@@ -1,37 +1,30 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * CANONICAL VGC TOWERS TRAVEL SYSTEM — REPAIRED (2026-06-21)
+ * VGC TOWERS NPC TRAVEL — REPAIRED (2026-06-21)
  *
- * SOLE canonical VGC Towers distribution function.
+ * Boundary-strict VGC Towers NPC distribution function.
  *
- * ACTIVE WINDOW: 10:00 AM – 1:00 AM Eastern (next day)
- * LOCKDOWN WINDOW: 1:00 AM – 10:00 AM Eastern (rest period)
+ * HARD BOUNDARIES:
+ * - Character RLS is NOT modified.
+ * - autonomous_travel_enabled is NEVER used.
+ * - active_created_character records are NEVER processed.
+ * - Global Character reads are NOT used.
+ * - Financial systems are untouched.
  *
- * TRAVEL LOOP GATE (PHASE 0): Validates travel eligibility BEFORE any write.
- * If travel_enabled=false in payload → BLOCKED_NO_WRITE (no intent, no partial state).
- * During lockdown, only returns strays — no distribution.
+ * AUTHORITY: VGC Towers LocationReference.resident_character_ids roster only.
  *
- * FIVE-PERSON WINDOWS (PHASE 6): Eligible residents partitioned into batches of 5.
- * Each batch processed sequentially. Batch failure does not abort sibling batches.
- *
- * LOAD OPTIMIZATION: Single global character load → in-memory per-account filtering.
- * Avoids per-account owner_email queries which hit RLS limitations under asServiceRole.
- *
- * PARTIAL-STATE PROTECTION: Each batch's writes are tracked. If any write in a
- * batch fails, the batch is marked as partial and reported. Character + roster
- * updates happen in the same write call — no split-state.
- *
- * OWNERSHIP: owner_email is the sole authority. created_by is never used.
+ * ACTIVE WINDOW: 10:00 AM – 1:00 AM Eastern
+ * LOCKDOWN WINDOW: 1:00 AM – 10:00 AM (returns strays home only)
  */
 
 const BATCH_SIZE = 5;
-const ROTATION_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
+const ROTATION_THRESHOLD_MS = 90 * 60 * 1000;
 
-const NPC_ELIGIBLE_TYPES = [
-  'npc_fictitious', 'npc_regular', 'npc_family_member',
+const VGC_ELIGIBLE_TYPES = new Set([
+  'npc_regular', 'npc_family_member', 'npc_fictitious',
   'family_npc', 'npc', 'background', 'npc_fictitious_person', 'promoted_npc'
-];
+]);
 
 // ── CHUNK HELPER ───────────────────────────────────────────────────────────────
 
@@ -41,6 +34,47 @@ function chunkArray(arr, size) {
     chunks.push(arr.slice(i, i + size));
   }
   return chunks;
+}
+
+// ── VGC RESIDENT LOADER ───────────────────────────────────────────────────────
+// Fetches ONLY the Character records whose IDs appear in the VGC Towers roster.
+// Uses targeted id-based lookups. If any ID cannot be fetched, it is logged and
+// skipped — the function continues with whatever residents can be safely accessed.
+
+async function loadRosterResidents(base44, residentIds, ownerEmail, phaseLog) {
+  if (!residentIds || residentIds.length === 0) {
+    phaseLog.push(`  [ROSTER] No resident_character_ids on this VGC Towers record`);
+    return { residents: [], unavailable: [] };
+  }
+
+  phaseLog.push(`  [ROSTER] ${residentIds.length} resident IDs referenced`);
+
+  const residents = [];
+  const unavailable = [];
+
+  // Fetch residents individually by ID to avoid broad scans.
+  // asServiceRole + specific id filter is the narrowest access path.
+  for (const rid of residentIds) {
+    try {
+      const results = await base44.asServiceRole.entities.Character.filter(
+        { id: rid, status: 'active' }, null, 1
+      );
+      if (results && results.length > 0) {
+        residents.push(results[0]);
+      } else {
+        unavailable.push({ id: rid, reason: 'NOT_FOUND_OR_INACTIVE' });
+      }
+    } catch (err) {
+      unavailable.push({ id: rid, reason: `FETCH_ERROR: ${err.message}` });
+    }
+  }
+
+  phaseLog.push(`  [ROSTER] ${residents.length} residents fetched, ${unavailable.length} unavailable`);
+  if (unavailable.length > 0) {
+    phaseLog.push(`  [ROSTER] UNAVAILABLE: ${unavailable.map(u => `${u.id.slice(0,8)}... (${u.reason})`).join(', ')}`);
+  }
+
+  return { residents, unavailable };
 }
 
 // ── MAIN HANDLER ───────────────────────────────────────────────────────────────
@@ -58,44 +92,29 @@ Deno.serve(async (req) => {
   let payload = {};
   try { payload = await req.json(); } catch { /* no body */ }
   const forceRun = payload.force === true;
-  const travelEnabled = payload.travel_enabled !== false; // default: enabled
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PHASE 0: TRAVEL LOOP GATE — validate BEFORE any data load or write
+  // PHASE 0: VGC TRAVEL GATE (VGC-specific, NOT autonomous_travel_enabled)
   // ══════════════════════════════════════════════════════════════════════════
   const ts = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ET`;
-  phaseLog.push(`[PHASE 0] ${ts} | travel_enabled=${travelEnabled} | force=${forceRun}`);
-
-  if (!travelEnabled) {
-    return Response.json({
-      success: false,
-      status: 'BLOCKED_NO_WRITE',
-      reason: 'Travel loop explicitly disabled (travel_enabled=false in payload)',
-      hoursET: hour, minutesET: minute,
-      moved: 0, blocked: 0, skipped: 0, returned: 0,
-      totalBatches: 0, batchResults: [],
-      phaseLog,
-    });
-  }
-
   const isLockdown = hour >= 1 && hour < 10;
+
   if (isLockdown && !forceRun) {
-    phaseLog.push(`[PHASE 0] LOCKDOWN MODE (${ts}) — returning strays only, no distribution`);
+    phaseLog.push(`[PHASE 0] ${ts} | LOCKDOWN — returning strays only, no distribution`);
   } else if (!isLockdown) {
-    phaseLog.push(`[PHASE 0] ACTIVE WINDOW (${ts}) — distribution + rotation enabled`);
+    phaseLog.push(`[PHASE 0] ${ts} | ACTIVE WINDOW — distribution + rotation enabled`);
   } else {
-    phaseLog.push(`[PHASE 0] LOCKDOWN OVERRIDE (${ts}) — force=true, proceeding`);
+    phaseLog.push(`[PHASE 0] ${ts} | LOCKDOWN OVERRIDE (force=true)`);
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PHASE 1: LOAD LOCATIONS + ALL ACTIVE CHARACTERS (single global pass)
+  // PHASE 1: LOAD VGC TOWERS LOCATIONS
   // ══════════════════════════════════════════════════════════════════════════
-  phaseLog.push('[PHASE 1] Loading locations + characters...');
+  phaseLog.push('[PHASE 1] Loading VGC Towers locations...');
 
-  const [accountLocations, sharedLocations, allCharacters] = await Promise.all([
+  const [accountLocations, sharedLocations] = await Promise.all([
     base44.asServiceRole.entities.LocationReference.filter({ scope: 'account_global' }, null, 500),
     base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 200),
-    base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500),
   ]);
 
   const seenIds = new Set();
@@ -106,31 +125,27 @@ Deno.serve(async (req) => {
   });
 
   const vgcTowersList = allLocations.filter(l => l.name === 'VGC Towers');
-  phaseLog.push(`[PHASE 1] ${allLocations.length} locations | ${allCharacters.length} active characters | ${vgcTowersList.length} VGC Towers`);
+  phaseLog.push(`[PHASE 1] ${allLocations.length} locations | ${vgcTowersList.length} VGC Towers`);
 
   if (vgcTowersList.length === 0) {
     return Response.json({
       success: true, status: 'NO_VGC_TOWERS',
-      message: 'No VGC Towers locations found',
       hoursET: hour, minutesET: minute,
-      moved: 0, blocked: 0, skipped: 0, returned: 0,
-      charactersLoaded: allCharacters.length,
-      totalBatches: 0, batchResults: [],
+      moved: 0, returned: 0, blocked: 0, skipped: 0, unavailable: 0,
+      activeCreatedCount: 0, totalBatches: 0, batchResults: [],
       phaseLog,
     });
   }
 
-  // Build a lookup map: character id → character (for fast per-account filtering)
-  const charMap = {};
-  for (const c of allCharacters) { charMap[c.id] = c; }
-
   // ══════════════════════════════════════════════════════════════════════════
-  // PER-ACCOUNT PROCESSING (in-memory filtering from global load)
+  // PER-ACCOUNT PROCESSING
   // ══════════════════════════════════════════════════════════════════════════
   let totalMoved = 0;
+  let totalReturned = 0;
   let totalBlocked = 0;
   let totalSkipped = 0;
-  let totalReturned = 0;
+  let totalUnavailable = 0;
+  let activeCreatedCount = 0;
   let totalBatches = 0;
   const allBatchResults = [];
 
@@ -139,59 +154,69 @@ Deno.serve(async (req) => {
     const ownerEmail = vgcTowers.owner_email;
 
     if (!ownerEmail) {
-      phaseLog.push(`[ACCOUNT SKIP] VGC ${VGC_ID.slice(0,8)}... — no owner_email`);
+      phaseLog.push(`[ACCOUNT SKIP] VGC ${VGC_ID.slice(0, 8)}... — no owner_email`);
+      continue;
+    }
+
+    phaseLog.push(`[ACCOUNT] ${ownerEmail} | VGC Towers ID=${VGC_ID.slice(0, 8)}...`);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PHASE 2: EXTRACT RESIDENT IDS FROM ROSTER (authority: LocationReference)
+    // ════════════════════════════════════════════════════════════════════════
+    const rosterIds = [
+      ...(vgcTowers.resident_character_ids || []),
+      ...((vgcTowers.residents || []).map(r => r.character_id).filter(Boolean)),
+    ];
+    // deduplicate
+    const uniqueRosterIds = [...new Set(rosterIds)];
+
+    phaseLog.push(`[PHASE 2] [${ownerEmail}] ${uniqueRosterIds.length} unique resident IDs in roster`);
+
+    if (uniqueRosterIds.length === 0) {
+      phaseLog.push(`[${ownerEmail}] No resident IDs in roster — skipping`);
       continue;
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // PHASE 2: FILTER THIS ACCOUNT'S CHARACTERS FROM GLOBAL LOAD
+    // PHASE 3: FETCH ONLY ROSTER-REFERENCED RESIDENT RECORDS
     // ════════════════════════════════════════════════════════════════════════
-    const ownerCharacters = allCharacters.filter(c => c.owner_email === ownerEmail);
-    phaseLog.push(`[PHASE 2] [${ownerEmail}] ${ownerCharacters.length} active characters`);
-
-    // Build resident ID set from roster arrays
-    const residentStubs = vgcTowers.residents || [];
-    const residentIdSet = new Set([
-      ...residentStubs.map(r => r.character_id).filter(Boolean),
-      ...(vgcTowers.resident_character_ids || []),
-    ]);
-
-    // ════════════════════════════════════════════════════════════════════════
-    // PHASE 3: IDENTIFY ELIGIBLE RESIDENTS (cross-reference roster IDs with charMap)
-    // ════════════════════════════════════════════════════════════════════════
-    // Residents come from TWO sources:
-    //   a) roster entries whose character_id resolves in charMap
-    //   b) characters whose home_location_id is VGC_ID (not in roster but live there)
-    const rosterResidents = [];
-    for (const rid of residentIdSet) {
-      const found = charMap[rid];
-      if (found && NPC_ELIGIBLE_TYPES.includes(found.character_type) && !found.protected_active) {
-        rosterResidents.push(found);
-      }
-    }
-    const homeResidents = ownerCharacters.filter(c =>
-      !residentIdSet.has(c.id) &&
-      c.current_home_location_id === VGC_ID &&
-      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
-      !c.protected_active
+    const { residents: allRosterResidents, unavailable } = await loadRosterResidents(
+      base44, uniqueRosterIds, ownerEmail, phaseLog
     );
-    // Deduplicate by ID
-    const seenResidentIds = new Set();
-    const vgcResidents = [...rosterResidents, ...homeResidents].filter(c => {
-      if (seenResidentIds.has(c.id)) return false;
-      seenResidentIds.add(c.id);
+    totalUnavailable += unavailable.length;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PHASE 4: FILTER TO VGC-ELIGIBLE NPC TYPES ONLY
+    // ════════════════════════════════════════════════════════════════════════
+    // EXCLUDE active_created_character. Count them for proof.
+    const activeCreated = allRosterResidents.filter(c => c.character_type === 'active_created_character');
+    activeCreatedCount += activeCreated.length;
+    if (activeCreated.length > 0) {
+      phaseLog.push(`[PHASE 4] [${ownerEmail}] EXCLUDED ${activeCreated.length} active_created_character records`);
+    }
+
+    const vgcNpcResidents = allRosterResidents.filter(c => {
+      // Exclude active_created_character
+      if (c.character_type === 'active_created_character') return false;
+      // Include only VGC-eligible NPC types
+      if (!VGC_ELIGIBLE_TYPES.has(c.character_type)) return false;
+      // Exclude protected
+      if (c.protected_active) return false;
       return true;
     });
 
-    phaseLog.push(`[PHASE 3] [${ownerEmail}] ${vgcResidents.length} VGC residents (roster=${residentIdSet.size} entries, roster-resolved=${rosterResidents.length}, home-matched=${homeResidents.length})`);
+    phaseLog.push(`[PHASE 4] [${ownerEmail}] ${vgcNpcResidents.length} VGC-eligible NPC residents`);
 
-    if (vgcResidents.length === 0) continue;
+    if (vgcNpcResidents.length === 0) {
+      phaseLog.push(`[${ownerEmail}] No eligible NPC residents after filtering`);
+      continue;
+    }
 
     // ════════════════════════════════════════════════════════════════════════
-    // LOCKDOWN: Return strays home in batches, then skip distribution
+    // LOCKDOWN: Return strays home in batches
     // ════════════════════════════════════════════════════════════════════════
     if (isLockdown && !forceRun) {
-      const stray = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
+      const stray = vgcNpcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
       phaseLog.push(`[LOCKDOWN] [${ownerEmail}] ${stray.length} strays to return`);
 
       const strayBatches = chunkArray(stray, BATCH_SIZE);
@@ -209,27 +234,28 @@ Deno.serve(async (req) => {
               resolved_location_type: 'home',
               resolved_source_reason: 'lockdown_rest',
               presence_state: 'home',
-              source_of_move: 'system',
+              presence_reason: 'lockdown_rest',
+              return_location_id: null,
               valid_from: now.toISOString(),
               valid_until: null,
-              next_move_at: null,
+              last_vgc_travel_at: null,
               last_location_update_time: now.toISOString(),
             });
             batchResult.moved++;
             totalReturned++;
-            phaseLog.push(`  [batch ${totalBatches}] ${npc.name} → VGC Towers (lockdown return)`);
+            phaseLog.push(`  [B${totalBatches}] ${npc.name} → VGC Towers (lockdown return)`);
           } catch (err) {
             batchResult.failed.push({ name: npc.name, error: err.message });
-            phaseLog.push(`  [batch ${totalBatches}] ${npc.name} → RETURN FAILED: ${err.message}`);
+            phaseLog.push(`  [B${totalBatches}] ${npc.name} → FAILED: ${err.message}`);
           }
         }
         allBatchResults.push(batchResult);
       }
-      continue; // No distribution during lockdown
+      continue;
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // PHASE 4: COLLECT VALID DESTINATIONS
+    // PHASE 5: BUILD DESTINATION POOL + ELIGIBILITY FILTERING
     // ════════════════════════════════════════════════════════════════════════
     const socialLocations = allLocations.filter(loc => {
       if (loc.id === VGC_ID) return false;
@@ -242,22 +268,19 @@ Deno.serve(async (req) => {
       return true;
     });
 
-    phaseLog.push(`[PHASE 4] [${ownerEmail}] ${socialLocations.length} open destinations`);
+    phaseLog.push(`[PHASE 5] [${ownerEmail}] ${socialLocations.length} open destinations`);
 
     if (socialLocations.length === 0) {
       phaseLog.push(`[${ownerEmail}] No valid destinations — all residents stay home`);
       continue;
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // PHASE 5: ELIGIBILITY FILTERING + DESTINATION SELECTION
-    // ════════════════════════════════════════════════════════════════════════
     const occupancyMap = new Map();
     const eligibleMoves = [];
     let accountBlocked = 0;
     let accountSkipped = 0;
 
-    for (const npc of vgcResidents) {
+    for (const npc of vgcNpcResidents) {
       const blockReason = getBlockReason(npc, nowET);
       if (blockReason) {
         accountBlocked++;
@@ -266,20 +289,20 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const isAtHome = !npc.resolved_current_location_id || npc.resolved_current_location_id === VGC_ID;
+      const atHome = !npc.resolved_current_location_id || npc.resolved_current_location_id === VGC_ID;
 
-      if (!isAtHome) {
-        const timeAtLocation = now.getTime() - (npc.valid_from ? new Date(npc.valid_from).getTime() : 0);
-        if (timeAtLocation < ROTATION_THRESHOLD_MS) {
+      if (!atHome) {
+        const timeAtLoc = now.getTime() - (npc.valid_from ? new Date(npc.valid_from).getTime() : 0);
+        if (timeAtLoc < ROTATION_THRESHOLD_MS) {
           accountSkipped++;
           totalSkipped++;
           continue;
         }
       }
 
-      // Age-safe destination filter
+      // Age-safe filter
       const npcAge = npc.age || 0;
-      const ageSafeLocs = socialLocations.filter(loc => {
+      const pool = socialLocations.filter(loc => {
         if (npcAge < 21) {
           const n = loc.name.toLowerCase();
           if (['bar', 'club', 'lounge', 'pub', 'tavern', 'nightclub'].some(kw => n.includes(kw))) return false;
@@ -287,38 +310,34 @@ Deno.serve(async (req) => {
         return true;
       });
 
-      const pool = ageSafeLocs.length > 0 ? ageSafeLocs : socialLocations;
-      const differentPool = pool.filter(l => l.id !== npc.resolved_current_location_id);
-      const finalPool = differentPool.length > 0 ? differentPool : pool;
+      const finalPool = pool.length > 0 ? pool : socialLocations;
+      const differentPool = finalPool.filter(l => l.id !== npc.resolved_current_location_id);
+      const chosenPool = differentPool.length > 0 ? differentPool : finalPool;
+      if (chosenPool.length === 0) continue;
 
-      if (finalPool.length === 0) continue;
+      const sel = pickByGravity(chosenPool, occupancyMap, nowET);
+      occupancyMap.set(sel.id, (occupancyMap.get(sel.id) || 0) + 1);
 
-      const selectedLoc = pickByGravity(finalPool, occupancyMap, nowET);
-      occupancyMap.set(selectedLoc.id, (occupancyMap.get(selectedLoc.id) || 0) + 1);
-
-      const reason = isAtHome ? 'vgc_distribution' : 'vgc_rotation';
+      const reason = atHome ? 'vgc_distribution' : 'vgc_rotation';
 
       eligibleMoves.push({
         id: npc.id,
         name: npc.name,
-        destId: selectedLoc.id,
-        destName: selectedLoc.name,
+        destId: sel.id,
+        destName: sel.name,
         data: {
-          resolved_current_location_id: selectedLoc.id,
-          resolved_current_location_name: selectedLoc.name,
+          resolved_current_location_id: sel.id,
+          resolved_current_location_name: sel.name,
           resolved_presence_status: 'visiting',
           resolved_location_type: 'visit',
           resolved_source_reason: reason,
           presence_state: 'social_visit',
           presence_reason: reason,
-          source_of_move: 'system',
+          return_location_id: VGC_ID,
           valid_from: now.toISOString(),
           valid_until: new Date(now.getTime() + ROTATION_THRESHOLD_MS * 2).toISOString(),
-          return_location_id: VGC_ID,
-          last_location_update_time: now.toISOString(),
-          last_arrived_time: now.toISOString(),
           last_vgc_travel_at: now.toISOString(),
-          vgc_travel_day_active: true,
+          last_location_update_time: now.toISOString(),
         },
       });
     }
@@ -328,23 +347,17 @@ Deno.serve(async (req) => {
     if (eligibleMoves.length === 0) continue;
 
     // ════════════════════════════════════════════════════════════════════════
-    // PHASE 6: FIVE-PERSON BATCH WRITES (atomic per batch)
+    // PHASE 6: FIVE-PERSON BATCH WRITES
     // ════════════════════════════════════════════════════════════════════════
     const batches = chunkArray(eligibleMoves, BATCH_SIZE);
-    phaseLog.push(`[PHASE 6] [${ownerEmail}] ${batches.length} batch(es) of up to ${BATCH_SIZE} residents each`);
+    phaseLog.push(`[PHASE 6] [${ownerEmail}] ${batches.length} batch(es) of ≤${BATCH_SIZE}`);
 
     for (let bi = 0; bi < batches.length; bi++) {
       const batch = batches[bi];
       totalBatches++;
-      const batchResult = {
-        batchNumber: totalBatches,
-        residentCount: batch.length,
-        moved: 0,
-        failed: [],
-        type: 'distribution',
-      };
+      const batchResult = { batchNumber: totalBatches, residentCount: batch.length, moved: 0, failed: [], type: 'distribution' };
 
-      phaseLog.push(`  [BATCH ${totalBatches}] ${batch.length} residents`);
+      phaseLog.push(`  [BATCH ${totalBatches}] ${batch.length} NPCs`);
 
       for (const move of batch) {
         try {
@@ -354,10 +367,9 @@ Deno.serve(async (req) => {
           phaseLog.push(`    ✓ ${move.name} → ${move.destName}`);
         } catch (err) {
           batchResult.failed.push({ name: move.name, dest: move.destName, error: err.message });
-          phaseLog.push(`    ✗ ${move.name} → ${move.destName} FAILED: ${err.message}`);
+          phaseLog.push(`    ✗ ${move.name} → FAILED: ${err.message}`);
         }
       }
-
       allBatchResults.push(batchResult);
     }
   }
@@ -369,7 +381,7 @@ Deno.serve(async (req) => {
   const status = partialBatches.length > 0 ? 'PARTIAL_FAILURE' : 'SUCCESS';
   const mode = isLockdown && !forceRun ? 'lockdown' : 'active';
 
-  phaseLog.push(`[SUMMARY] status=${status} mode=${mode} accounts=${vgcTowersList.length} batches=${totalBatches} moved=${totalMoved} returned=${totalReturned} blocked=${totalBlocked} skipped=${totalSkipped}`);
+  phaseLog.push(`[SUMMARY] status=${status} mode=${mode} accounts=${vgcTowersList.length} batches=${totalBatches} moved=${totalMoved} returned=${totalReturned} blocked=${totalBlocked} skipped=${totalSkipped} unavailable=${totalUnavailable} activeCreated=${activeCreatedCount}`);
 
   return Response.json({
     success: partialBatches.length === 0,
@@ -377,159 +389,117 @@ Deno.serve(async (req) => {
     mode,
     hoursET: hour,
     minutesET: minute,
-    travelEnabled,
     accountsProcessed: vgcTowersList.length,
     locationsLoaded: allLocations.length,
-    charactersLoaded: allCharacters.length,
     totalBatches,
     moved: totalMoved,
     returned: totalReturned,
     blocked: totalBlocked,
     skipped: totalSkipped,
+    unavailable: totalUnavailable,
+    activeCreatedCount,
     partialBatches: partialBatches.map(b => ({
-      batchNumber: b.batchNumber,
-      failedCount: b.failed.length,
-      failures: b.failed.map(f => ({ name: f.name, dest: f.dest || 'VGC Towers', error: f.error })),
+      batchNumber: b.batchNumber, failedCount: b.failed.length,
+      failures: b.failed.map(f => ({ name: f.name, error: f.error })),
     })),
     batchResults: allBatchResults.map(b => ({
-      batchNumber: b.batchNumber,
-      residentCount: b.residentCount,
-      moved: b.moved,
-      failed: b.failed.length,
-      type: b.type,
+      batchNumber: b.batchNumber, residentCount: b.residentCount,
+      moved: b.moved, failed: b.failed.length, type: b.type,
     })),
     phaseLog,
   });
-
 });
 
-// ── BLOCKER DETECTION ──────────────────────────────────────────────────────────
+// ── BLOCKER DETECTION (VGC NPC residents only) ─────────────────────────────
 
 function getBlockReason(npc, nowET) {
-  // Confinement
   if (npc.is_jailed) return 'jailed';
   if (npc.house_arrest_active) return 'house_arrest';
-  if (['incarcerated', 'house_arrest', 'confined'].includes(npc.resolved_presence_status)) {
+  if (['incarcerated', 'house_arrest', 'confined', 'hospitalized'].includes(npc.resolved_presence_status)) {
     return npc.resolved_presence_status;
   }
-
-  // Hospitalized / supervised
-  if (['hospitalized', 'supervised'].includes(npc.presence_state)) return npc.presence_state;
-
-  // Sleeping
   if (isNPCSleeping(npc, nowET)) return 'sleeping';
-
-  // Work schedule
   if (isOnWorkSchedule(npc, nowET)) return 'at_work';
-
-  // School hours (8 AM – 3 PM)
   if (npc.student_status === 'enrolled' && npc.education_location_id) {
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
     if (nowMin >= 480 && nowMin < 900) return 'at_school';
   }
-
   return null;
 }
 
 function isNPCSleeping(npc, etNow) {
   const hour = etNow.getHours();
-  if (!npc.sleep_start_time || !npc.wake_up_time) {
-    // Default: sleeping 11 PM – 7 AM
-    return hour >= 23 || hour < 7;
-  }
+  if (!npc.sleep_start_time || !npc.wake_up_time) return hour >= 23 || hour < 7;
   const nowMin = hour * 60 + etNow.getMinutes();
   const [sh, sm] = npc.sleep_start_time.split(':').map(Number);
   const [wh, wm] = npc.wake_up_time.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const wakeMin = wh * 60 + wm;
-  if (startMin > wakeMin) return nowMin >= startMin || nowMin < wakeMin;
-  return nowMin >= startMin && nowMin < wakeMin;
+  return startMin > wakeMin ? nowMin >= startMin || nowMin < wakeMin : nowMin >= startMin && nowMin < wakeMin;
 }
 
 function isOnWorkSchedule(npc, nowET) {
   if (!npc.work_days || !npc.work_start_time || !npc.work_end_time) return false;
-  const dayOfWeek = nowET.getDay();
-  if (!npc.work_days.includes(dayOfWeek)) return false;
-  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  if (!npc.work_days.includes(nowET.getDay())) return false;
   const [sh, sm] = npc.work_start_time.split(':').map(Number);
   const [eh, em] = npc.work_end_time.split(':').map(Number);
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
   return nowMin >= sh * 60 + sm && nowMin < eh * 60 + em;
 }
 
-// ── OPERATING HOURS ───────────────────────────────────────────────────────────
+// ── LOCATION HOURS ──────────────────────────────────────────────────────────
 
 function isLocationClosed(location, currentTime) {
   if (!location.operating_hours || location.operating_hours.length === 0) return false;
-  const dayOfWeek = currentTime.getDay();
-  const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
-  const todayEntries = location.operating_hours.filter(h => h.day_of_week === dayOfWeek);
-  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
-  const entries = todayEntries.length > 0 ? todayEntries : dayAgnostic;
+  const day = currentTime.getDay();
+  const cm = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const today = location.operating_hours.filter(h => h.day_of_week === day);
+  const generic = location.operating_hours.filter(h => h.day_of_week == null);
+  const entries = today.length > 0 ? today : generic;
   if (entries.length === 0) return false;
-  return !entries.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
+  return !entries.some(h => isInWindow(cm, h.open_time, h.close_time));
 }
 
-function isInWindow(currentMinutes, openStr, closeStr) {
+function isInWindow(cm, openStr, closeStr) {
   if (!openStr || !closeStr) return true;
   const [oh, om] = openStr.split(':').map(Number);
-  const [ch, cm] = closeStr.split(':').map(Number);
-  const openMin = oh * 60 + om;
-  const closeMin = ch * 60 + cm;
-  if (openMin <= closeMin) return currentMinutes >= openMin && currentMinutes <= closeMin;
-  return currentMinutes >= openMin || currentMinutes <= closeMin;
+  const [ch, cm2] = closeStr.split(':').map(Number);
+  const om2 = oh * 60 + om, cm3 = ch * 60 + cm2;
+  return om2 <= cm3 ? cm >= om2 && cm <= cm3 : cm >= om2 || cm <= cm3;
 }
 
-// ── GRAVITY SYSTEM ────────────────────────────────────────────────────────────
+// ── GRAVITY ─────────────────────────────────────────────────────────────────
 
-const CATEGORY_BASE_POPULARITY = {
-  home: 10, workplace: 30, school: 30, gym: 45, grocery: 40,
-  medical: 25, hospital: 25, clinic: 25, church: 35, religion: 35,
-  park: 55, outdoor: 50, food_drink: 65, restaurant: 65,
-  bar: 70, social: 75, community: 60, business: 40, government: 20,
-  public: 50, generic: 40,
+const BASE_POPULARITY = {
+  gym: 45, grocery: 40, park: 55, outdoor: 50, food_drink: 65,
+  restaurant: 65, social: 75, community: 60, business: 40, public: 50,
+  generic: 40, home: 10, workplace: 30, school: 30, medical: 25, church: 35,
+};
+const TIME_RULES = {
+  gym: [[5,9,1.6],[17,20,1.5]], food_drink: [[7,10,1.4],[12,14,1.5],[17,20,1.3]],
+  restaurant: [[11,14,1.6],[18,21,1.7]], social: [[18,23,1.8],[14,17,1.3]],
+  park: [[8,12,1.5],[15,18,1.4]], grocery: [[10,13,1.5],[16,19,1.6]],
+  church: [[8,13,1.8]],
 };
 
-const CATEGORY_TIME_RULES = {
-  gym:        [[5, 9, 1.6], [17, 20, 1.5]],
-  food_drink: [[7, 10, 1.4], [12, 14, 1.5], [17, 20, 1.3]],
-  restaurant: [[11, 14, 1.6], [18, 21, 1.7]],
-  bar:        [[20, 23, 1.9], [22, 24, 2.0], [0, 2, 1.7]],
-  social:     [[18, 23, 1.8], [14, 17, 1.3]],
-  park:       [[8, 12, 1.5], [15, 18, 1.4]],
-  grocery:    [[10, 13, 1.5], [16, 19, 1.6]],
-  church:     [[8, 13, 1.8]],
-};
-
-function getTimeMultiplier(category, hour) {
-  const rules = CATEGORY_TIME_RULES[category];
-  if (!rules) return 1.0;
-  for (const [start, end, mult] of rules) {
-    if (hour >= start && hour < end) return mult;
-  }
+function getTimeMult(cat, h) {
+  const r = TIME_RULES[cat]; if (!r) return 1.0;
+  for (const [s,e,m] of r) { if (h >= s && h < e) return m; }
   return 0.8;
 }
 
-function calcGravity(location, occupants, nowET) {
-  const category = location.category || 'generic';
-  const hour = nowET.getHours();
-  const base = typeof location.popularity_score === 'number'
-    ? location.popularity_score
-    : (CATEGORY_BASE_POPULARITY[category] ?? 40);
-  const timeMult = getTimeMultiplier(category, hour);
-  const socialBoost = occupants === 0 ? 0 : occupants === 1 ? 5 : occupants <= 3 ? 20 : 30;
-  return Math.max(1, Math.round(base * timeMult + socialBoost));
+function calcGravity(loc, occ, et) {
+  const cat = loc.category || 'generic', h = et.getHours();
+  const base = typeof loc.popularity_score === 'number' ? loc.popularity_score : (BASE_POPULARITY[cat] ?? 40);
+  const tm = getTimeMult(cat, h);
+  const sb = occ === 0 ? 0 : occ === 1 ? 5 : occ <= 3 ? 20 : 30;
+  return Math.max(1, Math.round(base * tm + sb));
 }
 
-function pickByGravity(locations, occupancyMap, nowET) {
-  const weighted = locations.map(loc => ({
-    loc,
-    weight: calcGravity(loc, occupancyMap.get(loc.id) || 0, nowET),
-  }));
-  const total = weighted.reduce((s, w) => s + w.weight, 0);
-  let rand = Math.random() * total;
-  for (const { loc, weight } of weighted) {
-    rand -= weight;
-    if (rand <= 0) return loc;
-  }
-  return weighted[weighted.length - 1].loc;
+function pickByGravity(locs, occMap, et) {
+  const w = locs.map(l => ({ l, w: calcGravity(l, occMap.get(l.id) || 0, et) }));
+  const total = w.reduce((s, x) => s + x.w, 0);
+  let r = Math.random() * total;
+  for (const { l, w: weight } of w) { r -= weight; if (r <= 0) return l; }
+  return w[w.length - 1].l;
 }
