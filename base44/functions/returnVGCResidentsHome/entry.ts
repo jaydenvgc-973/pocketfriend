@@ -156,7 +156,9 @@ function isSchoolScheduleActive(char) {
 function shouldProtectFromHomeReturn(char) {
   if (isWorkScheduleActive(char)) return true;
   if (isSchoolScheduleActive(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  // Sleeping/napping NPCs MUST be returned home — they should not be sleeping at public venues.
+  // Only hospitalized characters are protected (medical facility is their current care location).
+  if (['hospitalized'].includes(char.resolved_presence_status)) return true;
   if (char.is_jailed || char.house_arrest_active) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;

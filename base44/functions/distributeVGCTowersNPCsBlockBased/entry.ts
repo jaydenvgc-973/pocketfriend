@@ -283,6 +283,32 @@ Deno.serve(async (req) => {
     for (const npc of vgcNpcResidents) {
       const blockReason = getBlockReason(npc, nowET);
       if (blockReason) {
+        // SLEEPING NPC AWAY FROM VGC TOWERS: return home immediately.
+        // Do NOT leave them stranded at a public venue during their sleep window.
+        const isAwayFromVGC = npc.resolved_current_location_id && npc.resolved_current_location_id !== VGC_ID;
+        if (blockReason === 'sleeping' && isAwayFromVGC) {
+          try {
+            await base44.asServiceRole.entities.Character.update(npc.id, {
+              resolved_current_location_id: VGC_ID,
+              resolved_current_location_name: 'VGC Towers',
+              resolved_presence_status: 'home',
+              resolved_location_type: 'home',
+              resolved_source_reason: 'sleep_return_from_venue',
+              presence_state: 'home',
+              presence_reason: 'sleep_return',
+              return_location_id: null,
+              valid_from: now.toISOString(),
+              valid_until: null,
+              last_vgc_travel_at: null,
+              last_location_update_time: now.toISOString(),
+            });
+            totalReturned++;
+            phaseLog.push(`  SLEEP-RETURN: ${npc.name} → VGC Towers (sleeping at venue, returned home)`);
+          } catch (err) {
+            phaseLog.push(`  SLEEP-RETURN FAILED: ${npc.name} → ${err.message}`);
+          }
+          continue;
+        }
         accountBlocked++;
         totalBlocked++;
         phaseLog.push(`  BLOCKED: ${npc.name} → ${blockReason}`);
