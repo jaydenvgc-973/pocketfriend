@@ -22,6 +22,30 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
+/**
+ * WORLD PHONE BOUNDARY GUARD (inline — no local imports in Deno functions)
+ *
+ * World Phone is communication-only. It must NEVER contain narrative records.
+ * Any message payload with is_narrative truthy is rejected before write.
+ * This is a permanent system-level guard. The root cause of the June 2026
+ * contamination was that narrative records were written into world_phone
+ * conversations. This guard prevents that at the write layer.
+ */
+function assertNotNarrative(payload, callerLabel) {
+  const isNarrativeTruthy =
+    payload.is_narrative === true ||
+    payload.is_narrative === 1 ||
+    payload.is_narrative === '1' ||
+    payload.is_narrative === 'true';
+  if (isNarrativeTruthy) {
+    throw new Error(
+      `[WORLD_PHONE_BOUNDARY_VIOLATION] ${callerLabel} attempted to write a narrative record ` +
+      `(is_narrative=${JSON.stringify(payload.is_narrative)}) to a World Phone conversation. ` +
+      `World Phone is communication-only. Narrative content must target direct user↔character conversations.`
+    );
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -514,6 +538,12 @@ This must be a real message — not a command, not a description, not a meta-ins
       if (source_media_had_generation_context !== undefined) messagePayload.source_media_had_generation_context = source_media_had_generation_context;
     }
 
+    // ── WORLD PHONE BOUNDARY GUARD: reject narrative content before write ─────
+    // This is the permanent system-level guard that ensures narrative records
+    // can never enter World Phone conversations regardless of caller.
+    // isNarrativeTruthy catches boolean true, 1, "1", "true" — all representations.
+    assertNotNarrative(messagePayload, 'sendWorldPhoneMessage/outbound');
+
     const savedMessage = await base44.entities.Message.create(messagePayload);
 
     // HARD STOP: if message write failed, return failure — caller must not fake success
@@ -793,7 +823,7 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
       if (finalReplyText && finalReplyText.length > 2 && !finalReplyText.startsWith('{')) {
         recipientResponse = finalReplyText;
         const responseTimestamp = new Date(Date.now() + 2000).toISOString();
-        const recipientMsg = await base44.entities.Message.create({
+        const recipientMsgPayload = {
           conversation_id: conversationId,
           sender_type: 'character',
           character_id: recipient.id,
@@ -812,7 +842,10 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
           recovery_signal: false,
           memory_eligible: true,
           relationship_eligible: true,
-        });
+        };
+        // WORLD PHONE BOUNDARY GUARD: recipient response must never be narrative
+        assertNotNarrative(recipientMsgPayload, 'sendWorldPhoneMessage/recipient_response');
+        const recipientMsg = await base44.entities.Message.create(recipientMsgPayload);
         if (recipientMsg?.id) {
           recipientResponseMessageId = recipientMsg.id;
           await base44.entities.Conversation.update(conversationId, {

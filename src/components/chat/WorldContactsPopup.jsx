@@ -12,6 +12,7 @@ import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
 import { isCountableUnread } from "@/lib/canonicalUnreadResolver";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveCharacterContacts } from "@/lib/characterContactsResolver";
+import { filterWorldPhoneHistory } from "@/lib/worldPhoneBoundaryGuard";
 import { callLLMWithRetry } from "@/lib/llmUtils";
 import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -306,10 +307,16 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         }
 
         setConversationId(found.id);
-        const history = await base44.entities.Message.filter({ conversation_id: found.id }, "created_date");
+        const rawHistory = await base44.entities.Message.filter({ conversation_id: found.id }, "created_date");
+
+        // WORLD PHONE BOUNDARY GUARD: filter out canon_excluded contamination records
+        // and any narrative records that lack bilateral IDs before rendering.
+        // This ensures excluded contamination from the June 2026 remediation never
+        // appears as visible bubbles in World Contacts, even if it exists in the DB.
+        const history = filterWorldPhoneHistory(rawHistory);
 
         // Diagnostic: log per-message sender info
-        console.log(`[WorldPhone] Loaded ${history.length} messages for convo ${found.id}`);
+        console.log(`[WorldPhone] Loaded ${rawHistory.length} raw messages, ${history.length} after boundary filter for convo ${found.id}`);
         history.forEach(m => {
           console.log(`  msg ${m.id.substring(0, 8)} | sender_char_id=${m.sender_character_id || 'none'} | char_id=${m.character_id || 'none'} | sender_type=${m.sender_type}`);
         });
