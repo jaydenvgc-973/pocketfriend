@@ -47,8 +47,6 @@ export default function Travel() {
   const [showDebug, setShowDebug] = useState(false);
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);
-  const [travelRepairResult, setTravelRepairResult] = useState(null);
-  const [isRepairingTravel, setIsRepairingTravel] = useState(false);
   const [showMap, setShowMap] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
@@ -56,8 +54,12 @@ export default function Travel() {
     queryFn: () => base44.auth.me(),
   });
 
+  // Use the same hook as Home — single object shape, shared cache key ["userSettings", email]
+  // This eliminates the array/object shape mismatch that caused writeToCache to produce an object
+  // while Travel tried to read it as an array, resulting in safeSettings = null.
   const { settings: settingsObj } = useUserSettings();
 
+  // Single shared character source — same cache keys as Home, never flickers
   const {
     activeCreated: activeCharacters,
     npcFictitious: npcCharacters,
@@ -67,20 +69,29 @@ export default function Travel() {
     isRefreshing: isLoadingNpc,
   } = useOwnedCharacters(currentUser);
 
+  // Shared stable location hook — same LKG rules and cache key as Home
   const { locationsData } = useStableLocationReferences(currentUser?.email);
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
+  // settingsObj is the single UserSettings record (object shape) from useUserSettings
+  // It shares the same React Query cache key as Home, so writeToCache patches propagate here instantly.
   const safeSettings = settingsObj?.id ? settingsObj : null;
   const settings = settingsObj || {};
 
+  // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
 
+  // Travel page is foreground — background simulation must yield while user is here
   usePageContext({ page: 'travel' });
 
+  // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
 
   const verifiedTravelCompanions = travelCompanions;
 
+  // Build a synthetic userSettings object that merges server data with optimistic presence
+  // so resolveTravelPresenceEntities always sees the current user location (not stale DB value)
+  console.log("[Travel] userPresence →", { isAway: userPresence.isAway, locationId: userPresence.locationId, locationName: userPresence.locationName, safeSettingsId: safeSettings?.id, rawDBStatus: safeSettings?.user_presence_status, rawDBLocId: safeSettings?.user_current_location_id });
   const mergedUserSettingsForResolver = safeSettings ? {
     ...safeSettings,
     user_presence_status: userPresence.isAway ? 'away' : 'present',
@@ -88,6 +99,8 @@ export default function Travel() {
     user_current_location_name: userPresence.isAway ? null : userPresence.locationName,
   } : null;
 
+  // UNIFIED PRESENCE RESOLVER — single source of truth for map, popup, counts
+  // Includes: active_created, npc_fictitious, npc_family_member, internal family, + user when present
   const allPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
     currentUser,
     userSettings: mergedUserSettingsForResolver,
@@ -108,14 +121,24 @@ export default function Travel() {
     locationsData.length,
   ]);
 
+  // mapCharacters: UNIFIED PRESENCE ENTITIES (normalized, with home fallback applied)
+  // Fed directly to LivePresenceMap — ensures map matches popup/counts exactly
   const mapCharacters = allPresenceEntities;
 
+  // VGC Towers residents (for travel-away count)
   const vgcTowers = locationsData.find(l => l.name === 'VGC Towers');
   const vgcTowersResidents = allPresenceEntities.filter(e =>
     (e.character_type === 'npc_fictitious' || e.character_type === 'npc_family_member') &&
     e.residence_location_id === vgcTowers?.id
   );
 
+  // ensureLocationsMapped is deferred to when the user opens the map.
+  // Map coordinate assignment is NOT required for page display — the location grid
+  // and character selector render from locationsData directly without coordinates.
+  // Coordinates are only needed for LivePresenceMap pin rendering.
+  // Called inside the showMap toggle handler below.
+
+  // Close popup on outside click/tap or Escape key
   useEffect(() => {
     if (!selectedLocation) return;
     const handlePointerDown = (e) => {
@@ -133,6 +156,13 @@ export default function Travel() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [selectedLocation]);
+
+  // completeStuckTravelUserScoped and distributeVGCTowersNPCs removed from mount.
+  // The visible Travel page (location grid, character selector, presence map) does NOT
+  // require stuck travel repair or NPC distribution before the user acts.
+  // - completeStuckTravelUserScoped: repair work — must be user-triggered from the debug panel
+  // - distributeVGCTowersNPCs: world simulation maintenance — already in debug panel as manual action
+
 
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
@@ -153,6 +183,7 @@ export default function Travel() {
       return { canVisit: true, blockedBy: null, homeResidents: [] };
     }
     
+    // Use unified presence resolver (allPresenceEntities) — consistent with map + popup
     const presentHere = getPresenceAtLocation(location, allPresenceEntities);
     const homeResidents = presentHere.map(e => ({ name: e.display_name }));
     
@@ -176,6 +207,7 @@ export default function Travel() {
     const char = verifiedTravelCompanions.find(c => c.id === charId);
     if (!char) return;
     
+    // Check age-based travel restrictions
     if (selectedLocation) {
       const travelAllowed = canCharacterTravelToLocation(char, selectedLocation);
       if (!travelAllowed.allowed) {
@@ -247,6 +279,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       const char = travelCompanions.find(c => c.id === wakeUpModal.pendingCharacterId);
       if (!char) return;
 
+      // ── ENERGY FINALIZATION before wake ──────────────────────────────────
+      // Calculate partial energy recovery based on elapsed sleep time.
+      // Sleep recovery rate: +12/hr. Never exceed 100. Never lower than current.
+      // Only for active_created_character and npc_world_service (same scope as needs sim).
       const isEligible = (
         char.character_type === 'active_created_character' ||
         char.character_type === 'npc_world_service' ||
@@ -258,6 +294,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         const currentEnergy = char.energy_value ?? 75;
         const recoveredEnergy = Math.min(100, currentEnergy + SLEEP_RECOVERY_PER_HOUR * hoursSlept);
         const finalizedEnergy = Math.max(currentEnergy, Math.round(recoveredEnergy));
+        // Write the finalized energy value before generating the wake response
         await base44.entities.Character.update(char.id, {
           energy_value: finalizedEnergy,
           sleep_interrupted_at: new Date().toISOString(),
@@ -337,6 +374,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       }]);
       return;
     }
+    // NOTE: Removed "no one home" block — locations with listed residents are always visitable
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
@@ -379,6 +417,28 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     ? "Go alone"
     : `Go with ${selectedCharacterIds.length} character${selectedCharacterIds.length > 1 ? "s" : ""}`;
 
+  // Location hours check
+  const isLocationOpen = (location) => {
+    if (!location?.operating_hours || location.operating_hours.length === 0) return null;
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const dayOfWeek = nowET.getDay();
+    const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+    const isInWindow = (open, close) => {
+      const o = (open || '').split(':').map(Number);
+      const c = (close || '').split(':').map(Number);
+      const oMin = o[0] * 60 + (o[1] || 0), cMin = c[0] * 60 + (c[1] || 0);
+      if (oMin == null || cMin == null) return false;
+      return oMin <= cMin ? currentMinutes >= oMin && currentMinutes <= cMin : currentMinutes >= oMin || currentMinutes <= cMin;
+    };
+    const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+    const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+    const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+    if (todayEntries.length > 0) return todayEntries.some(h => isInWindow(h.open_time, h.close_time));
+    if (daySpecific.length > 0 && todayEntries.length === 0) return false;
+    if (dayAgnostic.length > 0) return dayAgnostic.some(h => isInWindow(h.open_time, h.close_time));
+    return null;
+  };
+
   const sortedLocations = [...locationsData]
     .sort((a, b) => {
       const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
@@ -402,6 +462,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
           onClick={() => {
             const opening = !showMap;
             setShowMap(opening);
+            // Ensure map coordinates are saved only when user opens the map.
+            // ensureLocationsMapped writes coordinates to the DB — map pins need them,
+            // but the location grid and selector do NOT. Deferred to here by design.
             if (opening && locationsData.length && currentUser?.email) {
               const saveLocation = async (locationId, updates) => {
                 await base44.entities.LocationReference.update(locationId, updates);
@@ -426,6 +489,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6 relative z-10">
 
+        {/* Live Presence Map */}
         <AnimatePresence>
           {showMap && (
             <motion.div
@@ -436,6 +500,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             >
               <div className="space-y-2 pb-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live World Map</p>
+                {/* LOADING GATE: render map only when ALL character data is loaded — never render partial world */}
                 {(isLoadingActive || isLoadingNpc) ? (
                   <div className="flex items-center justify-center h-[420px] rounded-[18px] bg-card border border-border">
                     <div className="flex flex-col items-center gap-2">
@@ -547,15 +612,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     );
                   }
 
+                  // UNIFIED: Use presence entities + location record resident_family_members as fallback
                   const presentHere = getPresenceAtLocation(selectedLocation, allPresenceEntities);
                   const lines = [];
                   const seenNames = new Set();
 
+                  // Build resident ID set from all resident fields on the location
                   const residentIdSet = new Set([
                     ...(selectedLocation.resident_character_ids || []),
                     ...(selectedLocation.residents || []).map(r => r.character_id).filter(Boolean),
                   ]);
 
+                  // From unified presence entities — characters physically AT this location right now
                   presentHere.forEach(entity => {
                     const name = entity.display_name;
                     if (seenNames.has(name?.toLowerCase())) return;
@@ -565,6 +633,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       residentIdSet.has(entity.id);
 
                     let status = entity.resolved_presence_status || (isHome ? 'home' : 'here');
+                    // Resident physically here — never label as "visiting"
                     if (isResidentHere && status === 'visiting') status = 'home';
 
                     let color = (isHome || isResidentHere) ? 'text-green-400' : 'text-blue-400';
@@ -573,6 +642,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       color = status === 'home' ? 'text-green-400' : 'text-blue-400';
                       status = status === 'sleeping' || status === 'napping' ? 'sleeping' : 'home';
                     }
+                    // Show "working" if resolved_presence_status is at_work from schedule source
                     if (!isHome && status === 'at_work' &&
                         (entity.resolved_source_reason === 'work_schedule' || entity.resolved_source_reason === 'work_schedule_enforced')) {
                       status = 'working';
@@ -581,28 +651,38 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name, status, color });
                   });
 
+                  // RESIDENTS WHO ARE AWAY: show residents not physically here as "out"
+                  // This covers VGC Towers NPCs who were distributed to other locations
                   allPresenceEntities.forEach(entity => {
                     if (!residentIdSet.has(entity.id) && entity.residence_location_id !== selectedLocation.id) return;
-                    if (entity.resolved_current_location_id === selectedLocation.id) return;
+                    if (entity.resolved_current_location_id === selectedLocation.id) return; // already shown above
                     const name = entity.display_name;
                     if (!name || seenNames.has(name?.toLowerCase())) return;
                     seenNames.add(name.toLowerCase());
                     lines.push({ name, status: 'out', color: 'text-amber-400' });
                   });
 
+                  // LOCATION RECORD FALLBACK: resident_family_members listed on this location.
+                  // RULE: Only show if source_character_id is a confirmed resident of THIS location.
+                  // Never infer from name matching or family relationship alone.
                   (selectedLocation.resident_family_members || []).forEach(fam => {
                     if (!fam.name) return;
                     if (seenNames.has(fam.name.toLowerCase())) return;
 
+                    // Gate: the source character that owns this family entry must live HERE.
+                    // If source_character_id is set, verify they are actually a resident of this location.
                     if (fam.source_character_id) {
                       const sourceChar = allCharactersForFamilyScan.find(c => c.id === fam.source_character_id);
-                      if (!sourceChar) return;
+                      if (!sourceChar) return; // source character not loaded — skip
                       const sourceHomesHere = sourceChar.current_home_location_id === selectedLocation.id;
                       const sourceInResidents = residentIdSet.has(sourceChar.id);
                       if (!sourceHomesHere && !sourceInResidents) {
+                        // Source character lives somewhere else — this family member belongs to THAT home, not this one
+                        console.log(`[Travel Popup] SUPPRESSED family member "${fam.name}" — source char ${sourceChar.name} lives at ${sourceChar.current_home_location_id}, not ${selectedLocation.id}`);
                         return;
                       }
                     } else {
+                      // No source_character_id — cannot verify ownership — skip to prevent bleed-over
                       return;
                     }
 
@@ -610,6 +690,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
                   });
 
+                  // resident_character_ids fallback for NPCs/family not caught above
                   (selectedLocation.resident_character_ids || []).forEach(resId => {
                     const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
                     if (!resChar) return;
@@ -619,6 +700,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     seenNames.add(name.toLowerCase());
                     lines.push({ name, status: 'home', color: 'text-green-400' });
                   });
+
+                  console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 
                   const presenceSummary = lines.length > 0 ? (
                     <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
@@ -631,6 +714,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     </div>
                   ) : null;
 
+                  // VGC Towers: show how many residents are out
                   let vgcTowersNote = null;
                   if (isHome && vgcTowers && selectedLocation.id === vgcTowers.id && vgcTowersResidents.length > 0) {
                     const residentsAway = vgcTowersResidents.filter(r => r.is_away).length;
@@ -642,6 +726,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       );
                     }
                   }
+
+                  // REMOVED: false "Nobody's home" block — if residents exist from location record, always allow travel
 
                   return (
                     <>
@@ -717,40 +803,37 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-24 right-4 w-80 max-h-[70vh] bg-card border border-border rounded-xl shadow-lg overflow-y-auto z-30 p-4 space-y-3"
+            className="fixed bottom-24 right-4 w-80 max-h-96 bg-card border border-border rounded-xl shadow-lg overflow-y-auto z-30 p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Debug Info</h3>
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
-                    setIsRepairingTravel(true);
-                    setTravelRepairResult(null);
-                    setDistributeResult(null);
                     try {
-                      const res = await base44.functions.invoke('repairAllStuckTravel', {});
-                      setTravelRepairResult(res?.data || { error: 'No response from repair function.' });
-                      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-                      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+                      const res = await base44.functions.invoke('completeStuckTravelUserScoped', {});
+                      const fixed = res?.data?.stuck_characters_found || 0;
+                      if (fixed > 0) {
+                        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+                        queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+                      }
+                      console.log('[Travel Debug] Stuck travel repair:', res?.data);
                     } catch (e) {
-                      setTravelRepairResult({ error: e.message });
-                    } finally {
-                      setIsRepairingTravel(false);
+                      console.error('[Travel Debug] Stuck travel repair failed:', e.message);
                     }
                   }}
-                  disabled={isRepairingTravel || isDistributing}
-                  className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+                  className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors"
                 >
-                  {isRepairingTravel ? 'Repairing...' : 'Repair Travel'}
+                  Fix Stuck Travel
                 </button>
                 <button
                   onClick={async () => {
                     setIsDistributing(true);
                     setDistributeResult(null);
-                    setTravelRepairResult(null);
                     try {
-                      const res = await base44.functions.invoke('distributeVGCTowersNPCs', { force: true });
+                      const res = await base44.functions.invoke('distributeVGCTowersNPCs', {});
                       setDistributeResult(res?.data || { error: 'No response' });
+                      // Use shared query keys — same as Home
                       await queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
                       await queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
                     } catch (e) {
@@ -759,7 +842,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       setIsDistributing(false);
                     }
                   }}
-                  disabled={isDistributing || isRepairingTravel}
+                  disabled={isDistributing}
                   className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50"
                 >
                   {isDistributing ? 'Running...' : 'Distribute NPCs'}
@@ -768,63 +851,93 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               </div>
             </div>
 
-            {travelRepairResult && (
-              <div className={`text-[10px] rounded-lg p-2 space-y-1 ${travelRepairResult.error ? 'bg-destructive/10 border border-destructive/30' : 'bg-green-500/10 border-green-500/30'}`}>
-                {travelRepairResult.error ? (
-                  <p className="text-destructive font-medium">Error: {travelRepairResult.error}</p>
-                ) : (
-                  <>
-                    <p className="text-green-400 font-semibold">✓ {travelRepairResult.message || 'Travel state repaired.'}</p>
-                    {(travelRepairResult.repaired_sessions > 0 || travelRepairResult.deleted_sessions > 0) &&
-                      <p className="text-muted-foreground">{travelRepairResult.repaired_sessions || 0} repaired, {travelRepairResult.deleted_sessions || 0} deleted.</p>
-                    }
-                  </>
-                )}
-              </div>
-            )}
-
             {distributeResult && (
-              <div className={`text-[10px] rounded-lg p-2 space-y-1 ${distributeResult.error ? 'bg-destructive/10 border border-destructive/30' : 'bg-green-500/10 border-green-500/30'}`}>
+              <div className={`text-[10px] rounded-lg p-2 space-y-1 ${distributeResult.error ? 'bg-destructive/10 border border-destructive/30' : 'bg-green-500/10 border border-green-500/30'}`}>
                 {distributeResult.error ? (
                   <p className="text-destructive font-medium">Error: {distributeResult.error}</p>
                 ) : (
                   <>
-                    <p className="text-green-400 font-semibold">✓ {distributeResult.moved || 0} moved, {distributeResult.returned || 0} returned, {distributeResult.blocked || 0} blocked</p>
-                    {(distributeResult.log || []).filter(l => l.includes('→')).slice(-5).map((l, i) => (
-                       <p key={i} className="truncate text-muted-foreground">{l.includes('•') ? l.substring(l.indexOf('•')) : l}</p>
+                    <p className="text-green-400 font-semibold">✓ {distributeResult.distributed}/{distributeResult.totalVGCResidents} NPCs moved — UI refreshed</p>
+                    {distributeResult.finalNPCStates?.map((s, i) => (
+                      <p key={i} className={`truncate ${s.flag === 'NOWHERE_FIX' ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                        • {s.name} → <span className="text-blue-400">{s.location}</span>
+                      </p>
                     ))}
-                    {(distributeResult.blocked_with_reasons || []).length > 0 && (
-                      <p className="text-amber-400 mt-1">Blocked: {distributeResult.blocked_with_reasons.map(x => `${x.name} (${x.reason})`).join(', ')}</p>
-                    )}
-                     {distributeResult.proof_check && (
-                      <p className="text-cyan-400 mt-1 truncate">Proof: {distributeResult.proof_check.name} → {distributeResult.proof_check.actual_resolved_location} ({distributeResult.proof_check.stayed_moved ? 'OK' : 'FAIL'})</p>
+                    {distributeResult.ineligible?.length > 0 && (
+                      <p className="text-amber-400 mt-1">Ineligible: {distributeResult.ineligible.map(x => `${x.name} (${x.reason})`).join(', ')}</p>
                     )}
                   </>
                 )}
               </div>
             )}
-
+            <div className="space-y-1 text-xs">
+              <p className="font-medium text-muted-foreground">Locations: {locationsData.length}</p>
+              {locationsData.map(l => (
+                <div key={l.id} className="text-[10px] text-muted-foreground/70 truncate">• {l.name} (id: {l.id.slice(0, 8)})</div>
+              ))}
+            </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
-              <p className="font-medium text-muted-foreground">VGC Towers ({vgcTowersResidents.length})</p>
-              {vgcTowersResidents.map(c => {
-                const presence = allPresenceEntities.find(e => e.id === c.id);
-                const isAtVGC = presence?.resolved_current_location_id === vgcTowers?.id;
-                const status = isAtVGC ? (presence.is_sleeping ? 'sleeping' : 'home') : 'out';
-                const color = isAtVGC ? (presence.is_sleeping ? 'text-blue-400' : 'text-green-400') : 'text-amber-400';
+              <p className="font-medium text-muted-foreground">Active Characters: {activeCharacters.length}</p>
+              {[...activeCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => {
+                const presenceEntity = allPresenceEntities.find(e => e.id === c.id);
                 return (
-                  <div key={c.id} className="text-[10px]">
-                    <span className="text-foreground/80">• {c.name || c.display_name}: </span>
-                    <span className={color}>{status}</span>
-                    {!isAtVGC && <span className="text-muted-foreground/70"> → {presence?.resolved_current_location_name || 'Unknown'}</span>}
+                  <div key={c.id} className="text-[10px] space-y-0.5 border-b border-border/30 pb-1">
+                    <span className="text-foreground/80 font-medium">{c.name}</span>
+                    <div className="text-muted-foreground/70 pl-2">
+                      <span className="text-blue-400">canonical: </span>{presenceEntity?.resolved_current_location_name || 'unresolved'}
+                      {' '}(<span className={presenceEntity?.is_sleeping ? 'text-blue-300' : 'text-green-400'}>{presenceEntity?.resolved_presence_status || '?'}</span>)
+                      <span className="text-muted-foreground/50"> src: {presenceEntity?.resolved_source_reason || '?'}</span>
+                    </div>
+                    <div className="text-muted-foreground/50 pl-2">db: {c.resolved_current_location_name || 'none'} / {c.resolved_presence_status || '?'}</div>
                   </div>
-                )
+                );
               })}
             </div>
-
+            <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">NPC Fictitious: {npcCharacters.length} · Family: {npcFamilyMembers.length}</p>
+              {[...npcCharacters, ...npcFamilyMembers].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => (
+                <div key={c.id} className="text-[10px]">
+                  <span className={c.character_type === 'npc_family_member' ? 'text-purple-400/70' : 'text-muted-foreground/70'}>• {c.name} ({c.character_type}):</span>
+                  {c.resolved_current_location_name ? (
+                    <span className="text-blue-400"> {c.resolved_current_location_name}</span>
+                  ) : c.current_home_location_id ? (
+                    <span className="text-amber-400"> home ({locationMap[c.current_home_location_id]?.name || c.current_home_location_id.slice(0, 8)})</span>
+                  ) : (
+                    <span className="text-red-400"> [NO LOCATION]</span>
+                  )}
+                </div>
+              ))}
+              {npcCharacters.length === 0 && npcFamilyMembers.length === 0 && (
+                <p className="text-[10px] text-muted-foreground/50">No NPC or family characters found</p>
+              )}
+            </div>
+            <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">User Presence State:</p>
+              <div className="text-[10px] bg-secondary/50 rounded p-1.5 space-y-0.5">
+                <p className={userPresence.isAway ? 'text-amber-400' : 'text-green-400'}>
+                  status: {userPresence.isAway ? 'away' : 'present'}
+                </p>
+                <p className="text-muted-foreground/70">locationId: {userPresence.locationId || '[none]'}</p>
+                <p className="text-muted-foreground/70">locationName: {userPresence.locationName || '[none]'}</p>
+                <p className="text-muted-foreground/70">settingsId: {safeSettings?.id || '[null — not loaded]'}</p>
+                <p className={allPresenceEntities.some(e => e.effective_presence_type === 'user') ? 'text-green-400' : 'text-red-400'}>
+                  user in entities: {allPresenceEntities.some(e => e.effective_presence_type === 'user') ? 'YES' : 'NO'}
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">Unified Presence: {allPresenceEntities.length} total · {allPresenceEntities.filter(e => e.is_currently_present).length} present</p>
+              {allPresenceEntities.filter(e => e.effective_presence_type === 'npc_family_member').map(e => (
+                <div key={e.id} className="text-[10px]">
+                  <span className="text-purple-400/70">• {e.display_name} (family):</span>
+                  <span className={e.is_currently_present ? 'text-green-400' : 'text-red-400'}> {e.resolved_current_location_name || '[no location]'}</span>
+                  {e.source_type === 'internal_family' && <span className="text-muted-foreground/50"> [internal]</span>}
+                </div>
+              ))}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }

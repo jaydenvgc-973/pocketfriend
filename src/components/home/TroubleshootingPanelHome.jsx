@@ -17,7 +17,7 @@ const ISSUE_LIST = [
   { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect duplicate character records and direct conversations shared across multiple character IDs.' },
   { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page. Checks status, visibility flags, and required fields. Uses owner_email (not legacy created_by).' },
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures in the simulation system.' },
-  { id: 'shift_verification', label: '🕒 Enforce work schedules', description: 'Force-updates presence for characters who are on shift but not at work. Respects callouts, jail, and other valid blockers.' },
+  { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
   { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values out of sync with backend.' },
   { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale or missing location data. Reports issues only — does not overwrite jail, travel, hotel, shelter, or temporary housing states.' },
   { id: 'restore_world_contacts', label: '🌐 Restore missing World Contacts', description: 'Find any contact records (any character type) with missing ownership that are referenced by this account\'s contact graph. Identifies them by name, then restores their owner_email. Does not change character types, promote NPCs, or create duplicates.' },
@@ -68,28 +68,6 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
     } finally {
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      setIsRunning(false);
-    }
-  };
-
-  const runFixEverything = async () => {
-    setIsRunning(true);
-    setError(null);
-    setResults(null);
-    try {
-      const res = await base44.functions.invoke('fixEverything', {});
-      const data = res?.data;
-      setResults({
-        summary: data?.summary || 'Full system diagnostic complete.',
-        fixed: data?.corrective_actions_taken || [],
-        issues_found: data?.issues_found || [],
-        checks: (data?.systems_checked || []).map(s => ({ name: s, status: 'info', message: 'System checked' })),
-        proof: [],
-      });
-    } catch (err) {
-      setError(err.message || 'Fix Everything failed');
-    } finally {
-      await queryClient.invalidateQueries();
       setIsRunning(false);
     }
   };
@@ -272,14 +250,13 @@ export default function TroubleshootingPanelHome({ isOpen, onClose, ownerEmail }
                     </button>
                   </div>
                   <button
-                    onClick={runFixEverything}
+                    onClick={runFixAll}
                     disabled={isRunning}
                     className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-400 font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
                   >
                     <Zap className="w-4 h-4" />
-                    Fix Everything — Full System Deep Diagnostic
+                    Fix All — Full Diagnostic + Repair
                   </button>
-
 
                   {/* ── WORLD PHONE MANUAL RE-ANCHOR — opens full workspace ── */}
                   {selectedIssues.includes('world_phone_anchors') && (
