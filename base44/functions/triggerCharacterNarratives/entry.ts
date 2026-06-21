@@ -60,13 +60,20 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
   for (const character of userChars) {
     const skipBase = { characterId: character.id, name: character.name, userEmail, status: 'skipped' };
 
-    // ── 1. Find the most recent direct conversation (scoped to this user) ──
-    // Fetch by BOTH created_by AND owner_email — conversations may be stored under either
+    // ── 1. Find the most recent DIRECT (user↔character) conversation (scoped to this user) ──
+    // CRITICAL BOUNDARY: narratives must ONLY be written to type='direct', channel!='world_phone' convos.
+    // World Phone conversations (channel='world_phone') are bilateral character↔character threads.
+    // Writing is_narrative=true messages into world_phone convos is a boundary violation.
+    // BUG FIXED (2026-06-21): world_phone convos were stored with type='direct', so filtering by
+    // type='direct' alone was insufficient — they also matched the character and user scope, causing
+    // narratives to be routed into world_phone threads. The additional channel guard below prevents this.
     const [convosByCreatedBy, convosByOwnerEmail] = await Promise.all([
       base44SR.entities.Conversation.filter({ type: 'direct', created_by: userEmail }, '-last_message_date', 100).catch(() => []),
       base44SR.entities.Conversation.filter({ type: 'direct', owner_email: userEmail }, '-last_message_date', 100).catch(() => []),
     ]);
     // Deduplicate by id, then filter for this character
+    // BOUNDARY GUARD: exclude any conversation whose channel is 'world_phone' — those are
+    // character↔character bilateral threads, not user↔character chat conversations.
     const seenConvoIds = new Set();
     const allUserConvos = [...convosByCreatedBy, ...convosByOwnerEmail].filter(c => {
       if (seenConvoIds.has(c.id)) return false;
@@ -74,7 +81,11 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
       return true;
     });
     const convos = allUserConvos
-      .filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(character.id))
+      .filter(c =>
+        Array.isArray(c.character_ids) &&
+        c.character_ids.includes(character.id) &&
+        c.channel !== 'world_phone'   // BOUNDARY: never write narratives to world_phone threads
+      )
       .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))
       .slice(0, 1);
 
