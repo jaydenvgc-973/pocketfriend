@@ -603,6 +603,35 @@ export function getCharacterSleepState(character, locationMap) {
           };
         }
 
+        // ── VGC ACTIVE-WINDOW GUARD ──────────────────────────────────────
+        // VGC Towers NPC residents follow the VGC travel schedule, NOT their
+        // individual sleep schedules, during the active travel window
+        // (10 AM – 1 AM ET). Even at home, they are awake and available for
+        // travel. Sleep schedules only apply during the lockdown window
+        // (1 AM – 10 AM ET). This prevents the UI from showing VGC residents
+        // as "sleeping" at home when they should be awake and mobile.
+        const isVGCResident = isVGCTowersNPCResident(character, locationMap);
+        if (isVGCResident) {
+          const hour = nowET.getHours();
+          const inActiveWindow = hour >= 10 || hour < 1; // 10 AM – 1 AM ET
+          if (inActiveWindow) {
+            return {
+              isSleeping: false,
+              isNapping: false,
+              isResting: false,
+              displayLabel: 'awake',
+              contextLabel: null,
+              visible_label: null,
+              confirmed_reason: null,
+              evidence_source: 'vgc_active_window_guard',
+              confidence: 1,
+              stale_risk: false,
+              isLikelyStale: false,
+              blockingCondition: null,
+            };
+          }
+        }
+
         const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
         if (scheduleAsleep && !isPlayerCharacter) {
           const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
