@@ -576,6 +576,33 @@ export function getCharacterSleepState(character, locationMap) {
         // NPC / FAMILY / UNTYPED: schedule-window override is appropriate for these character types.
         // locationMap is passed so VGC Towers residents get 'vgc_resident_schedule' (2:30–8:30 AM)
         // instead of 'npc_forced_default' (0:00–8:00 AM).
+        //
+        // VGC VISITING GUARD: NPCs placed at venues by the VGC travel system have
+        // resolved_presence_status='visiting' and are at a non-home location.
+        // Their sleep schedule is for when they are HOME — do NOT override their
+        // active visiting state with a sleep label. They are awake at the venue.
+        const isVisitingAtVenue = status === 'visiting' &&
+          character.resolved_current_location_id &&
+          character.resolved_current_location_id !== character.current_home_location_id &&
+          character.resolved_current_location_id !== character.home_location_id;
+
+        if (isVisitingAtVenue) {
+          return {
+            isSleeping: false,
+            isNapping: false,
+            isResting: false,
+            displayLabel: 'awake',
+            contextLabel: null,
+            visible_label: null,
+            confirmed_reason: null,
+            evidence_source: 'vgc_visiting_guard',
+            confidence: 1,
+            stale_risk: false,
+            isLikelyStale: false,
+            blockingCondition: null,
+          };
+        }
+
         const scheduleAsleep = isScheduledSleeping(character, nowET, locationMap);
         if (scheduleAsleep && !isPlayerCharacter) {
           const window = computeAdaptiveSleepWindow(character, nowET, locationMap);
