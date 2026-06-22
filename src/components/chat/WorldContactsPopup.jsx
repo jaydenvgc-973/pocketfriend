@@ -85,16 +85,27 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   // The contact list useEffect sets it false after loading finishes (success or error).
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [ownerEmail, setOwnerEmail] = useState(null);
+  // Incremented every time the popup opens — forces the contacts useEffect to re-run
+  // even when isOpen stays true and character?.id hasn't changed (e.g. close → reopen).
+  const [openGeneration, setOpenGeneration] = useState(0);
   // Per-message context menu state
   const [messageMenu, setMessageMenu] = useState(null); // { message, anchorRect } | null
 
   // Unread counts per contact — green badge source of truth
   const { unreadByContact, previewByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
 
+  // Track the previous isOpen value to detect rising edge (closed → open)
+  const prevIsOpenRef = useRef(false);
   useEffect(() => {
+    const wasOpen = prevIsOpenRef.current;
+    prevIsOpenRef.current = isOpen;
     if (!isOpen) return;
+    // Rising edge: popup just opened (or character changed while open)
+    if (!wasOpen || !isOpen) {
+      setOpenGeneration(g => g + 1);
+    }
     base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
-  }, [isOpen]);
+  }, [isOpen, character?.id]);
 
   // ── PANEL OPEN RECONCILIATION ────────────────────────────────────────────────
   // When the panel opens, sweep ALL green-channel conversations for this character
@@ -164,17 +175,27 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
   // The resolver reads fictional_relationships + family_members + conversation-linked characters.
   // This is the canonical contact source for ALL characters including Vick Servicio.
+  //
+  // RELIABILITY FIX: depends on `openGeneration` (incremented on every open rising-edge)
+  // rather than just `isOpen` + `character?.id`. This guarantees the fetch always re-runs
+  // on open, even when the popup was closed and reopened with the same character — a scenario
+  // where React would otherwise see unchanged deps and skip the effect, leaving contacts=[].
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
-    
+    setContacts([]); // clear stale contacts before fresh fetch, but loading=true hides empty state
+
+    let cancelled = false;
     base44.auth.me()
       .then(async me => {
         const contactList = await resolveCharacterContacts(character, me?.email, me);
-        setContacts(contactList);
-        setIsLoadingContacts(false);
+        if (!cancelled) {
+          setContacts(contactList);
+          setIsLoadingContacts(false);
+        }
       })
       .catch(() => {
+        if (cancelled) return;
         // Fallback: fictional_relationships only — NEVER hide existing contacts
         const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
           ...r,
@@ -183,7 +204,11 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         setContacts(fallback);
         setIsLoadingContacts(false);
       });
-  }, [isOpen, character?.id]);
+
+    return () => { cancelled = true; };
+  // openGeneration is the key dependency: incremented on every open, ensuring the fetch
+  // always runs fresh regardless of whether character?.id changed.
+  }, [openGeneration, character?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load or create a persistent conversation for the selected NPC
   const selectContact = async (contact) => {
@@ -487,7 +512,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setConversationId(null);
     setInputText("");
     setContacts([]);
-    setIsLoadingContacts(true); // reset to true so next open starts in loading state, not empty
+    setIsLoadingContacts(true); // stays true until next openGeneration fetch completes
     contactCharRecordRef.current = null;
     canonicalPromptCacheRef.current = null;
     replyLockRef.current.clear();
