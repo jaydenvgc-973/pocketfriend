@@ -29,25 +29,30 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 
 // ── RATES ────────────────────────────────────────────────────────────────────
 // ENERGY CALIBRATION:
-//   sleeping:    +12/hr → starting at ~20 energy → reaches ~70 (natural wake) in ~4.2 hours
-//                       → reaches ~90 (fully rested) in ~5.8 hours
-//                       → normal sleep cycle: 6–8 hours naturally
-//   passed_out:  +8/hr  → slower recovery — emergency sleep, not restful
-//   default awake: -4/hr → 75→low(35) in ~10 hours, →critical(15) in ~15 hours
-//   active contexts: -5 to -7/hr → fatigue builds faster during demanding activity
-//   resting at home: +3/hr → gentle recovery without full sleep (reading, lounging)
+//   sleeping:    +12.5/hr → voluntary/chosen sleep. Starting at ~20: reaches 70 in ~4h, 90 in ~5.6h, 100 in ~6.4h.
+//                           Normal sleep cycle: 6–8 hours. Cap: 8 hours.
+//   passed_out:  +8/hr    → INVOLUNTARY COLLAPSE. Distinct from sleeping. Slower, lower-quality recovery.
+//                           Body is recovering from forced shutdown, not restful sleep.
+//                           Starting at ~10: reaches 35 (release threshold) in ~3.1h, 75 in ~8.1h. Cap: 12 hours.
+//                           THESE RATES ARE NOT EQUAL. THEY MUST NOT BE SET EQUAL.
+//   hospitalized:+4/hr    → Medical recovery. Slowest energy restoration. Different state entirely.
+//   default awake: -4/hr  → 75→low(35) in ~10 hours, →critical(15) in ~15 hours.
+//   active contexts: -5 to -7/hr → fatigue builds faster during demanding activity.
 //
-// SLEEP MATH CHECK (starting at energy=20, sleeping at +12/hr):
-//   At 3h: energy ≈ 56 — still tired, character stays asleep (< 70 wake threshold)
-//   At 4h: energy ≈ 68 — close to wake threshold
-//   At 4.2h: energy ≈ 70 — natural wake possible if no obligations missed or health recovering
-//   At 6h: energy ≈ 92 — well rested, almost always awake unless sick/recovering
-//   At 8h: energy = 100 (clamped) — full recovery
 // ── ENERGY RULE: Awake contexts must NEVER restore energy (energy rate must be ≤ 0 for all awake states).
-// Energy restoration is ONLY valid in: sleeping (+12), passed_out (+8), hospitalized (+4).
-// home_resting, resting, eating, food_drink, hospital — previously had positive energy rates.
-// These are now set to 0 (neutral) for energy. Awake resting slows drain but never reverses it.
-// The -5/hr baseline awake drain guarantee (applied after context rates) ensures forward progress to 0.
+// Energy restoration is ONLY valid in: sleeping (+12.5), passed_out (+8), hospitalized (+4).
+// These three contexts are distinct and must not share rates, caps, or completion logic.
+//
+// ── PASSED_OUT IS NOT SLEEPING ───────────────────────────────────────────────
+// passed_out is a mechanically independent state from sleeping:
+//   - Different status value ('passed_out' vs 'sleeping')
+//   - Different recovery rate (+8/hr vs +12.5/hr)
+//   - Different cap (12h vs 8h)
+//   - Different completion logic (releases to 'home' when energy > 35, OR at 12h hard cap)
+//   - Different timestamps (last_pass_out_at vs last_sleep_start)
+//   - Different event/memory records (forced collapse vs voluntary rest)
+//   - NEVER transitions to 'sleeping'. Releases directly to awake ('home').
+//
 // ── SOCIAL NEED MODEL (corrected) ────────────────────────────────────────────
 // Social measures FULFILLMENT — not current activity, not location type.
 // A bartender who spent 8 hours with customers is socially fulfilled, not deprived.
@@ -55,10 +60,12 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 // Social GAINS from interaction with people (work, school, events, family, calls).
 // Social only DECAYS during genuine isolation (extended solitude with zero interaction).
 // Being at home ≠ antisocial. Being in public ≠ automatically social.
-// KEY INSIGHT: A character can be socially fulfilled AND want quiet time. These are not opposites.
 const RATES = {
+  // VOLUNTARY sleep: chosen rest, full restorative rate, normal sleep cap (8h), normal wake logic.
   sleeping:        { hunger: -1,   energy: +12.5, social:  0,   health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  passed_out:      { hunger: -0.5, energy: +12.5, social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
+  // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
+  // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
+  passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
   hospitalized:    { hunger: -0.5, energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
@@ -1114,14 +1121,16 @@ function computeCorrectiveState(needs, character, locationMap) {
     return { current_activity: 'seeking social contact — isolated too long' };
   }
 
-  // Compound crisis
+  // Compound crisis — involuntary collapse, NOT voluntary sleep.
+  // Uses 'passed_out' status with its own cap/release logic, NOT 'sleeping'.
+  // Does NOT write last_sleep_start — that field is exclusively for voluntary sleep.
   const criticalCount = [needs.hunger, needs.energy, needs.health, needs.social, needs.mental]
     .filter(v => v < 20).length;
   if (criticalCount >= T.COMPOUND_CRISIS && !isInRestState) {
     return {
-      resolved_presence_status: 'sleeping',
-      current_activity: 'forced rest — compound crisis',
-      last_sleep_start: new Date().toISOString(),
+      resolved_presence_status: 'passed_out',
+      current_activity: 'passed out from compound crisis — forced recovery',
+      last_pass_out_at: new Date().toISOString(),
     };
   }
 
@@ -1583,22 +1592,15 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
-          // ── PASS-OUT RECOVERY CORRECTION ──────────────────────────
-          // Pass-out is forced sleep the body demands after the character
-          // failed to choose sleep voluntarily. It IS rest — energy MUST
-          // recover using sleeping rates on subsequent ticks. It is NOT
-          // a permanent zero-energy state and must NOT bounce to awake.
-          //
-          // Stay lock prevents other automations from clearing this state
-          // before recovery begins. Release condition: energy > 35.
-          //
-          // Pass-out tracking: last_pass_out_at and pass_out_count record
-          // the event so future sleep decisions amplify pressure — the
-          // character remembers this was unpleasant and avoids repeating.
+          // ── PASS-OUT STATE: INVOLUNTARY PHYSICAL COLLAPSE ─────────────
+          // This is NOT sleep. The character did not choose this.
+          // Status: 'passed_out' (never 'sleeping').
+          // Recovery rate: RATES.passed_out = +8/hr energy (NOT +12.5/hr sleeping rate).
+          // Cap: 12-hour hard cap (NOT the 8-hour sleep cap).
+          // Release: energy > 35 OR 12h → transitions to 'home' (awake). NEVER to 'sleeping'.
+          // Timestamp: last_pass_out_at (NOT last_sleep_start — that field is for voluntary sleep only).
+          // Stay lock: prevents other automations from clearing recovery before it completes.
           const passOutCount = (char.pass_out_count ?? 0) + 1;
-          // Pass-out is NOT sleeping. Uses 'passed_out' status — mechanically and visually distinct.
-          // Recovery uses passed_out rates (+8/hr energy). Status stays 'passed_out' until energy > 35,
-          // then transitions to 'home' (awake), NOT to 'sleeping'.
           await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'passed_out',
             current_activity: 'passed out from exhaustion — forced recovery',
@@ -1917,7 +1919,7 @@ Deno.serve(async (req) => {
               const homeRedirectFields = (homeLocId && !isAlreadyAtHome) ? {
                 resolved_current_location_id: homeLocId,
                 resolved_location_type: 'home',
-                resolved_presence_status: 'home', // will be overwritten to sleeping below
+                resolved_presence_status: 'home', // will be overwritten to passed_out below
               } : {};
 
               const awakeLimitPayload = {
@@ -2018,19 +2020,39 @@ Deno.serve(async (req) => {
         const corrective = computeCorrectiveState(newNeeds, char, locationMap);
         if (corrective) {
           Object.assign(updatePayload, corrective);
-          // Write sleep/nap timestamp and stay lock for authoritative state transitions
-          if (corrective.resolved_presence_status === 'sleeping' || corrective.resolved_presence_status === 'napping') {
-            if (corrective.resolved_presence_status === 'sleeping') {
-              updatePayload.last_sleep_start = nowIso;
-              updatePayload.presence_stay_lock_reason = "sleep_state";
-            } else {
-              updatePayload.last_nap_time = nowIso;
-              updatePayload.presence_stay_lock_reason = "nap_state";
-            }
+          // Write authoritative timestamps and stay locks per state type.
+          // Each state has its own timestamp field — they must never be mixed.
+          const cs = corrective.resolved_presence_status;
+          if (cs === 'sleeping') {
+            // Voluntary sleep: last_sleep_start is the authoritative timer for the 8h cap.
+            updatePayload.last_sleep_start = nowIso;
             updatePayload.presence_stay_lock = true;
-            updatePayload.presence_stay_lock_authority = "simulateActiveCharacterNeeds";
+            updatePayload.presence_stay_lock_reason = 'sleep_state';
+            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
             updatePayload.presence_stay_lock_set_at = nowIso;
-            updatePayload.presence_stay_lock_created_by = "system_automation";
+            updatePayload.presence_stay_lock_created_by = 'system_automation';
+          } else if (cs === 'napping') {
+            // Nap: last_nap_time is the authoritative timer for the 3h cap.
+            updatePayload.last_nap_time = nowIso;
+            updatePayload.presence_stay_lock = true;
+            updatePayload.presence_stay_lock_reason = 'nap_state';
+            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
+            updatePayload.presence_stay_lock_set_at = nowIso;
+            updatePayload.presence_stay_lock_created_by = 'system_automation';
+          } else if (cs === 'passed_out') {
+            // Involuntary collapse: last_pass_out_at is the authoritative timer for the 12h cap.
+            // Must NOT write last_sleep_start — that field is exclusively for voluntary sleep.
+            updatePayload.last_pass_out_at = nowIso;
+            updatePayload.presence_stay_lock = true;
+            updatePayload.presence_stay_lock_reason = 'pass_out_recovery';
+            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
+            updatePayload.presence_stay_lock_set_at = nowIso;
+            updatePayload.presence_stay_lock_created_by = 'system_automation';
+            updatePayload.presence_stay_lock_release_condition = 'energy_above_35';
+            // Increment pass_out_count if not already set by a prior branch this tick
+            if (!updatePayload.pass_out_count) {
+              updatePayload.pass_out_count = (char.pass_out_count ?? 0) + 1;
+            }
           }
         }
 
