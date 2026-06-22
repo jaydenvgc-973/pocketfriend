@@ -94,27 +94,27 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   // Unread counts per contact — green badge source of truth
   const { unreadByContact, previewByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
 
-  // Increment openGeneration on every rising edge (closed → open) or character switch while open.
-  // This is the sole trigger that causes the contacts fetch to re-run.
-  // Two separate effects to be explicit about each case:
-  //   1. isOpen false→true: always fetch fresh contacts
-  //   2. character?.id changes while open: fetch contacts for the new character
+  // openGeneration is incremented to trigger a fresh contact fetch in two cases:
+  //   1. The popup transitions from closed to open (rising edge)
+  //   2. The character prop changes while the popup is already open
+  // Each case is handled in its own effect for clarity.
   const prevIsOpenRef = useRef(false);
   const prevCharacterIdRef = useRef(null);
+
+  // Case 1: popup just opened
   useEffect(() => {
     const wasOpen = prevIsOpenRef.current;
     prevIsOpenRef.current = isOpen;
-    // Rising edge only: was closed, now open
     if (!wasOpen && isOpen) {
       setOpenGeneration(g => g + 1);
       base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
     }
   }, [isOpen]);
 
+  // Case 2: character changed while popup is open
   useEffect(() => {
     const prevId = prevCharacterIdRef.current;
     prevCharacterIdRef.current = character?.id;
-    // Character changed while popup is open — fetch contacts for the new character
     if (isOpen && prevId !== null && prevId !== character?.id) {
       setOpenGeneration(g => g + 1);
       base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
@@ -187,17 +187,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const isSendingRef = useRef(false);
 
   // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
-  // The resolver reads fictional_relationships + family_members + conversation-linked characters.
-  // This is the canonical contact source for ALL characters including Vick Servicio.
-  //
-  // RELIABILITY FIX: depends on `openGeneration` (incremented on every open rising-edge)
-  // rather than just `isOpen` + `character?.id`. This guarantees the fetch always re-runs
-  // on open, even when the popup was closed and reopened with the same character — a scenario
-  // where React would otherwise see unchanged deps and skip the effect, leaving contacts=[].
+  // Runs whenever openGeneration increments (on open or character change) or character?.id changes.
+  // isLoadingContacts=true is set before the fetch starts, so the empty-state UI never shows
+  // while the fetch is in flight. isLoadingContacts becomes false only after the fetch completes.
   useEffect(() => {
     if (!isOpen || !character?.id) return;
     setIsLoadingContacts(true);
-    setContacts([]); // clear stale contacts before fresh fetch, but loading=true hides empty state
+    setContacts([]);
 
     let cancelled = false;
     base44.auth.me()
@@ -210,7 +206,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       })
       .catch(() => {
         if (cancelled) return;
-        // Fallback: fictional_relationships only — NEVER hide existing contacts
+        // Fallback to fictional_relationships only if the resolver throws
         const fallback = (character?.fictional_relationships || []).filter(r => r.person_name).map(r => ({
           ...r,
           _linkage: r.related_character_id ? 'linked' : 'name_only',
@@ -220,8 +216,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       });
 
     return () => { cancelled = true; };
-  // openGeneration is the key dependency: incremented on every open, ensuring the fetch
-  // always runs fresh regardless of whether character?.id changed.
   }, [openGeneration, character?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load or create a persistent conversation for the selected NPC
