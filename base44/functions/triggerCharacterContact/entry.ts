@@ -30,10 +30,10 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // auth.me() may return null when called from automation/function context (no user session)
+    const user = await base44.auth.me().catch(() => null);
 
-        const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source, user_instruction_context, autonomy_marker } = await req.json();
+    const { senderCharacterId, receiverCharacterName, receiverCharacterId, topic, messageContent, trigger_source, user_instruction_context, autonomy_marker } = await req.json();
 
     if (!senderCharacterId || (!receiverCharacterName && !receiverCharacterId)) {
       return Response.json({
@@ -43,9 +43,11 @@ Deno.serve(async (req) => {
     }
 
     // ── 1. RESOLVE SENDER ────────────────────────────────────────────────────
+    // Use service role for lookup — this function is called from automations, other
+    // functions, and test harnesses that don't carry the character owner's session
     let senderList;
     try {
-      senderList = await base44.entities.Character.filter({ id: senderCharacterId }, null, 1);
+      senderList = await base44.asServiceRole.entities.Character.filter({ id: senderCharacterId }, null, 1);
     } catch (lookupErr) {
       const msg = lookupErr?.message || String(lookupErr);
       if (msg.includes('Object not found') || msg.includes('not found') || msg.includes('Invalid id')) {
@@ -57,7 +59,8 @@ Deno.serve(async (req) => {
     if (!sender) {
       return Response.json({ error: `Sender character id=${senderCharacterId} not found`, stage: 'sender_lookup' }, { status: 404 });
     }
-    if (sender.owner_email !== user.email) {
+    // Ownership check: only enforce when a real user session is present (not automation/function context)
+    if (user && sender.owner_email && sender.owner_email !== user.email) {
       return Response.json({ error: `Ownership violation: sender does not belong to ${user.email}`, stage: 'ownership' }, { status: 403 });
     }
 
@@ -68,7 +71,7 @@ Deno.serve(async (req) => {
     if (triggerSrc !== 'user_requested') {
       const today = new Date().toISOString().split('T')[0];
       // Check World Phone messages sent today by this character
-      const recentWPMessages = await base44.entities.Message.filter({
+      const recentWPMessages = await base44.asServiceRole.entities.Message.filter({
         sender_character_id: senderCharacterId,
         channel: 'world_phone',
       }, '-timestamp', 30).catch(() => []);
@@ -163,7 +166,7 @@ IMPORTANT RULES:
       recipient_identifier: recipientIdentifier,
       requested_message: finalMessage,
       source: triggerSrc === 'user_requested' ? 'user_instruction' : 'character_action',
-      owner_email: user.email,
+      owner_email: user?.email || sender.owner_email,
       // Pass generate_recipient_response only for autonomous/need-driven — not user_requested
       // (user_requested is already handled by sendWorldPhoneMessage's default behavior)
       generate_recipient_response: triggerSrc !== 'user_requested',

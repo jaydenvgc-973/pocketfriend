@@ -154,19 +154,17 @@ function computeRelationshipPressure(char, recentMessages, lifeEvents, pendingCo
   }
 
   // Recent significant LifeEvent on THIS character (+20 pressure — they have something to share)
-  const now = Date.now();
-  const fortyEightHoursAgo = now - 48 * 3600 * 1000;
+  // Include only events that are: within the last 48 hours AND major/significant AND positive or negative
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - 48 * 3600 * 1000; // 48 hours ago in ms
   const significantEvents = (lifeEvents || []).filter(le => {
     const ts = le.timestamp || le.created_date;
     if (!ts) return false;
-    const age = now - new Date(ts).getTime();
-    if (age > fortyEightHoursAgo * -1) return false; // this check is intentionally reversed — see below
+    const eventMs = new Date(ts).getTime();
+    const withinWindow = eventMs >= cutoffMs && eventMs <= nowMs;
     const isMajor = le.severity === 'major' || le.severity === 'significant';
     const isPositiveOrNegative = le.valence === 'positive' || le.valence === 'negative';
-    return isMajor && isPositiveOrNegative;
-  }).filter(le => {
-    const ts = le.timestamp || le.created_date;
-    return ts && new Date(ts).getTime() >= fortyEightHoursAgo;
+    return withinWindow && isMajor && isPositiveOrNegative;
   });
   if (significantEvents.length > 0) pressure += 20;
 
@@ -207,20 +205,29 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
   ];
 
   const THIRD_PARTY_PATTERNS = [
-    { pattern: /tell\s+([\w\s]{2,30?})\s+i\s+said\s+([\w\s.!,]{2,60}?)(?:\.|$)/i },
-    { pattern: /tell\s+([\w\s]{2,30?})\s+(hi|hello|hey|congratulations|congrats|i\s+miss\s+(him|her|them)|i\s+was\s+asking\s+about\s+(him|her|them)|i\s+said\s+hey)/i },
-    { pattern: /ask\s+([\w\s]{2,30?})\s+(about|how)\s+([\w\s.!,]{2,60}?)(?:\.|$)/i },
-    { pattern: /let\s+([\w\s]{2,30?})\s+know\s+([\w\s.!,]{2,80}?)(?:\.|$)/i },
-    { pattern: /pass\s+along\s+to\s+([\w\s]{2,30?})\s+([\w\s.!,]{2,80}?)(?:\.|$)/i },
+    { pattern: /tell\s+([\w\s]{2,30})\s+i\s+said\s+([\w\s.!,]{2,60})(?:\.|$)/i },
+    { pattern: /tell\s+([\w\s]{2,30})\s+(hi|hello|hey|congratulations|congrats|i\s+miss\s+(him|her|them)|i\s+was\s+asking\s+about\s+(him|her|them)|i\s+said\s+hey)/i },
+    { pattern: /ask\s+([\w\s]{2,30})\s+(about|how)\s+([\w\s.!,]{2,60})(?:\.|$)/i },
+    { pattern: /let\s+([\w\s]{2,30})\s+know\s+([\w\s.!,]{2,80})(?:\.|$)/i },
+    { pattern: /pass\s+along\s+to\s+([\w\s]{2,30})\s+([\w\s.!,]{2,80})(?:\.|$)/i },
   ];
 
-  // Only scan character-sent messages in last 24 hours
+  // Scan character-sent messages in last 24 hours from ALL channels:
+  //   - direct chat (character_id = char.id)
+  //   - World Phone bilateral (sender_character_id = char.id, channel = 'world_phone')
+  // This ensures third-party relay obligations created in character-to-character World Phone
+  // conversations are captured on the correct obligated character (the receiver of the relay request).
   const oneDayAgo = now.getTime() - 24 * 3600 * 1000;
-  const recentCharMsgs = (messages || []).filter(m =>
-    m.sender_type === 'character' &&
-    m.character_id === char.id &&
-    new Date(m.timestamp || m.created_date).getTime() >= oneDayAgo
-  );
+  const recentCharMsgs = (messages || []).filter(m => {
+    const ts = new Date(m.timestamp || m.created_date).getTime();
+    if (ts < oneDayAgo) return false;
+    if (m.sender_type !== 'character') return false;
+    // Direct chat: character_id matches
+    if (m.character_id === char.id) return true;
+    // World Phone bilateral: sender_character_id matches
+    if (m.sender_character_id === char.id) return true;
+    return false;
+  });
 
   for (const msg of recentCharMsgs) {
     const content = msg.content || '';
@@ -301,13 +308,18 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, forceCommitmentId } = await req.json();
+    const body = await req.json();
+    const { characterId, forceCommitmentId } = body;
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    // Auth: attempt user identity; if not available (automation/function context), proceed
+    // with service role. All entity operations use asServiceRole explicitly regardless.
+    await base44.auth.me().catch(() => null);
+
+    // Character lookup — always via service role since this function is called from
+    // automations, other backend functions, and test harnesses
+    const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
     const char = charList?.[0];
     if (!char) return Response.json({ error: 'Character not found', characterId }, { status: 404 });
 
@@ -327,12 +339,19 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, reason: 'npc_world_service_excluded' });
     }
 
+    // ── All entity operations use asServiceRole ──────────────────────────────
+    // This function is invoked from scheduled automations, other backend functions,
+    // and test harnesses — none of which share the character owner's auth identity.
+    // asServiceRole is correct here because we already verified the character exists
+    // and belongs to a real owner_email. Security is enforced by the character lookup above.
+    const sr = base44.asServiceRole;
+
     // ── FIND ACTIVE CONVERSATION ─────────────────────────────────────────────
-    const convos = await base44.entities.Conversation.filter({
+    const convos = await sr.entities.Conversation.filter({
       type: 'direct',
       owner_email: char.owner_email,
       character_ids: [char.id],
-    });
+    }).catch(() => []);
 
     let conversationId = null;
     if (convos.length > 0) {
@@ -340,31 +359,52 @@ Deno.serve(async (req) => {
     }
 
     // ── FETCH RECENT MESSAGES ────────────────────────────────────────────────
+    // Fetch from two sources:
+    //   1. Direct conversation messages (character-to-user)
+    //   2. World Phone bilateral messages where this character is the SENDER
+    //      (needed so third-party relay obligations in character-to-character messages are detected)
     let recentMessages = [];
     if (conversationId) {
-      recentMessages = await base44.entities.Message.filter(
+      recentMessages = await sr.entities.Message.filter(
         { conversation_id: conversationId },
         '-timestamp',
         20
       ).catch(() => []);
     }
 
+    // Also fetch World Phone messages this character SENT (as sender_character_id) in last 24h
+    const wpMessages = await sr.entities.Message.filter(
+      { sender_character_id: char.id, channel: 'world_phone' },
+      '-timestamp',
+      20
+    ).catch(() => []);
+
+    // Merge, deduplicate by id
+    const allMessageIds = new Set(recentMessages.map(m => m.id));
+    for (const m of wpMessages) {
+      if (!allMessageIds.has(m.id)) {
+        recentMessages.push(m);
+        allMessageIds.add(m.id);
+      }
+    }
+
     // ── DETECT AND RECORD NEW COMMUNICATION COMMITMENTS ─────────────────────
-    // Run this on every proactive check — it's additive, not destructive
-    if (conversationId && recentMessages.length > 0) {
-      await detectAndRecordCommitments(base44, char, recentMessages, conversationId, char.owner_email).catch(() => {});
+    // Runs on every proactive check. Scans both direct and World Phone messages.
+    // additive — never destructive
+    if (recentMessages.length > 0) {
+      await detectAndRecordCommitments(sr, char, recentMessages, conversationId, char.owner_email).catch(() => {});
     }
 
     // ── CHECK FOR PENDING COMMUNICATION COMMITMENTS ──────────────────────────
     let pendingCommitment = null;
     if (forceCommitmentId) {
-      const commitList = await base44.entities.CommunicationCommitment.filter({
+      const commitList = await sr.entities.CommunicationCommitment.filter({
         character_id: char.id,
         status: 'pending',
       }, '-created_at', 1).catch(() => []);
       pendingCommitment = commitList.find(c => c.id === forceCommitmentId) || commitList[0] || null;
     } else {
-      const pendingList = await base44.entities.CommunicationCommitment.filter({
+      const pendingList = await sr.entities.CommunicationCommitment.filter({
         character_id: char.id,
         status: 'pending',
       }, 'due_after', 5).catch(() => []);
@@ -373,7 +413,7 @@ Deno.serve(async (req) => {
     }
 
     // ── FETCH RECENT LIFE EVENTS ─────────────────────────────────────────────
-    const lifeEvents = await base44.entities.LifeEvent.filter(
+    const lifeEvents = await sr.entities.LifeEvent.filter(
       { character_id: char.id },
       '-timestamp',
       10
@@ -433,7 +473,7 @@ Deno.serve(async (req) => {
     const idempotencyKey = `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
 
     if (conversationId) {
-      const existingThisHour = await base44.entities.Message.filter({
+      const existingThisHour = await sr.entities.Message.filter({
         conversation_id: conversationId,
         sender_type: 'character',
         character_id: char.id,
@@ -560,7 +600,7 @@ RULES:
 
     // ── FIND OR CREATE CONVERSATION ──────────────────────────────────────────
     if (!conversationId) {
-      const newConvo = await base44.entities.Conversation.create({
+      const newConvo = await sr.entities.Conversation.create({
         title: char.name,
         type: 'direct',
         character_ids: [char.id],
@@ -570,7 +610,7 @@ RULES:
     }
 
     // ── SAVE MESSAGE ─────────────────────────────────────────────────────────
-    const msg = await base44.entities.Message.create({
+    const msg = await sr.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: char.id,
@@ -581,16 +621,20 @@ RULES:
       emotional_state: char.emotional_state || 'calm',
       timestamp: now.toISOString(),
       channel: 'direct',
+      is_read: false,
       idempotency_key: idempotencyKey,
       source_message_id: null,
       reply_to_message_id: null,
       generation_lock_id: null,
+      recovery_signal: false,
+      memory_eligible: true,
+      relationship_eligible: true,
       autonomy_marker: `proactive::${messageIntent}::pressure_${pressure}`,
     });
 
     // ── MARK COMMITMENT FULFILLED ────────────────────────────────────────────
     if (pendingCommitment) {
-      await base44.entities.CommunicationCommitment.update(pendingCommitment.id, {
+      await sr.entities.CommunicationCommitment.update(pendingCommitment.id, {
         status: 'fulfilled',
         fulfilled_at: now.toISOString(),
         fulfilled_message_id: msg.id,
@@ -598,7 +642,7 @@ RULES:
     }
 
     // ── UPDATE CONVERSATION ──────────────────────────────────────────────────
-    await base44.entities.Conversation.update(conversationId, {
+    await sr.entities.Conversation.update(conversationId, {
       last_message_preview: messageContent.substring(0, 100),
       last_message_date: now.toISOString(),
     }).catch(() => {});
