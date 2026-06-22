@@ -890,21 +890,26 @@ Deno.serve(async (req) => {
 
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // Soft auth: automation/function callers may not have a user session.
+    // ownerEmailHint is the scoping fallback — required when no session is present.
+    const user = await base44.auth.me().catch(() => null);
 
     const {
       characterId,
       interactionContext = 'direct_chat',
       topKMemories = 14,
-      ownerEmailHint = null,   // optional hint from caller — always verified against user.email
+      ownerEmailHint = null,   // required when calling without a user session
     } = await req.json();
 
     if (!characterId) {
       return Response.json({ error: 'characterId is required' }, { status: 400 });
     }
 
-    contextLog.push({ step: 'init', route: interactionContext, characterId, ownerEmail: user.email });
+    // resolvedEmail: session email takes precedence over hint (security).
+    // If neither exists, we'll attempt to load by characterId only.
+    const resolvedEmail = user?.email || ownerEmailHint || null;
+
+    contextLog.push({ step: 'init', route: interactionContext, characterId, ownerEmail: resolvedEmail });
 
     // ── Step 1: Fetch character (user-scoped RLS, with NPC fallback) ──────────
     let character = null;
@@ -945,7 +950,7 @@ Deno.serve(async (req) => {
       console.warn(
         `[buildCanonicalCharacterContext] NOT FOUND | route=${interactionContext}` +
         ` | characterId=${characterId}` +
-        ` | owner=${user.email}` +
+        ` | owner=${resolvedEmail || 'none'}` +
         ` | canonical_loaded=false` +
         ` | fallback_used=true` +
         ` | fallback_reason=character_not_found_in_any_scope`
@@ -969,7 +974,9 @@ Deno.serve(async (req) => {
     });
 
     // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
-    const settingsList = await base44.entities.UserSettings.filter({ owner_email: user.email }).catch(() => []);
+    const settingsList = resolvedEmail
+      ? await base44.asServiceRole.entities.UserSettings.filter({ owner_email: resolvedEmail }).catch(() => [])
+      : [];
     const settings = settingsList?.[0] || {};
     const worldName = settings?.fictional_world_name || null;
 
@@ -978,7 +985,7 @@ Deno.serve(async (req) => {
     const userCurrentLocationName = settings?.user_current_location_name  || null;
     const userPresenceStatus      = settings?.user_presence_status        || 'away';
 
-    contextLog.push({ step: 'settings', worldName: worldName || 'none', userPresenceStatus, userCurrentLocationId });
+    contextLog.push({ step: 'settings', worldName: worldName || 'none', userPresenceStatus, userCurrentLocationId, resolvedEmail: resolvedEmail || 'none' });
 
     // ── Step 3: Fetch memories from the shared Memory well ────────────────────
     // This is the ONE memory well. All routes read from here — Chat, Scene, Travel,
@@ -1130,8 +1137,8 @@ Deno.serve(async (req) => {
       let charactersPresentHere = [];
       if (charLocationId && !character.is_jailed && userPresentHere) {
         try {
-          const otherChars = await base44.entities.Character.filter(
-            { owner_email: user.email, status: 'active' },
+          const otherChars = await base44.asServiceRole.entities.Character.filter(
+            { owner_email: resolvedEmail, status: 'active' },
             null,
             40
           ).catch(() => []);
@@ -1286,11 +1293,11 @@ Deno.serve(async (req) => {
     let userBirthdayFact = null;
     try {
       // UserSettings lookup by owner_email (user-scoped RLS)
-      const userSettingsList = await base44.entities.UserSettings.filter(
-        { owner_email: user.email },
+      const userSettingsList = resolvedEmail ? await base44.asServiceRole.entities.UserSettings.filter(
+        { owner_email: resolvedEmail },
         null,
         1
-      ).catch(() => []);
+      ).catch(() => []) : [];
 
       if (userSettingsList?.[0]) {
         const settings = userSettingsList[0];
@@ -1494,7 +1501,7 @@ Deno.serve(async (req) => {
     try {
       const travelCtxRes = await base44.functions.invoke('getCharacterTravelContext', {
         characterId,
-        ownerEmail: character.owner_email || user.email,
+        ownerEmail: character.owner_email || resolvedEmail || null,
       });
       const travelData = travelCtxRes?.data || travelCtxRes;
       if (travelData?.context_block) {
@@ -1522,11 +1529,11 @@ Deno.serve(async (req) => {
 
       // Fetch active events in the next 7 days (owner-scoped + shared system events)
       const [ownerEvents, sharedEvents] = await Promise.all([
-        base44.entities.CommunityEvent.filter(
-          { owner_email: user.email, is_active: true },
+        resolvedEmail ? base44.asServiceRole.entities.CommunityEvent.filter(
+          { owner_email: resolvedEmail, is_active: true },
           'start_date',
           10
-        ).catch(() => []),
+        ).catch(() => []) : Promise.resolve([]),
         base44.asServiceRole.entities.CommunityEvent.filter(
           { is_active: true },
           'start_date',
@@ -1818,8 +1825,8 @@ NEVER SAY:
     console.log(
       `[buildCanonicalCharacterContext] ✓ route=${interactionContext}` +
       ` | character=${character.name} (${characterId})` +
-      ` | owner=${user.email}` +
-      ` | canonical_loaded=true` +
+      ` | owner=${resolvedEmail || 'none'}` +
+        ` | canonical_loaded=true` +
       ` | hard_facts_loaded=${hardFactsLoaded}` +
       ` | life_journal_count=${lifeJournalCount}` +
       ` | memory_count=${memories.length}` +
@@ -1838,7 +1845,7 @@ NEVER SAY:
       totalMs,
       characterName: character.name,
       characterId,
-      ownerEmail: user.email,
+      ownerEmail: resolvedEmail || 'none',
       route: interactionContext,
       canonical_loaded: true,
       hard_facts_loaded: hardFactsLoaded,

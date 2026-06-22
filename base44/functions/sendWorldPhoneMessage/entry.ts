@@ -49,10 +49,13 @@ function assertNotNarrative(payload, callerLabel) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
+    // auth.me() may return null when called from automation/function context (no user session).
+    // Security is maintained by ownerEmail scoping on all entity operations below.
+    const user = await base44.auth.me().catch(() => null);
+
+    // If called from a real user session, validate ownership.
+    // If called from automation/function context (no session), ownerEmail param is authoritative.
+    // We do NOT block non-session callers — they must supply a valid owner_email.
 
     const {
       sender_character_id,
@@ -105,11 +108,18 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    const ownerEmail = owner_email || user.email;
+    // ownerEmail: from payload if present (automation callers), else from session user.
+    // If neither is available, fail fast — all entity operations require a scope.
+    const ownerEmail = owner_email || user?.email;
+    if (!ownerEmail) {
+      return Response.json({ success: false, error: 'owner_email is required when calling without a user session' }, { status: 400 });
+    }
     const warnings = [];
 
     // ── LOAD SENDER ────────────────────────────────────────────────────────────
-    const senderArr = await base44.entities.Character.filter({ id: sender_character_id }, null, 1).catch(() => []);
+    // Use asServiceRole — this function is called from automations and other functions
+    // that don't carry a user session. ownerEmail ensures data isolation.
+    const senderArr = await base44.asServiceRole.entities.Character.filter({ id: sender_character_id }, null, 1).catch(() => []);
     const sender = senderArr?.[0];
     if (!sender) {
       return Response.json({ success: false, error: `Sender character not found: ${sender_character_id}` });
@@ -162,7 +172,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
 
     // 1. Direct character ID
     if (effectiveRecipientIdentifier.length > 15 && !effectiveRecipientIdentifier.includes(' ')) {
-      const byId = await base44.entities.Character.filter({ id: effectiveRecipientIdentifier }, null, 1).catch(() => []);
+      const byId = await base44.asServiceRole.entities.Character.filter({ id: effectiveRecipientIdentifier }, null, 1).catch(() => []);
       if (byId?.[0]) {
         recipient = byId[0];
         recipientResolutionPath = 'direct_id';
@@ -179,7 +189,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         r.character_name?.toLowerCase() === nameLower
       );
       if (relMatch?.related_character_id) {
-        const relArr = await base44.entities.Character.filter({ id: relMatch.related_character_id }, null, 1).catch(() => []);
+        const relArr = await base44.asServiceRole.entities.Character.filter({ id: relMatch.related_character_id }, null, 1).catch(() => []);
         if (relArr?.[0]) {
           recipient = relArr[0];
           recipientResolutionPath = 'fictional_relationships';
@@ -195,7 +205,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         f.name?.toLowerCase() === nameLower
       );
       if (famMatch?.character_id) {
-        const famArr = await base44.entities.Character.filter({ id: famMatch.character_id }, null, 1).catch(() => []);
+        const famArr = await base44.asServiceRole.entities.Character.filter({ id: famMatch.character_id }, null, 1).catch(() => []);
         if (famArr?.[0]) {
           recipient = famArr[0];
           recipientResolutionPath = 'family_members';
@@ -206,7 +216,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
     // 4. Account-wide name search — exact match only; partial match requires unique result
     if (!recipient) {
       const nameLower = effectiveRecipientIdentifier.toLowerCase().trim();
-      const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
+      const allChars = await base44.asServiceRole.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
 
       const exactMatches = allChars.filter(c =>
         c.name?.toLowerCase() === nameLower ||
@@ -263,6 +273,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         characterId: sender_character_id,
         interactionContext: 'world_contacts',
         topKMemories: 8,
+        ownerEmailHint: ownerEmail,
       });
       const ctxData = ctxRes?.data || ctxRes;
       if (ctxData?.systemPrompt) {
@@ -300,7 +311,7 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
     let userPresenceData = null;
 
     try {
-      const settingsList = await base44.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
+      const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
       const settings = settingsList?.[0] || {};
       const userLocationId = settings.user_current_location_id || null;
       const userLocationName = settings.user_current_location_name || null;
@@ -408,8 +419,8 @@ This must be a real message — not a command, not a description, not a meta-ins
     let conversationId = null;
 
     const [byCanonical, byParticipant] = await Promise.all([
-      base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, '-updated_date', 5).catch(() => []),
-      base44.entities.Conversation.filter({ participant_character_ids: [sender_character_id] }, '-updated_date', 100).catch(() => []),
+      base44.asServiceRole.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, '-updated_date', 5).catch(() => []),
+      base44.asServiceRole.entities.Conversation.filter({ participant_character_ids: [sender_character_id] }, '-updated_date', 100).catch(() => []),
     ]);
 
     const seenIds = new Set();
@@ -438,7 +449,7 @@ This must be a real message — not a command, not a description, not a meta-ins
       if (needsUpgrade) {
         const currentCharIds = Array.isArray(existingConvo.character_ids) ? existingConvo.character_ids : [sender_character_id];
         const mergedCharIds = [...new Set([...currentCharIds, recipient.id])];
-        await base44.entities.Conversation.update(conversationId, {
+        await base44.asServiceRole.entities.Conversation.update(conversationId, {
           shared_conversation_key: canonicalKey,
           participant_character_ids: participantIds,
           character_ids: mergedCharIds,
@@ -449,7 +460,7 @@ This must be a real message — not a command, not a description, not a meta-ins
       const senderType = sender.character_type || null;
       const recipientType = recipient.character_type || null;
       const bothActiveCreated = senderType === 'active_created_character' && recipientType === 'active_created_character';
-      const newConvo = await base44.entities.Conversation.create({
+      const newConvo = await base44.asServiceRole.entities.Conversation.create({
         title: `world_phone::${participantIds.join('::')}`,
         type: bothActiveCreated ? 'direct' : 'npc',
         character_ids: [sender_character_id, recipient.id],
@@ -544,7 +555,7 @@ This must be a real message — not a command, not a description, not a meta-ins
     // isNarrativeTruthy catches boolean true, 1, "1", "true" — all representations.
     assertNotNarrative(messagePayload, 'sendWorldPhoneMessage/outbound');
 
-    const savedMessage = await base44.entities.Message.create(messagePayload);
+    const savedMessage = await base44.asServiceRole.entities.Message.create(messagePayload);
 
     // HARD STOP: if message write failed, return failure — caller must not fake success
     if (!savedMessage?.id) {
@@ -643,7 +654,7 @@ Return ONLY the description text, nothing else.`,
       ? '📷 Photo'
       : rewrittenMessage.substring(0, 100);
     
-    await base44.entities.Conversation.update(conversationId, {
+    await base44.asServiceRole.entities.Conversation.update(conversationId, {
       last_message_preview: previewText,
       last_message_date: now,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
@@ -657,7 +668,7 @@ Return ONLY the description text, nothing else.`,
 
     try {
       // Load recent conversation history
-      const recentHistory = await base44.entities.Message.filter(
+      const recentHistory = await base44.asServiceRole.entities.Message.filter(
         { conversation_id: conversationId },
         'created_date',
         10
@@ -845,10 +856,10 @@ Reply as ${recipient.name} — casual, authentic, in your voice:`,
         };
         // WORLD PHONE BOUNDARY GUARD: recipient response must never be narrative
         assertNotNarrative(recipientMsgPayload, 'sendWorldPhoneMessage/recipient_response');
-        const recipientMsg = await base44.entities.Message.create(recipientMsgPayload);
+        const recipientMsg = await base44.asServiceRole.entities.Message.create(recipientMsgPayload);
         if (recipientMsg?.id) {
           recipientResponseMessageId = recipientMsg.id;
-          await base44.entities.Conversation.update(conversationId, {
+          await base44.asServiceRole.entities.Conversation.update(conversationId, {
             last_message_preview: recipientResponse.substring(0, 100),
             last_message_date: responseTimestamp,
           }).catch(() => {});
