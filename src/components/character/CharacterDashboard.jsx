@@ -193,8 +193,23 @@ const entryAccent = (emotion) => {
   return "border-l-border/40 bg-transparent";
 };
 
-const fmtTime = (iso) => {
-  try { return format(parseISO(iso), "h:mm aa"); } catch { return ""; }
+// fmtDayTime — shows day context + time for multi-day lists.
+// "Today · 9:07 AM" / "Yesterday · 6:57 PM" / "Mon · 5:15 PM"
+// A user can immediately tell BOTH the day and time without inferring from order.
+const fmtDayTime = (iso) => {
+  try {
+    const d = parseISO(iso);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today.getTime() - 86400000);
+    const twoDaysAgo = new Date(today.getTime() - 2 * 86400000);
+    const itemDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const timeStr = format(d, "h:mm aa");
+    if (itemDay.getTime() === today.getTime()) return `Today · ${timeStr}`;
+    if (itemDay.getTime() === yesterday.getTime()) return `Yesterday · ${timeStr}`;
+    if (itemDay.getTime() >= twoDaysAgo.getTime()) return `${format(d, "EEE")} · ${timeStr}`;
+    return `${format(d, "MMM d")} · ${timeStr}`;
+  } catch { return ""; }
 };
 
 // ── People-facing occupation detection ───────────────────────────────────────
@@ -1242,6 +1257,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
             note: le.emotional_impact || le.description?.substring(0, 120) || null,
             active: le.valence === "negative" || le.severity === "significant" || le.severity === "major",
             emotion,
+            time: le.timestamp || le.created_date || null,
           };
         });
 
@@ -1436,7 +1452,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
                       {entry.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{entry.sub}</p>}
                     </div>
                     <div className="flex-shrink-0 text-right ml-1">
-                      {entry.time && <p className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtTime(entry.time)}</p>}
+                      {entry.time && <p className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtDayTime(entry.time)}</p>}
                       {entry.emotion && <p className="text-[9px] font-medium capitalize whitespace-nowrap" style={{ color: eColor(entry.emotion) }}>{entry.emotion}</p>}
                     </div>
                   </div>
@@ -1529,6 +1545,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-foreground leading-snug">{mem.title}</p>
+                    {mem.time && <p className="text-[9px] text-muted-foreground/70 mt-0.5">{fmtDayTime(mem.time)}</p>}
                     {mem.note && <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug line-clamp-2">{mem.note}</p>}
                   </div>
                   {mem.active && <span className="text-[8px] font-medium whitespace-nowrap flex-shrink-0 mt-1" style={{ color: eColor(mem.emotion || "stressed") }}>Still active</span>}
