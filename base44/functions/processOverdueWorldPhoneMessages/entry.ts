@@ -28,7 +28,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  */
 
 const OVERDUE_HOURS = 48;
-const MAX_RESPONSES_PER_RUN = 5; // cap to avoid rate limit
+const MAX_RESPONSES_PER_RUN = 5; // cap to avoid rate limit per production run
+const MAX_CONVOS_TO_SCAN = 50; // limit conversation scan per run to avoid 429s on message fetch
 
 Deno.serve(async (req) => {
   try {
@@ -54,11 +55,14 @@ Deno.serve(async (req) => {
 
     log.push(`[processOverdueWorldPhoneMessages] START | dryRun=${dryRun} | overdueHours=${overdueHours} | cutoff=${cutoff}`);
 
-    // ── STEP 1: FETCH ALL WORLD PHONE CONVERSATIONS ─────────────────────────
+    // ── STEP 1: FETCH WORLD PHONE CONVERSATIONS (sorted oldest-first for backlog drain) ─────────────────────────
+    // Sort by last_message_date ascending so oldest conversations get processed first.
+    // This drains the deepest backlog items before newer ones.
+    // Limit scan to MAX_CONVOS_TO_SCAN to avoid rate limit on message fetches.
     const convos = await base44.asServiceRole.entities.Conversation.filter(
       { channel: 'world_phone' },
-      '-last_message_date',
-      200
+      'last_message_date',  // ascending — oldest first for backlog drain
+      MAX_CONVOS_TO_SCAN
     ).catch(() => []);
 
     log.push(`[processOverdueWorldPhoneMessages] WP convos found: ${convos.length}`);
@@ -201,13 +205,25 @@ You're just now getting around to responding. Write a short, natural catch-up re
 - Return ONLY the message text.`;
 
       let replyText = null;
-      try {
-        const llmResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
-          prompt: catchUpPrompt,
-        });
-        replyText = (typeof llmResult === 'string' ? llmResult : '').trim();
-      } catch (llmErr) {
-        log.push(`[processOverdueWorldPhoneMessages] LLM failed for ${receiver.name}: ${llmErr.message}`);
+      // LLM call with retry on 429 rate limit
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const llmResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: catchUpPrompt,
+          });
+          replyText = (typeof llmResult === 'string' ? llmResult : '').trim();
+          break;
+        } catch (llmErr) {
+          const is429 = llmErr.message?.includes('429') || llmErr.message?.includes('Rate limit');
+          if (is429 && attempt < 2) {
+            const waitMs = 3000 * (attempt + 1); // 3s, 6s
+            log.push(`[processOverdueWorldPhoneMessages] 429 for ${receiver.name}, retry in ${waitMs}ms`);
+            await new Promise(r => setTimeout(r, waitMs));
+          } else {
+            log.push(`[processOverdueWorldPhoneMessages] LLM failed for ${receiver.name}: ${llmErr.message}`);
+            break;
+          }
+        }
       }
 
       if (!replyText) {

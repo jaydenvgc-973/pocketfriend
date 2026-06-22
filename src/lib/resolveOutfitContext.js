@@ -319,7 +319,13 @@ export function buildOutfitNarrativeHint(resolvedOutfit, character) {
   if (!resolvedOutfit?.outfit && !resolvedOutfit?.category) return null;
   if (!resolvedOutfit.description && !resolvedOutfit.category) return null;
 
-  const { category, reason, description } = resolvedOutfit;
+  const { category, reason, description, source } = resolvedOutfit;
+
+  // Uniform — required by role/job/location — highest explicit priority in hint text
+  if (source?.startsWith('uniform:') || category === 'uniform') {
+    if (description) return `wearing required uniform: ${description}`;
+    return 'in their required uniform for this role';
+  }
 
   // Asleep — stay grounded in sleep, not clothing
   if (reason === 'sleep_state') {
