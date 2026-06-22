@@ -62,18 +62,6 @@ Deno.serve(async (req) => {
 
     const ownerEmail = user?.email || sender.owner_email;
 
-    // ── WORLD-SERVICE EXCLUSION (SENDER) ─────────────────────────────────────
-    // World-service characters (e.g. Vick Servicio) must never be used as senders
-    // in ordinary autonomous character-to-character communication.
-    const isWorldServiceSender =
-      sender.character_type === 'npc_world_service' ||
-      sender.is_world_service === true ||
-      sender.diagnostic_only === true ||
-      (sender.name || '').toLowerCase().includes('vick servicio');
-    if (isWorldServiceSender) {
-      return Response.json({ success: false, reason: 'world_service_sender_excluded', senderName: sender.name });
-    }
-
     // ── 2. RESOLVE RECIPIENT (name → ID) ─────────────────────────────────────
     // We need the recipient's ID to pass to sendWorldPhoneMessage as recipient_identifier.
     // This is pure orchestration — no World Phone logic here.
@@ -113,24 +101,6 @@ Deno.serve(async (req) => {
 
     if (recipientId === senderCharacterId) {
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
-    }
-
-    // ── WORLD-SERVICE EXCLUSION (RECIPIENT) ──────────────────────────────────
-    // World-service characters must not be pulled into ordinary autonomous contact
-    // as recipients. User-directed contact (user_requested) is still allowed.
-    if (trigger_source && trigger_source !== 'user_requested') {
-      const recipientList = await sr.entities.Character.filter({ id: recipientId }, null, 1).catch(() => []);
-      const recipientChar = recipientList?.[0];
-      if (recipientChar) {
-        const isWorldServiceRecipient =
-          recipientChar.character_type === 'npc_world_service' ||
-          recipientChar.is_world_service === true ||
-          recipientChar.diagnostic_only === true ||
-          (recipientChar.name || '').toLowerCase().includes('vick servicio');
-        if (isWorldServiceRecipient) {
-          return Response.json({ success: false, reason: 'world_service_recipient_excluded', recipientName: recipientChar.name });
-        }
-      }
     }
 
     const triggerSrc = trigger_source || 'user_requested';
