@@ -897,12 +897,12 @@ function computeCorrectiveState(needs, character, locationMap) {
 
   // ═══════════════════════════════════════════════════════════════════════
   // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse
+  // Pass-out is NOT sleeping. Uses 'passed_out' status, not 'sleeping'.
   // ═══════════════════════════════════════════════════════════════════════
   if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
     return {
-      resolved_presence_status: 'sleeping',
-      current_activity: 'passed out — resting',
-      last_sleep_start: new Date().toISOString(),
+      resolved_presence_status: 'passed_out',
+      current_activity: 'passed out from exhaustion — forced recovery',
     };
   }
 
@@ -1190,8 +1190,8 @@ function computeDecisionWeights(needs, character) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
 
-  // If already sleeping or hospitalized, no autonomous decisions
-  if (presence === 'sleeping' || presence === 'napping' || presence === 'hospitalized') return null;
+  // If already in a rest/recovery state, no autonomous decisions
+  if (presence === 'sleeping' || presence === 'napping' || presence === 'hospitalized' || presence === 'passed_out') return null;
 
   const hygieneW  = pressureCurve(needs.hygiene, HYGIENE_CURVE);
   let   energyW   = pressureCurve(needs.energy,  ENERGY_CURVE);
@@ -1596,12 +1596,14 @@ Deno.serve(async (req) => {
           // the event so future sleep decisions amplify pressure — the
           // character remembers this was unpleasant and avoids repeating.
           const passOutCount = (char.pass_out_count ?? 0) + 1;
+          // Pass-out is NOT sleeping. Uses 'passed_out' status — mechanically and visually distinct.
+          // Recovery uses passed_out rates (+8/hr energy). Status stays 'passed_out' until energy > 35,
+          // then transitions to 'home' (awake), NOT to 'sleeping'.
           await base44.entities.Character.update(char.id, {
-            resolved_presence_status: 'sleeping',
-            current_activity: 'passed out — resting',
-            last_sleep_start: nowIso,
-            last_need_simulated_at: nowIso,
+            resolved_presence_status: 'passed_out',
+            current_activity: 'passed out from exhaustion — forced recovery',
             last_pass_out_at: nowIso,
+            last_need_simulated_at: nowIso,
             pass_out_count: passOutCount,
             // Stay lock: block other automations from clearing pass-out recovery
             presence_stay_lock: true,
@@ -1722,8 +1724,9 @@ Deno.serve(async (req) => {
         // The 19-hour awake timer uses last_sleep_start ONLY — naps do NOT reset it.
         // ─────────────────────────────────────────────────────────────────────
 
-        const dbIsSleeping = char.resolved_presence_status === 'sleeping';
-        const dbIsNapping  = char.resolved_presence_status === 'napping';
+        const dbIsSleeping  = char.resolved_presence_status === 'sleeping';
+        const dbIsNapping   = char.resolved_presence_status === 'napping';
+        const dbIsPassedOut = char.resolved_presence_status === 'passed_out';
 
         // ── HARD 8-HOUR SLEEP CAP ──────────────────────────────────────────
         // Uses last_sleep_start ONLY. Generic timestamps are NEVER sleep-start evidence.
@@ -1778,6 +1781,54 @@ Deno.serve(async (req) => {
               timestamp: nowIso,
               context_tags: ['missing_timestamp', 'last_sleep_start', 'simulateActiveCharacterNeeds'],
             }).catch(() => {});
+          }
+        }
+
+        // ── HARD 12-HOUR PASS-OUT CAP ─────────────────────────────────────
+        // Pass-out cannot last indefinitely. After 12 hours of passed_out recovery,
+        // the character wakes up regardless of energy (minimum survival state).
+        // Transition: passed_out → home (awake), NOT to sleeping.
+        if (dbIsPassedOut && !sleepLocked) {
+          const passOutStart = char.last_pass_out_at;
+          if (passOutStart) {
+            const passOutDurationHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
+            if (passOutDurationHours >= 12) {
+              const passOutWakePayload = {
+                resolved_presence_status: 'home',
+                current_activity: '',
+                last_wake_time: nowIso,
+                presence_stay_lock: false,
+                presence_stay_lock_reason: null,
+                presence_stay_lock_release_condition: null,
+                hunger_value:  Math.round(newNeeds.hunger),
+                energy_value:  Math.round(newNeeds.energy),
+                social_value:  Math.round(newNeeds.social),
+                health_value:  Math.round(newNeeds.health),
+                mental_value:  Math.round(newNeeds.mental),
+                hygiene_value: Math.round(newNeeds.hygiene),
+                comfort_value: Math.round(newNeeds.comfort),
+                last_need_simulated_at: nowIso,
+              };
+              await base44.entities.Character.update(char.id, passOutWakePayload);
+              results.push({
+                character: charName, context,
+                event: 'hard_12h_passout_wake',
+                passout_duration_hours: Math.round(passOutDurationHours * 100) / 100,
+                needs: {
+                  hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
+                  social: Math.round(newNeeds.social), health: Math.round(newNeeds.health),
+                  mental: Math.round(newNeeds.mental), hygiene: Math.round(newNeeds.hygiene),
+                  comfort: Math.round(newNeeds.comfort),
+                },
+              });
+              continue;
+            }
+          } else {
+            // No last_pass_out_at — set it now to start the cap timer
+            await base44.entities.Character.update(char.id, {
+              last_pass_out_at: nowIso,
+              last_need_simulated_at: nowIso,
+            });
           }
         }
 
@@ -1871,9 +1922,8 @@ Deno.serve(async (req) => {
 
               const awakeLimitPayload = {
                 ...homeRedirectFields,
-                resolved_presence_status: 'sleeping',
-                current_activity: 'passed out — forced exhaustion (19-hour limit)',
-                last_sleep_start: nowIso,
+                resolved_presence_status: 'passed_out',
+                current_activity: 'passed out from forced exhaustion — 19-hour limit',
                 last_pass_out_at: nowIso,
                 pass_out_count: passOutCount19h,
                 // Stay lock: prevent other automations from clearing recovery
@@ -1986,14 +2036,14 @@ Deno.serve(async (req) => {
 
         // ── RC2 (continued): ENERGY ZERO → PASSED OUT ────────────────────
         // If energy reached zero during this simulation tick, character
-        // collapses. Write presence and activity immediately.
+        // collapses. Uses 'passed_out' status — NOT 'sleeping'.
         if (newNeeds.energy <= 0 && !sleepLocked && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out') {
           Object.assign(updatePayload, {
-            resolved_presence_status: 'sleeping',
-            current_activity: 'passed out — resting',
-            last_sleep_start: nowIso,
+            resolved_presence_status: 'passed_out',
+            current_activity: 'passed out from exhaustion — forced recovery',
+            last_pass_out_at: nowIso,
           });
         }
 
@@ -2050,12 +2100,13 @@ Deno.serve(async (req) => {
         if (criticalNeeds >= T.COMPOUND_CRISIS
             && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
+            && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized'
             && !sleepLocked) {
           Object.assign(updatePayload, {
-            resolved_presence_status: 'sleeping',
-            current_activity: 'forced rest — compound crisis',
-            last_sleep_start: nowIso,
+            resolved_presence_status: 'passed_out',
+            current_activity: 'passed out from compound crisis — forced recovery',
+            last_pass_out_at: nowIso,
           });
 
           // Create recovery ScheduledEvent
@@ -2086,13 +2137,17 @@ Deno.serve(async (req) => {
         }
 
         // ── PASS-OUT STAY LOCK RELEASE ────────────────────────────────────
-        // Pass-out locks the character in sleeping state for recovery.
-        // When energy recovers above 35, the body has enough reserves to
-        // function — release the lock so natural wake/sleep rules apply.
+        // Pass-out locks the character in 'passed_out' state for recovery.
+        // When energy recovers above 35, release the lock AND transition to 'home'.
+        // CRITICAL: Do NOT transition passed_out → sleeping. They wake up, not go back to sleep.
         if (char.presence_stay_lock &&
             char.presence_stay_lock_reason === 'pass_out_recovery' &&
+            char.resolved_presence_status === 'passed_out' &&
             newNeeds.energy > 35) {
           Object.assign(updatePayload, {
+            resolved_presence_status: 'home',
+            current_activity: '',
+            last_wake_time: nowIso,
             presence_stay_lock: false,
             presence_stay_lock_reason: null,
             presence_stay_lock_release_condition: null,

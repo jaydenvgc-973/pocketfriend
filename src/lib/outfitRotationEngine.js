@@ -172,8 +172,9 @@ export function resolveTargetCategory(character, activityText = '', locationCate
   // ── PRIORITY 1: BATH STATE ──────────────────────────────────────────────────
   if (ACTIVITY_CATEGORY_MAP[0].activities.some(a => combined.includes(a))) return 'bath';
 
-  // ── PRIORITY 2: SLEEP STATE ──────────────────────────────────────────────────
-  const isSleeping = presenceStatus === 'sleeping' || presenceStatus === 'napping';
+  // ── PRIORITY 2: SLEEP / PASS-OUT STATE ───────────────────────────────────────
+  // passed_out = collapsed from exhaustion — treat same as sleepwear context for outfit purposes
+  const isSleeping = presenceStatus === 'sleeping' || presenceStatus === 'napping' || presenceStatus === 'passed_out';
   if (isSleeping) return 'sleepwear';
 
   // Approaching sleep: within 60 minutes of sleep start
@@ -350,4 +351,61 @@ export const SPEC_CATEGORY_ALIAS = {
 export function normalizeCategory(cat) {
   if (!cat) return 'daily_casual';
   return SPEC_CATEGORY_ALIAS[cat] || cat;
+}
+
+/**
+ * resolveOutfitForDate — date-aware outfit resolver
+ *
+ * Resolves the outfit a character would wear on a SPECIFIC date (today, tomorrow, etc.)
+ * using the canonical rotation algorithm with the given date as the rotation anchor.
+ *
+ * This is the ONLY correct way to get tomorrow's outfit — never fake it with ID manipulation.
+ *
+ * @param {object} character - Full character record
+ * @param {Date} date - The target date (e.g. new Date() for today, tomorrow's date for tomorrow)
+ * @param {string} activityText - Activity context (optional)
+ * @param {string|null} locationCategory - Location category (optional)
+ * @returns {object|null} outfit object for that date, or null
+ */
+export function resolveOutfitForDate(character, date, activityText = '', locationCategory = null) {
+  if (!character) return null;
+
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
+  if (outfits.length === 0) return character.current_outfit || null;
+
+  const rotationEnabled = character.outfit_rotation_enabled !== false;
+  const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
+  const fallbackChain = buildFallbackChain(targetCategory);
+
+  // Date-specific rotation index: same algorithm as getDailyRotationIndex but uses the supplied date
+  const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+  const idHash = (character.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+
+  function pickForDate(pool) {
+    if (pool.length === 0) return null;
+    if (pool.length === 1) return pool[0];
+
+    const numbered = pool
+      .filter(o => o.rotation_number != null && o.rotation_number !== "")
+      .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+    const unnumbered = pool.filter(o => o.rotation_number == null || o.rotation_number === "");
+
+    if (numbered.length > 0) {
+      const idx = (dayOfYear + idHash) % numbered.length;
+      return numbered[idx];
+    }
+
+    const favorites = unnumbered.filter(o => o.is_favorite);
+    const candidates = favorites.length > 0 ? favorites : unnumbered;
+    if (candidates.length === 1) return candidates[0];
+    return candidates[(dayOfYear + idHash) % candidates.length];
+  }
+
+  for (const cat of fallbackChain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length > 0) return pickForDate(pool);
+  }
+
+  return pickForDate(outfits);
 }

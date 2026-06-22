@@ -110,7 +110,7 @@
     },
     "presence_stay_lock_reason": {
       "type": "string",
-      "description": "Why the lock exists (e.g., user_scene_stay, sleep_state, work_shift, school_schedule)."
+      "description": "Why the lock exists (e.g., user_scene_stay, sleep_state, work_shift, school_schedule, pass_out_recovery)."
     },
     "presence_stay_lock_authority": {
       "type": "string",
@@ -123,7 +123,7 @@
     },
     "presence_stay_lock_release_condition": {
       "type": "string",
-      "description": "Programmatic condition for release (e.g., sleep_complete, shift_end, scene_end)."
+      "description": "Programmatic condition for release (e.g., sleep_complete, shift_end, scene_end, energy_above_35)."
     },
     "presence_stay_lock_created_by": {
       "type": "string",
@@ -488,11 +488,14 @@
         "under_supervision",
         "sleeping",
         "napping",
+        "passed_out",
         "temporary_housing",
         "incarcerated",
         "house_arrest",
-        "confined"
-      ]
+        "confined",
+        "hospitalized"
+      ],
+      "description": "sleeping = voluntary/chosen sleep. passed_out = involuntary collapse from exhaustion or compound crisis. These are mechanically and visually distinct states. hospitalized = medical emergency. Do NOT use sleeping for pass-out or forced exhaustion."
     },
     "resolved_source_reason": {
       "type": "string"
@@ -630,7 +633,7 @@
     "last_pass_out_at": {
       "type": "string",
       "format": "date-time",
-      "description": "When the character last passed out from exhaustion (energy reaching 0-10). Used for behavioral memory: characters who passed out recently feel sleep pressure more intensely and are less likely to ignore exhaustion. Pass-out is an unpleasant, embarrassing, physically draining experience they remember and want to avoid repeating."
+      "description": "When the character last passed out from exhaustion (energy reaching 0-10, 19-hour forced exhaustion, or compound crisis). Used for behavioral memory: characters who passed out recently feel sleep pressure more intensely and are less likely to ignore exhaustion. Pass-out is an unpleasant, embarrassing, physically draining experience they remember and want to avoid repeating."
     },
     "pass_out_count": {
       "type": "integer",

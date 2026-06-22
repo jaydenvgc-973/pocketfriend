@@ -6,8 +6,7 @@ import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
 import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
 import { buildArcContextBlock } from "@/lib/arcEngine";
-import { buildOutfitPromptText } from "@/lib/outfitRotationEngine";
-import { pickOutfitFromCloset } from "@/lib/resolveOutfitContext";
+import { buildOutfitPromptText, resolveOutfitForDate } from "@/lib/outfitRotationEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -531,19 +530,14 @@ WARDROBE & OUTFIT AWARENESS — CURRENT STATE
 You are currently ${outfitHint}.
 You know your own closet. You dressed intentionally for this context.
 ${(() => {
-  // Tomorrow's planned outfit — use the canonical rotation engine (same algorithm as today's picker)
-  // This avoids duplicating the rotation math inline.
+  // Tomorrow's planned outfit — uses resolveOutfitForDate with tomorrow's actual date.
+  // This is the canonical, date-aware resolver — no ID manipulation, no duplicated math.
   try {
     const closet = character.character_closet || [];
     if (closet.filter(o => o.outfit_id).length > 1) {
-      // Create a fake "tomorrow" character snapshot: advance the day so the rotation engine
-      // picks the NEXT day's outfit without modifying the real character object.
-      const tomorrowChar = { ...character, _tomorrow_override: true };
-      // Override the id hash to advance by one day's worth of rotation
-      // by temporarily shifting the character's id hash by the closet length offset.
-      // Simpler: call pickOutfitFromCloset with a cloned char that has a date-shifted id.
-      const dayShiftedId = (character.id || '') + '_tomorrow';
-      const tomorrowOutfit = pickOutfitFromCloset({ ...character, id: dayShiftedId }, character.current_outfit?.category || 'daily_casual');
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowOutfit = resolveOutfitForDate(character, tomorrow, '', null);
       const tomorrowDesc = tomorrowOutfit ? buildOutfitPromptText(tomorrowOutfit) : null;
       if (tomorrowDesc && tomorrowOutfit?.outfit_id !== character.current_outfit?.outfit_id) {
         return `Tomorrow you're planning to wear: ${tomorrowDesc}.\n`;
