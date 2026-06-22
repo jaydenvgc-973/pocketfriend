@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
       ).catch(() => []);
       const autonomousToday = recentWP.filter(m =>
         m.created_date?.startsWith(today) &&
-        ['need_driven', 'autonomous', 'relationship'].includes(m.trigger_source)
+        m.autonomy_marker?.startsWith('trigger_contact::')
       ).length;
       if (autonomousToday >= 3) {
         return Response.json({ success: false, reason: 'daily_autonomous_cap_reached', autonomousToday });
