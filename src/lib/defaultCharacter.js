@@ -528,7 +528,24 @@ WARDROBE & OUTFIT AWARENESS — CURRENT STATE
 ════════════════════════════════════
 You are currently ${outfitHint}.
 You know your own closet. You dressed intentionally for this context.
-Reference your outfit naturally when relevant (getting dressed, going out, gym, work, bed, etc.).
+${(() => {
+  // Tomorrow's planned outfit — next rotation from closet
+  try {
+    const closet = character.character_closet || [];
+    const outfits = closet.filter(o => o.outfit_id);
+    if (outfits.length > 1) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dayOfYear = Math.floor((tomorrow - new Date(tomorrow.getFullYear(), 0, 0)) / 86400000);
+      const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+      const nextIdx = (dayOfYear + idHash) % outfits.length;
+      const nextOutfit = outfits[nextIdx];
+      const nextDesc = nextOutfit?.full_description || [nextOutfit?.top, nextOutfit?.bottom, nextOutfit?.shoes].filter(Boolean).join(', ');
+      if (nextDesc) return `Tomorrow you're planning to wear: ${nextDesc}.\n`;
+    }
+  } catch (_) {}
+  return '';
+})()}Reference your outfit naturally when relevant (getting dressed, going out, gym, work, bed, etc.).
 Do NOT comment on clothing unprompted unless it genuinely fits the conversation.
 When changing context (waking up, going to work, returning home, exercising, sleeping): acknowledge the outfit shift naturally if it comes up.
 ════════════════════════════════════` : ''}

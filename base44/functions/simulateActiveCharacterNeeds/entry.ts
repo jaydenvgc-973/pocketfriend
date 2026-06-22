@@ -1042,22 +1042,7 @@ function computeCorrectiveState(needs, character, locationMap) {
           last_sleep_start: new Date().toISOString(),
         };
       }
-      // CRITICAL HOME-RETURN: If not in a hard obligation and not home, redirect home
-      // immediately so sleep can happen next tick. This is the key fix for pass-out loops:
-      // a character not at home with critically low energy would previously drain to ≤10
-      // and pass out wherever they were, recover to 35, wake, then immediately drain again.
-      // Sending them home at ≤25 allows sleep to occur on the very next tick.
-      if (!effectiveInObligation && !atHome && !character.sleep_lock) {
-        const homeLoc = character.current_home_location_id;
-        if (homeLoc) {
-          return {
-            resolved_presence_status: 'home',
-            resolved_current_location_id: homeLoc,
-            current_activity: 'heading home urgently — critically low energy',
-          };
-        }
-      }
-      return null; // blocked by hard obligation — re-evaluate next tick
+      return null; // blocked by obligation or not home — re-evaluate next tick; pass-out will happen naturally if energy drains to ≤10
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1097,22 +1082,7 @@ function computeCorrectiveState(needs, character, locationMap) {
           last_nap_time: new Date().toISOString(),
         };
       }
-      // PROACTIVE HOME-RETURN: if character is not at home, not in a hard obligation,
-      // and energy is critically low — direct them home so sleep can proceed next tick.
-      // Without this, they stay wherever they are and drain to pass-out (≤10).
-      // Hard obligations (work shift, school, jail, travel) are respected.
-      // Only the !atHome condition is overridden — being away is not a hard block.
-      if (!effectiveInObligation && !atHome && !character.sleep_lock) {
-        const homeLoc = character.current_home_location_id;
-        if (homeLoc) {
-          return {
-            resolved_presence_status: 'home',
-            resolved_current_location_id: homeLoc,
-            current_activity: 'heading home — low energy',
-          };
-        }
-      }
-      return null; // blocked — re-evaluate next tick
+      return null; // blocked — re-evaluate next tick; character will drain naturally
     }
 
     // ═══════════════════════════════════════════════════════════════════

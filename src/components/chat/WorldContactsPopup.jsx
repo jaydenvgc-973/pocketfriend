@@ -81,7 +81,9 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [contacts, setContacts] = useState([]);
-  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  // Initialize to true so "no contacts" is never shown before the first load completes.
+  // The contact list useEffect sets it false after loading finishes (success or error).
+  const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [ownerEmail, setOwnerEmail] = useState(null);
   // Per-message context menu state
   const [messageMenu, setMessageMenu] = useState(null); // { message, anchorRect } | null
@@ -484,6 +486,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     setMessages([]);
     setConversationId(null);
     setInputText("");
+    setContacts([]);
+    setIsLoadingContacts(true); // reset to true so next open starts in loading state, not empty
     contactCharRecordRef.current = null;
     canonicalPromptCacheRef.current = null;
     replyLockRef.current.clear();
@@ -1280,7 +1284,7 @@ Respond ONLY with valid JSON in this exact format:
               <p className="text-xs text-muted-foreground flex items-center gap-1">
                 {selectedContact
                   ? selectedContact.relationship_type || "known contact"
-                  : `${contacts.length} known contact${contacts.length !== 1 ? "s" : ""}`}
+                  : isLoadingContacts ? 'Loading contacts...' : `${contacts.length} known contact${contacts.length !== 1 ? "s" : ""}`}
                 {conversationId && selectedContact?.related_character_id && (
                   <span className="text-[10px] text-amber-500">
                     {/* Sync status will be checked when conversation loads */}
