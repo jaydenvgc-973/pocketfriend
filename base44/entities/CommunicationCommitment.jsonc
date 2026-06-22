@@ -1,0 +1,126 @@
+{
+  "name": "CommunicationCommitment",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Character who made the communication commitment"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of committing character"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for RLS scoping"
+    },
+    "commitment_type": {
+      "type": "string",
+      "enum": [
+        "follow_up",
+        "check_in",
+        "will_let_you_know",
+        "third_party_relay",
+        "emotional_follow_up",
+        "event_follow_up"
+      ],
+      "description": "follow_up = generic follow-up promise. check_in = will check on someone. will_let_you_know = promised to share outcome. third_party_relay = asked to pass message to third party. emotional_follow_up = promised to continue emotional conversation. event_follow_up = will update after event/outcome."
+    },
+    "commitment_text": {
+      "type": "string",
+      "description": "The exact phrase or paraphrase that created the commitment"
+    },
+    "target_character_id": {
+      "type": "string",
+      "description": "Character this commitment is directed toward (may be null for user-directed commitments)"
+    },
+    "target_character_name": {
+      "type": "string",
+      "description": "Display name of target character"
+    },
+    "third_party_character_id": {
+      "type": "string",
+      "description": "For third_party_relay: the character the message should be passed to"
+    },
+    "third_party_character_name": {
+      "type": "string",
+      "description": "Display name of third-party character"
+    },
+    "third_party_message": {
+      "type": "string",
+      "description": "The message to relay to the third party (e.g. 'Tell Ethan I said hi')"
+    },
+    "source_conversation_id": {
+      "type": "string",
+      "description": "Conversation where this commitment was made"
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "Message that contained the commitment"
+    },
+    "context_summary": {
+      "type": "string",
+      "description": "Brief context about what the commitment refers to (e.g., 'job interview outcome', 'health scare follow-up')"
+    },
+    "due_after": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Earliest time the follow-up should happen (respects the implied timeline \u2014 'tomorrow' = ~24h, 'later' = ~4h, etc.)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "fulfilled",
+        "expired",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "pending = waiting to be acted on. fulfilled = follow-up sent. expired = too old, will not fire. cancelled = context makes it irrelevant."
+    },
+    "fulfilled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the commitment was fulfilled"
+    },
+    "fulfilled_message_id": {
+      "type": "string",
+      "description": "ID of the message that fulfilled this commitment"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email",
+    "commitment_type",
+    "commitment_text"
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "read": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  }
+}

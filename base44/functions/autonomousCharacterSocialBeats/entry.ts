@@ -50,6 +50,53 @@ function canonicalConvoKey(idA, idB) {
   return `world_phone::${sorted[0]}::${sorted[1]}`;
 }
 
+/**
+ * computePairRelationshipStrength
+ *
+ * Returns 0–100 score for how strong the relationship between sender → receiver is.
+ * Used to weight pair selection so strong relationships get priority over weak ones.
+ *
+ * Sources (in priority order):
+ *   1. fictional_relationships entry for this specific pair (all dimensions)
+ *   2. family relationship (npc_family_member type = automatic strong bond)
+ *   3. shared context (coworker, housemate, classmate) = moderate bond
+ *   4. fallback = 30 (neutral acquaintance)
+ */
+function computePairRelationshipStrength(sender, receiverId, receiverType, pairingSource) {
+  const relationships = sender.fictional_relationships || [];
+
+  // Find the specific relationship record for this receiver
+  const rel = relationships.find(r => r.related_character_id === receiverId);
+
+  if (rel) {
+    // All dimensions contribute — trust and romantic weight more than friendship alone
+    const friendship = rel.friendship_level ?? 50;
+    const trust = rel.trust_level ?? 50;
+    const romantic = rel.romantic_level ?? 0;
+    const respect = rel.respect_level ?? 50;
+    const tension = rel.tension_level ?? 0;
+
+    // Weighted combination: trust + romantic are highest-weight bonds
+    const raw = friendship * 0.25 + trust * 0.30 + romantic * 0.25 + respect * 0.20;
+    // Tension reduces the score (conflict creates pressure but lowers desirability)
+    const tensionPenalty = tension * 0.15;
+    return Math.min(100, Math.max(0, Math.round(raw - tensionPenalty)));
+  }
+
+  // Family = inherently strong bond regardless of relationship record
+  if (pairingSource === 'family' || receiverType === 'npc_family_member') {
+    return 70;
+  }
+
+  // Shared context bonds (coworker, housemate, classmate) = moderate
+  if (['coworker', 'housemate', 'classmate'].includes(pairingSource)) {
+    return 45;
+  }
+
+  // Unknown / no relationship record
+  return 30;
+}
+
 // Beat type based on relationship context and needs
 function selectBeatType(sender, receiver, rel, pairingSource) {
   const tension = rel?.tension_level ?? 0;
@@ -398,19 +445,41 @@ Deno.serve(async (req) => {
       userDiag.candidate_pairs = candidatePairs.length;
       console.log(`[autonomousSocialBeats] [${userEmail}] Candidate pairs: ${candidatePairs.length} (event=${candidatePairs.filter(p=>p.source==='community_event').length} coworker=${candidatePairs.filter(p=>p.source==='coworker').length} housemate=${candidatePairs.filter(p=>p.source==='housemate').length} family=${candidatePairs.filter(p=>p.source==='family').length} relationship=${candidatePairs.filter(p=>p.source==='relationship').length})`);
 
-      // Shuffle so we don't always pick the same pair.
-      // proofEventPath=true: pin community_event pairs to front so they are guaranteed to fire.
-      // This flag is only used for live path proof runs — production runs always shuffle.
+      // ── RELATIONSHIP-STRENGTH WEIGHTED SORT ─────────────────────────────────
+      // REPAIR: Strong relationships must get priority over weak ones.
+      // Previously: pure random shuffle — a 95/100 trust pair and a 30/100 acquaintance
+      //             had identical selection probability. That was wrong.
+      // Now: pairs are sorted by relationship strength score (desc), with a small random
+      //      jitter so the same pair doesn't ALWAYS fire, but strong bonds consistently win.
+      //
+      // proofEventPath=true: community_event pairs pinned to front for proof runs only.
+      for (const pair of candidatePairs) {
+        const sender = userChars.find(c => c.id === pair.senderId);
+        pair._strength = sender
+          ? computePairRelationshipStrength(sender, pair.receiverId, userChars.find(c => c.id === pair.receiverId)?.character_type, pair.source)
+          : 30;
+      }
+
       if (proofEventPath) {
         candidatePairs.sort((a, b) => {
           if (a.source === 'community_event' && b.source !== 'community_event') return -1;
           if (b.source === 'community_event' && a.source !== 'community_event') return 1;
-          return Math.random() - 0.5;
+          // Within community_event: stronger relationships first
+          return (b._strength - a._strength) + (Math.random() * 10 - 5);
         });
         console.log(`[autonomousSocialBeats] proofEventPath=true: community_event pairs pinned to front`);
       } else {
-        candidatePairs.sort(() => Math.random() - 0.5);
+        // Weighted sort: relationship strength (0-100) + small random jitter (0-15)
+        // This ensures strong relationships dominate but not exclusively
+        candidatePairs.sort((a, b) => {
+          const scoreA = a._strength + Math.random() * 15;
+          const scoreB = b._strength + Math.random() * 15;
+          return scoreB - scoreA;
+        });
       }
+
+      const topStrengths = candidatePairs.slice(0, 3).map(p => `${p.senderId.substring(0,6)}→${p.receiverId.substring(0,6)}:str${p._strength}`).join(', ');
+      console.log(`[autonomousSocialBeats] [${userEmail}] Pair sort by strength. Top 3: [${topStrengths}]`);
 
       for (const pair of candidatePairs) {
         if (beatsThisUser >= MAX_BEATS_PER_USER) break;

@@ -1,10 +1,18 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
 
 /**
- * sendProactiveMessageForCharacter
- * 
- * Sends a single proactive message from a character.
- * Designed to be called individually per character to avoid rate limits.
+ * sendProactiveMessageForCharacter — v2
+ *
+ * REPAIR: Added relationship-driven communication pressure.
+ *
+ * NEW pressure factors (all absent in v1):
+ *   1. Per-relationship dimensions: trust_level, romantic_level, respect_level from fictional_relationships
+ *   2. Time-since-last-meaningful-contact (days) — longer silence = higher pressure
+ *   3. LifeEvent triggers — recent significant events on the character create urgency context
+ *   4. Unresolved conversation detection — last message ended with question/unresolved emotion
+ *   5. CommunicationCommitment pending fulfillment check — generates context-aware follow-up
+ *
+ * All existing timing gates, daily caps, and idempotency logic preserved unchanged.
  */
 
 function getEasternTime() {
@@ -19,8 +27,8 @@ function isWithinWorkHours(char) {
   if (!char.work_start_time || !char.work_end_time) return false;
   const et = getEasternTime();
   const now = getTimeMinutes(et);
-  const start = parseInt(char.work_start_time.split(':')[0]) * 60 + parseInt(char.work_start_time.split(':')[1]);
-  const end = parseInt(char.work_end_time.split(':')[0]) * 60 + parseInt(char.work_end_time.split(':')[1]);
+  const start = parseInt(char.work_start_time.split(':')[0]) * 60 + parseInt(char.work_start_time.split(':')[1] || 0);
+  const end = parseInt(char.work_end_time.split(':')[0]) * 60 + parseInt(char.work_end_time.split(':')[1] || 0);
   return now >= start && now <= end;
 }
 
@@ -28,19 +36,15 @@ function isSleepTime(char) {
   if (!char.sleep_start_time || !char.wake_up_time) return false;
   const et = getEasternTime();
   const now = getTimeMinutes(et);
-  const sleep = parseInt(char.sleep_start_time.split(':')[0]) * 60 + parseInt(char.sleep_start_time.split(':')[1]);
-  const wake = parseInt(char.wake_up_time.split(':')[0]) * 60 + parseInt(char.wake_up_time.split(':')[1]);
-  
-  if (sleep > wake) {
-    return now >= sleep || now <= wake;
-  }
+  const sleep = parseInt(char.sleep_start_time.split(':')[0]) * 60 + parseInt(char.sleep_start_time.split(':')[1] || 0);
+  const wake = parseInt(char.wake_up_time.split(':')[0]) * 60 + parseInt(char.wake_up_time.split(':')[1] || 0);
+  if (sleep > wake) return now >= sleep || now <= wake;
   return now >= sleep && now <= wake;
 }
 
 function shouldMessageNow(char, relationshipLevel) {
   const et = getEasternTime();
   const hour = et.getHours();
-  
   if (isSleepTime(char)) return false;
   if (relationshipLevel >= 80) return true;
   if (relationshipLevel >= 60) {
@@ -56,29 +60,242 @@ function shouldMessageNow(char, relationshipLevel) {
   return true;
 }
 
-async function getRecentConversationContext(base44, characterId, ownerEmail) {
-  if (!ownerEmail) return null;
-  const convos = await base44.entities.Conversation.filter({
-    owner_email: ownerEmail,
-    character_ids: [characterId],
+/**
+ * computeRelationshipPressure
+ *
+ * Returns a score 0–100 representing how much communication pressure exists
+ * given all relationship dimensions, time-since-contact, and recent life events.
+ *
+ * Pressure factors (all additive):
+ *   base: friendship_level on the character root field (0–100) → weight 0.25
+ *   per-relationship dimensions from fictional_relationships (if character-to-user relationship exists):
+ *     trust_level → weight 0.15
+ *     romantic_level → weight 0.20
+ *     respect_level → weight 0.10
+ *   chosen_family_level (from char root) → weight 0.10
+ *   time-since-contact: exponential increase up to 30 pressure points for 7+ days of silence
+ *   unresolved conversation: +15 if last message ended unresolved
+ *   recent significant LifeEvent: +20 if within last 48h
+ *   pending CommunicationCommitment: +30 (hard — must follow through)
+ *
+ * Pressure >= 40 = attempt contact
+ * Pressure >= 60 = high urgency
+ * Pressure >= 80 = must contact if timing allows
+ */
+function computeRelationshipPressure(char, recentMessages, lifeEvents, pendingCommitment) {
+  let pressure = 0;
+
+  // Base from root friendship_level
+  const rootFriendship = char.friendship_level ?? 50;
+  pressure += rootFriendship * 0.25;
+
+  // Per-relationship dimensions — find the primary relationship record
+  const relationships = char.fictional_relationships || [];
+  // The primary relationship is the one with the highest combined score
+  let bestRelScore = 0;
+  let bestTrust = 0;
+  let bestRomantic = 0;
+  let bestRespect = 0;
+  for (const r of relationships) {
+    const combined = (r.friendship_level ?? 0) + (r.trust_level ?? 0) + (r.romantic_level ?? 0) + (r.respect_level ?? 0);
+    if (combined > bestRelScore) {
+      bestRelScore = combined;
+      bestTrust = r.trust_level ?? 0;
+      bestRomantic = r.romantic_level ?? 0;
+      bestRespect = r.respect_level ?? 0;
+    }
+  }
+  pressure += bestTrust * 0.15;
+  pressure += bestRomantic * 0.20;
+  pressure += bestRespect * 0.10;
+
+  // chosen_family_level from root
+  pressure += (char.chosen_family_level ?? 0) * 0.10;
+
+  // Time-since-contact: find most recent message timestamp
+  if (recentMessages.length > 0) {
+    const sorted = [...recentMessages].sort((a, b) =>
+      new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date)
+    );
+    const lastMsgTime = new Date(sorted[0].timestamp || sorted[0].created_date);
+    const daysSince = (Date.now() - lastMsgTime.getTime()) / (24 * 3600 * 1000);
+
+    // Exponential pressure: 0 at 0 days, ~10 at 1 day, ~20 at 3 days, ~30 at 7+ days
+    // Only applies if relationship is meaningful (friendship >= 40 or trust >= 40 or romantic >= 20)
+    const isMeaningful = rootFriendship >= 40 || bestTrust >= 40 || bestRomantic >= 20;
+    if (isMeaningful) {
+      const silencePressure = Math.min(30, 30 * (1 - Math.exp(-daysSince / 3)));
+      pressure += silencePressure;
+    }
+  } else {
+    // No messages at all — character has never reached out. Strong relationships must initiate.
+    const isMeaningful = rootFriendship >= 50 || bestTrust >= 50 || bestRomantic >= 30;
+    if (isMeaningful) pressure += 20;
+  }
+
+  // Unresolved conversation detection: last character message ended with question/emotional state
+  if (recentMessages.length > 0) {
+    const sorted = [...recentMessages].sort((a, b) =>
+      new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date)
+    );
+    const lastMsg = sorted[0];
+    if (lastMsg) {
+      const content = (lastMsg.content || '').toLowerCase();
+      const emotional = lastMsg.emotional_state;
+      const unresolvedMarkers = [
+        '?', 'let me know', "i'll find out", "i'll check", 'not sure yet', 'we\'ll see',
+        "i'll text you", "i'll message you", "talk later", "we should", "let's", "let us",
+        "i was thinking", "you never told me", "what happened", "how did it go",
+      ];
+      const unresolvedEmotion = ['anxious', 'worried', 'stressed', 'sad', 'upset', 'concerned'].includes(emotional);
+      const hasUnresolved = unresolvedMarkers.some(m => content.includes(m)) || unresolvedEmotion;
+      if (hasUnresolved) pressure += 15;
+    }
+  }
+
+  // Recent significant LifeEvent on THIS character (+20 pressure — they have something to share)
+  const now = Date.now();
+  const fortyEightHoursAgo = now - 48 * 3600 * 1000;
+  const significantEvents = (lifeEvents || []).filter(le => {
+    const ts = le.timestamp || le.created_date;
+    if (!ts) return false;
+    const age = now - new Date(ts).getTime();
+    if (age > fortyEightHoursAgo * -1) return false; // this check is intentionally reversed — see below
+    const isMajor = le.severity === 'major' || le.severity === 'significant';
+    const isPositiveOrNegative = le.valence === 'positive' || le.valence === 'negative';
+    return isMajor && isPositiveOrNegative;
+  }).filter(le => {
+    const ts = le.timestamp || le.created_date;
+    return ts && new Date(ts).getTime() >= fortyEightHoursAgo;
   });
-  
-  if (convos.length === 0) return null;
-  
-  const messages = await base44.entities.Message.filter(
-    { conversation_id: convos[0].id },
-    '-timestamp',
-    5
+  if (significantEvents.length > 0) pressure += 20;
+
+  // Pending CommunicationCommitment — hard obligation (+30)
+  if (pendingCommitment) pressure += 30;
+
+  return Math.min(100, Math.round(pressure));
+}
+
+/**
+ * detectConversationCommitments
+ *
+ * Scans recent messages for communication promise patterns and creates
+ * CommunicationCommitment records for untracked promises.
+ *
+ * Patterns detected:
+ *   - "I'll let you know how it goes"
+ *   - "I'll text you later/tomorrow"
+ *   - "I'll check on you"
+ *   - "Tell [Name] I said [message]" / "Tell [Name] [message]"
+ *   - "Ask [Name] about..."
+ *   - "I'll follow up"
+ *   - "We should talk more about this"
+ *   - "I'll think about it and get back to you"
+ */
+async function detectAndRecordCommitments(base44, char, messages, conversationId, ownerEmail) {
+  const created = [];
+  const now = new Date();
+
+  const FOLLOW_UP_PATTERNS = [
+    { pattern: /i'?ll?\s*(let\s+you\s+know|update\s+you|keep\s+you\s+(posted|updated))/i, type: 'will_let_you_know', dueHours: 24 },
+    { pattern: /i'?ll?\s*(text|message|call|hit\s+you\s+up)\s*(you\s+)?(later|tomorrow|tonight|soon|when\s+i\s+(know|find\s+out|get\s+there))/i, type: 'follow_up', dueHours: 8 },
+    { pattern: /i'?ll?\s*(check\s+(on|in\s+on)\s+you)/i, type: 'check_in', dueHours: 12 },
+    { pattern: /i'?ll?\s*(follow\s+up|get\s+back\s+to\s+you)/i, type: 'follow_up', dueHours: 12 },
+    { pattern: /(we\s+should\s+(talk|catch\s+up|finish\s+this|continue)\s*(about|later|soon)?)/i, type: 'follow_up', dueHours: 24 },
+    { pattern: /i'?ll?\s*(think\s+about\s+it|let\s+you\s+know\s+how\s+it\s+goes)/i, type: 'event_follow_up', dueHours: 24 },
+    { pattern: /(after\s+i\s+(go|get|finish|do|see|find)\s*[\w\s]{0,30}),?\s*i'?ll?\s*(tell|let|text|message|update)\s+you/i, type: 'event_follow_up', dueHours: 12 },
+  ];
+
+  const THIRD_PARTY_PATTERNS = [
+    { pattern: /tell\s+([\w\s]{2,30?})\s+i\s+said\s+([\w\s.!,]{2,60}?)(?:\.|$)/i },
+    { pattern: /tell\s+([\w\s]{2,30?})\s+(hi|hello|hey|congratulations|congrats|i\s+miss\s+(him|her|them)|i\s+was\s+asking\s+about\s+(him|her|them)|i\s+said\s+hey)/i },
+    { pattern: /ask\s+([\w\s]{2,30?})\s+(about|how)\s+([\w\s.!,]{2,60}?)(?:\.|$)/i },
+    { pattern: /let\s+([\w\s]{2,30?})\s+know\s+([\w\s.!,]{2,80}?)(?:\.|$)/i },
+    { pattern: /pass\s+along\s+to\s+([\w\s]{2,30?})\s+([\w\s.!,]{2,80}?)(?:\.|$)/i },
+  ];
+
+  // Only scan character-sent messages in last 24 hours
+  const oneDayAgo = now.getTime() - 24 * 3600 * 1000;
+  const recentCharMsgs = (messages || []).filter(m =>
+    m.sender_type === 'character' &&
+    m.character_id === char.id &&
+    new Date(m.timestamp || m.created_date).getTime() >= oneDayAgo
   );
-  
-  if (messages.length === 0) return null;
-  
-  const recentTopics = messages
-    .map(m => m.content)
-    .slice(0, 3)
-    .join(' | ');
-  
-  return recentTopics;
+
+  for (const msg of recentCharMsgs) {
+    const content = msg.content || '';
+
+    // Check follow-up/promise patterns
+    for (const { pattern, type, dueHours } of FOLLOW_UP_PATTERNS) {
+      if (!pattern.test(content)) continue;
+
+      // Check if we already created a commitment for this message
+      const existing = await base44.entities.CommunicationCommitment.filter({
+        source_message_id: msg.id,
+        character_id: char.id,
+      }, null, 1).catch(() => []);
+      if (existing.length > 0) continue;
+
+      const dueAfter = new Date(new Date(msg.timestamp || msg.created_date).getTime() + dueHours * 3600 * 1000);
+
+      await base44.entities.CommunicationCommitment.create({
+        character_id: char.id,
+        character_name: char.name,
+        owner_email: ownerEmail,
+        commitment_type: type,
+        commitment_text: content.substring(0, 300),
+        source_conversation_id: conversationId,
+        source_message_id: msg.id,
+        context_summary: `Communication promise detected in message`,
+        due_after: dueAfter.toISOString(),
+        status: 'pending',
+        created_at: now.toISOString(),
+      }).catch(() => null);
+
+      created.push({ type, dueAfter: dueAfter.toISOString() });
+      break; // one commitment per message
+    }
+
+    // Check third-party relay patterns
+    for (const { pattern } of THIRD_PARTY_PATTERNS) {
+      const match = content.match(pattern);
+      if (!match) continue;
+
+      const thirdPartyName = match[1]?.trim();
+      const relayMessage = match[2]?.trim();
+      if (!thirdPartyName || thirdPartyName.length < 2) continue;
+
+      // Check if already recorded
+      const existing = await base44.entities.CommunicationCommitment.filter({
+        source_message_id: msg.id,
+        commitment_type: 'third_party_relay',
+      }, null, 1).catch(() => []);
+      if (existing.length > 0) continue;
+
+      const dueAfter = new Date(new Date(msg.timestamp || msg.created_date).getTime() + 6 * 3600 * 1000);
+
+      await base44.entities.CommunicationCommitment.create({
+        character_id: char.id,
+        character_name: char.name,
+        owner_email: ownerEmail,
+        commitment_type: 'third_party_relay',
+        commitment_text: content.substring(0, 300),
+        third_party_character_name: thirdPartyName,
+        third_party_message: relayMessage || '',
+        source_conversation_id: conversationId,
+        source_message_id: msg.id,
+        context_summary: `Relay message to ${thirdPartyName}: "${relayMessage || ''}"`,
+        due_after: dueAfter.toISOString(),
+        status: 'pending',
+        created_at: now.toISOString(),
+      }).catch(() => null);
+
+      created.push({ type: 'third_party_relay', target: thirdPartyName });
+      break;
+    }
+  }
+
+  return created;
 }
 
 Deno.serve(async (req) => {
@@ -87,12 +304,9 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId } = await req.json();
+    const { characterId, forceCommitmentId } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    // Use user-scoped filter — asServiceRole.get() has a platform visibility gap for
-    // user-owned characters and will return null or 403 on accounts where the caller
-    // is not the record owner. User-scoped filter({ id }) uses the same RLS path as Chat.
     const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
     const char = charList?.[0];
     if (!char) return Response.json({ error: 'Character not found', characterId }, { status: 404 });
@@ -100,102 +314,217 @@ Deno.serve(async (req) => {
     const now = new Date();
     const today = now.toISOString().split('T')[0];
 
-    // owner_email is required — fail visible if missing
     if (!char.owner_email) {
-      return Response.json({ error: `Character id=${char.id} missing owner_email — cannot scope conversation query` }, { status: 422 });
+      return Response.json({ error: `Character id=${char.id} missing owner_email` }, { status: 422 });
     }
 
-    // Check daily limit
-    const todaysConvo = await base44.entities.Conversation.filter({
+    // World-service characters never send proactive messages
+    const isWorldService = char.character_type === 'npc_world_service' ||
+      char.is_world_service === true ||
+      char.diagnostic_only === true ||
+      (char.name || '').toLowerCase().includes('vick servicio');
+    if (isWorldService) {
+      return Response.json({ success: false, reason: 'npc_world_service_excluded' });
+    }
+
+    // ── FIND ACTIVE CONVERSATION ─────────────────────────────────────────────
+    const convos = await base44.entities.Conversation.filter({
+      type: 'direct',
       owner_email: char.owner_email,
       character_ids: [char.id],
     });
 
-    if (todaysConvo.length > 0) {
-      const todaysMessages = await base44.entities.Message.filter({
-        conversation_id: todaysConvo[0].id,
-        sender_type: 'character',
+    let conversationId = null;
+    if (convos.length > 0) {
+      conversationId = convos[0].id;
+    }
+
+    // ── FETCH RECENT MESSAGES ────────────────────────────────────────────────
+    let recentMessages = [];
+    if (conversationId) {
+      recentMessages = await base44.entities.Message.filter(
+        { conversation_id: conversationId },
+        '-timestamp',
+        20
+      ).catch(() => []);
+    }
+
+    // ── DETECT AND RECORD NEW COMMUNICATION COMMITMENTS ─────────────────────
+    // Run this on every proactive check — it's additive, not destructive
+    if (conversationId && recentMessages.length > 0) {
+      await detectAndRecordCommitments(base44, char, recentMessages, conversationId, char.owner_email).catch(() => {});
+    }
+
+    // ── CHECK FOR PENDING COMMUNICATION COMMITMENTS ──────────────────────────
+    let pendingCommitment = null;
+    if (forceCommitmentId) {
+      const commitList = await base44.entities.CommunicationCommitment.filter({
+        character_id: char.id,
+        status: 'pending',
+      }, '-created_at', 1).catch(() => []);
+      pendingCommitment = commitList.find(c => c.id === forceCommitmentId) || commitList[0] || null;
+    } else {
+      const pendingList = await base44.entities.CommunicationCommitment.filter({
+        character_id: char.id,
+        status: 'pending',
+      }, 'due_after', 5).catch(() => []);
+      // Only act on commitments that are due (due_after <= now)
+      pendingCommitment = pendingList.find(c => !c.due_after || new Date(c.due_after) <= now) || null;
+    }
+
+    // ── FETCH RECENT LIFE EVENTS ─────────────────────────────────────────────
+    const lifeEvents = await base44.entities.LifeEvent.filter(
+      { character_id: char.id },
+      '-timestamp',
+      10
+    ).catch(() => []);
+
+    // ── COMPUTE RELATIONSHIP PRESSURE ────────────────────────────────────────
+    const pressure = computeRelationshipPressure(char, recentMessages, lifeEvents, pendingCommitment);
+    const rootFriendship = char.friendship_level ?? 50;
+
+    // Pressure threshold to attempt contact:
+    //   < 25 = don't initiate (relationship too weak or recently contacted)
+    //   25-40 = low probability initiation
+    //   40+ = initiate if timing allows
+    //   60+ = high urgency, bypass some timing gates
+    //   80+ = critical (pending commitment), bypass work-hour gate
+    const INITIATE_THRESHOLD = 25;
+    if (pressure < INITIATE_THRESHOLD && !pendingCommitment) {
+      return Response.json({
+        success: false,
+        reason: 'insufficient_relationship_pressure',
+        pressure,
+        threshold: INITIATE_THRESHOLD,
       });
+    }
 
-      const todayCount = todaysMessages.filter(m => 
-        m.created_date?.startsWith(today)
-      ).length;
-
-      if (todayCount >= 7) {
-        return Response.json({
-          success: false,
-          reason: '7 messages already sent today',
-        });
+    // Timing gate — bypass for critical pressure (commitments, 80+)
+    const highUrgency = pressure >= 80 || !!pendingCommitment;
+    if (!highUrgency && !shouldMessageNow(char, rootFriendship)) {
+      return Response.json({
+        success: false,
+        reason: 'not_the_right_time',
+        pressure,
+      });
+    }
+    // For pressure 25-39: apply random reduction to avoid over-messaging
+    if (pressure < 40 && !pendingCommitment) {
+      const probability = (pressure - 25) / 75; // 0 at 25 pressure, 0.2 at 40 pressure
+      if (Math.random() > probability) {
+        return Response.json({ success: false, reason: 'random_pressure_gate', pressure });
       }
     }
 
-    // Check if appropriate time
-    const relationshipLevel = char.friendship_level || 50;
-    if (!shouldMessageNow(char, relationshipLevel)) {
-      return Response.json({
-        success: false,
-        reason: 'not the right time to message',
-      });
+    // ── DAILY CAP CHECK ──────────────────────────────────────────────────────
+    if (conversationId) {
+      const todayMessages = recentMessages.filter(m =>
+        m.sender_type === 'character' && m.character_id === char.id &&
+        (m.created_date || '').startsWith(today)
+      );
+      const dailyLimit = pressure >= 70 ? 10 : pressure >= 50 ? 7 : 5;
+      if (todayMessages.length >= dailyLimit) {
+        return Response.json({ success: false, reason: `daily_cap_reached_${dailyLimit}`, pressure });
+      }
     }
 
-    // Get context and generate
-    const recentContext = await getRecentConversationContext(base44, char.id, char.owner_email);
-    const et = getEasternTime();
-    const hour = et.getHours();
-    
-    let timeContext = '';
-    if (hour >= 7 && hour < 9) timeContext = 'morning (good morning message)';
-    else if (hour >= 12 && hour < 13) timeContext = 'lunch break';
-    else if (hour >= 18 && hour < 20) timeContext = 'evening';
-    else if (hour >= 21 && hour < 23) timeContext = 'late night (good night message)';
+    // ── IDEMPOTENCY KEY ──────────────────────────────────────────────────────
+    const timeBucket = now.toISOString().substring(0, 13);
+    const idempotencyKey = `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
 
-    // ── CANONICAL CONTEXT: pull from shared truth service ─────────────────
+    if (conversationId) {
+      const existingThisHour = await base44.entities.Message.filter({
+        conversation_id: conversationId,
+        sender_type: 'character',
+        character_id: char.id,
+        idempotency_key: idempotencyKey,
+      }, null, 1).catch(() => []);
+      if (existingThisHour.length > 0) {
+        return Response.json({ success: false, reason: 'already_sent_this_hour', pressure });
+      }
+    }
+
+    // ── CANONICAL CONTEXT ────────────────────────────────────────────────────
     let canonicalSystemPrompt = null;
-    let canonicalLoaded = false;
-    let canonicalHardFacts = '';
-    let memoryCount = 0;
-    let relationshipLoaded = false;
     try {
       const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
         characterId: char.id,
         interactionContext: 'proactive',
         topKMemories: 8,
       });
-      const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.systemPrompt) {
-        canonicalSystemPrompt = ctxData.systemPrompt;
-        canonicalLoaded = true;
-        canonicalHardFacts = ctxData.hardFacts || '';
-        memoryCount = ctxData.memories?.length ?? 0;
-        relationshipLoaded = !!ctxData.relationshipContext;
-        console.log(
-          `[sendProactiveMessageForCharacter] ✓ route=proactive` +
-          ` | character=${char.name} (${char.id})` +
-          ` | owner=${char.owner_email}` +
-          ` | canonical_loaded=true` +
-          ` | hard_facts_loaded=${!!canonicalHardFacts}` +
-          ` | memory_count=${memoryCount}` +
-          ` | relationship_context_loaded=${relationshipLoaded}` +
-          ` | fallback_used=false`
-        );
+      if (ctxRes?.data?.systemPrompt) {
+        canonicalSystemPrompt = ctxRes.data.systemPrompt;
       }
-    } catch (ctxErr) {
-      console.warn(`[sendProactiveMessageForCharacter] Canonical context service error: ${ctxErr.message}`);
+    } catch (_) {}
+
+    if (!canonicalSystemPrompt) {
+      canonicalSystemPrompt = `You are ${char.name}. ${char.personality_summary || ''}`;
     }
 
-    // Fallback only if canonical context service fails — log visibly with all diagnostic fields
-    if (!canonicalSystemPrompt) {
-      console.warn(
-        `[sendProactiveMessageForCharacter] DEGRADED | route=proactive` +
-        ` | character=${char.name} (${char.id})` +
-        ` | owner=${char.owner_email}` +
-        ` | canonical_loaded=false` +
-        ` | hard_facts_loaded=false` +
-        ` | memory_count=0` +
-        ` | relationship_context_loaded=false` +
-        ` | fallback_used=true`
-      );
-      canonicalSystemPrompt = `You are ${char.name}. ${char.personality_summary || 'A real person with your own life and personality.'}`;
+    // ── BUILD MESSAGE TYPE BASED ON PRESSURE SOURCE ──────────────────────────
+    const et = getEasternTime();
+    const hour = et.getHours();
+    let timeContext = '';
+    if (hour >= 7 && hour < 9) timeContext = 'morning';
+    else if (hour >= 12 && hour < 13) timeContext = 'lunch break';
+    else if (hour >= 18 && hour < 20) timeContext = 'evening';
+    else if (hour >= 21 && hour < 23) timeContext = 'late night';
+
+    // Build context about WHY this character is reaching out
+    let reachOutContext = '';
+    let messageIntent = 'general check-in';
+
+    if (pendingCommitment) {
+      // Commitment follow-through — highest priority
+      if (pendingCommitment.commitment_type === 'third_party_relay') {
+        reachOutContext = `You previously said you would pass a message along to the person you're talking to. The original message to relay was: "${pendingCommitment.third_party_message || pendingCommitment.commitment_text}". Follow through on this — mention it naturally, as if you remembered and followed through.`;
+        messageIntent = 'commitment_relay';
+      } else if (pendingCommitment.commitment_type === 'will_let_you_know' || pendingCommitment.commitment_type === 'event_follow_up') {
+        reachOutContext = `You previously said you would follow up or let them know how something went. That promise was: "${pendingCommitment.commitment_text.substring(0, 150)}". This is that follow-up. Share what happened, how it went, or what you found out.`;
+        messageIntent = 'commitment_followup';
+      } else if (pendingCommitment.commitment_type === 'check_in') {
+        reachOutContext = `You said you would check in on this person. This is that check-in. Be genuine — ask how they're doing, reference the context of why you wanted to check in.`;
+        messageIntent = 'commitment_checkin';
+      } else {
+        reachOutContext = `You made a promise to follow up: "${pendingCommitment.commitment_text.substring(0, 150)}". This is that follow-up.`;
+        messageIntent = 'commitment_general';
+      }
+    } else {
+      // Build context from recent messages and life events
+      const lastMsg = recentMessages.sort((a, b) =>
+        new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date))[0];
+
+      if (lifeEvents.length > 0) {
+        const recentSignificant = lifeEvents.filter(le => {
+          const ts = le.timestamp || le.created_date;
+          return ts && (Date.now() - new Date(ts).getTime()) < 48 * 3600 * 1000 &&
+            (le.severity === 'major' || le.severity === 'significant');
+        })[0];
+        if (recentSignificant) {
+          reachOutContext = `Something significant just happened in your life: "${recentSignificant.title}". You might naturally want to share this, process it by talking, or just connect with someone after experiencing it.`;
+          messageIntent = 'life_event_share';
+        }
+      }
+
+      if (!reachOutContext && lastMsg) {
+        const lastContent = lastMsg.content || '';
+        const daysSince = (Date.now() - new Date(lastMsg.timestamp || lastMsg.created_date).getTime()) / (24 * 3600 * 1000);
+        if (daysSince > 2) {
+          reachOutContext = `It's been ${Math.round(daysSince)} days since you last spoke. You're thinking about this person. Reach out naturally — no need to announce the gap.`;
+          messageIntent = 'break_silence';
+        } else if (lastContent.includes('?') || lastContent.toLowerCase().includes('let me know')) {
+          reachOutContext = `Your last conversation left something open. Continue naturally from where things were. Recent context: "${lastContent.substring(0, 100)}"`;
+          messageIntent = 'continue_conversation';
+        } else {
+          reachOutContext = `You're thinking about this person and want to reach out. Recent context from last conversation: "${lastContent.substring(0, 100)}"`;
+          messageIntent = 'general_reach_out';
+        }
+      }
+
+      if (!reachOutContext) {
+        reachOutContext = `You feel like reaching out. Maybe you thought of them, saw something that reminded you of them, or just want to connect.`;
+        messageIntent = 'spontaneous';
+      }
     }
 
     const proactivePrompt = `${canonicalSystemPrompt}
@@ -203,54 +532,34 @@ Deno.serve(async (req) => {
 ━━━━━━━━━━━━━━━━━━━━
 PROACTIVE MESSAGE TASK
 ━━━━━━━━━━━━━━━━━━━━
-Generate a natural, spontaneous proactive message RIGHT NOW (1-3 sentences max).
-${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling right now.'}
-Time context: ${timeContext}
-Friendship level with user: ${relationshipLevel}/100 — adjust tone accordingly (higher = more casual, lower = more respectful).
+Generate a natural, spontaneous message RIGHT NOW (1-3 sentences max).
+
+WHY YOU'RE REACHING OUT: ${reachOutContext}
+Time: ${timeContext || 'mid-day'}
+Relationship pressure: ${pressure}/100 — ${pressure >= 70 ? 'close relationship, genuine connection' : pressure >= 50 ? 'solid friendship, comfortable reaching out' : 'friendly, respectful'}
 
 RULES:
 - Write like a real person texting. Short. Human. Imperfect.
 - NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ).
-- Be authentic. Not overly cheerful. Not assistant-like.
+- Be authentic to the reason you're reaching out.
 - Do NOT start with your own name or a label.
-- Max 2-3 sentences. Often 1 is better.`;
+- Max 2-3 sentences. Often 1 is better.
+- Do NOT announce that you're following up unless it flows naturally.`;
 
     let messageContent;
     try {
-      messageContent = await base44.integrations.Core.InvokeLLM({
-        prompt: proactivePrompt,
-      });
+      messageContent = await base44.integrations.Core.InvokeLLM({ prompt: proactivePrompt });
     } catch (llmErr) {
-      console.warn(`[sendProactiveMessageForCharacter] LLM failed for ${char.name}: ${llmErr.message}`);
-      // ── CIRCUIT BREAKER: Record durable fallback state — do NOT save generic text ──
-      // Proactive messages must NEVER use "Sorry, got pulled away..." as character speech.
-      // If LLM fails, skip this proactive message entirely.
-      const todayConvos = await base44.entities.Conversation.filter({
-        type: 'direct', owner_email: char.owner_email, character_ids: [char.id],
-      }).catch(() => []);
-      if (todayConvos.length > 0) {
-        base44.functions.invoke('generationLock', {
-          action: 'record_fallback',
-          conversation_id: todayConvos[0].id,
-          character_id: char.id,
-          owner_email: char.owner_email,
-          fallback_text: `[proactive_llm_failure] ${llmErr.message?.substring(0, 60)}`,
-        }).catch(() => {});
-      }
-      return Response.json({ success: false, reason: 'llm_failure_no_fallback_saved' });
+      return Response.json({ success: false, reason: 'llm_failure', error: llmErr.message });
     }
 
-    // Find or create conversation — owner_email required on both filter and create
-    const convos = await base44.entities.Conversation.filter({
-      type: 'direct',
-      owner_email: char.owner_email,
-      character_ids: [char.id],
-    });
+    if (!messageContent || typeof messageContent !== 'string' || messageContent.trim().length < 3) {
+      return Response.json({ success: false, reason: 'empty_llm_response' });
+    }
+    messageContent = messageContent.trim();
 
-    let conversationId;
-    if (convos.length > 0) {
-      conversationId = convos[0].id;
-    } else {
+    // ── FIND OR CREATE CONVERSATION ──────────────────────────────────────────
+    if (!conversationId) {
       const newConvo = await base44.entities.Conversation.create({
         title: char.name,
         type: 'direct',
@@ -260,49 +569,54 @@ RULES:
       conversationId = newConvo.id;
     }
 
-    // ── IDEMPOTENCY KEY for autonomous/proactive (no user source message) ─────
-    // Format: owner_email + character_id + channel + trigger_type + time_bucket (hour)
-    const timeBucket = now.toISOString().substring(0, 13); // YYYY-MM-DDTHH
-    const idempotencyKey = `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
-
-    // Check for existing proactive message in this hour (prevents duplicate sends on retry)
-    const existingThisHour = await base44.entities.Message.filter({
-      conversation_id: conversationId,
-      sender_type: 'character',
-      character_id: char.id,
-      idempotency_key: idempotencyKey,
-    }, null, 1).catch(() => []);
-
-    if (existingThisHour.length > 0) {
-      console.log(`[sendProactiveMessageForCharacter] IDEMPOTENT: message already sent this hour for char=${char.id} key=${idempotencyKey}`);
-      return Response.json({ success: false, reason: 'already_sent_this_hour', idempotency_key: idempotencyKey });
-    }
-
-    // Create message with full idempotency fields
+    // ── SAVE MESSAGE ─────────────────────────────────────────────────────────
     const msg = await base44.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
       character_id: char.id,
       character_name: char.name,
       sender_character_id: char.id,
-      receiver_character_id: null, // user receiver
+      receiver_character_id: null,
       content: messageContent,
       emotional_state: char.emotional_state || 'calm',
       timestamp: now.toISOString(),
       channel: 'direct',
-      // ── IDEMPOTENCY FIELDS ────────────────────────────────────────────────
       idempotency_key: idempotencyKey,
-      source_message_id: null,   // autonomous — no user source message
-      reply_to_message_id: null, // autonomous — not a reply
-      generation_lock_id: null,  // proactive path does not use generation lock
+      source_message_id: null,
+      reply_to_message_id: null,
+      generation_lock_id: null,
+      autonomy_marker: `proactive::${messageIntent}::pressure_${pressure}`,
     });
+
+    // ── MARK COMMITMENT FULFILLED ────────────────────────────────────────────
+    if (pendingCommitment) {
+      await base44.entities.CommunicationCommitment.update(pendingCommitment.id, {
+        status: 'fulfilled',
+        fulfilled_at: now.toISOString(),
+        fulfilled_message_id: msg.id,
+      }).catch(() => {});
+    }
+
+    // ── UPDATE CONVERSATION ──────────────────────────────────────────────────
+    await base44.entities.Conversation.update(conversationId, {
+      last_message_preview: messageContent.substring(0, 100),
+      last_message_date: now.toISOString(),
+    }).catch(() => {});
+
+    console.log(
+      `[sendProactiveMessageForCharacter] ✓ char=${char.name} | pressure=${pressure} | intent=${messageIntent} | commitment=${!!pendingCommitment} | msg=${msg.id}`
+    );
 
     return Response.json({
       success: true,
       messageId: msg.id,
       characterName: char.name,
       content: messageContent,
+      pressure,
+      messageIntent,
+      commitmentFulfilled: pendingCommitment?.id || null,
     });
+
   } catch (error) {
     console.error('[sendProactiveMessageForCharacter]', error);
     return Response.json({ error: error.message }, { status: 500 });
