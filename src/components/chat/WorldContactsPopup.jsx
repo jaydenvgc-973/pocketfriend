@@ -94,18 +94,32 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   // Unread counts per contact — green badge source of truth
   const { unreadByContact, previewByContact } = useWorldContactsUnread(character?.id, contacts, ownerEmail);
 
-  // Track the previous isOpen value to detect rising edge (closed → open)
+  // Increment openGeneration on every rising edge (closed → open) or character switch while open.
+  // This is the sole trigger that causes the contacts fetch to re-run.
+  // Two separate effects to be explicit about each case:
+  //   1. isOpen false→true: always fetch fresh contacts
+  //   2. character?.id changes while open: fetch contacts for the new character
   const prevIsOpenRef = useRef(false);
+  const prevCharacterIdRef = useRef(null);
   useEffect(() => {
     const wasOpen = prevIsOpenRef.current;
     prevIsOpenRef.current = isOpen;
-    if (!isOpen) return;
-    // Rising edge: popup just opened (or character changed while open)
-    if (!wasOpen || !isOpen) {
+    // Rising edge only: was closed, now open
+    if (!wasOpen && isOpen) {
       setOpenGeneration(g => g + 1);
+      base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
     }
-    base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
-  }, [isOpen, character?.id]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    const prevId = prevCharacterIdRef.current;
+    prevCharacterIdRef.current = character?.id;
+    // Character changed while popup is open — fetch contacts for the new character
+    if (isOpen && prevId !== null && prevId !== character?.id) {
+      setOpenGeneration(g => g + 1);
+      base44.auth.me().then(me => { if (me?.email) setOwnerEmail(me.email); }).catch(() => {});
+    }
+  }, [character?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── PANEL OPEN RECONCILIATION ────────────────────────────────────────────────
   // When the panel opens, sweep ALL green-channel conversations for this character
