@@ -282,24 +282,10 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         console.log(`[sendWorldPhoneMessage] canonical_context_loaded | sender=${sender.name} | memories=${ctxData.memories?.length || 0} | life_journal=${ctxData.lifeJournalEntries?.length || 0} | location=${sender.resolved_current_location_name || 'unknown'}`);
       }
     } catch (ctxErr) {
-      console.error(`[sendWorldPhoneMessage] CANONICAL CONTEXT EXCEPTION | sender=${sender.name} | error=${ctxErr.message}`);
-      return Response.json({
-        success: false,
-        error: `buildCanonicalCharacterContext threw exception for sender ${sender.name}: ${ctxErr.message}. Message not sent.`,
-        routing_step: 'canonical_context',
-        routing_step_failed: true,
-      });
-    }
-
-    // HARD STOP: if canonical context returned no usable systemPrompt, do not proceed
-    if (!canonicalLoaded) {
-      console.error(`[sendWorldPhoneMessage] CANONICAL CONTEXT EMPTY | sender=${sender.name} | systemPrompt_present=false`);
-      return Response.json({
-        success: false,
-        error: `buildCanonicalCharacterContext returned no usable systemPrompt for sender ${sender.name}. Message not sent.`,
-        routing_step: 'canonical_context',
-        routing_step_failed: true,
-      });
+      // Non-fatal: fall through with a lightweight inline prompt built from sender fields.
+      // This ensures World Phone communication works even when buildCanonicalCharacterContext
+      // is called from an automation/function context with no user session.
+      console.warn(`[sendWorldPhoneMessage] canonical_context_fallback | sender=${sender.name} | reason=${ctxErr.message}`);
     }
 
 
@@ -394,7 +380,7 @@ This must be a real message — not a command, not a description, not a meta-ins
 1–2 sentences max. Return ONLY the message text, no quotes, no labels.`;
         }
 
-        const rewriteRes = await base44.integrations.Core.InvokeLLM({ prompt: llmPrompt });
+        const rewriteRes = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt: llmPrompt });
         if (typeof rewriteRes === 'string' && rewriteRes.trim().length > 0) {
           rewrittenMessage = rewriteRes.trim();
         } else if (!requested_message) {

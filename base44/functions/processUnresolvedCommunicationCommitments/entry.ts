@@ -23,14 +23,17 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
+    // Soft auth — this runs from scheduled automations without a user session
+    const user = await base44.auth.me().catch(() => null);
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const now = new Date();
     const nowIso = now.toISOString();
 
     // Load pending commitments that are due (due_after <= now OR no due_after set)
-    const allPending = await base44.entities.CommunicationCommitment.filter({
+    // Use asServiceRole since this runs from automation context without a live user session
+    const sr = base44.asServiceRole;
+    const allPending = await sr.entities.CommunicationCommitment.filter({
       status: 'pending',
     }, 'due_after', 50).catch(() => []);
 
@@ -43,7 +46,7 @@ Deno.serve(async (req) => {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
     const expired = due.filter(c => new Date(c.created_at || c.due_after) < sevenDaysAgo);
     for (const c of expired) {
-      await base44.entities.CommunicationCommitment.update(c.id, {
+      await sr.entities.CommunicationCommitment.update(c.id, {
         status: 'expired',
       }).catch(() => {});
     }
@@ -67,9 +70,10 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // Look up the third-party character by name
-          const allChars = await base44.entities.Character.filter({
-            owner_email: user.email,
+          // Look up the third-party character by name — use service role since no user session in automation
+          const charOwnerEmail = commitment.owner_email || user.email;
+          const allChars = await sr.entities.Character.filter({
+            owner_email: charOwnerEmail,
             status: 'active',
           }, null, 200).catch(() => []);
 
@@ -89,7 +93,7 @@ Deno.serve(async (req) => {
 
           // If third_party_character_id not set yet, update it
           if (!commitment.third_party_character_id) {
-            await base44.entities.CommunicationCommitment.update(commitment.id, {
+            await sr.entities.CommunicationCommitment.update(commitment.id, {
               third_party_character_id: targetChar.id,
             }).catch(() => {});
           }
@@ -107,7 +111,7 @@ Deno.serve(async (req) => {
 
           const wpSuccess = wpResult?.data?.success;
 
-          await base44.entities.CommunicationCommitment.update(commitment.id, {
+          await sr.entities.CommunicationCommitment.update(commitment.id, {
             status: wpSuccess ? 'fulfilled' : 'expired',
             fulfilled_at: wpSuccess ? nowIso : null,
             fulfilled_message_id: wpResult?.data?.messageId || null,
@@ -136,7 +140,7 @@ Deno.serve(async (req) => {
             // Don't expire on failure — retry next run unless it's been too long
             const daysOld = (now.getTime() - new Date(commitment.created_at || commitment.due_after).getTime()) / (24 * 3600 * 1000);
             if (daysOld > 3) {
-              await base44.entities.CommunicationCommitment.update(commitment.id, {
+              await sr.entities.CommunicationCommitment.update(commitment.id, {
                 status: 'expired',
               }).catch(() => {});
             }

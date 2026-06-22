@@ -121,28 +121,24 @@ Deno.serve(async (req) => {
     }
 
     if (!finalMessage) {
-      const canonicalRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
-        characterId: senderCharacterId,
-        interactionContext: 'world_phone',
-        topKMemories: 6,
-      }).catch(() => null);
-      const senderContext = canonicalRes?.data?.systemPrompt || `You are ${sender.name}.`;
-
-      // topic is the SUBJECT/REASON — not the user's instruction sentence.
-      // user_instruction_context is stored for context awareness only — never becomes message body.
+      // Build a minimal inline context from sender fields — no function.invoke chaining
+      // needed here since we already have the full sender character record from asServiceRole lookup.
+      const personalityHint = [sender.personality_summary, sender.communication_style, sender.archetype]
+        .filter(Boolean).join('. ');
       const topicForGeneration = topic || (user_instruction_context
         ? `reaching out (context: ${user_instruction_context})`
         : 'catching up');
 
       finalMessage = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `${senderContext}
+        prompt: `You are ${sender.name}. ${personalityHint ? `Personality: ${personalityHint}.` : ''}
+Emotional state: ${sender.emotional_state || 'calm'}.
 
 You are writing a text message to ${resolvedReceiverName || 'someone you know'}.
 Topic/reason: ${topicForGeneration}
 
 IMPORTANT RULES:
 - Write this message in YOUR OWN voice as ${sender.name}.
-- This is the message YOU are sending TO ${resolvedReceiverName || 'them'} — not something you say to the user.
+- This is the message YOU are sending TO ${resolvedReceiverName || 'them'}.
 - Do NOT repeat or echo any instruction you were given. Generate original content.
 - Keep it short, natural, 1-3 sentences. Spontaneous and real.
 - Return ONLY the message text. Nothing else.`,
@@ -206,7 +202,7 @@ IMPORTANT RULES:
     });
 
   } catch (error) {
-    console.error('[triggerCharacterContact] Fatal:', error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    console.error('[triggerCharacterContact] Fatal:', error.message, error.stack?.substring(0, 300));
+    return Response.json({ error: error.message, stack: error.stack?.substring(0, 300) }, { status: 500 });
   }
 });

@@ -237,7 +237,7 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
       if (!pattern.test(content)) continue;
 
       // Check if we already created a commitment for this message
-      const existing = await base44.entities.CommunicationCommitment.filter({
+      const existing = await base44.asServiceRole.entities.CommunicationCommitment.filter({
         source_message_id: msg.id,
         character_id: char.id,
       }, null, 1).catch(() => []);
@@ -245,7 +245,7 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
 
       const dueAfter = new Date(new Date(msg.timestamp || msg.created_date).getTime() + dueHours * 3600 * 1000);
 
-      await base44.entities.CommunicationCommitment.create({
+      await base44.asServiceRole.entities.CommunicationCommitment.create({
         character_id: char.id,
         character_name: char.name,
         owner_email: ownerEmail,
@@ -273,7 +273,7 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
       if (!thirdPartyName || thirdPartyName.length < 2) continue;
 
       // Check if already recorded
-      const existing = await base44.entities.CommunicationCommitment.filter({
+      const existing = await base44.asServiceRole.entities.CommunicationCommitment.filter({
         source_message_id: msg.id,
         commitment_type: 'third_party_relay',
       }, null, 1).catch(() => []);
@@ -281,7 +281,7 @@ async function detectAndRecordCommitments(base44, char, messages, conversationId
 
       const dueAfter = new Date(new Date(msg.timestamp || msg.created_date).getTime() + 6 * 3600 * 1000);
 
-      await base44.entities.CommunicationCommitment.create({
+      await base44.asServiceRole.entities.CommunicationCommitment.create({
         character_id: char.id,
         character_name: char.name,
         owner_email: ownerEmail,
@@ -491,6 +491,7 @@ Deno.serve(async (req) => {
         characterId: char.id,
         interactionContext: 'proactive',
         topKMemories: 8,
+        ownerEmailHint: char.owner_email,
       });
       if (ctxRes?.data?.systemPrompt) {
         canonicalSystemPrompt = ctxRes.data.systemPrompt;

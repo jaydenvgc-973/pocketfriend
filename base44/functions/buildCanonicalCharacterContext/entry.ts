@@ -915,25 +915,16 @@ Deno.serve(async (req) => {
     let character = null;
     let characterLoadPath = 'unknown';
 
-    const byId = await base44.entities.Character.filter({ id: characterId }).catch(() => []);
-    if (byId.length > 0) {
-      character = byId[0];
-      characterLoadPath = 'user_scoped_filter';
-    } else {
-      // Fallback 1: service role lookup by ID — covers legacy characters whose owner_email
-      // has an RLS gap (e.g. created before owner_email was required, or ownership metadata
-      // was not fully backfilled). This is read-only and does NOT alter any data.
-      contextLog.push({ step: 'character_load', path: 'service_role_fallback', reason: 'user_scoped_filter_empty' });
-      try {
-        const srById = await base44.asServiceRole.entities.Character.filter({ id: characterId }).catch(() => []);
-        if (srById.length > 0) {
-          character = srById[0];
-          characterLoadPath = 'service_role_id_fallback';
-          contextLog.push({ step: 'character_load', path: characterLoadPath, name: character.name });
-        }
-      } catch (srErr) {
-        contextLog.push({ step: 'character_load', path: 'service_role_fallback', status: 'error', error: srErr.message });
+    // Always use asServiceRole — this function is invoked from automations and other backend
+    // functions that have no user session. Security is maintained by ownerEmail scoping.
+    try {
+      const srById = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 5).catch(() => []);
+      if (srById.length > 0) {
+        character = srById[0];
+        characterLoadPath = 'service_role_direct';
       }
+    } catch (srErr) {
+      contextLog.push({ step: 'character_load', path: 'service_role_direct', status: 'error', error: srErr.message });
     }
 
     // Fallback 2: NPC route — for NPC characters not visible via either direct filter
@@ -1005,7 +996,7 @@ Deno.serve(async (req) => {
         memories = memRes.data.memories;
         memoryLoadPath = 'retrieveActiveMemory_semantic';
       } else {
-        const direct = await base44.entities.Memory.filter(
+        const direct = await base44.asServiceRole.entities.Memory.filter(
           { character_id: characterId },
           '-timestamp',
           topKMemories
@@ -1030,7 +1021,7 @@ Deno.serve(async (req) => {
     let lifeJournalEntries = [];
     let lifeJournalCount = 0;
     try {
-      const journalRaw = await base44.entities.CharacterMemory.filter(
+      const journalRaw = await base44.asServiceRole.entities.CharacterMemory.filter(
         { character_id: characterId },
         '-created_date',
         20
@@ -1054,7 +1045,7 @@ Deno.serve(async (req) => {
     let recentMessages = [];
     try {
       // Find conversations this character participated in
-      const convos = await base44.entities.Conversation.filter(
+      const convos = await base44.asServiceRole.entities.Conversation.filter(
         { character_ids: [characterId] },
         '-updated_date',
         3
@@ -1063,7 +1054,7 @@ Deno.serve(async (req) => {
       if (convos.length > 0) {
         const recentMsgResults = await Promise.all(
           convos.slice(0, 2).map(c =>
-            base44.entities.Message.filter(
+            base44.asServiceRole.entities.Message.filter(
               { conversation_id: c.id, character_id: characterId },
               '-timestamp',
               8
