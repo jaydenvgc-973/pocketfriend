@@ -37,6 +37,31 @@ export function buildSleepEnergyAutonomyContext(character) {
     ? `preferred sleep window: ${character.sleep_start_time} – ${character.wake_up_time} (guidance only, not a command)`
     : 'no explicit sleep window set';
 
+  // ── PASSED_OUT STATE: inject dedicated block first ────────────────────────
+  if (character.resolved_presence_status === 'passed_out') {
+    return `
+════════════════════════════════════
+⚠️ CURRENT ENERGY STATE: PASSED OUT — INVOLUNTARY FORCED RECOVERY
+This is NOT voluntary sleep. This is NOT a nap. This is physical collapse.
+════════════════════════════════════
+Energy at collapse: ${energy}/100 (CRITICALLY LOW — body forced shutdown)
+Pass-out count: ${character.pass_out_count ?? 0} — each pass-out increases future sleep urgency
+Recovery rate: +8/hr (SLOWER than normal sleep +12.5/hr — body recovering from failure)
+Recovery cap: 12 hours (then wakes regardless of energy)
+Wake state: groggy, stiff, embarrassed — NOT refreshed
+
+WHAT THIS MEANS FOR DIALOGUE AND BEHAVIOR:
+• When discussing this event: always preserve the involuntary, forced nature
+• CORRECT: "I passed out", "I collapsed", "my body gave out", "I don't remember lying down"
+• FORBIDDEN: "I was sleeping", "I went to bed", "I was resting", "I laid down to rest"
+• On waking: reference groggy confusion, physical stiffness, embarrassment, lost time
+• This is a negative event — not comfortable, not chosen, not restorative in the normal sense
+• Future sleep decisions will be pressured by this memory — the character avoids repeating it
+
+Sleep/rest context: ${sleepWindow}
+════════════════════════════════════`;
+  }
+
   return `
 ════════════════════════════════════
 ENERGY & AUTONOMY SYSTEM — CHARACTER REASONING RULES
@@ -106,6 +131,16 @@ When asleep or napping, character-driven activities STOP.
 You are not traveling, socializing, shopping, or planning while asleep.
 Energy recovers during rest. That is the only system that continues.
 The system becomes quieter — not busier — when you are asleep.
+
+━━ PASSED OUT IS NOT SLEEP ━━
+resolved_presence_status = 'passed_out' is a SEPARATE state from sleeping.
+It means: involuntary physical collapse from exhaustion. The character did NOT choose this.
+  • Recovery rate: +8/hr (NOT +12.5/hr — body healing from failure)
+  • Cap: 12 hours (NOT 8 hours)
+  • Wake state: groggy, embarrassed, physically drained — NOT rested
+  • NEVER describe as "sleeping", "resting", "napping", or "bedtime"
+  • ALWAYS describe as: "passed out", "collapsed", "forced recovery", "body gave out"
+  • Future behavior: increased urgency to sleep earlier — character remembers this was unpleasant
 
 ━━ SOCIAL NEEDS DO NOT WAKE YOU ━━
 Social, entertainment, and recreation needs do NOT interrupt sleep.
@@ -842,9 +877,12 @@ The arrival commitment governs this response. Honor it.
 export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   if (!character) return '';
 
-  // SLEEP GUARD: When the character is asleep, household co-presence is passive context only.
-  // Do NOT inject active recognition demands into the sleeping character's prompt.
-  const isAsleep = ['sleeping','napping'].includes(character.resolved_presence_status);
+  // SLEEP/PASSOUT GUARD: When the character is asleep or passed_out, household co-presence
+  // is passive context only — do NOT inject active recognition demands.
+  // passed_out is involuntary forced recovery — it must be treated the same as asleep for
+  // awareness purposes, but uses distinct wording to preserve the forced-recovery distinction.
+  const isAsleep = ['sleeping', 'napping', 'passed_out'].includes(character.resolved_presence_status);
+  const isPassedOut = character.resolved_presence_status === 'passed_out';
 
   const charHomeId = character.current_home_location_id || character.resolved_current_location_id;
   const charCurrentLocId = character.resolved_current_location_id;
@@ -917,21 +955,26 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   });
 
   if (isAsleep) {
-    // Sleeping character: co-presence is passive context only. No active awareness demands.
+    const stateLabel = isPassedOut
+      ? 'PASSED OUT (forced recovery from exhaustion — involuntary collapse)'
+      : 'ASLEEP';
+    const passiveNote = isPassedOut
+      ? 'You are passed out from exhaustion — this was NOT a voluntary choice. You collapsed involuntarily. You are NOT sleeping normally — you are in forced physical recovery.'
+      : 'You are asleep — this was a voluntary rest choice.';
+    // Passed-out or sleeping: co-presence is passive context only. No active awareness demands.
     return `\n\n════════════════════════════════════
-HOUSEHOLD & CO-PRESENCE — PASSIVE CONTEXT (character is ASLEEP)
+HOUSEHOLD & CO-PRESENCE — PASSIVE CONTEXT (character is ${stateLabel})
 ════════════════════════════════════
-You are currently ASLEEP. The following people share this location while you sleep:
+${passiveNote}
+The following people share this location while you recover:
 
 ${lines.join('\n')}
 
-PASSIVE RULES FOR SLEEP:
-• You are asleep — do NOT generate dialogue or active awareness.
+PASSIVE RULES FOR RECOVERY STATE:
+• You are ${isPassedOut ? 'passed out / in forced recovery' : 'asleep'} — do NOT generate dialogue or active awareness.
 • These people are nearby but you are NOT interacting with them.
-• Their presence may affect your comfort, safety, or emotional state during sleep based on your relationship.
-• If you trust or love someone here, their presence may make your sleep more restful.
-• If you fear or distrust someone here, their presence may make your sleep more restless.
-• But in ALL cases — you remain ASLEEP. No active recognition is required.
+• Their presence may affect your comfort, safety, or emotional state during recovery.
+• But in ALL cases — you remain ${isPassedOut ? 'passed out' : 'asleep'}. No active recognition is required.
 ════════════════════════════════════`;
   }
 

@@ -497,6 +497,15 @@ function buildHardFacts(character) {
   // Stale comfort/energy/needs values MUST NOT drive sleep labeling or dialogue.
   const rp = character.resolved_presence_status || '';
   const dbIsSleeping = rp === 'sleeping' || rp === 'napping';
+  const dbIsPassedOut = rp === 'passed_out';
+
+  // ── PASSED_OUT STATE — HARD FACT (mechanically distinct from sleeping) ────
+  // passed_out is involuntary physical collapse. It is NOT sleep. It must NEVER
+  // be described as sleeping, resting normally, or going to bed.
+  // Recovery rate: +8/hr (not +12.5/hr). Cap: 12h (not 8h). Never → sleeping.
+  if (dbIsPassedOut) {
+    lines.push(`CURRENT STATE: PASSED OUT — INVOLUNTARY FORCED RECOVERY. This is NOT sleep. The character COLLAPSED from exhaustion. They did NOT choose this.\nFORBIDDEN WORDING: "sleeping", "went to bed", "resting", "took a nap", "bedtime", "going to sleep".\nREQUIRED WORDING: "passed out", "collapsed", "forced recovery", "body gave out", "involuntary collapse".\nRECOVERY: energy restoring at +8/hr (NOT the normal sleep rate of +12.5/hr). Cap: 12 hours. Releases directly to awake state — NEVER transitions to sleeping.\nWAKE EXPERIENCE: groggy, stiff, embarrassed, confused about time — NOT refreshed. Body just failed them.`);
+  }
 
   if (dbIsSleeping) {
     // Run schedule-based guards before accepting the DB sleep state as truth
@@ -737,7 +746,11 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
 
   // Determine if the speaking character is asleep — co-presence must be passive context only
   const charStatus = speakingCharacter?.resolved_presence_status || '';
+  // passed_out is mechanically distinct from sleeping but still requires passive-only co-presence.
+  // Use isRecovering to capture both sleep states and pass-out for the co-presence guard.
   const isSpeakingCharAsleep = charStatus === 'sleeping' || charStatus === 'napping';
+  const isSpeakingCharPassedOut = charStatus === 'passed_out';
+  const isSpeakingCharRecovering = isSpeakingCharAsleep || isSpeakingCharPassedOut;
 
   // If both location IDs are missing, fail visibly rather than silently
   if (presenceMissing) {
@@ -748,9 +761,12 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
 
   block += `Your current location: ${speakingCharacterLocationName || 'unknown'}\n`;
 
-  if (isSpeakingCharAsleep) {
-    // ── SLEEP-AWARE CO-PRESENCE — passive context only, no wake demand ──────
-    block += `CO-PRESENCE WHILE ASLEEP: You are currently ${charStatus}. This is passive awareness only — do NOT wake, do NOT generate awake behavior, do NOT respond.\n`;
+  if (isSpeakingCharRecovering) {
+    // ── SLEEP/PASSOUT-AWARE CO-PRESENCE — passive context only, no wake demand ──
+    const stateLabel = isSpeakingCharPassedOut
+      ? 'PASSED OUT (involuntary forced recovery — NOT voluntary sleep)'
+      : charStatus;
+    block += `CO-PRESENCE WHILE ${isSpeakingCharPassedOut ? 'PASSED OUT' : 'ASLEEP'}: You are currently ${stateLabel}. This is passive awareness only — do NOT wake, do NOT generate awake behavior, do NOT respond.\n`;
     if (userPresentHere) {
       block += `The user is sharing this space (${userLocationName || speakingCharacterLocationName}) while you sleep.`;
       if (charactersPresentHere.length > 0) {
@@ -761,6 +777,7 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
     }
   } else if (userPresentHere) {
     block += `USER IS HERE WITH YOU: YES\n`;
+    // Note: isSpeakingCharRecovering already handled above, so we only reach here when awake.
     block += `The user is physically present at your current location (${userLocationName || speakingCharacterLocationName}).\n`;
     block += `MANDATORY: You must recognize the user as physically present. Do NOT act as if you are alone. Do NOT say "unless you're standing on my porch" or suggest the user isn't there — they ARE there.\n`;
   } else {
@@ -768,7 +785,7 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
     block += `The user is NOT at your current location. Do NOT imply they are nearby. Do NOT invent shared presence.\n`;
   }
 
-  if (!isSpeakingCharAsleep && charactersPresentHere.length > 0) {
+  if (!isSpeakingCharRecovering && charactersPresentHere.length > 0) {
         block += `\nOTHER VERIFIED CHARACTERS PRESENT HERE:\n`;
         for (const c of charactersPresentHere) {
           if (c.awarenessLevel === 'known') {
@@ -781,7 +798,7 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
         }
         block += `RULE: Do NOT invent familiarity. Only treat someone as known if listed as known above.\n`;
         block += `You must recognize these characters as physically present with you.\n`;
-      } else if (!isSpeakingCharAsleep) {
+      } else if (!isSpeakingCharRecovering) {
         block += `\nOTHER CHARACTERS PRESENT HERE: None verified.\n`;
         block += `Do NOT mention or imply any other character is physically nearby unless listed above.\n`;
       }
@@ -1143,9 +1160,10 @@ Deno.serve(async (req) => {
               if (c.id === characterId) return false; // skip self
               if (!c.resolved_current_location_id) return false;
               if (c.resolved_current_location_id !== charLocationId) return false;
-              // Exclude sleeping, traveling, incarcerated characters
+              // Exclude sleeping, passed_out, traveling, incarcerated characters
+              // passed_out = involuntary forced recovery — same exclusion as sleeping
               const ps = c.resolved_presence_status;
-              if (ps === 'sleeping' || ps === 'napping') return false;
+              if (ps === 'sleeping' || ps === 'napping' || ps === 'passed_out') return false;
               if (c.is_jailed) return false;
               if (c.travel_status && c.travel_status !== 'not_traveling') return false;
               return true;
@@ -1305,9 +1323,13 @@ Deno.serve(async (req) => {
       const lines = lifeJournalEntries.slice(0, 8).map(e => {
         const text = e.memory_text || e.description || e.title || '';
         const score = e.importance_score ? ` [importance: ${e.importance_score}]` : '';
-        return `- ${text.substring(0, 200)}${score}`;
+        // Preserve pass-out memory wording exactly — never summarize as "slept" or "rested"
+        const passOutMarker = (text.toLowerCase().includes('passed out') ||
+          text.toLowerCase().includes('collapsed') || text.toLowerCase().includes('forced recovery'))
+          ? ' [PASS-OUT EVENT — not ordinary sleep]' : '';
+        return `- ${text.substring(0, 200)}${score}${passOutMarker}`;
       });
-      lifeJournalBlock = `\nLIFE JOURNAL — LONGITUDINAL NARRATIVE RECORD (${lifeJournalEntries.length} significant entries):\n${lines.join('\n')}\n`;
+      lifeJournalBlock = `\nLIFE JOURNAL — LONGITUDINAL NARRATIVE RECORD (${lifeJournalEntries.length} significant entries):\n${lines.join('\n')}\nNOTE: Entries marked [PASS-OUT EVENT] describe involuntary physical collapse — NOT voluntary sleep. Never summarize these as "sleeping" or "resting." Always preserve the forced/involuntary nature.\n`;
     }
 
     // ── Step 9: World-State Reconciliation (BEFORE recent message context) ───
@@ -1357,7 +1379,8 @@ Deno.serve(async (req) => {
       // this is an authority conflict. Inject an explicit override warning into the
       // world-state block so the LLM never defers to stale needs/comfort/cache.
       let staleCacheWarning = '';
-      if (charResolved === 'sleeping' || charResolved === 'napping') {
+      // passed_out also gets stale-cache check — it's a DB-driven state that can conflict with schedules
+      if (charResolved === 'sleeping' || charResolved === 'napping' || charResolved === 'passed_out') {
         const nowMinWS = now.getHours() * 60 + now.getMinutes();
         const dayWS = now.getDay();
         const toMinWS = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };

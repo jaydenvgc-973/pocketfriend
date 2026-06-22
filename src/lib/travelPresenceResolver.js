@@ -173,7 +173,10 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
   // Only truly locationless characters (no home, no schedule, no visit) are absent.
   const isCurrentlyPresent = !!resolvedLocId;
 
+  // passed_out is mechanically distinct from sleeping — it is involuntary forced recovery.
+  // Include it here so the travel map shows passed-out characters at their home (not as missing).
   const isSleeping = resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
+  const isPassedOut = resolvedStatus === 'passed_out';
 
   console.log(`[travelPresenceResolver:normalize] ${char.name} → loc="${resolvedLocName}" status="${resolvedStatus}" sleeping=${isSleeping} source="${canonical.resolved_source_reason}"`);
 
@@ -198,6 +201,7 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
     is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
     is_sleeping: isSleeping,
+    is_passed_out: isPassedOut,
   };
 }
 

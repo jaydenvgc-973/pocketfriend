@@ -333,7 +333,39 @@ You remain fully available and alert at all times regardless of any Life Need va
     ? `\nHARD CONTRADICTION BLOCKS — output must not violate these:\n${contradictions.map(c => `  ✗ ${c}`).join('\n')}`
     : '';
 
-  return `${NEEDS_BEHAVIORAL_PHILOSOPHY}
+  // ── PASSED_OUT CURRENT STATE INJECTION ───────────────────────────────────────
+  // When the character is currently passed out, inject an explicit block BEFORE the needs table.
+  // This is the most important context when the character is in forced recovery.
+  const passedOutBlock = character.resolved_presence_status === 'passed_out' ? `
+════════════════════════════════════
+⚠️ CURRENT STATE: PASSED OUT — FORCED RECOVERY (read this first)
+════════════════════════════════════
+You are NOT asleep. You did NOT choose to rest. You COLLAPSED.
+
+Your body gave out from exhaustion and forced you down involuntarily.
+This is a physically draining, embarrassing, and unpleasant experience.
+
+MANDATORY WORDING when referencing this state:
+  ✓ "I passed out" / "I collapsed" / "my body just gave out"
+  ✓ "I don't even remember lying down" / "I just went down"
+  ✓ "I woke up on the floor/couch/wherever I fell"
+  ✓ "I was out — not asleep, just gone"
+
+FORBIDDEN WORDING:
+  ✗ "I was sleeping" / "I went to bed" / "I took a nap"
+  ✗ "I decided to rest" / "I laid down" / "I was resting normally"
+  ✗ Any wording that implies this was voluntary or restorative in the normal sense
+
+RECOVERY CONTEXT:
+  • Energy recovery is SLOWER than normal sleep — the body is healing from failure, not resting.
+  • When you wake, you are groggy, stiff, possibly confused about time.
+  • You feel some physical embarrassment — you did not manage your own body well.
+  • This experience increases your urgency to sleep earlier in the future.
+  • last_pass_out_at: ${character.last_pass_out_at ? new Date(character.last_pass_out_at).toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true, month: 'short', day: 'numeric' }) : 'recently'}
+  • Pass-out count: ${character.pass_out_count ?? 0}
+════════════════════════════════════` : '';
+
+  return `${NEEDS_BEHAVIORAL_PHILOSOPHY}${passedOutBlock}
 ════════════════════════════════════
 LIVE NEEDS — FULL STATE TRUTH (read before generating any output)
 These values are current and authoritative. They override memory, prior summaries, and stale context.
@@ -351,8 +383,8 @@ ${comboBlock}${contradictionBlock}
 NEEDS CONSISTENCY RULE: Every word of dialogue, every described action, every stated preference, every plan or refusal must be consistent with the need states above. If a proposed output contradicts any of the above states, it must be rewritten before display. Memory is context — it does not override current need values.
 
 ════════════════════════════════════
-CRITICAL — FEELING STATE vs SLEEP STATE (HARD SEPARATION)
-These are two completely different systems. They must NEVER be conflated.
+CRITICAL — FEELING STATE vs SLEEP STATE vs PASS-OUT STATE (HARD SEPARATION)
+These are THREE completely different systems. They must NEVER be conflated.
 ════════════════════════════════════
 FEELING STATE (dialogue — does NOT change any system state):
   "I'm tired." / "I'm sleepy." / "I'm exhausted." / "I didn't sleep well."
@@ -361,18 +393,30 @@ FEELING STATE (dialogue — does NOT change any system state):
   → Saying these words does NOT make the character asleep.
   → The character can say any of these while remaining at school, work, or any location.
 
-SLEEP STATE (system-controlled only — never set by dialogue):
-  resolved_presence_status = 'sleeping' | 'napping'
-  → This is only TRUE when the authoritative sleep resolver confirms it.
-  → This is NEVER triggered by what the character says or feels.
-  → This is NEVER triggered by energy values expressed in dialogue.
+VOLUNTARY SLEEP STATE (resolved_presence_status = 'sleeping' | 'napping'):
+  → Chosen by the character when energy was low and they were at home, free to rest.
+  → Uses the 8-hour sleep cap and last_sleep_start timestamp.
+  → Character woke up because they CHOSE to sleep. It was restorative.
+  → NEVER set by dialogue. Only set by the authoritative simulation.
+
+INVOLUNTARY PASS-OUT STATE (resolved_presence_status = 'passed_out'):
+  → NOT a choice. The character's body FORCED them down — they collapsed from exhaustion.
+  → This is NOT sleep. It is a medical consequence of ignored exhaustion.
+  → Uses the 12-hour cap and last_pass_out_at timestamp.
+  → Recovery rate is SLOWER (+8/hr) than normal sleep (+12.5/hr) — the body is recovering from failure, not resting.
+  → When they wake, they feel groggy, embarrassed, physically drained — NOT refreshed like after normal sleep.
+  → They remember this event. It increases future sleep urgency.
+  → NEVER describe pass-out as "sleeping", "going to bed", "resting normally", or "taking a nap".
+  → ALWAYS preserve the involuntary, forced nature: "passed out", "collapsed from exhaustion", "forced recovery".
 
 HARD RULES:
-  ✗ NEVER treat "I'm tired" as evidence the character is currently asleep.
+  ✗ NEVER treat "I'm tired" as evidence the character is currently asleep or passed out.
   ✗ NEVER transition a character to sleep state because they said they need sleep.
-  ✗ NEVER change a card label, travel availability, or presence based on fatigue dialogue.
+  ✗ NEVER describe passed_out recovery as "sleeping" or "resting normally".
   ✗ NEVER conflate "planning to sleep later" with "currently sleeping."
+  ✗ NEVER describe the pass-out event as a normal bedtime or voluntary rest.
   ✓ Characters may discuss tiredness freely at any location while remaining fully awake.
   ✓ Sleep intent ("I should get to bed soon") means the character is still awake, planning ahead.
+  ✓ Pass-out waking should reference the collapse: "I passed out", "I don't even remember lying down", "my body just gave out."
 ════════════════════════════════════`;
 }

@@ -236,16 +236,45 @@ export function getCharacterSleepState(character, locationMap) {
     const nowMin    = nowET.getHours() * 60 + nowET.getMinutes();
     const dayOfWeek = nowET.getDay();
 
-    // passed_out is a medical consequence state — always trust DB for it, never a window check
+    // passed_out is an involuntary collapse state — mechanically and visually distinct from sleeping.
+    // isSleeping is FALSE — this is NOT voluntary sleep.
+    // isPassedOut is TRUE — this is forced recovery from exhaustion.
+    // displayLabel must NEVER be 'sleeping'. It is 'passed_out'.
+    // Cap: 12h (not 8h). Timestamp: last_pass_out_at (not last_sleep_start).
+    // Release: energy > 35 OR 12h → home (awake). NEVER transitions to 'sleeping'.
     if (status === 'passed_out') {
+      // Check 12-hour pass-out cap
+      if (character.last_pass_out_at) {
+        const nowET_inner = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const passOutDuration = (nowET_inner.getTime() - new Date(character.last_pass_out_at).getTime()) / 3_600_000;
+        if (passOutDuration >= 12) {
+          // 12h cap exceeded — character should be awake by now
+          return {
+            isSleeping: false,
+            isNapping: false,
+            isPassedOut: false,
+            isAsleep: false,
+            displayLabel: 'awake',
+            contextLabel: null,
+            visible_label: null,
+            confirmed_reason: 'passout_cap_12h_exceeded',
+            evidence_source: 'last_pass_out_at',
+            confidence: 1,
+            stale_risk: true,
+            isLikelyStale: true,
+            blockingCondition: `passout_cap_12h`,
+          };
+        }
+      }
       return {
-        isSleeping: true,
+        isSleeping: false,
         isNapping: false,
+        isPassedOut: true,
         isAsleep: true,
-        displayLabel: 'sleeping',
-        contextLabel: 'Collapsed',
-        visible_label: 'Collapsed',
-        confirmed_reason: 'passed_out_medical',
+        displayLabel: 'passed_out',
+        contextLabel: 'Passed Out',
+        visible_label: 'Passed Out — Forced Recovery',
+        confirmed_reason: 'passed_out_involuntary_collapse',
         evidence_source: 'resolved_presence_status',
         confidence: 1,
         stale_risk: false,
