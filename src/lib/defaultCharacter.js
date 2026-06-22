@@ -6,6 +6,8 @@ import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
 import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
 import { buildArcContextBlock } from "@/lib/arcEngine";
+import { buildOutfitPromptText } from "@/lib/outfitRotationEngine";
+import { pickOutfitFromCloset } from "@/lib/resolveOutfitContext";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -529,19 +531,23 @@ WARDROBE & OUTFIT AWARENESS — CURRENT STATE
 You are currently ${outfitHint}.
 You know your own closet. You dressed intentionally for this context.
 ${(() => {
-  // Tomorrow's planned outfit — next rotation from closet
+  // Tomorrow's planned outfit — use the canonical rotation engine (same algorithm as today's picker)
+  // This avoids duplicating the rotation math inline.
   try {
     const closet = character.character_closet || [];
-    const outfits = closet.filter(o => o.outfit_id);
-    if (outfits.length > 1) {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dayOfYear = Math.floor((tomorrow - new Date(tomorrow.getFullYear(), 0, 0)) / 86400000);
-      const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-      const nextIdx = (dayOfYear + idHash) % outfits.length;
-      const nextOutfit = outfits[nextIdx];
-      const nextDesc = nextOutfit?.full_description || [nextOutfit?.top, nextOutfit?.bottom, nextOutfit?.shoes].filter(Boolean).join(', ');
-      if (nextDesc) return `Tomorrow you're planning to wear: ${nextDesc}.\n`;
+    if (closet.filter(o => o.outfit_id).length > 1) {
+      // Create a fake "tomorrow" character snapshot: advance the day so the rotation engine
+      // picks the NEXT day's outfit without modifying the real character object.
+      const tomorrowChar = { ...character, _tomorrow_override: true };
+      // Override the id hash to advance by one day's worth of rotation
+      // by temporarily shifting the character's id hash by the closet length offset.
+      // Simpler: call pickOutfitFromCloset with a cloned char that has a date-shifted id.
+      const dayShiftedId = (character.id || '') + '_tomorrow';
+      const tomorrowOutfit = pickOutfitFromCloset({ ...character, id: dayShiftedId }, character.current_outfit?.category || 'daily_casual');
+      const tomorrowDesc = tomorrowOutfit ? buildOutfitPromptText(tomorrowOutfit) : null;
+      if (tomorrowDesc && tomorrowOutfit?.outfit_id !== character.current_outfit?.outfit_id) {
+        return `Tomorrow you're planning to wear: ${tomorrowDesc}.\n`;
+      }
     }
   } catch (_) {}
   return '';

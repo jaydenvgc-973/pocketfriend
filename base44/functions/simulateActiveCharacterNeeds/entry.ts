@@ -1846,10 +1846,43 @@ Deno.serve(async (req) => {
             const lastWakeMs = new Date(char.last_wake_time).getTime();
             const awakeHours = (nowET.getTime() - lastWakeMs) / 3_600_000;
             if (awakeHours >= 19) {
+              // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
+              // A character awake for 19+ hours has hit the biological limit.
+              // This is NOT a chosen sleep — it is the same consequence as pass-out.
+              // Treat it identically: record last_pass_out_at, increment pass_out_count,
+              // write CharacterMemory, set stay lock, and redirect to assigned home.
+              // The user-facing distinction must be preserved: current_activity = 'passed out — forced exhaustion'
+              // NOT 'sleeping — bedtime'. This is a collapse, not a choice.
+              const passOutCount19h = (char.pass_out_count ?? 0) + 1;
+
+              // ── HOME PRIORITY: redirect to assigned home before sleeping ──────
+              // A character who collapses from exhaustion should be found at home,
+              // not wherever they happened to be (park, street, random location).
+              // Only redirect if they have an assigned home and are NOT already home.
+              const homeLocId = char.current_home_location_id;
+              const isAlreadyAtHome = char.resolved_current_location_id === homeLocId ||
+                (char.resolved_location_type || '').toLowerCase() === 'home' ||
+                char.resolved_presence_status === 'home';
+              const homeRedirectFields = (homeLocId && !isAlreadyAtHome) ? {
+                resolved_current_location_id: homeLocId,
+                resolved_location_type: 'home',
+                resolved_presence_status: 'home', // will be overwritten to sleeping below
+              } : {};
+
               const awakeLimitPayload = {
+                ...homeRedirectFields,
                 resolved_presence_status: 'sleeping',
-                current_activity: 'forced sleep — 19-hour awake limit',
+                current_activity: 'passed out — forced exhaustion (19-hour limit)',
                 last_sleep_start: nowIso,
+                last_pass_out_at: nowIso,
+                pass_out_count: passOutCount19h,
+                // Stay lock: prevent other automations from clearing recovery
+                presence_stay_lock: true,
+                presence_stay_lock_reason: 'pass_out_recovery',
+                presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
+                presence_stay_lock_set_at: nowIso,
+                presence_stay_lock_created_by: 'system_automation',
+                presence_stay_lock_release_condition: 'energy_above_35',
                 hunger_value:  Math.round(newNeeds.hunger),
                 energy_value:  Math.round(newNeeds.energy),
                 social_value:  Math.round(newNeeds.social),
@@ -1864,16 +1897,29 @@ Deno.serve(async (req) => {
               await base44.entities.LifeEvent.create({
                 character_id: char.id, character_name: charName,
                 event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
-                title: 'Forced sleep — 19-hour awake limit',
-                description: `${charName} was awake for ${Math.round(awakeHours)} hours and forced to sleep.`,
-                emotional_impact: 'exhaustion', triggered_by: 'life_simulation',
-                timestamp: nowIso, context_tags: ['awake_limit', 'forced_sleep'],
+                title: 'Passed out — 19-hour forced exhaustion',
+                description: `${charName} was awake for ${Math.round(awakeHours)} hours and collapsed from exhaustion. Their body forced sleep — this was not a choice. This is their ${passOutCount19h === 1 ? 'first' : passOutCount19h === 2 ? 'second' : `${passOutCount19h}th`} pass-out event.${homeLocId && !isAlreadyAtHome ? ' Returned to assigned home for recovery.' : ''}`,
+                emotional_impact: 'forced collapse, embarrassment, loss of control', triggered_by: 'life_simulation',
+                timestamp: nowIso, context_tags: ['awake_limit', 'passed_out', 'forced_exhaustion', passOutCount19h > 1 ? 'repeat_pass_out' : 'first_pass_out'],
+              }).catch(() => {});
+
+              // CharacterMemory: 19h pass-out increases future sleep pressure identically to energy pass-out
+              await base44.entities.CharacterMemory.create({
+                character_id: char.id,
+                memory_type: 'event',
+                memory_text: `${charName} stayed awake for over ${Math.round(awakeHours)} hours and collapsed from exhaustion — their body forced sleep. This was not voluntary. The experience was draining, embarrassing, and physically difficult. They do not want to repeat it. They should sleep earlier when tired rather than pushing past their limit.`,
+                memory_summary: `Passed out at ${Math.round(awakeHours)}h awake — forced exhaustion, not voluntary sleep.`,
+                importance_score: 8,
+                permanence: 'long_term',
+                related_character_id: char.id,
               }).catch(() => {});
 
               results.push({
                 character: charName, context,
-                event: '19h_awake_forced_sleep',
+                event: '19h_pass_out_forced_exhaustion',
                 awake_hours: Math.round(awakeHours * 100) / 100,
+                home_redirected: !!(homeLocId && !isAlreadyAtHome),
+                pass_out_count: passOutCount19h,
                 needs: {
                   hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
                   social: Math.round(newNeeds.social), health: Math.round(newNeeds.health),
