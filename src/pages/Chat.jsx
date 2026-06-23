@@ -989,23 +989,57 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       const canonicalCacheKey = `canonical::${characterId}`;
 
       // ── CACHE-FIRST: check global runtime cache, then mount cache, then fetch ──
-      // Global cache is warmed by prewarmCharacterRuntime fired on page open.
-      const { getCachedCanonicalPrompt: _gccp, setCachedCanonicalPrompt: _sccp } =
-        await import('@/lib/characterRuntimeCache.js');
+      // Before using any cached prompt, a freshness head-check is performed against
+      // the authoritative records (Message + CommunicationCommitment). If newer records
+      // exist, the cache is bypassed and context is rebuilt. This is mandatory —
+      // TTL and subscription events are optimizations only, not freshness authority.
+      const {
+        getCachedCanonicalPrompt: _gccp,
+        setCachedCanonicalPrompt: _sccp,
+        verifyCachedPromptFreshness: _verifyFreshness,
+      } = await import('@/lib/characterRuntimeCache.js');
+
       const globalCachedPrompt = currentUser?.email
         ? _gccp(currentUser.email, characterId)
         : null;
 
+      // Determine if there is any cached prompt to potentially use
+      const mountCached = systemPromptCacheRef.current[canonicalCacheKey];
+      const hasCachedPrompt = !!(globalCachedPrompt || mountCached);
+
       // ── FRONTEND TIMING: mark send start — report canonical cache state ────
       {
-        const isCached = !!(globalCachedPrompt || systemPromptCacheRef.current[canonicalCacheKey]);
         markSendStart({
-          canonical_prompt_cached: isCached,
-          blocking_stages: isCached ? [] : ['canonical_prompt'],
+          canonical_prompt_cached: hasCachedPrompt,
+          blocking_stages: hasCachedPrompt ? [] : ['canonical_prompt'],
         });
       }
 
-      if (globalCachedPrompt) {
+      // ── FRESHNESS VERIFICATION ─────────────────────────────────────────────
+      // MANDATORY before any cached prompt is used for generation.
+      // Queries Max(Message.timestamp) for WP and Max(CommunicationCommitment.updated_date).
+      // If either is newer than the cached prompt's freshness metadata, cache is bypassed.
+      let cacheIsFresh = false;
+      if (hasCachedPrompt && currentUser?.email) {
+        try {
+          const freshnessResult = await _verifyFreshness(currentUser.email, characterId, base44);
+          cacheIsFresh = freshnessResult.fresh;
+          if (!cacheIsFresh) {
+            // Stale cache detected — evict immediately before rebuild
+            delete systemPromptCacheRef.current[canonicalCacheKey];
+            const { invalidateCharacterCache: _inv } = await import('@/lib/characterRuntimeCache.js');
+            _inv(currentUser.email, characterId);
+            console.log(`[Chat] canonical_prompt=FRESHNESS_FAIL | reason=${freshnessResult.reason} | character=${character.name} | cache_evicted=true`);
+          }
+        } catch (_fvErr) {
+          // Freshness check failed — treat as stale, force rebuild
+          cacheIsFresh = false;
+          delete systemPromptCacheRef.current[canonicalCacheKey];
+          console.warn(`[Chat] canonical_prompt freshness_check_error=${_fvErr.message} — forcing rebuild`);
+        }
+      }
+
+      if (cacheIsFresh && globalCachedPrompt) {
         canonicalPrompt = globalCachedPrompt;
         canonicalContextLoaded = true;
         // Backfill mount cache so subsequent sends in same session skip even the import
@@ -1014,14 +1048,16 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
           memoryCount: 0,
           lifeJournalCount: 0,
         };
-        console.log(`[Chat] canonical_prompt=GLOBAL_CACHE_HIT | character=${character.name}`);
-      } else if (systemPromptCacheRef.current[canonicalCacheKey]) {
-        const cached = systemPromptCacheRef.current[canonicalCacheKey];
+        console.log(`[Chat] canonical_prompt=GLOBAL_CACHE_HIT_FRESH | character=${character.name}`);
+      } else if (cacheIsFresh && mountCached) {
+        const cached = mountCached;
         canonicalPrompt = cached.systemPrompt;
         canonicalContextLoaded = true;
         canonicalMemoryCount = cached.memoryCount || 0;
         canonicalLifeJournalCount = cached.lifeJournalCount || 0;
+        console.log(`[Chat] canonical_prompt=MOUNT_CACHE_HIT_FRESH | character=${character.name}`);
       } else {
+        // Cache is stale or missing — fetch fresh context from authoritative records
         try {
           const t_canonical_start = Date.now();
           const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
@@ -1035,14 +1071,20 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
             canonicalContextLoaded = true;
             canonicalMemoryCount = ctxData.memories?.length ?? 0;
             canonicalLifeJournalCount = ctxData.lifeJournalEntries?.length ?? 0;
+            // Store freshness metadata alongside the prompt so the next head-check can compare
+            const freshnessMeta = ctxData.freshnessMeta || {};
             systemPromptCacheRef.current[canonicalCacheKey] = {
               systemPrompt: canonicalPrompt,
               memoryCount: canonicalMemoryCount,
               lifeJournalCount: canonicalLifeJournalCount,
+              latestWpMsgTs: freshnessMeta.latestWpMsgTs || null,
+              latestCommitmentTs: freshnessMeta.latestCommitmentTs || null,
             };
-            // Populate global cache for future page opens
-            if (currentUser?.email) _sccp(currentUser.email, characterId, canonicalPrompt);
-            console.log(`[Chat] canonical_prompt=DB_FETCH | blocking_stage=canonical_prompt | ms=${Date.now() - t_canonical_start}`);
+            // Populate global cache with freshness metadata
+            if (currentUser?.email) {
+              _sccp(currentUser.email, characterId, canonicalPrompt, freshnessMeta);
+            }
+            console.log(`[Chat] canonical_prompt=DB_FETCH_FRESH | blocking_stage=canonical_prompt | ms=${Date.now() - t_canonical_start} | wp_ts=${freshnessMeta.latestWpMsgTs || 'none'} | cm_ts=${freshnessMeta.latestCommitmentTs || 'none'}`);
           } else {
             canonicalFallbackUsed = true;
           }

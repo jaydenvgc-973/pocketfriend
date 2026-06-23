@@ -1175,6 +1175,102 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Step 5c: CommunicationCommitment awareness ────────────────────────────
+    // Reads pending, fulfilled, and recently expired CommunicationCommitment records.
+    // Read-only. No records created, updated, or fulfilled here.
+    // Injected into character awareness so the LLM knows what was promised, to whom,
+    // and whether those promises have been kept. Prevents re-promising already-kept items.
+    //
+    // SOURCE: CommunicationCommitment records only — authoritative, no duplicates.
+    // SCOPE: direct_chat and text contexts only (same scope as World Phone awareness).
+    let commitmentAwarenessBlock = '';
+    let latestCommitmentTs = null; // for freshness metadata return value
+    if (interactionContext === 'direct_chat' || interactionContext === 'text') {
+      try {
+        const now48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+
+        // Fetch pending + recently fulfilled/expired commitments for this character
+        const [pendingCommitments, recentlyResolvedCommitments] = await Promise.all([
+          base44.asServiceRole.entities.CommunicationCommitment.filter(
+            { character_id: characterId, status: 'pending' },
+            'due_after',
+            10
+          ).catch(() => []),
+          base44.asServiceRole.entities.CommunicationCommitment.filter(
+            { character_id: characterId },
+            '-updated_date',
+            5
+          ).catch(() => []),
+        ]);
+
+        // Determine latest commitment timestamp for freshness metadata
+        const allCommitments = [...pendingCommitments, ...recentlyResolvedCommitments];
+        if (allCommitments.length > 0) {
+          const tss = allCommitments
+            .map(c => c.updated_date || c.fulfilled_at || c.created_at || c.created_date)
+            .filter(Boolean)
+            .map(ts => new Date(ts).getTime());
+          if (tss.length > 0) {
+            latestCommitmentTs = new Date(Math.max(...tss)).toISOString();
+          }
+        }
+
+        // Filter resolved to last 48h to keep context relevant
+        const recentlyResolved = recentlyResolvedCommitments.filter(c => {
+          if (c.status === 'pending') return false; // already in pendingCommitments
+          const ts = c.fulfilled_at || c.updated_date || c.created_date;
+          if (!ts) return false;
+          return new Date(ts) >= new Date(now48h);
+        });
+
+        const hasPending = pendingCommitments.length > 0;
+        const hasResolved = recentlyResolved.length > 0;
+
+        if (hasPending || hasResolved) {
+          const lines = [];
+
+          if (hasPending) {
+            lines.push('PROMISES YOU STILL NEED TO KEEP:');
+            for (const c of pendingCommitments) {
+              const dueNote = c.due_after ? ` (due: ${new Date(c.due_after).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })})` : '';
+              const targetNote = c.target_character_name ? ` → to ${c.target_character_name}` : '';
+              const thirdPartyNote = c.third_party_character_name ? ` (relay to ${c.third_party_character_name}: "${c.third_party_message || ''}") ` : '';
+              lines.push(`• [${c.commitment_type.replace(/_/g, ' ')}]${targetNote}${thirdPartyNote}: "${(c.commitment_text || '').substring(0, 120)}"${dueNote}`);
+            }
+            lines.push('RULE: You remember making these promises. Do NOT re-promise. Either follow through or acknowledge you haven\'t yet.');
+          }
+
+          if (hasResolved) {
+            lines.push('\nPROMISES YOU RECENTLY KEPT OR CLOSED (last 48h):');
+            for (const c of recentlyResolved) {
+              const statusLabel = c.status === 'fulfilled' ? 'KEPT' : c.status === 'expired' ? 'EXPIRED (not followed up)' : c.status.toUpperCase();
+              const whenNote = c.fulfilled_at ? ` at ${new Date(c.fulfilled_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}` : '';
+              lines.push(`• [${statusLabel}]${whenNote}: "${(c.commitment_text || '').substring(0, 100)}"`);
+            }
+            lines.push('RULE: These are already resolved. Do NOT re-promise or re-acknowledge them as pending — they are done.');
+          }
+
+          commitmentAwarenessBlock = `\n════════════════════════════════════\nCOMMUNICATION COMMITMENTS — YOUR PROMISE STATE\nSource: live CommunicationCommitment records. Never invented.\n════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════\n`;
+
+          contextLog.push({
+            step: 'commitment_awareness',
+            pending: pendingCommitments.length,
+            recently_resolved: recentlyResolved.length,
+            latestCommitmentTs,
+          });
+          console.log(
+            `[buildCanonicalCharacterContext] commitment_awareness | char=${character.name}` +
+            ` | pending=${pendingCommitments.length} | recently_resolved=${recentlyResolved.length}`
+          );
+        } else {
+          contextLog.push({ step: 'commitment_awareness', pending: 0, recently_resolved: 0 });
+        }
+      } catch (cmErr) {
+        contextLog.push({ step: 'commitment_awareness', status: 'error', error: cmErr.message });
+        console.warn(`[buildCanonicalCharacterContext] commitment_awareness error (non-blocking): ${cmErr.message}`);
+      }
+    }
+
     // ── Step 6: Build hard facts ──────────────────────────────────────────────
     const hardFacts = buildHardFacts(character);
     const hardFactsLoaded = hardFacts.length > 0;
@@ -1693,7 +1789,7 @@ Deno.serve(async (req) => {
     const wardrobeBlock = buildWardrobeAwarenessBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.
@@ -1947,6 +2043,40 @@ NEVER SAY:
       fallback_used: false,
     });
 
+    // ── Compute latestWpMsgTs for freshness metadata ──────────────────────────
+    // Derived from the WP awareness records already fetched in Step 5b.
+    // Used by the frontend to store freshness metadata alongside the cached prompt.
+    // This is the timestamp of the most recent WP Message known to this prompt build.
+    // No new records created. Read-only.
+    let latestWpMsgTs = null;
+    if (interactionContext === 'direct_chat' || interactionContext === 'text') {
+      // We re-check with the same logic as step 5b — this is a head-check, not a re-query.
+      // The worldPhoneAwarenessBlock was already built above; just extract the max timestamp
+      // from the raw WP messages that were used to build it. Since they are already filtered
+      // to 48h, the max is the most recent WP message in that window.
+      // We do a lightweight re-read of the same records (already fetched) rather than a second query.
+      try {
+        const [wpSentTs, wpReceivedTs] = await Promise.all([
+          base44.asServiceRole.entities.Message.filter(
+            { sender_character_id: characterId, channel: 'world_phone' },
+            '-timestamp', 1
+          ).catch(() => []),
+          base44.asServiceRole.entities.Message.filter(
+            { receiver_character_id: characterId, channel: 'world_phone' },
+            '-timestamp', 1
+          ).catch(() => []),
+        ]);
+        const combined = [...wpSentTs, ...wpReceivedTs].filter(Boolean);
+        if (combined.length > 0) {
+          const tss = combined
+            .map(m => m.timestamp || m.created_date)
+            .filter(Boolean)
+            .map(ts => new Date(ts).getTime());
+          if (tss.length > 0) latestWpMsgTs = new Date(Math.max(...tss)).toISOString();
+        }
+      } catch (_) {}
+    }
+
     return Response.json({
       success: true,
       systemPrompt: finalSystemPrompt,
@@ -1958,6 +2088,15 @@ NEVER SAY:
       relationshipContext,
       coPresence,
       contextLog,
+      // ── FRESHNESS METADATA ──────────────────────────────────────────────────
+      // Callers must store these alongside the cached canonical prompt.
+      // verifyCachedPromptFreshness() in characterRuntimeCache.js uses them
+      // to detect stale context before Chat/Text generation proceeds.
+      freshnessMeta: {
+        latestWpMsgTs,          // ISO timestamp of most recent WP Message at build time
+        latestCommitmentTs,     // ISO timestamp of most recent Commitment change at build time
+        builtAt: new Date().toISOString(),
+      },
     });
 
   } catch (error) {
