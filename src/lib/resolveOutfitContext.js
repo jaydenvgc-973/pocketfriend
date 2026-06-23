@@ -86,9 +86,10 @@ export function buildOutfitContext(character, locationMap = {}) {
     at_work_shift: atWorkShift,
     at_water_venue: isAtWaterVenue,
     at_home_relaxing: atHomeRelaxing,
-    manual_override: character.current_outfit?.change_reason === 'manual_selection' &&
-      character.current_outfit?.last_changed_at &&
-      new Date(character.current_outfit.last_changed_at).toDateString() === new Date().toDateString(),
+    // manual_override is no longer stored on current_outfit or closet items.
+    // It is resolved by reading today_category_outfit_overrides (rotation ON)
+    // or manual_category_selections (rotation OFF) in resolveCurrentOutfit.
+    manual_override: false,
   };
 }
 
@@ -102,9 +103,7 @@ export function buildOutfitContext(character, locationMap = {}) {
 export function resolveCategoryFromContext(context) {
   if (!context) return 'daily_casual';
 
-  // 1. Manual override (set today)
-  if (context.manual_override) return null; // null = respect current_outfit as-is
-
+  // 1. (Manual overrides are resolved in outfitRotationEngine, not here)
   // 2. Asleep → sleepwear
   if (context.is_asleep) return 'sleepwear';
 
@@ -236,16 +235,9 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
   const currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
   const currentLocation = currentLocationId ? locationMap[currentLocationId] : null;
 
-  // ── PRIORITY 1: Explicit user-selected outfit (manual override) ──────
-  if (context.manual_override && character.current_outfit?.label) {
-    return {
-      outfit: character.current_outfit,
-      category: character.current_outfit.category || 'daily_casual',
-      reason: 'manual_override',
-      description: buildOutfitPromptText(character.current_outfit),
-      source: 'manual',
-    };
-  }
+  // NOTE: Manual category overrides (today_category_outfit_overrides / manual_category_selections)
+  // are handled inside resolveCurrentOutfit / pickOutfitFromCloset via the outfitRotationEngine.
+  // No separate manual_override branch is needed here — the engine already applies it.
 
   // ── PRIORITY 2-7: Global uniform resolver ──────────────────────────
   if (currentLocation) {

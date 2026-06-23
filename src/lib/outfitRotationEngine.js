@@ -100,19 +100,15 @@ function getDailyRotationIndex(outfitPool, characterId = '') {
  * If outfits have rotation_number assigned, they are sorted by that number
  * and cycled in explicit sequence. Outfits without numbers fall back to
  * daily date-based rotation.
+ *
+ * NOTE: manual_override is NOT checked here. That logic is handled upstream
+ * in resolveCurrentOutfit by reading today_category_outfit_overrides /
+ * manual_category_selections from the character record — never from closet items.
  */
 // rotationEnabled: pass character.outfit_rotation_enabled (defaults true when undefined)
 function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEnabled = true) {
   if (pool.length === 0) return null;
   if (pool.length === 1) return pool[0];
-
-  // MANUAL CATEGORY OVERRIDE — highest priority, rotation-safe.
-  // If any outfit in this pool has manual_override=true, use it immediately.
-  // This override was set by applyManualCategoryOverride and applies only to
-  // this specific category. It does NOT affect other categories, rotation numbers,
-  // or tomorrow's rotation sequence. Weather/medical/transition logic is unaffected.
-  const manualOverride = pool.find(o => o.manual_override === true);
-  if (manualOverride) return manualOverride;
 
   // ROTATION OFF: always return the selected outfit if it's in this pool
   if (!rotationEnabled && currentOutfitId) {
@@ -244,6 +240,21 @@ export function resolveTargetCategory(character, activityText = '', locationCate
  * Main function: pick the best current outfit for a character.
  * Returns the outfit object or null if none available.
  *
+ * RESOLVER ORDER:
+ *   1. Medical override (future hook — not yet a field, reserved)
+ *   2. Weather modifier/layer (applied by caller after this returns)
+ *   3a. Rotation ON  → check today_category_outfit_overrides for active category
+ *   3b. Rotation OFF → check manual_category_selections for active category
+ *   4. Normal rotation / fallback chain
+ *
+ * today_category_outfit_overrides shape:
+ *   { date: "YYYY-MM-DD", overrides: { lounge: "outfit_id", daily_casual: "outfit_id", ... } }
+ *   Ignored when date is not today. Never written to closet items.
+ *
+ * manual_category_selections shape:
+ *   { lounge: "outfit_id", daily_casual: "outfit_id", ... }
+ *   Used only when rotation is OFF. Persistent (no date check).
+ *
  * @param {object} character - Full character record
  * @param {string} activityText - Text from latest message or activity context
  * @param {string|null} locationCategory - Location category string (e.g. 'gym', 'home')
@@ -256,27 +267,53 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
   const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
   if (outfits.length === 0) return character.current_outfit || null;
 
-  const currentOutfitId = character.current_outfit?.outfit_id || null;
   const rotationEnabled = character.outfit_rotation_enabled !== false;
-
-  // ROTATION OFF: return the currently selected outfit directly (no category check)
-  if (!rotationEnabled && currentOutfitId) {
-    const locked = outfits.find(o => o.outfit_id === currentOutfitId);
-    if (locked) return locked;
-  }
-
   const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
   const fallbackChain = buildFallbackChain(targetCategory);
 
-  for (const cat of fallbackChain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length > 0) {
-      return pickFromPool(pool, currentOutfitId, character.id, rotationEnabled);
+  // ── ROTATION ON: check today_category_outfit_overrides ──────────────────────
+  if (rotationEnabled) {
+    const overrideState = character.today_category_outfit_overrides;
+    if (overrideState && overrideState.date) {
+      const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      if (overrideState.date === todayStr && overrideState.overrides) {
+        // Walk the fallback chain — apply override to first matching category that has one
+        for (const cat of fallbackChain) {
+          const overrideId = overrideState.overrides[cat];
+          if (overrideId) {
+            const overrideOutfit = outfits.find(o => o.outfit_id === overrideId);
+            if (overrideOutfit) return overrideOutfit;
+          }
+        }
+      }
+    }
+    // No valid today override — use normal rotation
+    for (const cat of fallbackChain) {
+      const pool = outfits.filter(o => o.category === cat);
+      if (pool.length > 0) return pickFromPool(pool, null, character.id, true);
+    }
+    return pickFromPool(outfits, null, character.id, true);
+  }
+
+  // ── ROTATION OFF: check manual_category_selections ───────────────────────────
+  const manualSelections = character.manual_category_selections;
+  if (manualSelections) {
+    for (const cat of fallbackChain) {
+      const selectedId = manualSelections[cat];
+      if (selectedId) {
+        const selectedOutfit = outfits.find(o => o.outfit_id === selectedId);
+        if (selectedOutfit) return selectedOutfit;
+      }
     }
   }
 
-  // Last resort: any outfit from closet
-  return pickFromPool(outfits, currentOutfitId, character.id, rotationEnabled);
+  // Rotation OFF fallback: use current_outfit if it exists, else first in chain
+  const currentOutfitId = character.current_outfit?.outfit_id || null;
+  for (const cat of fallbackChain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length > 0) return pickFromPool(pool, currentOutfitId, character.id, false);
+  }
+  return pickFromPool(outfits, currentOutfitId, character.id, false);
 }
 
 /**
@@ -364,49 +401,59 @@ export function normalizeCategory(cat) {
 /**
  * applyManualCategoryOverride
  *
- * When rotation is enabled, the user may manually override the selected outfit
- * for ONE specific category without disturbing any other category or the rotation
- * sequence. This function merges the override into the character's closet data
- * by returning a patched `character_closet` array. The caller is responsible for
- * persisting it to the DB (e.g. Character.update).
+ * Sets a manual outfit selection for ONE category without touching the closet,
+ * rotation numbers, or any other category.
+ *
+ * State separation:
+ *   - Rotation ON  → writes to `today_category_outfit_overrides` (date-scoped, expires tomorrow)
+ *   - Rotation OFF → writes to `manual_category_selections` (persistent until changed)
+ *
+ * `character_closet` items are NEVER mutated. No `manual_override` flags on outfit objects.
+ *
+ * Returns a partial Character update object ready to pass directly to Character.update().
+ * The caller must persist it: `Character.update(character.id, result)`.
  *
  * Rules:
- *   - Only the target category's currently-active outfit is replaced.
- *   - All other category outfits remain unchanged.
+ *   - Only the target category changes.
+ *   - All other categories are preserved from existing state.
  *   - Rotation numbers are NOT renumbered, reordered, or reset.
  *   - The rotation counter (day-of-year index) is NOT advanced or reset.
  *   - Weather modifiers, medical overrides, and transition logic are unaffected.
- *   - Tomorrow's preview continues from the rotation sequence, not this override.
+ *   - Tomorrow's preview ignores today_category_outfit_overrides entirely.
+ *   - Tomorrow's preview only changes if the rotation algorithm would naturally pick next.
  *
  * @param {object} character - Full character record
- * @param {string} targetCategory - The category being overridden (e.g. 'lounge', 'work')
+ * @param {string} targetCategory - Category being overridden (e.g. 'lounge', 'daily_casual')
  * @param {string} newOutfitId - outfit_id of the replacement outfit
- * @returns {{ patched_closet: array, prev_outfit_id: string|null, new_outfit_id: string }}
+ * @returns {object} Partial Character update — pass directly to Character.update()
  */
 export function applyManualCategoryOverride(character, targetCategory, newOutfitId) {
-  const closet = (character.character_closet || []).map(item => ({ ...item }));
   const normalizedCategory = normalizeCategory(targetCategory);
-  let prevOutfitId = null;
+  const rotationEnabled = character.outfit_rotation_enabled !== false;
 
-  // Mark the new outfit as the manually-selected one for this category.
-  // We store a `manual_override: true` flag on the outfit itself so
-  // resolveCurrentOutfit can prefer it when resolving this category.
-  // This flag does NOT advance rotation_number or alter any other outfit.
-  for (const item of closet) {
-    if (item.category !== normalizedCategory) continue;
-    if (item.outfit_id === newOutfitId) {
-      // Flag the chosen outfit as manually overridden for today
-      item.manual_override = true;
-      item.manual_override_set_at = new Date().toISOString();
-    } else if (item.manual_override) {
-      // Clear any previous manual override on other outfits in this category
-      prevOutfitId = item.outfit_id;
-      item.manual_override = false;
-      item.manual_override_set_at = null;
-    }
+  if (rotationEnabled) {
+    // ── ROTATION ON: today-only override, never persists to tomorrow ──────────
+    const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const existing = character.today_category_outfit_overrides || {};
+    // If the stored date is not today, start fresh (stale overrides from yesterday are dropped)
+    const existingOverrides = (existing.date === todayStr && existing.overrides) ? { ...existing.overrides } : {};
+    existingOverrides[normalizedCategory] = newOutfitId;
+    return {
+      today_category_outfit_overrides: {
+        date: todayStr,
+        overrides: existingOverrides,
+      },
+    };
+  } else {
+    // ── ROTATION OFF: persistent per-category selection ───────────────────────
+    const existingSelections = character.manual_category_selections
+      ? { ...character.manual_category_selections }
+      : {};
+    existingSelections[normalizedCategory] = newOutfitId;
+    return {
+      manual_category_selections: existingSelections,
+    };
   }
-
-  return { patched_closet: closet, prev_outfit_id: prevOutfitId, new_outfit_id: newOutfitId };
 }
 
 /**
