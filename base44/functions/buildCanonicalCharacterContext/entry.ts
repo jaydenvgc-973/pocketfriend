@@ -1074,208 +1074,57 @@ Deno.serve(async (req) => {
       count: recentMessages.length,
     });
 
-    // ── Step 5b: World Phone conversation awareness ───────────────────────────
-    // Fetch current World Phone (bilateral character-to-character) conversation state
-    // for this character. This is separate from the user's direct chat history.
-    // Injected only for direct_chat and text contexts — the channels where the character
-    // generates user-facing responses that may reference their character-to-character world.
-    //
-    // SOURCE: Message records with channel='world_phone' where this character is sender OR receiver.
-    // Never invented — only actual persisted Message records.
-    // Does NOT merge with direct chat unread status.
-    //
-    // wpSent / wpReceived are kept in outer scope so Step 5c freshness metadata
-    // can derive latestWpMsgTs without issuing a second database query.
+    // ── Step 5b: World Phone awareness — delegated to buildWorldPhoneAwarenessBlock ──
+    // READ-ONLY. Returns awarenessBlock string + latestWpMsgTs for freshness metadata.
     let worldPhoneAwarenessBlock = '';
-    let wpSentOuter = [];   // populated inside Step 5b, read by freshness block below
-    let wpReceivedOuter = [];
+    let latestWpMsgTs = null;
     if (interactionContext === 'direct_chat' || interactionContext === 'text') {
       try {
-        // Fetch recent World Phone messages this character sent or received (last 48h window)
-        const cutoff48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-        const [wpSent, wpReceived] = await Promise.all([
-          base44.asServiceRole.entities.Message.filter(
-            { sender_character_id: characterId, channel: 'world_phone' },
-            '-timestamp',
-            15
-          ).catch(() => []),
-          base44.asServiceRole.entities.Message.filter(
-            { receiver_character_id: characterId, channel: 'world_phone' },
-            '-timestamp',
-            15
-          ).catch(() => []),
-        ]);
-        // Hoist for freshness metadata block — avoids a second query
-        wpSentOuter = wpSent;
-        wpReceivedOuter = wpReceived;
-
-        // Merge and deduplicate by id
-        const wpAllById = new Map();
-        [...wpSent, ...wpReceived].forEach(m => { if (m.id) wpAllById.set(m.id, m); });
-        const wpAll = [...wpAllById.values()]
-          .filter(m => {
-            // Restrict to last 48h for recency; canon-excluded messages are not awareness-eligible
-            const ts = m.timestamp || m.created_date;
-            if (!ts) return false;
-            if (m.canon_excluded) return false;
-            return new Date(ts) >= new Date(cutoff48h);
-          })
-          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
-
-        if (wpAll.length > 0) {
-          // Compute unread incoming count (messages TO this character not yet replied to)
-          const incoming = wpAll.filter(m => m.receiver_character_id === characterId);
-          const outgoing = wpAll.filter(m => m.sender_character_id === characterId);
-
-          const lastIncoming = incoming[0] || null;
-          const lastOutgoing = outgoing[0] || null;
-
-          // Determine if there's a pending reply: last incoming is more recent than last outgoing
-          const lastIncomingTs = lastIncoming ? new Date(lastIncoming.timestamp || lastIncoming.created_date).getTime() : 0;
-          const lastOutgoingTs = lastOutgoing ? new Date(lastOutgoing.timestamp || lastOutgoing.created_date).getTime() : 0;
-          const hasPendingReply = lastIncomingTs > lastOutgoingTs && lastIncoming !== null;
-
-          // Build per-thread awareness (group by shared_conversation_key or conversation_id)
-          const threadMap = new Map();
-          wpAll.forEach(m => {
-            const key = m.shared_conversation_key || m.conversation_id || 'unknown';
-            if (!threadMap.has(key)) threadMap.set(key, []);
-            threadMap.get(key).push(m);
-          });
-
-          const threadLines = [];
-          threadMap.forEach((msgs, threadKey) => {
-            const sorted = msgs.sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
-            const latestMsg = sorted[0];
-            const otherCharacterName = latestMsg.sender_character_id === characterId
-              ? (latestMsg.receiver_character_id ? `(character id: ${latestMsg.receiver_character_id})` : 'unknown recipient')
-              : (latestMsg.sender_character_name || latestMsg.played_as_character_name || `(character id: ${latestMsg.sender_character_id || 'unknown'})`);
-            const direction = latestMsg.sender_character_id === characterId ? 'you sent' : 'you received';
-            const tsStr = new Date(latestMsg.timestamp || latestMsg.created_date).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
-            const snippet = (latestMsg.content || '').substring(0, 120);
-            threadLines.push(`• Thread with ${otherCharacterName}: [${direction} at ${tsStr}] "${snippet}"`);
-          });
-
-          const pendingNote = hasPendingReply
-            ? `\n⚠️ PENDING REPLY: ${lastIncoming.sender_character_name || 'someone'} sent you a World Phone message you have not yet replied to. You are aware of this.`
-            : '';
-
-          worldPhoneAwarenessBlock = `\n════════════════════════════════════\nWORLD PHONE AWARENESS — YOUR CURRENT CHARACTER-TO-CHARACTER MESSAGE STATE\nSource: live Message records (last 48 hours). Never invented.\n════════════════════════════════════\nYou have ${incoming.length} incoming and ${outgoing.length} outgoing World Phone messages in the last 48 hours.\n${threadLines.join('\n')}${pendingNote}\n\nRULES:\n• You know about these messages. You do not need to be told — you sent or received them.\n• Reference them naturally if relevant (e.g. "I texted [name] earlier", "I heard from [name]").\n• Do NOT invent messages not listed above. If no thread exists, you have not contacted that person recently.\n• World Phone messages are separate from your conversation here. Do not confuse channels.\n════════════════════════════════════\n`;
-
-          contextLog.push({
-            step: 'world_phone_awareness',
-            incoming: incoming.length,
-            outgoing: outgoing.length,
-            threads: threadMap.size,
-            hasPendingReply,
-          });
-          console.log(
-            `[buildCanonicalCharacterContext] world_phone_awareness | char=${character.name}` +
-            ` | incoming=${incoming.length} | outgoing=${outgoing.length}` +
-            ` | threads=${threadMap.size} | pending_reply=${hasPendingReply}`
-          );
-        } else {
-          contextLog.push({ step: 'world_phone_awareness', count: 0, reason: 'no_messages_in_48h' });
-        }
+        const wpRes = await base44.functions.invoke('buildWorldPhoneAwarenessBlock', {
+          characterId,
+          characterName: character.name,
+        });
+        const wpData = wpRes?.data || wpRes;
+        worldPhoneAwarenessBlock = wpData?.awarenessBlock || '';
+        latestWpMsgTs = wpData?.latestWpMsgTs || null;
+        contextLog.push({
+          step: 'world_phone_awareness',
+          incoming: wpData?.incoming ?? 0,
+          outgoing: wpData?.outgoing ?? 0,
+          threads: wpData?.threads ?? 0,
+          hasPendingReply: wpData?.hasPendingReply ?? false,
+          latestWpMsgTs,
+          delegate: 'buildWorldPhoneAwarenessBlock',
+        });
       } catch (wpErr) {
-        contextLog.push({ step: 'world_phone_awareness', status: 'error', error: wpErr.message });
-        console.warn(`[buildCanonicalCharacterContext] world_phone_awareness error (non-blocking): ${wpErr.message}`);
+        contextLog.push({ step: 'world_phone_awareness', status: 'error', error: wpErr.message, delegate: 'buildWorldPhoneAwarenessBlock' });
+        console.warn(`[buildCanonicalCharacterContext] world_phone_awareness delegate error (non-blocking): ${wpErr.message}`);
       }
     }
 
-    // ── Step 5c: CommunicationCommitment awareness ────────────────────────────
-    // Reads pending, fulfilled, and recently expired CommunicationCommitment records.
-    // Read-only. No records created, updated, or fulfilled here.
-    // Injected into character awareness so the LLM knows what was promised, to whom,
-    // and whether those promises have been kept. Prevents re-promising already-kept items.
-    //
-    // SOURCE: CommunicationCommitment records only — authoritative, no duplicates.
-    // SCOPE: direct_chat and text contexts only (same scope as World Phone awareness).
+    // ── Step 5c: Commitment awareness — delegated to buildCommitmentAwarenessBlock ──
+    // READ-ONLY. Returns awarenessBlock string + latestCommitmentTs for freshness metadata.
     let commitmentAwarenessBlock = '';
-    let latestCommitmentTs = null; // for freshness metadata return value
+    let latestCommitmentTs = null;
     if (interactionContext === 'direct_chat' || interactionContext === 'text') {
       try {
-        const now48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-
-        // Fetch pending + recently fulfilled/expired commitments for this character
-        const [pendingCommitments, recentlyResolvedCommitments] = await Promise.all([
-          base44.asServiceRole.entities.CommunicationCommitment.filter(
-            { character_id: characterId, status: 'pending' },
-            'due_after',
-            10
-          ).catch(() => []),
-          base44.asServiceRole.entities.CommunicationCommitment.filter(
-            { character_id: characterId },
-            '-updated_date',
-            5
-          ).catch(() => []),
-        ]);
-
-        // Determine latest commitment timestamp for freshness metadata
-        const allCommitments = [...pendingCommitments, ...recentlyResolvedCommitments];
-        if (allCommitments.length > 0) {
-          const tss = allCommitments
-            .map(c => c.updated_date || c.fulfilled_at || c.created_at || c.created_date)
-            .filter(Boolean)
-            .map(ts => new Date(ts).getTime());
-          if (tss.length > 0) {
-            latestCommitmentTs = new Date(Math.max(...tss)).toISOString();
-          }
-        }
-
-        // Filter resolved to last 48h to keep context relevant
-        const recentlyResolved = recentlyResolvedCommitments.filter(c => {
-          if (c.status === 'pending') return false; // already in pendingCommitments
-          const ts = c.fulfilled_at || c.updated_date || c.created_date;
-          if (!ts) return false;
-          return new Date(ts) >= new Date(now48h);
+        const cmRes = await base44.functions.invoke('buildCommitmentAwarenessBlock', {
+          characterId,
+          characterName: character.name,
         });
-
-        const hasPending = pendingCommitments.length > 0;
-        const hasResolved = recentlyResolved.length > 0;
-
-        if (hasPending || hasResolved) {
-          const lines = [];
-
-          if (hasPending) {
-            lines.push('PROMISES YOU STILL NEED TO KEEP:');
-            for (const c of pendingCommitments) {
-              const dueNote = c.due_after ? ` (due: ${new Date(c.due_after).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })})` : '';
-              const targetNote = c.target_character_name ? ` → to ${c.target_character_name}` : '';
-              const thirdPartyNote = c.third_party_character_name ? ` (relay to ${c.third_party_character_name}: "${c.third_party_message || ''}") ` : '';
-              lines.push(`• [${c.commitment_type.replace(/_/g, ' ')}]${targetNote}${thirdPartyNote}: "${(c.commitment_text || '').substring(0, 120)}"${dueNote}`);
-            }
-            lines.push('RULE: You remember making these promises. Do NOT re-promise. Either follow through or acknowledge you haven\'t yet.');
-          }
-
-          if (hasResolved) {
-            lines.push('\nPROMISES YOU RECENTLY KEPT OR CLOSED (last 48h):');
-            for (const c of recentlyResolved) {
-              const statusLabel = c.status === 'fulfilled' ? 'KEPT' : c.status === 'expired' ? 'EXPIRED (not followed up)' : c.status.toUpperCase();
-              const whenNote = c.fulfilled_at ? ` at ${new Date(c.fulfilled_at).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })}` : '';
-              lines.push(`• [${statusLabel}]${whenNote}: "${(c.commitment_text || '').substring(0, 100)}"`);
-            }
-            lines.push('RULE: These are already resolved. Do NOT re-promise or re-acknowledge them as pending — they are done.');
-          }
-
-          commitmentAwarenessBlock = `\n════════════════════════════════════\nCOMMUNICATION COMMITMENTS — YOUR PROMISE STATE\nSource: live CommunicationCommitment records. Never invented.\n════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════\n`;
-
-          contextLog.push({
-            step: 'commitment_awareness',
-            pending: pendingCommitments.length,
-            recently_resolved: recentlyResolved.length,
-            latestCommitmentTs,
-          });
-          console.log(
-            `[buildCanonicalCharacterContext] commitment_awareness | char=${character.name}` +
-            ` | pending=${pendingCommitments.length} | recently_resolved=${recentlyResolved.length}`
-          );
-        } else {
-          contextLog.push({ step: 'commitment_awareness', pending: 0, recently_resolved: 0 });
-        }
+        const cmData = cmRes?.data || cmRes;
+        commitmentAwarenessBlock = cmData?.awarenessBlock || '';
+        latestCommitmentTs = cmData?.latestCommitmentTs || null;
+        contextLog.push({
+          step: 'commitment_awareness',
+          pending: cmData?.pending ?? 0,
+          recently_resolved: cmData?.recentlyResolved ?? 0,
+          latestCommitmentTs,
+          delegate: 'buildCommitmentAwarenessBlock',
+        });
       } catch (cmErr) {
-        contextLog.push({ step: 'commitment_awareness', status: 'error', error: cmErr.message });
-        console.warn(`[buildCanonicalCharacterContext] commitment_awareness error (non-blocking): ${cmErr.message}`);
+        contextLog.push({ step: 'commitment_awareness', status: 'error', error: cmErr.message, delegate: 'buildCommitmentAwarenessBlock' });
+        console.warn(`[buildCanonicalCharacterContext] commitment_awareness delegate error (non-blocking): ${cmErr.message}`);
       }
     }
 
@@ -2050,22 +1899,6 @@ NEVER SAY:
       relationship_context_loaded: relationshipLoaded,
       fallback_used: false,
     });
-
-    // ── Compute latestWpMsgTs for freshness metadata ──────────────────────────
-    // Derived from wpSentOuter / wpReceivedOuter — the records fetched in Step 5b.
-    // Those variables were hoisted to outer scope specifically to avoid a second query here.
-    // No additional DB queries. No new records created. Read-only.
-    let latestWpMsgTs = null;
-    if (interactionContext === 'direct_chat' || interactionContext === 'text') {
-      const combined = [...wpSentOuter, ...wpReceivedOuter].filter(Boolean);
-      if (combined.length > 0) {
-        const tss = combined
-          .map(m => m.timestamp || m.created_date)
-          .filter(Boolean)
-          .map(ts => new Date(ts).getTime());
-        if (tss.length > 0) latestWpMsgTs = new Date(Math.max(...tss)).toISOString();
-      }
-    }
 
     return Response.json({
       success: true,
