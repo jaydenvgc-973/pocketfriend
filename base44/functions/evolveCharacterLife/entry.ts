@@ -63,10 +63,12 @@ const _NIGHTCLUB_FLAGS = ['nightclub','night club','rave','dance club','lounge c
 const _hasPattern = (text, patterns) => { const t=(text||'').toLowerCase(); return patterns.some(p=>t.includes(p)); };
 
 function buildCharacterAffinityContext(character, availableLocations) {
+  // Base profile
   const profile = {};
   const allCats = ['home','outdoor','public','food_drink','education','medical','grocery','religion','social','gym','workplace','school','business','generic'];
   allCats.forEach(c => { profile[c] = 0; });
 
+  // Social energy
   const se = character.social_energy || 'ambivert';
   const ep = _SE[se] || _SE.ambivert;
   (ep.preferred||[]).forEach(c => { profile[c] = (profile[c]||0) + 3; });
@@ -74,6 +76,7 @@ function buildCharacterAffinityContext(character, availableLocations) {
   (ep.conditional||[]).forEach(c => { profile[c] = (profile[c]||0) - 1; });
   (ep.avoided||[]).forEach(c => { profile[c] = (profile[c]||0) - 3; });
 
+  // Archetype
   const arch = (character.archetype||'').toLowerCase().trim();
   const ao = _AA[arch] || _AA[Object.keys(_AA).find(k => arch.includes(k)||k.includes(arch))];
   if (ao) {
@@ -81,6 +84,7 @@ function buildCharacterAffinityContext(character, availableLocations) {
     (ao.penalize||[]).forEach(c => { profile[c] = (profile[c]||0) - 2; });
   }
 
+  // Religion
   const religion = (character.religion||'').toLowerCase().trim();
   const beliefLevel = character.belief_level || 'moderate';
   const isDevout = beliefLevel === 'devout';
@@ -93,12 +97,14 @@ function buildCharacterAffinityContext(character, availableLocations) {
     }
   }
 
+  // Health habits
   const hh = (character.health_habits||'').toLowerCase();
   if (/gym|workout|fitness|exercise|train|lift|crossfit/.test(hh)) profile.gym = (profile.gym||0) + 3;
   if (/run|jog|walk|hike|trail|outdoor|cycle|bike/.test(hh)) profile.outdoor = (profile.outdoor||0) + 2;
   if (/yoga|meditat|wellness|mindful|pilates/.test(hh)) profile.outdoor = (profile.outdoor||0) + 2;
   if (/drink|bar|nightclub|party|clubbing/.test(hh)) profile.social = (profile.social||0) + 2;
 
+  // Personality traits
   const traits = (character.personality_traits||[]).map(t => t.toLowerCase()).join(' ');
   if (/nature|earthy|outdoors|grounded|peaceful|hiking|trail/.test(traits)) { profile.outdoor += 2; profile.home += 1; profile.social -= 1; }
   if (/foodie|culinary|brunch|coffee|food lover/.test(traits)) profile.food_drink += 2;
@@ -109,6 +115,7 @@ function buildCharacterAffinityContext(character, availableLocations) {
   if (/spiritual|religious|faithful|devout|prayer|worship/.test(traits)) { profile.religion += 2; profile.home += 1; }
   if (/night owl|party lover|nightlife|club goer|bar hopper/.test(traits)) profile.social += 2;
 
+  // Emotional state
   const em = _EM[character.emotional_state||'calm'];
   if (em) {
     (em.boost||[]).forEach(c => { profile[c] = (profile[c]||0) + 2; });
@@ -116,10 +123,12 @@ function buildCharacterAffinityContext(character, availableLocations) {
     if (em.isolating) profile.home = (profile.home||0) + 1;
   }
 
+  // Score locations
   const scored = (availableLocations||[]).map(loc => {
     let score = profile[loc.category] || 0;
     const venueText = [(loc.venue_identity||''),(loc.club_theme||''),(loc.name||''),(loc.subtype||[]).join(' ')].join(' ').toLowerCase();
 
+    // Religion-based venue filtering
     if (religion && religion !== 'none') {
       if (isDevout && _hasPattern(venueText, _CONSERVATIVE_FLAGS)) score -= 8;
       else if (isModerate && _hasPattern(venueText, ['strip club','adult club','sex club'])) score -= 4;
@@ -128,11 +137,19 @@ function buildCharacterAffinityContext(character, availableLocations) {
       }
     }
 
+    // Introvert + nightclub
     if (_hasPattern(venueText, _NIGHTCLUB_FLAGS) && ['introvert','mostly_introvert'].includes(se)) score -= 3;
+
+    // Health need → medical
     if (loc.category === 'medical' && /sick|pain|recover|ill|injury|checkup/.test((character.health_status||'').toLowerCase())) score += 4;
+
+    // Gym + burnt out
     if (loc.category === 'gym' && /burnt out|overwhelmed|exhausted/.test((character.emotional_state||'').toLowerCase())) score -= 2;
+
+    // Home when worn out
     if (loc.category === 'home' && /burnt out|overwhelmed|sad|tired|exhausted|grief|anxious/.test((character.emotional_state||'').toLowerCase())) score += 2;
 
+    // Frequented places
     const freq = (character.frequented_places||[]).map(p=>p.toLowerCase());
     if (freq.some(p => (loc.name||'').toLowerCase().includes(p) || p.includes((loc.name||'').toLowerCase()))) score += 2;
 
@@ -158,227 +175,276 @@ function buildCharacterAffinityContext(character, availableLocations) {
 }
 
 Deno.serve(async (req) => {
+  const base44 = createClientFromRequest(req);
+
   try {
-    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+  } catch (_) {
+    // Scheduled automation — no user token
+  }
 
-    await base44.auth.me().catch(() => null);
+  const allCharacters = await base44.asServiceRole.entities.Character.list();
+  // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+  // Only process characters that have a valid owner_email (fail visible if missing)
+  const characters = allCharacters.filter(c => (!c.status || c.status === 'active') && c.owner_email);
 
-    // Paginate to avoid loading all characters at once (timeout prevention)
-    const allCharacters = await base44.asServiceRole.entities.Character.list('-created_date', 200);
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    const characters = allCharacters.filter(c => (!c.status || c.status === 'active') && c.owner_email);
+  const results = [];
 
-    const results = [];
+  for (const character of characters) {
+    try {
+      const name = character.name;
+      const personality = character.personality_summary || '';
+      const traits = (character.personality_traits || []).join(', ');
+      const archetype = character.archetype || 'unknown';
+      const upset_reaction = character.upset_reaction || '';
+      const emotional_triggers = (character.emotional_triggers_high || []).join(', ');
+      const work = character.work_details
+        ? `Works as a ${character.work_details.job_title || 'worker'} at a ${character.work_details.workplace_type || 'workplace'}. ${character.work_details.work_environment || ''}`
+        : character.current_situation || 'Has a job and daily life.';
+      const places = (character.frequented_places || []).join(', ') || 'local spots';
 
-    for (const character of characters) {
+      // --- STRUCTURED LIFE CONTEXT (schedule, education, occupation, location) ---
+      const workScheduleContext = (() => {
+        const start = character.work_start_time || '09:00';
+        const end = character.work_end_time || '17:00';
+        const days = (character.work_days || [1,2,3,4,5]).map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
+        return `Work schedule: ${start}–${end} on ${days}`;
+      })();
+
+      const sleepScheduleContext = character.sleep_start_time
+        ? `Sleep schedule: ${character.sleep_start_time}–${character.wake_up_time || '07:00'}`
+        : '';
+
+      const educationContext = (() => {
+        if (!character.current_education_activity || character.current_education_activity === 'none') return '';
+        const d = character.education_details || {};
+        const parts = [`Currently enrolled: ${d.course_name || character.current_education_activity}`];
+        if (d.institution) parts.push(`at ${d.institution}`);
+        if (character.education_expected_completion_date) parts.push(`(expected completion: ${new Date(character.education_expected_completion_date).toLocaleDateString()})`);
+        return parts.join(' ');
+      })();
+
+      const jobTrainingContext = (() => {
+        if (!character.current_job_training_activity || character.current_job_training_activity === 'none') return '';
+        const d = character.job_training_details || {};
+        const parts = [`Job training: ${d.training_name || character.current_job_training_activity}`];
+        if (d.company) parts.push(`at ${d.company}`);
+        if (d.position_title) parts.push(`for ${d.position_title} role`);
+        return parts.join(' ');
+      })();
+
+      const locationContext = [character.city, character.state].filter(Boolean).join(', ') || '';
+
+      const structuredLifeContext = [workScheduleContext, sleepScheduleContext, educationContext, jobTrainingContext, locationContext ? `Location: ${locationContext}` : ''].filter(Boolean).join('\n');
+
+      // Fetch available locations for affinity scoring
+      let locationAffinityContext = null;
       try {
-        const name = character.name;
-        const personality = character.personality_summary || '';
-        const traits = (character.personality_traits || []).join(', ');
-        const archetype = character.archetype || 'unknown';
-        const upset_reaction = character.upset_reaction || '';
-        const emotional_triggers = (character.emotional_triggers_high || []).join(', ');
-        const work = character.work_details
-          ? `Works as a ${character.work_details.job_title || 'worker'} at a ${character.work_details.workplace_type || 'workplace'}. ${character.work_details.work_environment || ''}`
-          : character.current_situation || 'Has a job and daily life.';
-        const places = (character.frequented_places || []).join(', ') || 'local spots';
+        const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 50);
+        // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+        const userLocations = allLocations.filter(l => !l.owner_email || l.owner_email === character.owner_email);
+        locationAffinityContext = buildCharacterAffinityContext(character, userLocations);
+      } catch (_) {}
 
-        const workScheduleContext = (() => {
-          const start = character.work_start_time || '09:00';
-          const end = character.work_end_time || '17:00';
-          const days = (character.work_days || [1,2,3,4,5]).map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
-          return `Work schedule: ${start}–${end} on ${days}`;
-        })();
+      // Fetch recent life events (last 10) for context
+      const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
+        { character_id: character.id },
+        '-timestamp',
+        10
+      );
 
-        const sleepScheduleContext = character.sleep_start_time
-          ? `Sleep schedule: ${character.sleep_start_time}–${character.wake_up_time || '07:00'}`
-          : '';
+      const negativeEvents = recentLifeEvents.filter(e => e.valence === 'negative');
+      const positiveEvents = recentLifeEvents.filter(e => e.valence === 'positive');
+      const substanceEvents = recentLifeEvents.filter(e => e.event_type === 'substance_use_event');
+      const sleepEvents = recentLifeEvents.filter(e => e.event_type === 'sleep_deprivation_event');
+      const griefEvents = recentLifeEvents.filter(e => e.event_type === 'grief_event');
+      const conflictEvents = recentLifeEvents.filter(e => ['conflict_event', 'fight_event'].includes(e.event_type));
+      const growthEvents = recentLifeEvents.filter(e => ['growth_event', 'healthy_choice_event', 'recovery_event'].includes(e.event_type));
 
-        const educationContext = (() => {
-          if (!character.current_education_activity || character.current_education_activity === 'none') return '';
-          const d = character.education_details || {};
-          const parts = [`Currently enrolled: ${d.course_name || character.current_education_activity}`];
-          if (d.institution) parts.push(`at ${d.institution}`);
-          if (character.education_expected_completion_date) parts.push(`(expected completion: ${new Date(character.education_expected_completion_date).toLocaleDateString()})`);
-          return parts.join(' ');
-        })();
+      // Build event history context string
+      let eventHistoryContext = '';
+      if (recentLifeEvents.length > 0) {
+        const lines = recentLifeEvents.map(e =>
+          `- [${e.valence}/${e.severity}] ${e.event_type.replace(/_/g, ' ')}: ${e.title}`
+        ).join('\n');
+        eventHistoryContext = `\nRECENT LIFE EVENTS (most recent first, use these to shape ${name}'s current state):\n${lines}`;
+      }
 
-        const jobTrainingContext = (() => {
-          if (!character.current_job_training_activity || character.current_job_training_activity === 'none') return '';
-          const d = character.job_training_details || {};
-          const parts = [`Job training: ${d.training_name || character.current_job_training_activity}`];
-          if (d.company) parts.push(`at ${d.company}`);
-          if (d.position_title) parts.push(`for ${d.position_title} role`);
-          return parts.join(' ');
-        })();
+      // Build vulnerability context: what makes this character more likely to act impulsively/poorly
+      let vulnerabilityContext = '';
+      if (substanceEvents.length >= 2) {
+        vulnerabilityContext += `\n⚠️ ${name} has been drinking or using substances multiple times recently. This lowers their judgment — they may act impulsively, say things they regret, or make risky choices they wouldn't sober.`;
+      }
+      if (sleepEvents.length >= 1) {
+        vulnerabilityContext += `\n⚠️ ${name} has been sleep-deprived. Their emotional regulation is compromised — they may snap, feel overwhelmed, or make mistakes.`;
+      }
+      if (griefEvents.length >= 1) {
+        vulnerabilityContext += `\n⚠️ ${name} is carrying grief right now. They may withdraw, lash out unexpectedly, or self-medicate. Grief does not leave people unchanged.`;
+      }
+      if (conflictEvents.length >= 2) {
+        vulnerabilityContext += `\n⚠️ ${name} has had repeated conflict recently. They may be on edge, defensive, or escalating situations unnecessarily.`;
+      }
 
-        const locationContext = [character.city, character.state].filter(Boolean).join(', ') || '';
-        const structuredLifeContext = [workScheduleContext, sleepScheduleContext, educationContext, jobTrainingContext, locationContext ? `Location: ${locationContext}` : ''].filter(Boolean).join('\n');
+      // Build growth context
+      let growthContext = '';
+      if (growthEvents.length >= 2) {
+        growthContext = `\n✅ ${name} has had a pattern of positive events recently. They may be more stable, hopeful, or making better choices.`;
+      }
 
-        let locationAffinityContext = null;
+      // Archetype-based flaw tendencies
+      const archetypeFlaws = {
+        'chaotic': `${name} tends toward impulsive, reckless decisions — especially under stress or boredom.`,
+        'toxic': `${name} may push people away, provoke conflict, or self-sabotage close relationships.`,
+        'self-destructive': `${name} is prone to choices that harm themselves — substance use, risky behavior, isolation.`,
+        'wounded': `${name} may misread kindness as pity, withdraw when overwhelmed, or act from old wounds.`,
+        'people-pleaser': `${name} may overextend, lie to avoid conflict, or break under the pressure of disappointing others.`,
+        'achiever': `${name} may neglect rest, relationships, or self-care in pursuit of goals — burnout is real.`,
+        'rebel': `${name} resists authority and routine — they may act out, push limits, or refuse help.`,
+        'guardian': `${name} may over-protect others at the cost of their own needs — or become controlling.`,
+        'charmer': `${name} may use flattery to avoid real intimacy, or charm their way into situations they shouldn't.`,
+        'introvert': `${name} may go silent for long periods, fail to communicate needs, or misread social situations.`,
+      };
+      const flawNote = archetypeFlaws[archetype?.toLowerCase()] || `${name} is human — they make mistakes, act on emotion sometimes, and have days where they aren't their best self.`;
+
+      // Build relationship context
+      let relationshipContext = '';
+      if (character.fictional_relationships?.length > 0) {
+        relationshipContext = character.fictional_relationships
+          .map(r => {
+            const bidirectionalNote = r.related_character_id ? ` [mutual connection]` : '';
+            return `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}${bidirectionalNote}`;
+          })
+          .join('\n');
+      }
+
+      const departedPeople = character.departed_characters || [];
+      const departedContext = departedPeople.length > 0
+        ? `\nPEOPLE WHO HAVE RECENTLY LEFT:\n${departedPeople.map(d => {
+            const pname = typeof d === 'string' ? d.replace(' (moved away)', '') : d.name;
+            const cause = typeof d === 'string' ? (d.includes('(moved away)') ? 'moved_away' : 'unknown') : (d.cause || 'unknown');
+            const closeness = typeof d === 'string' ? 'acquaintance' : (d.relationship_closeness || 'acquaintance');
+            const causeText = {
+              moved_away: `${pname} moved away.`,
+              disappeared: `${pname} just stopped being around with no explanation.`,
+              drifted: `${pname} and ${name} drifted apart.`,
+              falling_out: `Things ended badly with ${pname}.`,
+              died: `${pname} died.`,
+              unknown: `${pname} is just gone.`,
+            }[cause] || `${pname} is gone.`;
+            const closenessGuide = {
+              close: `They were close. This hits hard.`,
+              complicated: `Complicated relationship. Messy feelings.`,
+              acquaintance: `Not very close. ${name} notices but moves on.`,
+              distant: `Barely knew each other.`,
+            }[closeness] || '';
+            return `- ${causeText} ${closenessGuide}`;
+          }).join('\n')}`
+        : '';
+
+      const now = new Date();
+      const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+      const timeOfDay = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
+      const fullDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
+      const lastUpdated = character.life_last_updated
+        ? new Date(character.life_last_updated).toLocaleString('en-US', { timeZone: 'America/New_York' })
+        : 'never';
+
+      // Weather
+      let weatherContext = '';
+      if (character.city || character.state) {
+        const location = [character.city, character.state].filter(Boolean).join(', ');
         try {
-          const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 50);
-          const userLocations = allLocations.filter(l => !l.owner_email || l.owner_email === character.owner_email);
-          locationAffinityContext = buildCharacterAffinityContext(character, userLocations);
+          const weatherRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `Current weather right now in ${location}? One sentence: temperature (°F), conditions, feels-like.`,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash',
+          });
+          weatherContext = `\nCURRENT WEATHER IN ${location.toUpperCase()}: ${weatherRes}`;
         } catch (_) {}
+      }
 
-        const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
-          { character_id: character.id },
-          '-timestamp',
-          10
-        );
+      // ── WORLD STATE — active environmental drivers ────────────────────────────
+      // Read cached world context (fetched daily at 5 AM by fetchDailyWorldContext).
+      // This is NOT passive flavor. It shapes character behavior, decisions, and tone.
+      let worldStateBlock = '';
+      try {
+        const dateStr = now.toISOString().split('T')[0];
+        const worldStates = await base44.asServiceRole.entities.AppWorldState.filter({ current_date: dateStr });
+        const ws = worldStates?.[0] || null;
+        if (ws) {
+          const parts = [];
 
-        const negativeEvents = recentLifeEvents.filter(e => e.valence === 'negative');
-        const positiveEvents = recentLifeEvents.filter(e => e.valence === 'positive');
-        const substanceEvents = recentLifeEvents.filter(e => e.event_type === 'substance_use_event');
-        const sleepEvents = recentLifeEvents.filter(e => e.event_type === 'sleep_deprivation_event');
-        const griefEvents = recentLifeEvents.filter(e => e.event_type === 'grief_event');
-        const conflictEvents = recentLifeEvents.filter(e => ['conflict_event', 'fight_event'].includes(e.event_type));
-        const growthEvents = recentLifeEvents.filter(e => ['growth_event', 'healthy_choice_event', 'recovery_event'].includes(e.event_type));
-
-        let eventHistoryContext = '';
-        if (recentLifeEvents.length > 0) {
-          const lines = recentLifeEvents.map(e =>
-            `- [${e.valence}/${e.severity}] ${e.event_type.replace(/_/g, ' ')}: ${e.title}`
-          ).join('\n');
-          eventHistoryContext = `\nRECENT LIFE EVENTS (most recent first, use these to shape ${name}'s current state):\n${lines}`;
-        }
-
-        let vulnerabilityContext = '';
-        if (substanceEvents.length >= 2) {
-          vulnerabilityContext += `\n⚠️ ${name} has been drinking or using substances multiple times recently. This lowers their judgment — they may act impulsively, say things they regret, or make risky choices they wouldn't sober.`;
-        }
-        if (sleepEvents.length >= 1) {
-          vulnerabilityContext += `\n⚠️ ${name} has been sleep-deprived. Their emotional regulation is compromised — they may snap, feel overwhelmed, or make mistakes.`;
-        }
-        if (griefEvents.length >= 1) {
-          vulnerabilityContext += `\n⚠️ ${name} is carrying grief right now. They may withdraw, lash out unexpectedly, or self-medicate. Grief does not leave people unchanged.`;
-        }
-        if (conflictEvents.length >= 2) {
-          vulnerabilityContext += `\n⚠️ ${name} has had repeated conflict recently. They may be on edge, defensive, or escalating situations unnecessarily.`;
-        }
-
-        let growthContext = '';
-        if (growthEvents.length >= 2) {
-          growthContext = `\n✅ ${name} has had a pattern of positive events recently. They may be more stable, hopeful, or making better choices.`;
-        }
-
-        const archetypeFlaws = {
-          'chaotic': `${name} tends toward impulsive, reckless decisions — especially under stress or boredom.`,
-          'toxic': `${name} may push people away, provoke conflict, or self-sabotage close relationships.`,
-          'self-destructive': `${name} is prone to choices that harm themselves — substance use, risky behavior, isolation.`,
-          'wounded': `${name} may misread kindness as pity, withdraw when overwhelmed, or act from old wounds.`,
-          'people-pleaser': `${name} may overextend, lie to avoid conflict, or break under the pressure of disappointing others.`,
-          'achiever': `${name} may neglect rest, relationships, or self-care in pursuit of goals — burnout is real.`,
-          'rebel': `${name} resists authority and routine — they may act out, push limits, or refuse help.`,
-          'guardian': `${name} may over-protect others at the cost of their own needs — or become controlling.`,
-          'charmer': `${name} may use flattery to avoid real intimacy, or charm their way into situations they shouldn't.`,
-          'introvert': `${name} may go silent for long periods, fail to communicate needs, or misread social situations.`,
-        };
-        const flawNote = archetypeFlaws[archetype?.toLowerCase()] || `${name} is human — they make mistakes, act on emotion sometimes, and have days where they aren't their best self.`;
-
-        let relationshipContext = '';
-        if (character.fictional_relationships?.length > 0) {
-          relationshipContext = character.fictional_relationships
-            .map(r => {
-              const bidirectionalNote = r.related_character_id ? ` [mutual connection]` : '';
-              return `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}${bidirectionalNote}`;
-            })
-            .join('\n');
-        }
-
-        const departedPeople = character.departed_characters || [];
-        const departedContext = departedPeople.length > 0
-          ? `\nPEOPLE WHO HAVE RECENTLY LEFT:\n${departedPeople.map(d => {
-              const pname = typeof d === 'string' ? d.replace(' (moved away)', '') : d.name;
-              const cause = typeof d === 'string' ? (d.includes('(moved away)') ? 'moved_away' : 'unknown') : (d.cause || 'unknown');
-              const closeness = typeof d === 'string' ? 'acquaintance' : (d.relationship_closeness || 'acquaintance');
-              const causeText = {
-                moved_away: `${pname} moved away.`,
-                disappeared: `${pname} just stopped being around with no explanation.`,
-                drifted: `${pname} and ${name} drifted apart.`,
-                falling_out: `Things ended badly with ${pname}.`,
-                died: `${pname} died.`,
-                unknown: `${pname} is just gone.`,
-              }[cause] || `${pname} is gone.`;
-              const closenessGuide = {
-                close: `They were close. This hits hard.`,
-                complicated: `Complicated relationship. Messy feelings.`,
-                acquaintance: `Not very close. ${name} notices but moves on.`,
-                distant: `Barely knew each other.`,
-              }[closeness] || '';
-              return `- ${causeText} ${closenessGuide}`;
-            }).join('\n')}`
-          : '';
-
-        const now = new Date();
-        const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
-        const timeOfDay = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
-        const fullDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
-        const lastUpdated = character.life_last_updated
-          ? new Date(character.life_last_updated).toLocaleString('en-US', { timeZone: 'America/New_York' })
-          : 'never';
-
-        let weatherContext = '';
-        if (character.city || character.state) {
-          const location = [character.city, character.state].filter(Boolean).join(', ');
-          try {
-            const weatherRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
-              prompt: `Current weather right now in ${location}? One sentence: temperature (°F), conditions, feels-like.`,
-              add_context_from_internet: true,
-              model: 'gemini_3_flash',
-            });
-            weatherContext = `\nCURRENT WEATHER IN ${location.toUpperCase()}: ${weatherRes}`;
-          } catch (_) {}
-        }
-
-        let worldStateBlock = '';
-        try {
-          const dateStr = now.toISOString().split('T')[0];
-          const worldStates = await base44.asServiceRole.entities.AppWorldState.filter({ current_date: dateStr });
-          const ws = worldStates?.[0] || null;
-          if (ws) {
-            const parts = [];
-            const crimeHeadlines = ws.news?.crime || [];
-            if (crimeHeadlines.length > 0) {
-              parts.push(`CRIME / SAFETY CONDITIONS: ${crimeHeadlines.slice(0,3).join('; ')}\n→ Characters aware of crime may: avoid going out late, stick to known areas, leave certain venues earlier, mention safety concerns naturally in conversation.`);
-            }
-            const econ = ws.news?.economics || [];
-            if (econ.length > 0) {
-              parts.push(`ECONOMIC CONDITIONS: ${econ.slice(0,2).join('; ')}\n→ Characters under economic stress may: hesitate on purchases, choose cheaper options, express money anxiety, skip social outings due to cost.`);
-            }
-            const healthAlerts = ws.society?.health_alerts || {};
-            const healthStr = typeof healthAlerts === 'object' ? Object.entries(healthAlerts).map(([k,v]) => `${k}: ${v}`).join('; ') : String(healthAlerts);
-            if (healthStr && healthStr.length > 5) {
-              parts.push(`HEALTH CONDITIONS IN THE WORLD: ${healthStr}\n→ Characters may respond with: scheduling checkups, picking up medication, mentioning going to the clinic, expressing concern about their own health or someone else's.`);
-            }
-            const addictionTrends = ws.society?.addiction_trends || {};
-            const addStr = typeof addictionTrends === 'object' ? Object.entries(addictionTrends).map(([k,v]) => `${k}: ${v}`).join('; ') : String(addictionTrends);
-            if (addStr && addStr.length > 5) {
-              parts.push(`SUBSTANCE / ADDICTION ENVIRONMENT: ${addStr}\n→ Characters with relevant traits or vulnerabilities may reflect this through their choices, temptations, or restraint.`);
-            }
-            const headlines = (ws.news?.headlines || []).slice(0,4).map(h => h.title || h).filter(Boolean);
-            if (headlines.length > 0) {
-              parts.push(`CURRENT WORLD NEWS (background awareness): ${headlines.join('; ')}\n→ Characters may reference or react to current events subtly — not by reciting them, but by how they affect mood, conversation, or decisions.`);
-            }
-            const trending = (ws.entertainment?.trending || []).slice(0,3);
-            if (trending.length > 0) {
-              parts.push(`TRENDING CULTURE: ${trending.join(', ')}\n→ Characters may reference these naturally in conversation, social plans, or entertainment choices.`);
-            }
-            if (parts.length > 0) {
-              worldStateBlock = `\nWORLD STATE — ACTIVE ENVIRONMENTAL DRIVERS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${parts.join('\n\n')}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
-            }
+          // Crime/safety → characters adjust behavior
+          const crimeHeadlines = ws.news?.crime || [];
+          if (crimeHeadlines.length > 0) {
+            parts.push(`CRIME / SAFETY CONDITIONS: ${crimeHeadlines.slice(0,3).join('; ')}
+→ Characters aware of crime may: avoid going out late, stick to known areas, leave certain venues earlier, mention safety concerns naturally in conversation.`);
           }
-        } catch (_) {}
 
-        const gender = character.gender?.toLowerCase();
-        const pronouns = (() => {
-          if (gender === 'female') return { subject: 'she', object: 'her', possessive: 'her' };
-          if (gender === 'male') return { subject: 'he', object: 'him', possessive: 'his' };
-          return { subject: 'they', object: 'them', possessive: 'their' };
-        })();
+          // Economic stress → financial decisions
+          const econ = ws.news?.economics || [];
+          if (econ.length > 0) {
+            parts.push(`ECONOMIC CONDITIONS: ${econ.slice(0,2).join('; ')}
+→ Characters under economic stress may: hesitate on purchases, choose cheaper options, express money anxiety, skip social outings due to cost.`);
+          }
 
-        const prompt = `You are writing realistic life updates for a fictional character named ${name}. This character is fully alive in their world — they have flaws, habits, vulnerabilities, good days, and bad days.
+          // Health / social alerts → health behaviors
+          const healthAlerts = ws.society?.health_alerts || {};
+          const healthStr = typeof healthAlerts === 'object' ? Object.entries(healthAlerts).map(([k,v]) => `${k}: ${v}`).join('; ') : String(healthAlerts);
+          if (healthStr && healthStr.length > 5) {
+            parts.push(`HEALTH CONDITIONS IN THE WORLD: ${healthStr}
+→ Characters may respond with: scheduling checkups, picking up medication, mentioning going to the clinic, expressing concern about their own health or someone else's. Hospitals and pharmacies are active destinations.`);
+          }
+
+          // Addiction / substance trends
+          const addictionTrends = ws.society?.addiction_trends || {};
+          const addStr = typeof addictionTrends === 'object' ? Object.entries(addictionTrends).map(([k,v]) => `${k}: ${v}`).join('; ') : String(addictionTrends);
+          if (addStr && addStr.length > 5) {
+            parts.push(`SUBSTANCE / ADDICTION ENVIRONMENT: ${addStr}
+→ Characters with relevant traits or vulnerabilities may reflect this through their choices, temptations, or restraint.`);
+          }
+
+          // General news/stress
+          const headlines = (ws.news?.headlines || []).slice(0,4).map(h => h.title || h).filter(Boolean);
+          if (headlines.length > 0) {
+            parts.push(`CURRENT WORLD NEWS (background awareness): ${headlines.join('; ')}
+→ Characters may reference or react to current events subtly — not by reciting them, but by how they affect mood, conversation, or decisions.`);
+          }
+
+          // Entertainment / pop culture
+          const trending = (ws.entertainment?.trending || []).slice(0,3);
+          if (trending.length > 0) {
+            parts.push(`TRENDING CULTURE: ${trending.join(', ')}
+→ Characters may reference these naturally in conversation, social plans, or entertainment choices.`);
+          }
+
+          if (parts.length > 0) {
+            worldStateBlock = `
+WORLD STATE — ACTIVE ENVIRONMENTAL DRIVERS (treat as behavioral inputs, not background trivia)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${parts.join('\n\n')}
+
+CRITICAL RULE: These conditions must influence ${name}'s behavior, decisions, and/or narrative today.
+Characters do NOT recite statistics. They respond to them through action, tone, and choices.
+If crime is up → they may leave earlier, avoid certain areas, lock up.
+If health risks exist → they may schedule a checkup, pick up meds, mention a concern.
+If economic stress is high → they may skip spending, mention money, choose cheaper options.
+If substance trends are present → relevant characters may feel the pull or resist it.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+          }
+        }
+      } catch (_) {}
+      // ─────────────────────────────────────────────────────────────────────────
+
+      // Gender pronoun resolution for third-person narration
+      const gender = character.gender?.toLowerCase();
+      const pronouns = (() => {
+        if (gender === 'female') return { subject: 'she', object: 'her', possessive: 'her' };
+        if (gender === 'male') return { subject: 'he', object: 'him', possessive: 'his' };
+        return { subject: 'they', object: 'them', possessive: 'their' };
+      })();
+
+      const prompt = `You are writing realistic life updates for a fictional character named ${name}. This character is fully alive in their world — they have flaws, habits, vulnerabilities, good days, and bad days.
 
 REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)${weatherContext}
 Last updated: ${lastUpdated}
@@ -451,7 +517,7 @@ Even without explicit positive events, characters naturally experience:
   • Curiosity, excitement, or anticipation
   • Pride in small wins
 
-RESILIENCE RULE: Characters are NOT defined solely by their trauma or hardship. Past negative experiences must ALSO allow: growth, coping, reflection, earned strength, and emotional recovery over time.
+RESILIENCE RULE: Characters are NOT defined solely by their trauma or hardship. Past negative experiences must ALSO allow: growth, coping, reflection, earned strength, and emotional recovery over time. A character with a difficult past may be guarded, but they can also be joyful, funny, grounded, or warm.
 
 PERSONALITY-DRIVEN EMOTIONAL RANGE: Apply ${name}'s specific personality traits to determine the correct emotional state:
   • Optimistic characters → lean toward content, calm, or joyful even under mild stress
@@ -474,25 +540,98 @@ If ${name} has been in a negative state recently, this update MUST consider:
   2. What coping behavior may have occurred (movement, social, rest, activity)
   3. Whether an emotional shift (partial or full) is now warranted
 
-CHARACTER EVOLUTION SYSTEM:
+FAILURE CONDITION — DO NOT GENERATE:
+  ✗ Characters who are perpetually sad, anxious, or overwhelmed without recovery
+  ✗ Emotional_state consistently defaulting to negative without specific triggering events
+  ✗ Characters who never experience joy, pride, humor, or relief
+  ✗ Identical emotional outputs regardless of personality differences between characters
+
+CHARACTER EVOLUTION SYSTEM (EXTENSION — integrate naturally):
 Characters are NOT static. Based on the event history and life context above, consider whether ${name} might be:
 - SHIFTING PRIORITIES (e.g. money vs relationships, independence vs connection, routine vs spontaneity)
 - GROWING (becoming more open, more responsible, more grounded — if experiences support it)
 - REGRESSING (slipping back into old habits — if stress, conflict, or substance events suggest it)
 - ADAPTING (not idealized growth — real, sometimes messy change)
 
-Include a "character_evolution_note" field in your response that briefly describes (1–2 sentences) any priority shift or behavioral change that is emerging for ${name} based on their recent experiences. If nothing significant is changing, set character_evolution_note to null.
+Signals to look for:
+- Multiple negative events → more guarded, more defensive, potentially isolating
+- Financial instability → increased anxiety, hesitation around spending, more cautious decisions
+- Financial stability → slightly more generous, less stressed about small choices
+- Consistent positive events → more confident, warmer, slightly more open
+- Grief or betrayal events → withdrawn, more protective of themselves
+- Repeated conflict → on-edge, quicker to escalate
+- Recovery events → slowly rebuilding, still fragile
+
+Include a "character_evolution_note" field in your response that briefly describes (1–2 sentences) any priority shift or behavioral change that is emerging for ${name} based on their recent experiences. This should be subtle and behavior-based, not a declaration like "I've changed." It should show through choices and tone.
+
+If nothing significant is changing, set character_evolution_note to null.
 
 TODAY'S TASK:
 Generate realistic life updates grounded in current time, the character's history, and their specific vulnerabilities/strengths.
 
-MICRO-NARRATION SYSTEM:
+MICRO-NARRATION SYSTEM (EXTENSION — DO NOT SKIP):
 Generate a daily_micro_narration field: 1–3 short third-person sentences describing what ${name} is doing RIGHT NOW or in this general time window.
 
 Rules for daily_micro_narration:
 - STRICTLY third-person only. Use "${name}" or pronouns (${pronouns.subject}/${pronouns.object}/${pronouns.possessive}) — NEVER "I", "me", "my"
-- Short and grounded. Match the current time of day: ${timeOfDay} on a ${dayOfWeek}
-- Reflect the character's personality
+- Short and grounded. Like a quiet observer watching a real person's day
+- Match the current time of day: ${timeOfDay} on a ${dayOfWeek}
+- Reflect the character's personality (disciplined = structured tone, anxious = overthinking, tired = slow/minimal)
+- Vary phrasing — avoid robotic or repetitive sentence structures
+- Length: 1 sentence for routine moments, 2-3 for transitions or more context
+- DO NOT override or replace current_life_event — this is separate, smaller, more mundane
+- Examples of the right tone:
+  * "${name} wakes up to the alarm and hits snooze before finally getting out of bed."
+  * "${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} settles at ${pronouns.possessive} desk, already going through emails."
+  * "Lunch comes quick. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} steps outside for a few minutes."
+  * "${name} stops at the store on the way home. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} keeps it simple."
+  * "The dishes are done. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} finally sits down."
+
+MORNING NARRATIVE ENGINE (5:00 AM – 11:00 AM — ACTIVE CREATED CHARACTERS ONLY):
+If the current time falls between 5:00 AM and 11:00 AM, apply these rules for daily_micro_narration:
+
+MORNING INTENT — pick one based on personality, needs, schedule, and mood:
+productive | slow_start | self_care | social | obligation (if work/school) | escape | recovery | spiritual | chaotic
+
+INTENT SELECTION GUIDE:
+- introvert → slow_start or self_care
+- extrovert → social or productive
+- health-focused → productive or self_care
+- religious → spiritual
+- party-oriented traits → recovery or chaotic
+- low energy/mental need → slow_start or recovery
+- low social need → social
+- low hygiene → self_care
+- low hunger → food-first behavior
+- if work or school scheduled → obligation (hard override)
+
+LAYERING RULE (REQUIRED): Each morning narrative MUST include 2–3 connected actions — NOT a single action. Not a list — a flowing paragraph-style observation.
+
+ANTI-REPETITION (CRITICAL):
+- Do NOT default to "wakes up and drinks coffee" as the structure
+- Do NOT make coffee/tea the first or only action
+- Coffee/tea is acceptable ONLY as part of a sequence (e.g. after movement, after shower, after checking phone)
+- Some characters drink water first, some move first, some eat first, some skip drinks entirely
+- Vary structure across characters — no two mornings should feel identical
+
+MORNING PATTERN EXAMPLES (reference only — reword everything, adapt tone, vary structure):
+- Wakes before the alarm, sits a moment noticing body tension, then moves first before reaching for the phone
+- Ignores notifications, puts on music before anything else, takes a slower more deliberate approach to the morning
+- Gets up immediately when alarm goes off, checks schedule mentally, moves through routine efficiently
+- Wakes still tired, doesn't rush, focuses on small resets — water, basic routine, minimal effort
+- Notices something feels off, slows down, prioritizes balance over intensity
+- Reaches for phone early not to scroll but to connect — sends a quick message, eases into interaction
+- Starts morning with a financial or schedule check that shapes decisions for the rest of the day
+- Wakes slower than planned, stabilizes first — hydration, quiet, keeps routine minimal
+
+NIGHT OWL / LATE SHIFT ENGINE (applies when character works late, has night_owl trait, or is active late):
+If ${name} is a night owl or works late shifts, morning narratives should reflect that reality:
+- They may still be winding down, not waking up
+- Sleep patterns are shifted — do not force early-morning productivity on a night worker
+- Night shift intents: focused | social | restless | fatigued | perfectionist | withdrawn | routine_anchor | creative | time_aware
+- Night workers have their own layered behaviors: checking time, adjusting pace across the shift, filling quiet with purpose or restlessness
+- NOT all night workers are tired — some are locked in, some are restless, some are perfectionist
+- Vary night behavior across characters just as with mornings
 
 Return JSON:
 {
@@ -501,9 +640,9 @@ Return JSON:
       "person_name": string,
       "relationship_type": string,
       "description": string,
-      "current_status": string,
+      "current_status": string (what's happening RIGHT NOW between them — shaped by time of day),
       "emotional_impact": string,
-      "last_interaction_summary": string,
+      "last_interaction_summary": string (specific recent moment),
       "history_summary": string
     }
   ],
@@ -512,18 +651,18 @@ Return JSON:
       "description": string,
       "context": string,
       "emotional_reaction": string,
-      "date": string
+      "date": string (ISO)
     }
   ],
-  "current_life_event": string,
-  "daily_micro_narration": string,
-  "character_evolution_note": string or null,
-  "emotional_state": string,
+  "current_life_event": string (ONE sentence about what's active right now — real, specific, shaped by their history),
+  "daily_micro_narration": string (1–3 short third-person sentences describing what ${name} is doing right now. STRICT third person — use ${name} or ${pronouns.subject}/${pronouns.object}/${pronouns.possessive}. NEVER use "I", "me", "my"),
+  "character_evolution_note": string or null (1–2 sentences describing any emerging behavioral or priority shift for ${name} based on recent experiences. Behavior-based only — no declarations. Null if nothing significant.),
+  "emotional_state": string (from: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated, hopelessness, grief, resentment, shame, longing, apathy, detachment, nostalgia),
   "health_status": string,
   "health_habits": string,
   "life_event_to_log": {
     "should_log": boolean,
-    "event_type": string,
+    "event_type": string (optional — from the standard list if something significant happened today),
     "valence": "positive" | "negative" | "mixed",
     "severity": "minor" | "moderate" | "significant" | "major",
     "title": string,
@@ -533,151 +672,154 @@ Return JSON:
   }
 }
 
-Keep fictional_relationships to 3-5. Ground everything in real time and real consequences.`;
+Keep fictional_relationships to 3-5. Include life_event_to_log only if something genuinely notable happened today — not every update needs one. Ground everything in real time and real consequences.`;
 
-        const update = await base44.asServiceRole.integrations.Core.InvokeLLM({
-          prompt,
-          response_json_schema: {
-            type: 'object',
-            properties: {
-              fictional_relationships: { type: 'array', items: { type: 'object' } },
-              transient_encounters: { type: 'array', items: { type: 'object' } },
-              current_life_event: { type: 'string' },
-              daily_micro_narration: { type: 'string' },
-              character_evolution_note: { type: 'string' },
-              emotional_state: { type: 'string' },
-              health_status: { type: 'string' },
-              health_habits: { type: 'string' },
-              life_event_to_log: { type: 'object' },
-            },
+      const update = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt,
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            fictional_relationships: { type: 'array', items: { type: 'object' } },
+            transient_encounters: { type: 'array', items: { type: 'object' } },
+            current_life_event: { type: 'string' },
+            daily_micro_narration: { type: 'string' },
+            character_evolution_note: { type: 'string' },
+            emotional_state: { type: 'string' },
+            health_status: { type: 'string' },
+            health_habits: { type: 'string' },
+            life_event_to_log: { type: 'object' },
           },
-        });
+        },
+      });
 
-        // ── POST-SHIFT EXIT LOGIC
-        let postShiftUpdate = {};
-        const jobType = (character.work_details?.workplace_type || '').toLowerCase();
-        const highDrainJobs = ['hospital', 'clinic', 'school', 'office', 'government', 'medical', 'emergency'];
-        const isHighDrain = highDrainJobs.some(j => jobType.includes(j));
-        const currentH = now.getHours();
-        const currentMin = now.getMinutes();
-        const currentTimeMin = currentH * 60 + currentMin;
-        const workEndTime = character.work_end_time || '17:00';
-        const [endH, endM] = workEndTime.split(':').map(Number);
-        const workEndMin = endH * 60 + endM;
+      // ── POST-SHIFT EXIT LOGIC (PHASE 1)
+      // Inline job drain assessment
+      let postShiftUpdate = {};
+      const jobType = (character.work_details?.workplace_type || '').toLowerCase();
+      const highDrainJobs = ['hospital', 'clinic', 'school', 'office', 'government', 'medical', 'emergency'];
+      const isHighDrain = highDrainJobs.some(j => jobType.includes(j));
+      const currentH = now.getHours();
+      const currentMin = now.getMinutes();
+      const currentTimeMin = currentH * 60 + currentMin;
+      const workEndTime = character.work_end_time || '17:00';
+      const [endH, endM] = workEndTime.split(':').map(Number);
+      const workEndMin = endH * 60 + endM;
 
-        if (character.current_work_location_id && currentTimeMin > (workEndMin + 15)) {
-          const energy = character.energy_value || 75;
-          const mental = character.mental_value || 75;
-          const exitScore = (isHighDrain ? 30 : 15) + (energy < 50 ? 25 : energy < 70 ? 15 : 0) + (mental < 50 ? 25 : mental < 70 ? 15 : 0);
+      // After work hours + high drain job + low energy/mental = go home
+      if (character.current_work_location_id && currentTimeMin > (workEndMin + 15)) {
+        const energy = character.energy_value || 75;
+        const mental = character.mental_value || 75;
+        const exitScore = (isHighDrain ? 30 : 15) + (energy < 50 ? 25 : energy < 70 ? 15 : 0) + (mental < 50 ? 25 : mental < 70 ? 15 : 0);
 
-          if (exitScore > 50 && character.current_home_location_id) {
-            postShiftUpdate.resolved_current_location_id = character.current_home_location_id;
-            postShiftUpdate.resolved_presence_status = 'home';
-            update.current_life_event = `Heading home after work — need to decompress.`;
-          }
+        if (exitScore > 50 && character.current_home_location_id) {
+          postShiftUpdate.resolved_current_location_id = character.current_home_location_id;
+          postShiftUpdate.resolved_presence_status = 'home';
+          update.current_life_event = `Heading home after work — need to decompress.`;
         }
+      }
 
-        // Build enriched life event — append evolution note if present
-        const lifeEvent = [update.current_life_event, update.character_evolution_note]
-          .filter(Boolean).join(' ');
+      // ── STRICT MODE: Do NOT write fictional_relationships or transient_encounters
+      // from LLM inference. These can only be edited by the user manually.
+      // The LLM returns them in its schema for context continuity, but we DISCARD them.
 
+      // Build enriched life event — append evolution note if present
+      const lifeEvent = [update.current_life_event, update.character_evolution_note]
+        .filter(Boolean).join(' ');
+
+      // ─── PHASE 2: LOCATION SYNC
+      // Ensure resolved_last_updated_at is always set when location changes
+      if (postShiftUpdate.resolved_current_location_id) {
+        postShiftUpdate.resolved_last_updated_at = new Date().toISOString();
+      }
+
+      // ─── INTEGRATION: Trigger orchestrator for significant events
+      try {
         if (postShiftUpdate.resolved_current_location_id) {
-          postShiftUpdate.resolved_last_updated_at = new Date().toISOString();
+          // Event: work shift ended and character moved home
+          await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
+            eventType: 'WORK_SHIFT_ENDED',
+            characterId: character.id,
+            eventData: {
+              exitScore: 60,
+              reason: 'High-drain job + low energy',
+            },
+          });
         }
-
-        await base44.asServiceRole.entities.Character.update(character.id, {
-          current_life_event: lifeEvent || '',
-          daily_micro_narration: update.daily_micro_narration || '',
-          emotional_state: update.emotional_state || character.emotional_state || 'calm',
-          health_status: update.health_status || character.health_status || 'healthy',
-          health_habits: update.health_habits || character.health_habits || '',
-          life_last_updated: new Date().toISOString(),
-          departed_characters: [],
-          ...postShiftUpdate,
-        });
-
-        // ── PHASE 5: EVENT CHAINS + STORY ARCS
-        // Declared BEFORE use — fixes the ReferenceError that was crashing the function
-        const arcTypes = {};
-        const recentArcs = await base44.asServiceRole.entities.LifeEvent.filter(
-          { character_id: character.id },
-          '-timestamp',
-          15
-        );
-
-        recentArcs.forEach(e => {
-          if (e.event_type) {
-            if (['conflict_event', 'falling_out', 'fight_event'].includes(e.event_type)) {
-              arcTypes.CONFLICT_ARC = (arcTypes.CONFLICT_ARC || 0) + 1;
-            } else if (['grief_event', 'loss_event', 'medical_event'].includes(e.event_type)) {
-              arcTypes.EMOTIONAL_WEIGHT = (arcTypes.EMOTIONAL_WEIGHT || 0) + 1;
-            } else if (['growth_event', 'healthy_choice_event', 'recovery_event'].includes(e.event_type)) {
-              arcTypes.PERSONAL_GROWTH = (arcTypes.PERSONAL_GROWTH || 0) + 1;
-            } else if (e.event_type === 'bonding_event') {
-              arcTypes.RELATIONSHIP_GROWTH = (arcTypes.RELATIONSHIP_GROWTH || 0) + 1;
-            }
-          }
-        });
-
-        for (const [arcType, count] of Object.entries(arcTypes)) {
-          if (count >= 3) {
-            update.character_evolution_note = `A pattern is forming: ${arcType.replace(/_/g, ' ').toLowerCase()} trajectory.`;
-            break;
-          }
-        }
-
-        // Trigger orchestrator integrations — now that arcTypes is defined
-        try {
-          if (postShiftUpdate.resolved_current_location_id) {
-            await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
-              eventType: 'WORK_SHIFT_ENDED',
-              characterId: character.id,
-              eventData: { exitScore: 60, reason: 'High-drain job + low energy' },
-            }).catch(() => {});
-          }
-          if (Object.keys(arcTypes).length > 0) {
-            const arcType = Object.entries(arcTypes).sort((a, b) => b[1] - a[1])[0][0];
-            await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
-              eventType: 'STORY_ARC_PROGRESSED',
-              characterId: character.id,
-              eventData: { arcType, arcStage: 'forming' },
-            }).catch(() => {});
-          }
-        } catch (_) {}
-
-        // Log significant life event if produced — block birth/child events
-        const BLOCKED_EVENT_TYPES = ['birth_event', 'child_born', 'pregnancy_event', 'family_addition_event'];
-        const BLOCKED_KEYWORDS = /\b(born|birth|baby|infant|pregnancy|pregnant|child was born|new child|gave birth)\b/i;
-        const eventToLog = update.life_event_to_log;
-
-        if (eventToLog?.should_log &&
-            !BLOCKED_EVENT_TYPES.includes(eventToLog.event_type) &&
-            !BLOCKED_KEYWORDS.test(eventToLog.title || '') &&
-            !BLOCKED_KEYWORDS.test(eventToLog.description || '')) {
-          await base44.asServiceRole.entities.LifeEvent.create({
-            character_id: character.id,
-            character_name: name,
-            event_type: eventToLog.event_type || 'routine_positive_event',
-            valence: eventToLog.valence || 'neutral',
-            severity: eventToLog.severity || 'minor',
-            title: eventToLog.title || '',
-            description: eventToLog.description || '',
-            emotional_impact: eventToLog.emotional_impact || '',
-            triggered_by: 'life_simulation',
-            context_tags: eventToLog.context_tags || [],
-            timestamp: new Date().toISOString(),
+        // If forming arc detected, trigger arc progression
+        if (Object.keys(arcTypes).length > 0) {
+          const arcType = Object.entries(arcTypes).sort((a, b) => b[1] - a[1])[0][0];
+          await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
+            eventType: 'STORY_ARC_PROGRESSED',
+            characterId: character.id,
+            eventData: {
+              arcType,
+              arcStage: 'forming',
+            },
           }).catch(() => {});
         }
-
-        results.push({ id: character.id, name, status: 'updated' });
-      } catch (err) {
-        results.push({ id: character.id, name: character.name, status: 'error', error: err.message });
+      } catch (_) {
+        // Silent fail — orchestrator is optional
       }
-    }
 
-    return Response.json({ results });
-  } catch (err) {
-    console.error('[evolveCharacterLife] Fatal error:', err.message);
-    return Response.json({ error: err.message }, { status: 500 });
+      await base44.asServiceRole.entities.Character.update(character.id, {
+        // fictional_relationships: intentionally omitted — user-controlled only
+        // transient_encounters: intentionally omitted — user-controlled only
+        current_life_event: lifeEvent || '',
+        daily_micro_narration: update.daily_micro_narration || '',
+        emotional_state: update.emotional_state || character.emotional_state || 'calm',
+        health_status: update.health_status || character.health_status || 'healthy',
+        health_habits: update.health_habits || character.health_habits || '',
+        life_last_updated: new Date().toISOString(),
+        departed_characters: [],
+        ...postShiftUpdate,
+      });
+
+      // ─── PHASE 5: EVENT CHAINS + STORY ARCS
+      // Fetch recent life events to detect forming arcs
+      const arcUpdate = {};
+      const recentArcs = await base44.asServiceRole.entities.LifeEvent.filter(
+        { character_id: character.id },
+        '-timestamp',
+        15
+      );
+      
+      // Detect if a pattern is forming
+      const arcTypes = {};
+      recentArcs.forEach(e => {
+        if (e.event_type) {
+          // Group related events into arc types
+          if (['conflict_event', 'falling_out', 'fight_event'].includes(e.event_type)) {
+            arcTypes.CONFLICT_ARC = (arcTypes.CONFLICT_ARC || 0) + 1;
+          } else if (['grief_event', 'loss_event', 'medical_event'].includes(e.event_type)) {
+            arcTypes.EMOTIONAL_WEIGHT = (arcTypes.EMOTIONAL_WEIGHT || 0) + 1;
+          } else if (['growth_event', 'healthy_choice_event', 'recovery_event'].includes(e.event_type)) {
+            arcTypes.PERSONAL_GROWTH = (arcTypes.PERSONAL_GROWTH || 0) + 1;
+          } else if (e.event_type === 'bonding_event') {
+            arcTypes.RELATIONSHIP_GROWTH = (arcTypes.RELATIONSHIP_GROWTH || 0) + 1;
+          }
+        }
+      });
+
+      // If a pattern detected (3+ related events), note it for behavior changes
+      for (const [arcType, count] of Object.entries(arcTypes)) {
+        if (count >= 3) {
+          update.character_evolution_note = `A pattern is forming: ${arcType.replace(/_/g, ' ').toLowerCase()} trajectory.`;
+          break;
+        }
+      }
+
+      // Log significant life event if the simulation produced one
+      // STRICT MODE: Block any birth/child/family-creation events from auto-logging.
+      // Birth events require explicit user approval — they must never be auto-created.
+      const BLOCKED_EVENT_TYPES = ['birth_event', 'child_born', 'pregnancy_event', 'family_addition_event'];
+      const BLOCKED_KEYWORDS = /\b(born|birth|baby|infant|pregnancy|pregnant|child was born|new child|gave birth)\b/i;
+      const eventToLog = update.life_event_to_log;
+
+      results.push({ id: character.id, name, status: 'updated' });
+    } catch (err) {
+      results.push({ id: character.id, name: character.name, status: 'error', error: err.message });
+    }
   }
+
+  return Response.json({ results });
 });

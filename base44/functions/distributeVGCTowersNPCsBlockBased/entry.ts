@@ -49,31 +49,25 @@ async function loadRosterResidents(base44, residentIds, ownerEmail, phaseLog) {
 
   phaseLog.push(`  [ROSTER] ${residentIds.length} resident IDs referenced`);
 
-  // ONE scoped fetch for all active characters belonging to this owner.
-  // Filter to roster IDs client-side — this replaces N individual API calls
-  // (one per resident) with a single call, eliminating rate limit saturation.
   const residents = [];
-  const fetchedIds = new Set();
+  const unavailable = [];
 
-  try {
-    const allOwnerChars = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: ownerEmail, status: 'active' }, null, 300
-    );
-    const rosterSet = new Set(residentIds);
-    for (const r of (allOwnerChars || [])) {
-      if (rosterSet.has(r.id)) {
-        residents.push(r);
-        fetchedIds.add(r.id);
+  // Fetch residents individually by ID to avoid broad scans.
+  // asServiceRole + specific id filter is the narrowest access path.
+  for (const rid of residentIds) {
+    try {
+      const results = await base44.asServiceRole.entities.Character.filter(
+        { id: rid, status: 'active' }, null, 1
+      );
+      if (results && results.length > 0) {
+        residents.push(results[0]);
+      } else {
+        unavailable.push({ id: rid, reason: 'NOT_FOUND_OR_INACTIVE' });
       }
+    } catch (err) {
+      unavailable.push({ id: rid, reason: `FETCH_ERROR: ${err.message}` });
     }
-  } catch (err) {
-    phaseLog.push(`  [ROSTER] Owner character fetch error: ${err.message}`);
   }
-
-  // Identify any IDs that came back with no record (not found or inactive)
-  const unavailable = residentIds
-    .filter(rid => !fetchedIds.has(rid))
-    .map(rid => ({ id: rid, reason: 'NOT_FOUND_OR_INACTIVE' }));
 
   phaseLog.push(`  [ROSTER] ${residents.length} residents fetched, ${unavailable.length} unavailable`);
   if (unavailable.length > 0) {

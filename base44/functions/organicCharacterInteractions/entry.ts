@@ -153,58 +153,6 @@ Deno.serve(async (req) => {
     const cooldownMs = COOLDOWN_HOURS * 60 * 60 * 1000;
     let totalInteractions = 0;
 
-    // ── COLLECT ALL UNIQUE LOCATION IDs NEEDED ───────────────────────────────
-    const allLocationIds = [...new Set(eligible.map(c => c.resolved_current_location_id))];
-
-    // ── PRE-LOAD ALL LOCATION RECORDS IN BULK ────────────────────────────────
-    // Single bulk fetch instead of one-per-location inside the loop
-    const locationMap = {}; // locId → { name, category }
-    for (const locId of allLocationIds) {
-      try {
-        const locRecord = await base44.asServiceRole.entities.LocationReference.get(locId).catch(() => null);
-        if (locRecord) {
-          locationMap[locId] = { name: locRecord.name, category: locRecord.category || 'generic' };
-        }
-      } catch { /* skip */ }
-    }
-
-    // Collect all eligible character IDs for bulk memory/relationship pre-load
-    const eligibleIds = new Set(eligible.map(c => c.id));
-
-    // ── PRE-LOAD CharacterMemory for all eligible characters (bulk, one query per user) ──
-    // This replaces per-pair CharacterMemory.filter() calls inside the loop entirely.
-    const memoryByCharId = {}; // charId → CharacterMemory[]
-    for (const [userEmail, userChars] of Object.entries(
-      eligible.reduce((acc, c) => { if (c.owner_email) { (acc[c.owner_email] = acc[c.owner_email] || []).push(c); } return acc; }, {})
-    )) {
-      const charIds = userChars.map(c => c.id);
-      try {
-        const mems = await base44.asServiceRole.entities.CharacterMemory.filter(
-          { memory_type: 'relationship' },
-          '-created_date',
-          500
-        ).catch(() => []);
-        for (const m of mems) {
-          if (!charIds.includes(m.character_id)) continue;
-          if (!memoryByCharId[m.character_id]) memoryByCharId[m.character_id] = [];
-          memoryByCharId[m.character_id].push(m);
-        }
-      } catch { /* skip */ }
-    }
-
-    // ── PRE-LOAD CharacterRelationship for all eligible characters (bulk) ────
-    // Replaces per-pair CharacterRelationship.filter() calls inside the loop.
-    const relMap = {}; // `${charAId}::${charBId}` → relationship record
-    try {
-      const allRels = await base44.asServiceRole.entities.CharacterRelationship.filter(
-        {}, '-created_date', 1000
-      ).catch(() => []);
-      for (const rel of allRels) {
-        if (!eligibleIds.has(rel.source_character_id) && !eligibleIds.has(rel.target_character_id)) continue;
-        relMap[`${rel.source_character_id}::${rel.target_character_id}`] = rel;
-      }
-    } catch { /* skip */ }
-
     // ── PROCESS EACH USER'S CHARACTER SET ────────────────────────────────────
     for (const [userEmail, userChars] of Object.entries(byUser)) {
 
@@ -220,10 +168,17 @@ Deno.serve(async (req) => {
       for (const [locId, charsHere] of Object.entries(byLocation)) {
         if (charsHere.length < 2) continue;
 
-        // Use pre-loaded location data — zero extra API calls
-        const locData = locationMap[locId] || {};
-        const locationName = locData.name || charsHere[0].resolved_current_location_name || 'a shared location';
-        const locCategory = locData.category || 'generic';
+        // Load location data once (to get name + category)
+        let locationName = charsHere[0].resolved_current_location_name || 'a shared location';
+        let locCategory = 'generic';
+        try {
+          const locRecord = await base44.asServiceRole.entities.LocationReference.get(locId).catch(() => null);
+          if (locRecord) {
+            locationName = locRecord.name || locationName;
+            locCategory = locRecord.category || 'generic';
+          }
+        } catch { /* skip */ }
+
         const prob = interactionProbability(locCategory);
 
         // Evaluate all unique pairs
@@ -239,12 +194,17 @@ Deno.serve(async (req) => {
             // Probability gate
             if (Math.random() > prob) continue;
 
-            // ── COOLDOWN CHECK — use pre-loaded memory (no API call) ──────
-            const memoriesA = (memoryByCharId[charA.id] || []).filter(
-              m => m.related_character_id === charB.id && m.memory_summary?.includes('[co-location]')
-            );
+            const key = pairKey(charA.id, charB.id);
 
-            const lastInteraction = memoriesA
+            // ── COOLDOWN CHECK via CharacterMemory ────────────────────────
+            const recentMemories = await base44.asServiceRole.entities.CharacterMemory.filter({
+              character_id: charA.id,
+              related_character_id: charB.id,
+              memory_type: 'relationship',
+            });
+
+            const lastInteraction = recentMemories
+              .filter(m => m.memory_summary?.includes('[co-location]'))
               .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))[0];
 
             if (lastInteraction) {
@@ -252,8 +212,8 @@ Deno.serve(async (req) => {
               if (age < cooldownMs) continue; // too soon
             }
 
-            // Count prior interactions from pre-loaded data
-            const priorCount = memoriesA.length;
+            // Count prior interactions to gauge familiarity level
+            const priorCount = recentMemories.filter(m => m.memory_summary?.includes('[co-location]')).length;
             const newCount = priorCount + 1;
             const familiarityLabel = getFamiliarityLabel(newCount);
             const interactionNote = buildInteractionNote(charA, charB, locationName, locCategory);
@@ -294,7 +254,7 @@ Deno.serve(async (req) => {
               if (sourceChar.character_type !== 'active_created_character') return;
 
               const existing = (sourceChar.fictional_relationships || []).find(
-                r => r.related_character_id === targetChar.id ||
+                r => r.related_character_id === targetChar.id || 
                      r.person_name?.trim().toLowerCase() === (targetChar.name || targetChar.display_name)?.trim().toLowerCase()
               );
 
@@ -334,11 +294,17 @@ Deno.serve(async (req) => {
                   )
                 : [...(sourceChar.fictional_relationships || []), updatedRel];
 
+              // NOTE: Character RLS requires owner_email match for updates. asServiceRole does
+              // not satisfy this condition for user-owned records and returns 403.
+              // This scheduled function has no user token, so we invoke the update via the
+              // asServiceRole functions path which runs in the authenticated service context.
               await base44.asServiceRole.entities.Character.update(sourceChar.id, {
                 fictional_relationships: updatedList,
               }).catch(e => {
+                // 403 = RLS blocked. Log clearly — do not suppress — relationship data is not lost,
+                // it will be updated on next user-triggered interaction.
                 if (e?.status === 403 || e?.message?.includes('Permission denied')) {
-                  console.warn(`[organicInteractions] fictional_relationships update blocked by RLS for ${sourceChar.name} (id=${sourceChar.id}) — will update on next user interaction.`);
+                  console.warn(`[organicInteractions] fictional_relationships update blocked by RLS for ${sourceChar.name} (id=${sourceChar.id}) — expected for user-owned characters in scheduled context. Will update on next user interaction.`);
                 } else {
                   console.warn(`[organicInteractions] fictional_relationships update failed: ${e.message}`);
                 }
@@ -350,32 +316,38 @@ Deno.serve(async (req) => {
               updateFictionalRelationship(charB, charA),
             ]);
 
-            // ── UPDATE CharacterRelationship — use pre-loaded relMap ──────
-            const relKey = `${charA.id}::${charB.id}`;
-            const reverseKey = `${charB.id}::${charA.id}`;
-            const existingRel = relMap[relKey] || relMap[reverseKey] || null;
+            // ── UPDATE CharacterRelationship record ───────────────────────
+            const existingRels = await base44.asServiceRole.entities.CharacterRelationship.filter({
+              source_character_id: charA.id,
+              target_character_id: charB.id,
+            }).catch(() => []);
 
+            // Relationship bar deltas — small increments, context-aware
+            // First encounter: minimal bars. Repeated contact grows them slowly.
             const isFirstMeet = priorCount === 0;
-            const famDelta = isFirstMeet ? 5 : 4;
-            const friendDelta = isFirstMeet ? 0 : 2;
-            const trustDelta = isFirstMeet ? 0 : 1;
+            const famDelta = isFirstMeet ? 5 : 4;       // familiarity grows each time
+            const friendDelta = isFirstMeet ? 0 : 2;    // no friendship boost on first meet
+            const trustDelta = isFirstMeet ? 0 : 1;     // trust requires repeated contact
+
+            // Workplace/school context gives small coworker familiarity bump, not friendship
             const contextFamBonus = ['workplace', 'school'].includes(locCategory) ? 3 : 0;
 
-            if (existingRel) {
+            if (existingRels.length > 0) {
+              const rel = existingRels[0];
               const updates = {
-                familiarity_level: Math.min((existingRel.familiarity_level || 5) + famDelta + contextFamBonus, 100),
-                friendship_level: Math.min((existingRel.friendship_level || 0) + friendDelta, 100),
-                trust_level: Math.min((existingRel.trust_level || 0) + trustDelta, 100),
+                familiarity_level: Math.min((rel.familiarity_level || 5) + famDelta + contextFamBonus, 100),
+                friendship_level: Math.min((rel.friendship_level || 0) + friendDelta, 100),
+                trust_level: Math.min((rel.trust_level || 0) + trustDelta, 100),
                 label_from_source_perspective: familiarityLabel,
               };
-              if (!isFirstMeet && existingRel.relationship_type === 'other') {
+              // Upgrade relationship_type only after sufficient familiarity (not on first meet)
+              if (!isFirstMeet && rel.relationship_type === 'other') {
                 updates.relationship_type = relType;
               }
-              await base44.asServiceRole.entities.CharacterRelationship.update(existingRel.id, updates).catch(() => {});
-              // Update local cache so subsequent pairs in this run see the latest values
-              relMap[relKey] = { ...existingRel, ...updates };
+              await base44.asServiceRole.entities.CharacterRelationship.update(rel.id, updates).catch(() => {});
             } else {
-              const newRel = await base44.asServiceRole.entities.CharacterRelationship.create({
+              // Brand new relationship — start at "other", bars near zero
+              await base44.asServiceRole.entities.CharacterRelationship.create({
                 source_character_id: charA.id,
                 target_character_id: charB.id,
                 relationship_type: 'other',
@@ -389,15 +361,14 @@ Deno.serve(async (req) => {
                 is_household_member: false,
                 is_family: false,
                 is_hidden: false,
-              }).catch(() => null);
-              if (newRel) relMap[relKey] = newRel;
+              }).catch(() => {});
             }
 
             totalInteractions++;
             console.log(`[organicInteractions] ✓ Interaction: ${charA.name} ↔ ${charB.name} at ${locationName} (${familiarityLabel})`);
 
-            // Small delay between writes only (not reads — those are gone)
-            await new Promise(r => setTimeout(r, 100));
+            // Small delay to avoid hammering the DB
+            await new Promise(r => setTimeout(r, 150));
           }
         }
       }
