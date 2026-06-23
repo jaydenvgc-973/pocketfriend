@@ -40,26 +40,65 @@ Deno.serve(async (req) => {
     const now = Date.now();
 
     // ── Fetch all evidence in parallel ──────────────────────────────────────
+    // ── Paginated message fetch — owner-scoped, up to 5000 records ────────────
+    // A hard cap of 2000 silently drops older evidence. Paginate in batches of 500
+    // until the API returns fewer than 500 (meaning we've reached the end).
+    async function fetchAllMessages() {
+      const all = [];
+      let skip = 0;
+      const batch = 500;
+      while (true) {
+        const page = await sr.entities.Message.filter(
+          { owner_email: userEmail }, '-created_date', batch, skip
+        ).catch(() => []);
+        all.push(...page);
+        if (page.length < batch) break;  // last page
+        skip += batch;
+        if (skip >= 5000) break;          // absolute safety ceiling
+      }
+      return all;
+    }
+
+    // ── Paginated LifeEvent / Memory / CharacterMemory — owner-scoped via character ──
+    // These entities store owner_email on the character, not directly. Scope them by
+    // fetching characters first (done in parallel) then filtering by character_id set.
+    // Fetched after characters so we can scope correctly.
+
     const [
       existing,
       allMessages,
       allCharacters,
       allConversations,
-      financialTxns,
-      lifeEvents,
-      memories,
-      charMemories,
       locationHistory,
     ] = await Promise.all([
       base44.entities.UserAchievement.filter({ owner_email: userEmail }).catch(() => []),
-      sr.entities.Message.filter({ owner_email: userEmail }, '-created_date', 2000).catch(() => []),
+      fetchAllMessages(),
       sr.entities.Character.filter({ owner_email: userEmail }).catch(() => []),
       sr.entities.Conversation.filter({ owner_email: userEmail }).catch(() => []),
-      sr.entities.FinancialTransaction.filter({ character_id: { $exists: true } }, '-timestamp', 500).catch(() => []),
-      sr.entities.LifeEvent.filter({}, '-timestamp', 500).catch(() => []),
-      sr.entities.Memory.filter({}, '-timestamp', 500).catch(() => []),
-      sr.entities.CharacterMemory.filter({}, '-created_date', 500).catch(() => []),
       sr.entities.LocationHistory.filter({ owner_email: userEmail }, '-arrival_time', 500).catch(() => []),
+    ]);
+
+    // Build owner-scoped character ID set for scoping other queries
+    const ownerCharIds = new Set(allCharacters.map(c => c.id));
+
+    // Fetch owner-scoped data using character ID set
+    const [financialTxns, lifeEvents, memories, charMemories] = await Promise.all([
+      // FinancialTransaction: scope by character_id belonging to this owner
+      sr.entities.FinancialTransaction.filter({}, '-timestamp', 1000).then(txns =>
+        txns.filter(t => ownerCharIds.has(t.character_id) || ownerCharIds.has(t.sender_id) || ownerCharIds.has(t.receiver_id))
+      ).catch(() => []),
+      // LifeEvent: scope by character_id
+      sr.entities.LifeEvent.filter({}, '-timestamp', 1000).then(evts =>
+        evts.filter(e => ownerCharIds.has(e.character_id))
+      ).catch(() => []),
+      // Memory: scope by character_id
+      sr.entities.Memory.filter({}, '-timestamp', 1000).then(mems =>
+        mems.filter(m => ownerCharIds.has(m.character_id))
+      ).catch(() => []),
+      // CharacterMemory: scope by character_id
+      sr.entities.CharacterMemory.filter({}, '-created_date', 500).then(cms =>
+        cms.filter(m => ownerCharIds.has(m.character_id))
+      ).catch(() => []),
     ]);
 
     // Build existing dedup key set

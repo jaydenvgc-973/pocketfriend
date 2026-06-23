@@ -196,150 +196,263 @@ function detectTextPatternAchievements(msg, existingKeys, ownerEmail, characterI
 }
 
 // DATA-DRIVEN ACHIEVEMENT CHECKS
-// These require querying the database
+// Parity with retroactiveAchievementScan — same evidence rules, same dedup keys.
 async function detectDataAchievements(base44, userEmail, characterId, characterName, userMessage, existingIds) {
   const toUnlock = [];
-  const has = (id) => existingIds.includes(id);
+  // Use scoped dedup key for character-aware guard — prevents cross-character suppression
+  const hasScoped = (id) => existingIds.includes(id);
   const now = Date.now();
+  const sr = base44.asServiceRole;
 
-  // Run all data queries in parallel
   const [
     allMessages,
     allCharacters,
     allConversations,
+    financialTxns,
+    lifeEvents,
+    memories,
   ] = await Promise.all([
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
-    base44.asServiceRole.entities.Message.filter({ owner_email: userEmail }, '-created_date', 500),
-    base44.asServiceRole.entities.Character.filter({ owner_email: userEmail, status: 'active' }),
-    base44.asServiceRole.entities.Conversation.filter({ owner_email: userEmail }),
+    sr.entities.Message.filter({ owner_email: userEmail }, '-created_date', 1000).catch(() => []),
+    sr.entities.Character.filter({ owner_email: userEmail, status: 'active' }).catch(() => []),
+    sr.entities.Conversation.filter({ owner_email: userEmail }).catch(() => []),
+    sr.entities.FinancialTransaction.filter({ character_id: characterId }, '-timestamp', 100).catch(() => []),
+    sr.entities.LifeEvent.filter({ character_id: characterId }, '-timestamp', 200).catch(() => []),
+    sr.entities.Memory.filter({ character_id: characterId }, '-timestamp', 100).catch(() => []),
   ]);
 
   const userMessages = allMessages.filter(m => m.sender_type === 'user');
   const charMessages = allMessages.filter(m => m.sender_type === 'character');
+  const cMsgs = charMessages.filter(m => m.character_id === characterId);
+  const convIds = new Set(cMsgs.map(m => m.conversation_id));
+  const uMsgs = userMessages.filter(m => convIds.has(m.conversation_id));
+  const allDays = new Set(userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString()));
 
-  // first_impression: sent at least 1 message ever
-  if (!has('first_impression') && userMessages.length >= 1) {
-    toUnlock.push('first_impression');
-  }
+  // ── GLOBAL ───────────────────────────────────────────────────────────────────
+  if (!hasScoped('first_impression') && userMessages.length >= 1) toUnlock.push('first_impression');
+  if (!hasScoped('seen_it_all') && charMessages.some(m => m.image_url)) toUnlock.push('seen_it_all');
+  if (!hasScoped('still_here') && allDays.size >= 3) toUnlock.push('still_here');
+  if (!hasScoped('consistent') && allDays.size >= 5) toUnlock.push('consistent');
 
-  // seen_it_all: received a photo from a character (only if we have character messages)
-  if (!has('seen_it_all') && charMessages.length > 0 && charMessages.some(m => m.image_url)) {
-    toUnlock.push('seen_it_all');
-  }
-
-  // multi-character engagement (no formal badge for this yet but maps to inner_circle proximity)
-  // inner_circle: interacted with the same character across 10+ messages
-  if (!has('inner_circle')) {
-    const msgsWithThisChar = allMessages.filter(m => 
-      m.sender_type === 'user' && 
-      allMessages.some(cm => cm.conversation_id === m.conversation_id && cm.sender_type === 'character' && cm.character_id === characterId)
-    );
-    if (msgsWithThisChar.length >= 10) {
-      toUnlock.push('inner_circle');
-    }
-  }
-
-  // still_here: sent messages on 3+ distinct calendar days
-  if (!has('still_here')) {
-    const days = new Set(
-      userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
-    );
-    if (days.size >= 3) toUnlock.push('still_here');
-  }
-
-  // they_came_back: gap of 3+ days then returned
-  if (!has('they_came_back') && userMessages.length >= 2) {
+  if (!hasScoped('they_came_back') && userMessages.length >= 2) {
     const sorted = [...userMessages].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
     for (let i = 1; i < sorted.length; i++) {
-      const gap = new Date(sorted[i].created_date) - new Date(sorted[i - 1].created_date);
-      if (gap > 3 * 24 * 60 * 60 * 1000) {
-        toUnlock.push('they_came_back');
-        break;
+      if (new Date(sorted[i].created_date) - new Date(sorted[i-1].created_date) > 3 * 86400000) {
+        toUnlock.push('they_came_back'); break;
       }
     }
   }
 
-  // emoji badges: character sent heart reaction to user
-  const emojiMessages = allMessages.filter(m => 
-    m.sender_type === 'user' && 
-    m.reactions?.some(r => r.reactor_type === 'character' && r.emoji === '❤️')
-  );
-  if (!has('that_meant_something') && emojiMessages.length >= 1) {
-    toUnlock.push('that_meant_something');
+  if (!hasScoped('left_on_read')) {
+    const old = charMessages.find(m => !m.is_read && now - new Date(m.created_date).getTime() > 86400000);
+    if (old) toUnlock.push('left_on_read');
   }
 
-  // you_were_there: was present when a character had a major life event (narrative message + at least 1 user message)
-  if (!has('you_were_there')) {
-    const narrativeMessages = charMessages.filter(m => m.is_narrative);
-    if (narrativeMessages.length > 0 && userMessages.length > 0) toUnlock.push('you_were_there');
+  if (!hasScoped('group_hangout') && allConversations.some(c => (c.character_ids || []).length >= 2)) {
+    toUnlock.push('group_hangout');
   }
 
-  // big_moment: character shared a milestone (narrative + user responded after)
-  if (!has('big_moment')) {
-    const narratives = charMessages.filter(m => m.is_narrative);
-    if (narratives.length > 0 && userMessages.length > 0) {
-      // Check if user sent at least one message after any narrative
-      const narrativeTime = Math.min(...narratives.map(m => new Date(m.created_date).getTime()));
-      const respondedAfter = userMessages.some(m => new Date(m.created_date).getTime() > narrativeTime);
-      if (respondedAfter) toUnlock.push('big_moment');
+  if (!hasScoped('rent_paid') && financialTxns.some(t => t.transaction_type === 'rent')) {
+    toUnlock.push('rent_paid');
+  }
+
+  // ── CHARACTER-SCOPED (this character only) ───────────────────────────────────
+  const total = cMsgs.length + uMsgs.length;
+
+  if (!hasScoped('inner_circle') && total >= 10) toUnlock.push('inner_circle');
+
+  if (!hasScoped('ride_along') && total >= 2) {
+    const all = [...cMsgs, ...uMsgs].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+    if (new Date(all[all.length-1].created_date) - new Date(all[0].created_date) >= 7 * 86400000) {
+      toUnlock.push('ride_along');
     }
   }
 
-  // clutch_timing: replied within 2 minutes of a character message
-  if (!has('clutch_timing') && userMessages.length >= 1 && charMessages.length >= 1) {
-    for (const cm of charMessages.slice(0, 100)) {
+  if (!hasScoped('longtime_contact') && total >= 2) {
+    const all = [...cMsgs, ...uMsgs].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+    if (new Date(all[all.length-1].created_date) - new Date(all[0].created_date) >= 14 * 86400000) {
+      toUnlock.push('longtime_contact');
+    }
+  }
+
+  if (!hasScoped('favorite_contact') && total >= 50) toUnlock.push('favorite_contact');
+
+  if (!hasScoped('they_opened_up')) {
+    const open = cMsgs.filter(m => ['reflective','sad','vulnerable','longing','grief','loneliness','nostalgia'].includes(m.emotional_state));
+    if (open.length >= 2) toUnlock.push('they_opened_up');
+  }
+
+  if (!hasScoped('that_meant_something')) {
+    if (uMsgs.some(m => m.reactions?.some(r => r.reactor_type === 'character' && r.emoji === '❤️'))) {
+      toUnlock.push('that_meant_something');
+    }
+  }
+
+  if (!hasScoped('tension')) {
+    if (uMsgs.some(m => m.reactions?.some(r => r.reactor_type === 'character' && r.emoji === '😡'))) {
+      toUnlock.push('tension');
+    }
+  }
+
+  if (!hasScoped('you_were_there') || !hasScoped('big_moment')) {
+    const narrativeMsg = cMsgs.find(m => m.is_narrative);
+    if (narrativeMsg) {
+      if (!hasScoped('you_were_there')) toUnlock.push('you_were_there');
+      if (!hasScoped('big_moment')) {
+        const narTime = new Date(narrativeMsg.created_date).getTime();
+        if (uMsgs.some(m => new Date(m.created_date).getTime() > narTime)) toUnlock.push('big_moment');
+      }
+    }
+  }
+
+  if (!hasScoped('clutch_timing')) {
+    outer: for (const cm of cMsgs.slice(0, 100)) {
       const cmTime = new Date(cm.created_date).getTime();
-      const quickReply = userMessages.find(um => {
+      for (const um of uMsgs) {
         const umTime = new Date(um.created_date).getTime();
-        return umTime > cmTime && umTime - cmTime < 2 * 60 * 1000;
-      });
-      if (quickReply) {
-        toUnlock.push('clutch_timing');
-        break;
+        if (umTime > cmTime && umTime - cmTime < 2 * 60000) { toUnlock.push('clutch_timing'); break outer; }
       }
     }
   }
 
-  // left_on_read: character message unread for 24h+
-  if (!has('left_on_read')) {
-    const oldUnread = charMessages.find(m => {
-      if (m.is_read) return false;
-      const age = now - new Date(m.created_date).getTime();
-      return age > 24 * 60 * 60 * 1000;
-    });
-    if (oldUnread) toUnlock.push('left_on_read');
+  if (!hasScoped('trust_built')) {
+    const char = allCharacters.find(c => c.id === characterId);
+    if ((char?.trust_level ?? 50) > 70) toUnlock.push('trust_built');
+    const trustEvts = lifeEvents.filter(e => ['relationship_shift','bonding_event'].includes(e.event_type) && e.valence === 'positive');
+    if (trustEvts.length >= 2) toUnlock.push('trust_built');
   }
 
-  // ride_along: active convo across 7+ days with same character
-  if (!has('ride_along')) {
-    const msgsThisChar = allMessages.filter(m => m.character_id === characterId || 
-      allMessages.some(cm => cm.conversation_id === m.conversation_id && cm.character_id === characterId)
-    );
-    if (msgsThisChar.length >= 2) {
-      const sorted = [...msgsThisChar].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
-      const span = new Date(sorted[sorted.length - 1].created_date) - new Date(sorted[0].created_date);
-      if (span >= 7 * 24 * 60 * 60 * 1000) toUnlock.push('ride_along');
+  if (!hasScoped('reconnected') && total >= 2) {
+    const all = [...cMsgs, ...uMsgs].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+    for (let i = 1; i < all.length; i++) {
+      if (new Date(all[i].created_date) - new Date(all[i-1].created_date) > 7 * 86400000) {
+        toUnlock.push('reconnected'); break;
+      }
     }
   }
 
-  // they_opened_up: character sent 5+ messages with emotional state = reflective/sad/vulnerable
-  if (!has('they_opened_up')) {
-    const openMessages = charMessages.filter(m => 
-      m.character_id === characterId &&
-      ['reflective', 'sad', 'vulnerable', 'longing', 'grief', 'loneliness', 'nostalgia'].includes(m.emotional_state)
-    );
-    if (openMessages.length >= 2) toUnlock.push('they_opened_up');
+  if (!hasScoped('reconciliation')) {
+    const hasTension = lifeEvents.some(e => e.event_type === 'conflict_event');
+    const hasRes = lifeEvents.some(e => e.event_type === 'reconciliation_event');
+    if (hasTension && hasRes) toUnlock.push('reconciliation');
   }
 
-  // consistent: messaged on 5+ different days
-  if (!has('consistent')) {
-    const days = new Set(
-      userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
-    );
-    if (days.size >= 5) toUnlock.push('consistent');
+  if (!hasScoped('apologized')) {
+    if (uMsgs.some(m => /i('m|\s+am)\s+(so\s+)?sorry|my\s+bad|i\s+apologize|i\s+was\s+wrong/i.test(m.content || ''))) {
+      toUnlock.push('apologized');
+    }
   }
 
-  return [...new Set(toUnlock)]; // dedupe
+  if (!hasScoped('tension_resolved')) {
+    if (uMsgs.some(m => /i('m|\s+am)\s+(so\s+)?sorry|my\s+bad|i\s+apologize|i\s+was\s+wrong/i.test(m.content || ''))) {
+      toUnlock.push('tension_resolved');
+    }
+  }
+
+  if (!hasScoped('financial_lifeline')) {
+    const giftTxns = financialTxns.filter(t => ['gift','loan','financial_lifeline'].includes(t.transaction_type) && t.amount > 0);
+    if (giftTxns.length >= 1) toUnlock.push('financial_lifeline');
+  }
+
+  if (!hasScoped('financial_clutch')) {
+    if (uMsgs.some(m => /sent\s+(you\s+)?(money|funds|cash|\$)|help(ing)?\s+(with|pay|cover)\s+(your\s+)?(rent|bill)|i('ll|\s+will)\s+(cover|pay|help\s+with)/i.test(m.content || ''))) {
+      toUnlock.push('financial_clutch');
+    }
+  }
+
+  if (!hasScoped('bar_night')) {
+    const barMsgs = [...cMsgs, ...uMsgs].filter(m => /\b(bar|club|nightclub|lounge|night\s+out|went\s+out|clubbing|drinks?\s+(tonight|last\s+night))\b/i.test(m.content || ''));
+    if (barMsgs.length >= 2) toUnlock.push('bar_night');
+  }
+
+  if (!hasScoped('night_out')) {
+    const barMsgs = [...cMsgs, ...uMsgs].filter(m => /\b(bar|club|nightclub|lounge|night\s+out|went\s+out|clubbing|drinks?\s+(tonight|last\s+night))\b/i.test(m.content || ''));
+    if (barMsgs.length >= 1) toUnlock.push('night_out');
+  }
+
+  if (!hasScoped('photo_history') && cMsgs.filter(m => m.image_url).length >= 3) {
+    toUnlock.push('photo_history');
+  }
+
+  if (!hasScoped('witnessed_birth')) {
+    const birthEvt = lifeEvents.find(e => e.event_type === 'life_milestone_event' && /(birth|newborn|baby|born|pregnant)/i.test((e.title || '') + (e.description || '')));
+    const birthMem = memories.find(m => /(birth|newborn|baby|born|pregnant)/i.test((m.title || '') + (m.description || '')));
+    const birthMsg = [...cMsgs, ...uMsgs].find(m => /\b(newborn|had\s+(the\s+)?baby|just\s+gave\s+birth|she\s+(had|delivered)|born\s+today)\b/i.test(m.content || ''));
+    if (birthEvt || birthMem || birthMsg) toUnlock.push('witnessed_birth');
+  }
+
+  if (!hasScoped('watched_them_grow')) {
+    const growthEvts = lifeEvents.filter(e => ['achievement_qualifying_action','growth_event','life_milestone_event','recovery_event'].includes(e.event_type) && e.valence === 'positive');
+    const char = allCharacters.find(c => c.id === characterId);
+    if (growthEvts.length >= 3 || ((char?.friendship_level ?? 75) > 85 && total >= 20)) {
+      toUnlock.push('watched_them_grow');
+    }
+  }
+
+  if (!hasScoped('grief_support')) {
+    const griefEvt = lifeEvents.find(e => ['grief_event','medical_event'].includes(e.event_type));
+    const griefMsgs = [...cMsgs, ...uMsgs].filter(m => /\b(passed away|died|funeral|death|grief|mourning|loss|condolence)\b/i.test(m.content || ''));
+    if (griefEvt || griefMsgs.length >= 2) toUnlock.push('grief_support');
+  }
+
+  if (!hasScoped('housing_intervention')) {
+    const housingEvt = lifeEvents.find(e => e.event_type === 'location_change_event' && /(homeless|evict|move|housing|shelter)/i.test((e.title || '') + (e.description || '')));
+    if (housingEvt) toUnlock.push('housing_intervention');
+  }
+
+  if (!hasScoped('growth_arc')) {
+    const growthEvts = lifeEvents.filter(e => ['achievement_qualifying_action','growth_event','life_milestone_event','recovery_event'].includes(e.event_type) && e.valence === 'positive');
+    if (total >= 30 && growthEvts.length >= 1) toUnlock.push('growth_arc');
+  }
+
+  if (!hasScoped('bedside_manner')) {
+    if (uMsgs.some(m => /how\s+are\s+you\s+(feeling|doing)|are\s+you\s+(ok|okay)|get\s+well|feel\s+better|i('m|\s+am)\s+here\s+for\s+you/i.test(m.content || ''))) {
+      toUnlock.push('bedside_manner');
+    }
+  }
+
+  if (!hasScoped('first_responder')) {
+    if (uMsgs.some(m => /call(ed|ing)?\s+(9-?1-?1|emergency|ambulance)|order(ed|ing)?\s+(an?\s+)?(uber|lyft|taxi)|took\s+(her|him|them)\s+to\s+(hospital|doctor|clinic)/i.test(m.content || ''))) {
+      toUnlock.push('first_responder');
+    }
+  }
+
+  if (!hasScoped('stayed_calm')) {
+    if (uMsgs.some(m => /i\s+understand|i\s+hear\s+you|let('s|\s+us)\s+(calm|talk|work)|i('m|\s+am)\s+not\s+trying\s+to\s+fight|we\s+can\s+(figure|work|talk)/i.test(m.content || ''))) {
+      toUnlock.push('stayed_calm');
+    }
+  }
+
+  if (!hasScoped('let_them_in')) {
+    if (uMsgs.some(m => /i\s+(feel|felt|have\s+been)\s+(so\s+)?(scared|alone|anxious|lost|broken|hurt|struggling)|i\s+never\s+told\s+(anyone|you)|to\s+be\s+honest[,\s]/i.test(m.content || ''))) {
+      toUnlock.push('let_them_in');
+    }
+  }
+
+  if (!hasScoped('hard_truth')) {
+    if (uMsgs.some(m => /i\s+(have|need)\s+to\s+(be\s+honest|tell\s+you\s+(something|the truth))|the\s+truth\s+is|you\s+might\s+not\s+(want\s+to\s+)?hear\s+this/i.test(m.content || ''))) {
+      toUnlock.push('hard_truth');
+    }
+  }
+
+  if (!hasScoped('the_push')) {
+    if (uMsgs.some(m => /should\s+(take|enroll|try|start)\s+(a\s+)?(course|class|degree|program)|go(ing)?\s+(back\s+to\s+)?school/i.test(m.content || ''))) {
+      toUnlock.push('the_push');
+    }
+  }
+
+  if (!hasScoped('voice_of_reason')) {
+    if (uMsgs.some(m => /think\s+(about\s+this|before\s+you|it\s+through)|are\s+you\s+sure\s+(about|this)|slow\s+down|don't\s+rush/i.test(m.content || ''))) {
+      toUnlock.push('voice_of_reason');
+    }
+  }
+
+  if (!hasScoped('healthy_choice')) {
+    if (uMsgs.some(m => /i('m|\s+am)\s+(going\s+to\s+)?(take\s+a\s+break|step\s+back|breathe|take\s+care\s+of\s+myself)|choosing\s+(to\s+)?(let\s+it\s+go|stay\s+(calm|positive))/i.test(m.content || ''))) {
+      toUnlock.push('healthy_choice');
+    }
+  }
+
+  return [...new Set(toUnlock)];
 }
 
 Deno.serve(async (req) => {
