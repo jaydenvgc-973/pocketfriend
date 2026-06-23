@@ -27,7 +27,6 @@
  * All non-canonical same-name records are listed in source_record_ids.
  */
 
-import { resolveCanonicalPerson } from './canonicalPersonResolver.js';
 
 export function getPlaceholderColor() { return 'bg-purple-500'; }
 export function getInitial(name) { return name?.[0]?.toUpperCase() || '?'; }
@@ -109,13 +108,6 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
   );
 
-  // Aggregate all fictional_relationships for cross-reference scoring.
-  // Tag each entry with _source_character_id so the scorer can verify independence
-  // (two refs are "independent" only if they come from different source characters).
-  const allFictionalRels = liveChars.flatMap(c =>
-    (c.fictional_relationships || []).map(rel => ({ ...rel, _source_character_id: c.id }))
-  );
-
   const repairDiagnostics = [];
 
   // ── USER ENTRY ───────────────────────────────────────────────────────────
@@ -190,130 +182,35 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     resolvedNameKeys.add(nameKey);
   });
 
-  // ── FAMILY MEMBERS — read-only resolution pass ───────────────────────────
-  // For each family member not already in the canonical roster:
-  //   Call resolveCanonicalPerson in "read" mode.
-  //   If resolved (confidence ≥ 0.70): add to roster.
-  //   If needs_review (confidence < 0.70): add to repairDiagnostics. Do NOT create.
-  //
-  // NO Character.create here. NO writes here.
-
-  const processedFamilyNames = new Set();
+  // ── RELATIONSHIP LINKAGE — ensure linked liveChars are in roster ─────────
+  // RULE: The roster is built exclusively from liveChars (real Character DB records
+  // scoped to owner_email). Relationship edges (family_members, fictional_relationships)
+  // are used ONLY to ensure an already-existing liveChar is not missed.
+  // Name-only strings with no related_character_id are NEVER added to the roster.
+  // No resolveCanonicalPerson, no name-based injection, no cross-account bleed.
 
   for (const char of liveChars) {
-    const members = char.family_members || [];
-    for (const fm of members) {
-      if (!fm.name?.trim()) continue;
-      if (fm._is_user) continue;
-      if (fm.name.toLowerCase().includes('unnamed')) continue;
-
-      const nameKey = fm.name.trim().toLowerCase();
-      if (resolvedNameKeys.has(nameKey)) continue;
-      if (processedFamilyNames.has(nameKey)) continue;
-      processedFamilyNames.add(nameKey);
-
-      const result = await resolveCanonicalPerson({
-        owner_email: userEmail,
-        name: fm.name,
-        linked_character_id: fm._linked_character_id || null,
-        source_type: 'family_member',
-        source_record_id: fm._member_id || null,
-        source_character_id: char.id,
-        relationship_context: fm.relationship_type || null,
-        avatar_url: fm.photo_url || null,
-        mode: 'read',  // READ ONLY — no creates, no writes
-        all_live_characters: liveChars,
-        all_fictional_rels: allFictionalRels,
-        base44,
-      });
-
-      if (result.status === 'resolved' || result.status === 'repaired') {
-        const resolvedChar = liveChars.find(c => c.id === result.canonical_person_id);
-        if (resolvedChar && !canonicalById.has(resolvedChar.id)) {
-          const entry = buildCharacterEntry(resolvedChar, result.source_record_ids);
-          canonicalEntries.push(entry);
-          canonicalById.set(resolvedChar.id, entry);
-          resolvedNameKeys.add(resolvedChar.name.trim().toLowerCase());
-        }
-      } else {
-        // needs_review — log diagnostic, do not add to roster, do not create
-        repairDiagnostics.push({
-          name: fm.name,
-          source_type: 'family_member',
-          source_character_id: char.id,
-          source_character_name: char.name,
-          confidence: result.confidence,
-          matched_evidence: result.matched_evidence,
-          failure_reason: result.failure_reason,
-        });
+    // Family members with a linked character ID
+    for (const fm of (char.family_members || [])) {
+      const linkedId = fm._linked_character_id || fm.character_id;
+      if (!linkedId) continue;
+      const linkedChar = liveChars.find(c => c.id === linkedId);
+      if (linkedChar && !canonicalById.has(linkedChar.id)) {
+        const entry = buildCharacterEntry(linkedChar, []);
+        canonicalEntries.push(entry);
+        canonicalById.set(linkedChar.id, entry);
+        resolvedNameKeys.add(linkedChar.name.trim().toLowerCase());
       }
     }
-  }
-
-  // ── FICTIONAL RELATIONSHIPS — read-only resolution pass ──────────────────
-  // For each fictional_relationship with a person_name but no related_character_id:
-  //   Call resolveCanonicalPerson in "read" mode.
-  //   If resolved: ensure the character is in the roster.
-  //   If needs_review: add to repairDiagnostics. Do NOT create.
-  //   A fictional relationship edge is NOT automatically a new person record.
-  //
-  // For entries that already have related_character_id: ensure that Character is in roster.
-
-  for (const char of liveChars) {
-    const rels = char.fictional_relationships || [];
-
-    for (const rel of rels) {
-      // Already linked — ensure target is in roster
-      if (rel.related_character_id) {
-        const linkedChar = liveChars.find(c => c.id === rel.related_character_id);
-        if (linkedChar && !canonicalById.has(linkedChar.id)) {
-          const entry = buildCharacterEntry(linkedChar, []);
-          canonicalEntries.push(entry);
-          canonicalById.set(linkedChar.id, entry);
-          resolvedNameKeys.add(linkedChar.name.trim().toLowerCase());
-        }
-        continue;
-      }
-
-      if (!rel.person_name?.trim()) continue;
-
-      const nameKey = rel.person_name.trim().toLowerCase();
-      if (resolvedNameKeys.has(nameKey)) continue;
-
-      const result = await resolveCanonicalPerson({
-        owner_email: userEmail,
-        name: rel.person_name,
-        related_character_id: rel.related_character_id || null,
-        source_type: 'fictional_relationship',
-        source_character_id: char.id,
-        relationship_context: rel.relationship_type || null,
-        avatar_url: rel.photo_url || rel.avatar_url || null,
-        mode: 'read',  // READ ONLY — no creates, no writes
-        all_live_characters: liveChars,
-        all_fictional_rels: allFictionalRels,
-        base44,
-      });
-
-      if (result.status === 'resolved' || result.status === 'repaired') {
-        const resolvedChar = liveChars.find(c => c.id === result.canonical_person_id);
-        if (resolvedChar && !canonicalById.has(resolvedChar.id)) {
-          const entry = buildCharacterEntry(resolvedChar, result.source_record_ids);
-          canonicalEntries.push(entry);
-          canonicalById.set(resolvedChar.id, entry);
-          resolvedNameKeys.add(resolvedChar.name.trim().toLowerCase());
-        }
-      } else {
-        // Fictional relationship person with no confident match — log diagnostic, skip
-        // This is correct: a relationship edge is NOT automatically a new person record.
-        repairDiagnostics.push({
-          name: rel.person_name,
-          source_type: 'fictional_relationship',
-          source_character_id: char.id,
-          source_character_name: char.name,
-          confidence: result.confidence,
-          matched_evidence: result.matched_evidence,
-          failure_reason: result.failure_reason,
-        });
+    // Fictional relationships with a linked character ID
+    for (const rel of (char.fictional_relationships || [])) {
+      if (!rel.related_character_id) continue;
+      const linkedChar = liveChars.find(c => c.id === rel.related_character_id);
+      if (linkedChar && !canonicalById.has(linkedChar.id)) {
+        const entry = buildCharacterEntry(linkedChar, []);
+        canonicalEntries.push(entry);
+        canonicalById.set(linkedChar.id, entry);
+        resolvedNameKeys.add(linkedChar.name.trim().toLowerCase());
       }
     }
   }
