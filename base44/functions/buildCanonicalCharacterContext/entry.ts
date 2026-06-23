@@ -1074,6 +1074,107 @@ Deno.serve(async (req) => {
       count: recentMessages.length,
     });
 
+    // ── Step 5b: World Phone conversation awareness ───────────────────────────
+    // Fetch current World Phone (bilateral character-to-character) conversation state
+    // for this character. This is separate from the user's direct chat history.
+    // Injected only for direct_chat and text contexts — the channels where the character
+    // generates user-facing responses that may reference their character-to-character world.
+    //
+    // SOURCE: Message records with channel='world_phone' where this character is sender OR receiver.
+    // Never invented — only actual persisted Message records.
+    // Does NOT merge with direct chat unread status.
+    let worldPhoneAwarenessBlock = '';
+    if (interactionContext === 'direct_chat' || interactionContext === 'text') {
+      try {
+        // Fetch recent World Phone messages this character sent or received (last 48h window)
+        const cutoff48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+        const [wpSent, wpReceived] = await Promise.all([
+          base44.asServiceRole.entities.Message.filter(
+            { sender_character_id: characterId, channel: 'world_phone' },
+            '-timestamp',
+            15
+          ).catch(() => []),
+          base44.asServiceRole.entities.Message.filter(
+            { receiver_character_id: characterId, channel: 'world_phone' },
+            '-timestamp',
+            15
+          ).catch(() => []),
+        ]);
+
+        // Merge and deduplicate by id
+        const wpAllById = new Map();
+        [...wpSent, ...wpReceived].forEach(m => { if (m.id) wpAllById.set(m.id, m); });
+        const wpAll = [...wpAllById.values()]
+          .filter(m => {
+            // Restrict to last 48h for recency; canon-excluded messages are not awareness-eligible
+            const ts = m.timestamp || m.created_date;
+            if (!ts) return false;
+            if (m.canon_excluded) return false;
+            return new Date(ts) >= new Date(cutoff48h);
+          })
+          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
+
+        if (wpAll.length > 0) {
+          // Compute unread incoming count (messages TO this character not yet replied to)
+          const incoming = wpAll.filter(m => m.receiver_character_id === characterId);
+          const outgoing = wpAll.filter(m => m.sender_character_id === characterId);
+
+          const lastIncoming = incoming[0] || null;
+          const lastOutgoing = outgoing[0] || null;
+
+          // Determine if there's a pending reply: last incoming is more recent than last outgoing
+          const lastIncomingTs = lastIncoming ? new Date(lastIncoming.timestamp || lastIncoming.created_date).getTime() : 0;
+          const lastOutgoingTs = lastOutgoing ? new Date(lastOutgoing.timestamp || lastOutgoing.created_date).getTime() : 0;
+          const hasPendingReply = lastIncomingTs > lastOutgoingTs && lastIncoming !== null;
+
+          // Build per-thread awareness (group by shared_conversation_key or conversation_id)
+          const threadMap = new Map();
+          wpAll.forEach(m => {
+            const key = m.shared_conversation_key || m.conversation_id || 'unknown';
+            if (!threadMap.has(key)) threadMap.set(key, []);
+            threadMap.get(key).push(m);
+          });
+
+          const threadLines = [];
+          threadMap.forEach((msgs, threadKey) => {
+            const sorted = msgs.sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
+            const latestMsg = sorted[0];
+            const otherCharacterName = latestMsg.sender_character_id === characterId
+              ? (latestMsg.receiver_character_id ? `(character id: ${latestMsg.receiver_character_id})` : 'unknown recipient')
+              : (latestMsg.sender_character_name || latestMsg.played_as_character_name || `(character id: ${latestMsg.sender_character_id || 'unknown'})`);
+            const direction = latestMsg.sender_character_id === characterId ? 'you sent' : 'you received';
+            const tsStr = new Date(latestMsg.timestamp || latestMsg.created_date).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+            const snippet = (latestMsg.content || '').substring(0, 120);
+            threadLines.push(`• Thread with ${otherCharacterName}: [${direction} at ${tsStr}] "${snippet}"`);
+          });
+
+          const pendingNote = hasPendingReply
+            ? `\n⚠️ PENDING REPLY: ${lastIncoming.sender_character_name || 'someone'} sent you a World Phone message you have not yet replied to. You are aware of this.`
+            : '';
+
+          worldPhoneAwarenessBlock = `\n════════════════════════════════════\nWORLD PHONE AWARENESS — YOUR CURRENT CHARACTER-TO-CHARACTER MESSAGE STATE\nSource: live Message records (last 48 hours). Never invented.\n════════════════════════════════════\nYou have ${incoming.length} incoming and ${outgoing.length} outgoing World Phone messages in the last 48 hours.\n${threadLines.join('\n')}${pendingNote}\n\nRULES:\n• You know about these messages. You do not need to be told — you sent or received them.\n• Reference them naturally if relevant (e.g. "I texted [name] earlier", "I heard from [name]").\n• Do NOT invent messages not listed above. If no thread exists, you have not contacted that person recently.\n• World Phone messages are separate from your conversation here. Do not confuse channels.\n════════════════════════════════════\n`;
+
+          contextLog.push({
+            step: 'world_phone_awareness',
+            incoming: incoming.length,
+            outgoing: outgoing.length,
+            threads: threadMap.size,
+            hasPendingReply,
+          });
+          console.log(
+            `[buildCanonicalCharacterContext] world_phone_awareness | char=${character.name}` +
+            ` | incoming=${incoming.length} | outgoing=${outgoing.length}` +
+            ` | threads=${threadMap.size} | pending_reply=${hasPendingReply}`
+          );
+        } else {
+          contextLog.push({ step: 'world_phone_awareness', count: 0, reason: 'no_messages_in_48h' });
+        }
+      } catch (wpErr) {
+        contextLog.push({ step: 'world_phone_awareness', status: 'error', error: wpErr.message });
+        console.warn(`[buildCanonicalCharacterContext] world_phone_awareness error (non-blocking): ${wpErr.message}`);
+      }
+    }
+
     // ── Step 6: Build hard facts ──────────────────────────────────────────────
     const hardFacts = buildHardFacts(character);
     const hardFactsLoaded = hardFacts.length > 0;
@@ -1592,7 +1693,7 @@ Deno.serve(async (req) => {
     const wardrobeBlock = buildWardrobeAwarenessBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.
