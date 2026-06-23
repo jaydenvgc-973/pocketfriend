@@ -96,15 +96,10 @@ function buildCharacterEntry(char, sourceRecordIds = []) {
 export async function fetchUnifiedRoster(base44, userEmail) {
   if (!userEmail) return { roster: [], repairDiagnostics: [] };
 
-  const ADMIN_EMAIL = 'murqart@gmail.com';
-  const isAdmin = userEmail === ADMIN_EMAIL;
-
   const [user, settingsList, all] = await Promise.all([
     base44.auth.me().catch(() => null),
     base44.entities.UserSettings.filter({ owner_email: userEmail }).catch(() => []),
-    isAdmin
-      ? base44.entities.Character.list('-created_date', 200).catch(() => [])
-      : base44.entities.Character.filter({ owner_email: userEmail }, '-created_date', 200).catch(() => []),
+    base44.entities.Character.filter({ owner_email: userEmail }, '-created_date', 200).catch(() => []),
   ]);
 
   const settings = Array.isArray(settingsList) ? settingsList[0] : (settingsList || {});
