@@ -106,6 +106,14 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEn
   if (pool.length === 0) return null;
   if (pool.length === 1) return pool[0];
 
+  // MANUAL CATEGORY OVERRIDE — highest priority, rotation-safe.
+  // If any outfit in this pool has manual_override=true, use it immediately.
+  // This override was set by applyManualCategoryOverride and applies only to
+  // this specific category. It does NOT affect other categories, rotation numbers,
+  // or tomorrow's rotation sequence. Weather/medical/transition logic is unaffected.
+  const manualOverride = pool.find(o => o.manual_override === true);
+  if (manualOverride) return manualOverride;
+
   // ROTATION OFF: always return the selected outfit if it's in this pool
   if (!rotationEnabled && currentOutfitId) {
     const locked = pool.find(o => o.outfit_id === currentOutfitId);
@@ -351,6 +359,54 @@ export const SPEC_CATEGORY_ALIAS = {
 export function normalizeCategory(cat) {
   if (!cat) return 'daily_casual';
   return SPEC_CATEGORY_ALIAS[cat] || cat;
+}
+
+/**
+ * applyManualCategoryOverride
+ *
+ * When rotation is enabled, the user may manually override the selected outfit
+ * for ONE specific category without disturbing any other category or the rotation
+ * sequence. This function merges the override into the character's closet data
+ * by returning a patched `character_closet` array. The caller is responsible for
+ * persisting it to the DB (e.g. Character.update).
+ *
+ * Rules:
+ *   - Only the target category's currently-active outfit is replaced.
+ *   - All other category outfits remain unchanged.
+ *   - Rotation numbers are NOT renumbered, reordered, or reset.
+ *   - The rotation counter (day-of-year index) is NOT advanced or reset.
+ *   - Weather modifiers, medical overrides, and transition logic are unaffected.
+ *   - Tomorrow's preview continues from the rotation sequence, not this override.
+ *
+ * @param {object} character - Full character record
+ * @param {string} targetCategory - The category being overridden (e.g. 'lounge', 'work')
+ * @param {string} newOutfitId - outfit_id of the replacement outfit
+ * @returns {{ patched_closet: array, prev_outfit_id: string|null, new_outfit_id: string }}
+ */
+export function applyManualCategoryOverride(character, targetCategory, newOutfitId) {
+  const closet = (character.character_closet || []).map(item => ({ ...item }));
+  const normalizedCategory = normalizeCategory(targetCategory);
+  let prevOutfitId = null;
+
+  // Mark the new outfit as the manually-selected one for this category.
+  // We store a `manual_override: true` flag on the outfit itself so
+  // resolveCurrentOutfit can prefer it when resolving this category.
+  // This flag does NOT advance rotation_number or alter any other outfit.
+  for (const item of closet) {
+    if (item.category !== normalizedCategory) continue;
+    if (item.outfit_id === newOutfitId) {
+      // Flag the chosen outfit as manually overridden for today
+      item.manual_override = true;
+      item.manual_override_set_at = new Date().toISOString();
+    } else if (item.manual_override) {
+      // Clear any previous manual override on other outfits in this category
+      prevOutfitId = item.outfit_id;
+      item.manual_override = false;
+      item.manual_override_set_at = null;
+    }
+  }
+
+  return { patched_closet: closet, prev_outfit_id: prevOutfitId, new_outfit_id: newOutfitId };
 }
 
 /**

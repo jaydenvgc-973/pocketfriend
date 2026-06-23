@@ -208,14 +208,14 @@ export default function Moments() {
                 setScanResult(null);
                 try {
                   const res = await base44.functions.invoke('retroactiveAchievementScan', {});
-                  const granted = res?.data?.granted || 0;
+                  const granted = res?.data?.granted ?? 0;
                   setScanResult(granted);
-                  if (granted > 0) {
-                    await refetchAchievements();
-                    queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
-                  }
+                  // Always refetch — even 0 new grants means the UI should show current state
+                  await refetchAchievements();
+                  queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
                 } catch (err) {
                   console.warn('[Moments] retroactive scan failed:', err.message);
+                  setScanResult(-1); // signal error
                 } finally {
                   setScanning(false);
                 }
@@ -244,14 +244,14 @@ export default function Moments() {
              >
                <Wrench className="w-4 h-4" />
              </button>
-             {scanResult && (
-               <motion.div
-                 initial={{ opacity: 0, scale: 0.8 }}
-                 animate={{ opacity: 1, scale: 1 }}
-                 className="bg-primary/20 text-primary text-xs font-semibold px-3 py-1.5 rounded-full"
-               >
-                 +{scanResult} unlocked!
-               </motion.div>
+             {scanResult !== null && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-full ${scanResult < 0 ? 'bg-destructive/20 text-destructive' : 'bg-primary/20 text-primary'}`}
+              >
+                {scanResult < 0 ? 'Scan failed' : scanResult === 0 ? '✓ Up to date' : `+${scanResult} unlocked!`}
+              </motion.div>
              )}
            </div>
          </div>
