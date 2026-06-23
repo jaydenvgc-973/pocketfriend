@@ -478,7 +478,7 @@ Deno.serve(async (req) => {
     // ── CANONICAL CONTEXT ────────────────────────────────────────────────────
     let canonicalSystemPrompt = null;
     try {
-      const ctxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+      const ctxRes = await sr.functions.invoke('buildCanonicalCharacterContext', {
         characterId: char.id,
         interactionContext: 'proactive',
         topKMemories: 8,
@@ -580,7 +580,10 @@ RULES:
 
     let messageContent;
     try {
-      messageContent = await base44.integrations.Core.InvokeLLM({ prompt: proactivePrompt });
+      // Use sr (asServiceRole) for InvokeLLM — this function is called from scheduled
+      // automations and service-role orchestrators which have no user session token.
+      // The user-scoped base44 client would return 403 in those contexts.
+      messageContent = await sr.integrations.Core.InvokeLLM({ prompt: proactivePrompt });
     } catch (llmErr) {
       return Response.json({ success: false, reason: 'llm_failure', error: llmErr.message });
     }
