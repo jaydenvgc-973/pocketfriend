@@ -1083,7 +1083,12 @@ Deno.serve(async (req) => {
     // SOURCE: Message records with channel='world_phone' where this character is sender OR receiver.
     // Never invented — only actual persisted Message records.
     // Does NOT merge with direct chat unread status.
+    //
+    // wpSent / wpReceived are kept in outer scope so Step 5c freshness metadata
+    // can derive latestWpMsgTs without issuing a second database query.
     let worldPhoneAwarenessBlock = '';
+    let wpSentOuter = [];   // populated inside Step 5b, read by freshness block below
+    let wpReceivedOuter = [];
     if (interactionContext === 'direct_chat' || interactionContext === 'text') {
       try {
         // Fetch recent World Phone messages this character sent or received (last 48h window)
@@ -1100,6 +1105,9 @@ Deno.serve(async (req) => {
             15
           ).catch(() => []),
         ]);
+        // Hoist for freshness metadata block — avoids a second query
+        wpSentOuter = wpSent;
+        wpReceivedOuter = wpReceived;
 
         // Merge and deduplicate by id
         const wpAllById = new Map();
@@ -2044,37 +2052,19 @@ NEVER SAY:
     });
 
     // ── Compute latestWpMsgTs for freshness metadata ──────────────────────────
-    // Derived from the WP awareness records already fetched in Step 5b.
-    // Used by the frontend to store freshness metadata alongside the cached prompt.
-    // This is the timestamp of the most recent WP Message known to this prompt build.
-    // No new records created. Read-only.
+    // Derived from wpSentOuter / wpReceivedOuter — the records fetched in Step 5b.
+    // Those variables were hoisted to outer scope specifically to avoid a second query here.
+    // No additional DB queries. No new records created. Read-only.
     let latestWpMsgTs = null;
     if (interactionContext === 'direct_chat' || interactionContext === 'text') {
-      // We re-check with the same logic as step 5b — this is a head-check, not a re-query.
-      // The worldPhoneAwarenessBlock was already built above; just extract the max timestamp
-      // from the raw WP messages that were used to build it. Since they are already filtered
-      // to 48h, the max is the most recent WP message in that window.
-      // We do a lightweight re-read of the same records (already fetched) rather than a second query.
-      try {
-        const [wpSentTs, wpReceivedTs] = await Promise.all([
-          base44.asServiceRole.entities.Message.filter(
-            { sender_character_id: characterId, channel: 'world_phone' },
-            '-timestamp', 1
-          ).catch(() => []),
-          base44.asServiceRole.entities.Message.filter(
-            { receiver_character_id: characterId, channel: 'world_phone' },
-            '-timestamp', 1
-          ).catch(() => []),
-        ]);
-        const combined = [...wpSentTs, ...wpReceivedTs].filter(Boolean);
-        if (combined.length > 0) {
-          const tss = combined
-            .map(m => m.timestamp || m.created_date)
-            .filter(Boolean)
-            .map(ts => new Date(ts).getTime());
-          if (tss.length > 0) latestWpMsgTs = new Date(Math.max(...tss)).toISOString();
-        }
-      } catch (_) {}
+      const combined = [...wpSentOuter, ...wpReceivedOuter].filter(Boolean);
+      if (combined.length > 0) {
+        const tss = combined
+          .map(m => m.timestamp || m.created_date)
+          .filter(Boolean)
+          .map(ts => new Date(ts).getTime());
+        if (tss.length > 0) latestWpMsgTs = new Date(Math.max(...tss)).toISOString();
+      }
     }
 
     return Response.json({
