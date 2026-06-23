@@ -87,6 +87,7 @@ import { runVickDiagnosticIfNeeded, shouldUseVickFastPath, buildVickFastPathProm
 import VickCharacterSpeechToggle, { useVickCharacterSpeechMode } from "@/components/chat/VickCharacterSpeechToggle";
 import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
 import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
+import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/worldPhoneCacheInvalidation";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -301,25 +302,11 @@ export default function Chat({ chatTypeOverride } = {}) {
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       // ── WORLD PHONE AWARENESS CACHE INVALIDATION ──────────────────────────
-      // If a new WP message arrives for this character (sent or received) while the
-      // user is on this chat page, invalidate the canonical prompt cache so the next
-      // chat turn re-fetches fresh World Phone awareness from buildCanonicalCharacterContext.
-      // This ensures proactive WP messages created by the server-side scheduler while the
-      // page is open are reflected in the character's generation context immediately.
-      // Does NOT block proactive messaging — proactive runs independently server-side.
-      if (
-        event.type === "create" &&
-        event.data?.channel === "world_phone" &&
-        (event.data?.sender_character_id === characterId || event.data?.receiver_character_id === characterId)
-      ) {
-        // Evict canonical prompt cache so next send re-fetches WP awareness
-        delete systemPromptCacheRef.current[`canonical::${characterId}`];
-        if (currentUser?.email) {
-          import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
-            invalidateCharacterCache(currentUser.email, characterId);
-          }).catch(() => {});
-        }
-        console.log(`[Chat] WP message arrived for char=${characterId} — canonical cache invalidated to include fresh WP awareness`);
+      // Fires when a WP message involving this character arrives while the page is open.
+      // Evicts canonical prompt cache so the next send re-fetches WP-aware context.
+      // Schema proof: channel==='world_phone' is the authoritative discriminator.
+      if (event.type === "create" && shouldInvalidateForWorldPhone(event.data, characterId)) {
+        invalidateCanonicalCache(characterId, currentUser?.email, systemPromptCacheRef);
       }
 
       if (event.data?.conversation_id !== conversationId) return;
