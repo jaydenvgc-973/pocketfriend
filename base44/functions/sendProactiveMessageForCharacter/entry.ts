@@ -330,15 +330,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Character id=${char.id} missing owner_email` }, { status: 422 });
     }
 
-    // World-service characters never send proactive messages
-    const isWorldService = char.character_type === 'npc_world_service' ||
-      char.is_world_service === true ||
-      char.diagnostic_only === true ||
-      (char.name || '').toLowerCase().includes('vick servicio');
-    if (isWorldService) {
-      return Response.json({ success: false, reason: 'npc_world_service_excluded' });
-    }
-
     // ── All entity operations use asServiceRole ──────────────────────────────
     // This function is invoked from scheduled automations, other backend functions,
     // and test harnesses — none of which share the character owner's auth identity.
