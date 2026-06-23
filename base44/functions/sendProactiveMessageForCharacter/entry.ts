@@ -330,6 +330,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: `Character id=${char.id} missing owner_email` }, { status: 422 });
     }
 
+    // ── WORLD-SERVICE SCOPE GATE ─────────────────────────────────────────────
+    // This function drives social/relationship-pressure messaging to the user:
+    // friendship scores, loneliness detection, life event sharing, spontaneous check-ins.
+    // That is active-created-character social behavior and is not Vick's role.
+    //
+    // Vick's messaging paths are:
+    //   - World Phone send/receive → sendWorldPhoneMessage (no restriction)
+    //   - Character-to-character → triggerCharacterContact → sendWorldPhoneMessage (no restriction)
+    //   - Communication commitments → processUnresolvedCommunicationCommitments (no restriction)
+    //   - Diagnostics and repair → vickRunDiagnostic, deliverVickFindings (no restriction)
+    //
+    // Only the social-pressure proactive path (this function) does not apply to Vick,
+    // because his role is service-driven, not socially-driven.
+    // This gate does NOT affect any other messaging path.
+    if (char.character_type === 'npc_world_service' || char.is_world_service === true) {
+      return Response.json({ success: false, reason: 'world_service_social_pressure_not_applicable' });
+    }
+
     // ── All entity operations use asServiceRole ──────────────────────────────
     // This function is invoked from scheduled automations, other backend functions,
     // and test harnesses — none of which share the character owner's auth identity.
