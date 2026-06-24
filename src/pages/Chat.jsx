@@ -1583,6 +1583,34 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const resolvedSubjectType = 'character';
       const finalImageGenPrompt = imageGenPrompt;
 
+      // ── SECONDARY CHARACTER DETECTION — multi-subject image support ──────────
+      // Scan the image prompt for names of other characters in the current roster.
+      // When a character generates an image that includes another named character
+      // (e.g. "Jordan and Maya at the park"), we resolve the secondary IDs so
+      // generateImageAsync can build sealed identity bundles for all subjects.
+      // Only fires when the prompt explicitly names another known character.
+      let resolvedAdditionalCharacterIds = [];
+      try {
+        const allCachedChars = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+        const promptLowerForScan = finalImageGenPrompt.toLowerCase();
+        for (const c of allCachedChars) {
+          if (!c.name || c.id === characterId || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+          const fullNameLower = c.name.toLowerCase();
+          const firstName = fullNameLower.split(' ')[0];
+          // Full name match: safest — no false positives
+          // First name match: only if ≥4 chars to avoid short-name collisions
+          if (promptLowerForScan.includes(fullNameLower) || (firstName.length >= 4 && promptLowerForScan.includes(firstName))) {
+            resolvedAdditionalCharacterIds.push(c.id);
+            console.log(`[Chat] Multi-subject detection: secondary char "${c.name}" (id=${c.id}) found in image prompt`);
+          }
+        }
+        // Cap at 4 additional to match generateImageAsync's limit
+        resolvedAdditionalCharacterIds = resolvedAdditionalCharacterIds.slice(0, 4);
+      } catch (scanErr) {
+        console.warn('[Chat] Secondary character name scan failed (non-blocking):', scanErr?.message);
+        resolvedAdditionalCharacterIds = [];
+      }
+
       console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
 
       let imgMsg;
@@ -1637,6 +1665,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         setMessages,
         convoId,
         queryClient,
+        additionalCharacterIds: resolvedAdditionalCharacterIds,
       }), delayMs);
       return imgMsg;
     };

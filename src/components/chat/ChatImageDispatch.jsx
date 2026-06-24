@@ -58,6 +58,7 @@ export async function dispatchImageGeneration({
   convoId,
   queryClient,
   locationMap = {},
+  additionalCharacterIds = [], // Secondary character IDs resolved from prompt name scan
 }) {
   try {
     // CRITICAL: Resolve housing FIRST — route flag downstream
@@ -126,6 +127,8 @@ export async function dispatchImageGeneration({
       mayAssignTemporaryHousing,
       // Pass ownerEmail for service-role callers (scheduled/autonomous) to authenticate and scope correctly
       ownerEmail: currentUser.email,
+      // Additional secondary character IDs resolved from prompt name scan (multi-subject images)
+      additionalCharacterIds: additionalCharacterIds.length > 0 ? additionalCharacterIds : undefined,
     });
 
     const returnedMsgId = res?.data?.messageId;
