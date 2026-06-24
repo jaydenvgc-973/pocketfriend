@@ -952,35 +952,33 @@ Deno.serve(async (req) => {
         charResolvedRecord = charRecord;
         console.log(`[regenerateImageWithReason] charDesc built (demographics only): "${charDesc.substring(0, 120)}"`);
 
-        // ── OUTFIT INJECTION — delegates to the shared outfit authority ──────────
-        // resolveCharacterOutfitContext is the ONLY function allowed to decide outfit.
-        // This backend function is a consumer — it receives the result and injects it.
-        const alreadyHasOutfitRegen = /Currently wearing:/i.test(charDesc);
-        if (!alreadyHasOutfitRegen) {
-          let outfitText = null;
-          try {
-            const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
-              characterId: charRecord.id,
-              locationCategory: resolvedLocCategory || null,
-              ownerEmail: requestingUser,
-            });
-            outfitText = outfitRes?.text || null;
-            if (outfitRes?.source) console.log(`[regenerateImageWithReason] OutfitAuthority source="${outfitRes.source}" cat="${outfitRes.category}"`);
-          } catch (outfitErr) {
-            console.warn(`[regenerateImageWithReason] resolveCharacterOutfitContext failed (non-blocking): ${outfitErr?.message}`);
-          }
-          if (outfitText) {
-            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
+        // ── OUTFIT RESOLUTION — single authority: resolveCharacterOutfitContext ──
+        // Passes locationId so uniforms are resolved correctly (work/school/jail).
+        const _regenPresence = charRecord.resolved_presence_status || charRecord.location_status || '';
+        const _regenOutfitLocId = sanitizedOriginalLocId
+          || (_regenPresence === 'at_work' ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : null)
+          || (_regenPresence === 'at_school' ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null)
+          || (_regenPresence === 'incarcerated' ? (charRecord.incarceration_facility_id || null) : null)
+          || null;
+        try {
+          const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+            characterId: charRecord.id,
+            locationId: _regenOutfitLocId,
+            locationCategory: null,
+            ownerEmail: requestingUser,
+          });
+          if (outfitRes?.text) {
+            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitRes.text}` : `Currently wearing: ${outfitRes.text}`;
             scenePromptRaw = scenePromptRaw
               .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
               .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
               .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
-            console.log(`[regenerateImageWithReason] ✅ Closet outfit: "${outfitText.substring(0, 80)}"`);
+            console.log(`[regenerateImageWithReason] ✅ Outfit: source="${outfitRes.source}" cat="${outfitRes.category}" text="${outfitRes.text.substring(0,80)}"`);
           } else {
-            console.log(`[regenerateImageWithReason] ⚠️ No outfit resolved for "${charRecord.name}" — renders without wardrobe constraint`);
+            console.log(`[regenerateImageWithReason] ⚠️ No outfit for "${charRecord.name}" (source="${outfitRes?.source}")`);
           }
-        } else {
-          console.log(`[regenerateImageWithReason] Outfit already in charDesc — skipping duplicate`);
+        } catch (outfitErr) {
+          console.warn(`[regenerateImageWithReason] resolveCharacterOutfitContext failed (non-blocking): ${outfitErr?.message}`);
         }
       }
 
@@ -1557,22 +1555,24 @@ Deno.serve(async (req) => {
           }
           if (rec) {
           subjectDisplayName = rec.name || subjectDisplayName;
-          // Outfit: prefer stored outfit metadata from ctx, then delegate to shared outfit authority.
-          const storedMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'character' && m.name === rec.name);
-          if (storedMeta?.text) {
-            outfitText = storedMeta.text;
-          } else {
-            // Delegate to resolveCharacterOutfitContext — the single outfit authority.
-            try {
-              const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
-                characterId: rec.id,
-                locationCategory: resolvedLocCategory || null,
-                ownerEmail: requestingUser,
-              });
-              outfitText = outfitRes?.text || null;
-            } catch (bundleOutfitErr) {
-              console.warn(`[regenerateImageWithReason] Bundle outfit resolve failed for ${rec.id}: ${bundleOutfitErr?.message}`);
-            }
+          // Outfit: always resolve fresh from the single authority — never use stored metadata.
+          // Stored metadata is from a prior generation and may be stale.
+          const _bundlePresence = rec.resolved_presence_status || rec.location_status || '';
+          const _bundleLocId = sanitizedOriginalLocId
+            || (_bundlePresence === 'at_work' ? (rec.current_work_location_id || rec.occupation_location_id || null) : null)
+            || (_bundlePresence === 'at_school' ? (rec.current_school_location_id || rec.education_location_id || null) : null)
+            || (_bundlePresence === 'incarcerated' ? (rec.incarceration_facility_id || null) : null)
+            || null;
+          try {
+            const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+              characterId: rec.id,
+              locationId: _bundleLocId,
+              locationCategory: null,
+              ownerEmail: requestingUser,
+            });
+            outfitText = outfitRes?.text || null;
+          } catch (bundleOutfitErr) {
+            console.warn(`[regenerateImageWithReason] Bundle outfit resolve failed for ${rec.id}: ${bundleOutfitErr?.message}`);
           }
             // Appearance lock
             const al = rec.appearance_lock || {};

@@ -302,11 +302,18 @@ Deno.serve(async (req) => {
             }
             if (charRec) {
               // OUTFIT AUTHORITY: delegate to resolveCharacterOutfitContext — the single outfit authority.
-              // This backend function is a consumer only — no outfit rules live here.
+              // Pass locationId so uniforms (work/school/jail) are resolved correctly.
+              const _mgPresence = charRec.resolved_presence_status || charRec.location_status || '';
+              const _mgOutfitLocId = locationId
+                || (_mgPresence === 'at_work' ? (charRec.current_work_location_id || charRec.occupation_location_id || null) : null)
+                || (_mgPresence === 'at_school' ? (charRec.current_school_location_id || charRec.education_location_id || null) : null)
+                || (_mgPresence === 'incarcerated' ? (charRec.incarceration_facility_id || null) : null)
+                || null;
               try {
                 const mgOutfitResult = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
                   characterId: charRec.id,
-                  locationCategory: null, // location not yet resolved at this point in media grid
+                  locationId: _mgOutfitLocId,
+                  locationCategory: null,
                   ownerEmail: user.email,
                 });
                 outfitText = mgOutfitResult?.text || null;

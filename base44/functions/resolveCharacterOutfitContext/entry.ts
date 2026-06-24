@@ -33,6 +33,74 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── UNIFORM RESOLVER ─────────────────────────────────────────────────────────
+// Returns uniform description text if a required uniform applies, null otherwise.
+// Only fires when character is a worker/inmate/student at the location — never for visitors.
+function resolveUniformText(character, locationRecord) {
+  if (!character || !locationRecord) return null;
+  const uniforms = locationRecord.uniforms || {};
+  if (!uniforms || Object.keys(uniforms).length === 0) return null;
+
+  const workerIds = locationRecord.worker_character_ids || [];
+  const isWorker = workerIds.includes(character.id);
+  const jobTitle = locationRecord.worker_job_titles?.[character.id];
+  const isInmate = locationRecord.category === 'jail_prison' && character.is_jailed;
+  const isStudent = (locationRecord.category === 'school' || locationRecord.category === 'education')
+    && character.education_location_id === locationRecord.id;
+
+  if (!isWorker && !isInmate && !isStudent) return null;
+
+  let role = isInmate ? 'inmate' : isStudent ? 'student' : isWorker ? 'employee' : null;
+  if (isWorker && locationRecord.category === 'jail_prison') role = 'staff';
+  if (isWorker && locationRecord.category === 'medical') role = 'staff';
+  if (!role) return null;
+
+  function uniformToText(u) {
+    if (!u) return null;
+    const parts = [u.description, u.name].filter(Boolean);
+    return parts[0] || null;
+  }
+
+  const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
+  if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
+
+  if (jobTitle) {
+    const normalizedTitle = jobTitle.toLowerCase().trim();
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
+        return uniformToText(u);
+      }
+    }
+  }
+
+  const characterZone = (character.current_zone || character.current_activity || '').toLowerCase();
+  if (characterZone) {
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'zone' && u.zone && characterZone.includes(u.zone.toLowerCase())) {
+        return uniformToText(u);
+      }
+    }
+  }
+
+  for (const u of Object.values(uniforms)) {
+    if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === role) {
+      return uniformToText(u);
+    }
+  }
+
+  if (isWorker && jobTitle) {
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'generic_staff') return uniformToText(u);
+    }
+  }
+
+  for (const u of Object.values(uniforms)) {
+    if (u?.applicability === 'location_wide') return uniformToText(u);
+  }
+
+  return null;
+}
+
 // ── FALLBACK CHAINS ────────────────────────────────────────────────────────────
 // Copied from lib/outfitRotationEngine.js buildFallbackChain().
 // This file IS the authority — if fallback chains need to change, change them here.
@@ -133,7 +201,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me().catch(() => null);
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, locationCategory, ownerEmail } = await req.json();
+    const { characterId, locationCategory, locationId, ownerEmail } = await req.json();
 
     if (!characterId) {
       return Response.json({ error: 'characterId is required' }, { status: 400 });
@@ -163,6 +231,26 @@ Deno.serve(async (req) => {
     if (!character) {
       console.warn(`[resolveCharacterOutfitContext] Character ${characterId} not found`);
       return Response.json({ text: null, source: 'character_not_found', category: null });
+    }
+
+    // ── PRIORITY 1: UNIFORM (work/school/jail) ───────────────────────────────
+    // Resolve the effective location ID: passed locationId, then work/school/jail from presence.
+    const presence = character.resolved_presence_status || character.location_status || '';
+    const effectiveLocationId = locationId
+      || (presence === 'at_work' ? (character.current_work_location_id || character.occupation_location_id || null) : null)
+      || (presence === 'at_school' ? (character.current_school_location_id || character.education_location_id || null) : null)
+      || (presence === 'incarcerated' ? (character.incarceration_facility_id || null) : null);
+
+    if (effectiveLocationId) {
+      const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []);
+      const locRecord = locList?.[0] || null;
+      if (locRecord) {
+        const uniformText = resolveUniformText(character, locRecord);
+        if (uniformText) {
+          console.log(`[resolveCharacterOutfitContext] ✅ UNIFORM for "${character.name}" at "${locRecord.name}": "${uniformText.substring(0,80)}"`);
+          return Response.json({ text: uniformText, source: 'uniform', category: 'uniform' });
+        }
+      }
     }
 
     // ── CLOSET FILTER ─────────────────────────────────────────────────────────
