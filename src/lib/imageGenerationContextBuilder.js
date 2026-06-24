@@ -1,4 +1,5 @@
 import { resolveLocationWithSchoolGuard } from './campusResidencyResolver.js';
+import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -122,96 +123,12 @@ export async function buildImageGenerationContext({
     appearance_lock_present: !!appearanceLockText,
   };
 
-  // ── OUTFIT RESOLUTION ────────────────────────────────────────────────────────
-  let outfitText = null;
-  let outfitSource = 'none';
-  let outfitPrecedenceReason = null;
-
-  // Check if prompt explicitly specifies clothing
-  const promptLowerForOutfit = (prompt || '').toLowerCase();
-  const sleepWakeKeywords = ['sleeping', 'asleep', 'in bed', 'woke up', 'waking up', 'just woke', 'napping', 'nap', 'lying in bed'];
-  const isSleepContext = sleepWakeKeywords.some(kw => promptLowerForOutfit.includes(kw));
-
-  if (isSleepContext && effectiveCharacterRecord) {
-    // Sleep context: prioritize sleepwear
-    const closet = (effectiveCharacterRecord.character_closet || []).filter(o => o.outfit_id);
-    const sleepItem = closet.find(o => o.category === 'sleepwear' || o.category === 'lounge');
-    const co = effectiveCharacterRecord.current_outfit;
-
-    if (sleepItem) {
-      outfitText = [sleepItem.top, sleepItem.bottom, sleepItem.shoes, sleepItem.outerwear, sleepItem.accessories]
-        .filter(Boolean)
-        .map(p => {
-          const t = p.trim();
-          return /^(n\/?a|none|-)$/i.test(t) ? null : t;
-        })
-        .filter(Boolean)
-        .join(', ') || sleepItem.full_description || null;
-      outfitSource = 'sleepwear_locked';
-      outfitPrecedenceReason = 'sleep_context_and_sleepwear_exists';
-    } else if (co && (co.category === 'sleepwear' || co.category === 'lounge')) {
-      outfitText = [co.top, co.bottom, co.shoes, co.outerwear, co.accessories]
-        .filter(Boolean)
-        .map(p => {
-          const t = p.trim();
-          return /^(n\/?a|none|-)$/i.test(t) ? null : t;
-        })
-        .filter(Boolean)
-        .join(', ') || co.full_description || null;
-      outfitSource = 'current_outfit_sleepwear';
-      outfitPrecedenceReason = 'sleep_context_and_current_outfit_sleepwear';
-    } else {
-      const g = (effectiveCharacterRecord.gender || '').toLowerCase();
-      outfitText = g === 'female'
-        ? 'soft cotton pajama set or oversized sleep shirt and shorts'
-        : g === 'male'
-        ? 'pajama bottoms or boxer shorts, no shirt or plain sleep shirt'
-        : 'comfortable pajama set';
-      outfitSource = 'default_sleepwear';
-      outfitPrecedenceReason = 'sleep_context_no_saved_sleepwear';
-    }
-  } else if (effectiveCharacterRecord) {
-    // Non-sleep context: use current outfit or closet
-    const co = effectiveCharacterRecord.current_outfit;
-    if (co && co.outfit_id) {
-      outfitText = [co.top, co.bottom, co.shoes, co.outerwear, co.accessories]
-        .filter(Boolean)
-        .map(p => {
-          const t = p.trim();
-          return /^(n\/?a|none|-)$/i.test(t) ? null : t;
-        })
-        .filter(Boolean)
-        .join(', ') || co.full_description || null;
-      outfitSource = 'current_outfit';
-      outfitPrecedenceReason = 'current_outfit_exists';
-    } else {
-      const closet = (effectiveCharacterRecord.character_closet || []).filter(o => o.outfit_id);
-      if (closet.length > 0) {
-        outfitText = [closet[0].top, closet[0].bottom, closet[0].shoes, closet[0].outerwear, closet[0].accessories]
-          .filter(Boolean)
-          .map(p => {
-            const t = p.trim();
-            return /^(n\/?a|none|-)$/i.test(t) ? null : t;
-          })
-          .filter(Boolean)
-          .join(', ') || closet[0].full_description || null;
-        outfitSource = 'closet_first_item';
-        outfitPrecedenceReason = 'no_current_outfit_fallback_to_closet';
-      }
-    }
-  }
-
-  audit.diagnostics.outfit = {
-    source: outfitSource,
-    text: outfitText || null,
-    precedence_reason: outfitPrecedenceReason,
-    sleep_context_detected: isSleepContext,
-  };
-
-  // ── LOCATION RESOLUTION ──────────────────────────────────────────────────────
+  // ── LOCATION SANITIZATION (must run before outfit resolution) ───────────────
   // SCHOOL CONTAMINATION GUARD — uses canonical campusResidencyResolver.
   // Enrollment at a school is NOT residence. Campus housing is only valid
   // when lives_on_campus === true is explicitly saved on the enrollment record.
+  // sanitizedLocationId must be established here so the outfit resolver can use
+  // the location category as context for accurate outfit category selection.
   let sanitizedLocationId = locationId;
   if (effectiveCharacterRecord && locationId) {
     const guardResult = resolveLocationWithSchoolGuard(effectiveCharacterRecord, locationId);
@@ -280,6 +197,77 @@ export async function buildImageGenerationContext({
     location_name: locationRecord?.name || null,
     zone_name: effectiveZoneName || null,
     zone_images_count: zoneImages.length,
+  };
+
+  // ── OUTFIT RESOLUTION ────────────────────────────────────────────────────────
+  // MUST run after location resolution so we have locationRecord?.category available.
+  let outfitText = null;
+  let outfitSource = 'none';
+  let outfitPrecedenceReason = null;
+
+  const promptLowerForOutfit = (prompt || '').toLowerCase();
+  const sleepWakeKeywords = ['sleeping', 'asleep', 'in bed', 'woke up', 'waking up', 'just woke', 'napping', 'nap', 'lying in bed'];
+  const isSleepContext = sleepWakeKeywords.some(kw => promptLowerForOutfit.includes(kw));
+
+  if (isSleepContext && effectiveCharacterRecord) {
+    // Sleep context: prioritize sleepwear from closet, then current_outfit if it's sleepwear, then default
+    const closet = (effectiveCharacterRecord.character_closet || []).filter(o => o.outfit_id);
+    const sleepItem = closet.find(o => o.category === 'sleepwear' || o.category === 'lounge');
+    const co = effectiveCharacterRecord.current_outfit;
+    if (sleepItem) {
+      outfitText = buildOutfitPromptText(sleepItem);
+      outfitSource = 'sleepwear_locked';
+      outfitPrecedenceReason = 'sleep_context_and_sleepwear_exists';
+    } else if (co && (co.category === 'sleepwear' || co.category === 'lounge')) {
+      outfitText = buildOutfitPromptText(co);
+      outfitSource = 'current_outfit_sleepwear';
+      outfitPrecedenceReason = 'sleep_context_and_current_outfit_sleepwear';
+    } else {
+      const g = (effectiveCharacterRecord.gender || '').toLowerCase();
+      outfitText = g === 'female'
+        ? 'soft cotton pajama set or oversized sleep shirt and shorts'
+        : g === 'male'
+        ? 'pajama bottoms or boxer shorts, no shirt or plain sleep shirt'
+        : 'comfortable pajama set';
+      outfitSource = 'default_sleepwear';
+      outfitPrecedenceReason = 'sleep_context_no_saved_sleepwear';
+    }
+  } else if (effectiveCharacterRecord) {
+    // Non-sleep context: use the rotation engine as the ONLY authoritative outfit source.
+    // CRITICAL: character.current_outfit is NOT used — it reflects the last manually clicked
+    // outfit card, not the context-correct rotation result. The engine reads:
+    //   - character.resolved_presence_status (home / at_work / visiting / traveling)
+    //   - character.today_category_outfit_overrides (date-scoped manual override, rotation ON)
+    //   - character.manual_category_selections (persistent selection, rotation OFF)
+    //   - character.outfit_rotation_enabled
+    //   - character.character_closet
+    // locationRecord?.category is passed so the engine knows gym/work/home/etc.
+    const locationCategoryForOutfit = locationRecord?.category || null;
+    const resolvedOutfit = resolveCurrentOutfit(
+      effectiveCharacterRecord,
+      prompt || '',          // activity hints from the generation prompt
+      locationCategoryForOutfit
+    );
+    if (resolvedOutfit) {
+      outfitText = buildOutfitPromptText(resolvedOutfit);
+      outfitSource = 'rotation_engine';
+      outfitPrecedenceReason = `rotation_resolved_category:${resolvedOutfit.category || 'unknown'}`;
+    } else {
+      // No closet — last-resort only, not preferred
+      const co = effectiveCharacterRecord.current_outfit;
+      if (co) {
+        outfitText = buildOutfitPromptText(co);
+        outfitSource = 'current_outfit_last_resort';
+        outfitPrecedenceReason = 'no_closet_rotation_unavailable';
+      }
+    }
+  }
+
+  audit.diagnostics.outfit = {
+    source: outfitSource,
+    text: outfitText || null,
+    precedence_reason: outfitPrecedenceReason,
+    sleep_context_detected: isSleepContext,
   };
 
   // ── FINAL CONTEXT ────────────────────────────────────────────────────────────
