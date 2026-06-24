@@ -52,13 +52,14 @@ export async function dispatchImageGeneration({
   userSettings,
   currentUser,
   subjectType,
-  characterId,
+  characterId,       // Primary SUBJECT character ID — may differ from character.id (the sender)
+  characterName,     // Primary SUBJECT character name — may differ from character.name (the sender)
   isMountedRef,
   setMessages,
   convoId,
   queryClient,
   locationMap = {},
-  additionalCharacterIds = [], // Secondary character IDs resolved from prompt name scan
+  additionalCharacterIds = [], // Co-subject character IDs resolved from prompt
 }) {
   try {
     // CRITICAL: Resolve housing FIRST — route flag downstream
@@ -78,25 +79,28 @@ export async function dispatchImageGeneration({
 
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
     //
-    // IDENTITY RESOLUTION — matches the regenerate path authority order exactly:
-    // 1. character.reference_image_urls (from the character object the frontend already loaded)
-    // 2. charRefs passed from the caller (may be the same, or pre-resolved)
-    // 3. character.avatar_url as last-resort identity anchor — ONLY if CDN-hosted (media.base44.com)
-    //    CDN-hosted avatars ARE the character's canonical face portrait and are safe to use.
-    //    Non-CDN avatars (generated_image, internal API URLs) are excluded to prevent scene contamination.
+    // IDENTITY RESOLUTION — subject-aware:
+    // charRefs is now the PRE-RESOLVED subject's reference images, passed from Chat.jsx after
+    // subject resolution. When the subject differs from the sender (third-party photo), charRefs
+    // contains the SUBJECT's refs — NOT the sender's. We must not override with character.reference_image_urls
+    // here because character is always the SENDER, not necessarily the subject.
     //
-    // NOTE: generateImageAsync does its own DB fetch and will use reference_image_urls from the
-    // fresh charRecord. These publicCharRefs are passed as characterReferenceImages which serve as
-    // a fallback when the DB fetch returns no refs — ensuring the frontend's already-loaded data
-    // is available to the pipeline even if the DB query misses.
-    const characterDbRefs = (character.reference_image_urls || []).filter(Boolean);
+    // Priority:
+    // 1. charRefs passed from caller (subject-resolved refs — may be sender or named third-party)
+    // 2. character.reference_image_urls ONLY as fallback when charRefs is empty AND subject == sender
+    // 3. character.avatar_url CDN fallback — only when charRefs is empty
     const callerRefs = (charRefs || []).filter(Boolean);
-    // Prefer DB refs from the character object; fall back to caller-passed refs
-    const candidateRefs = characterDbRefs.length > 0 ? characterDbRefs : callerRefs;
+
+    // Only fall back to sender's DB refs when the caller passed no refs AND we have no indication
+    // of a third-party subject (characterId matches character.id = sender is subject)
+    const senderIsSubject = !characterId || characterId === character.id;
+    const senderDbRefs = senderIsSubject ? (character.reference_image_urls || []).filter(Boolean) : [];
+
+    let candidateRefs = callerRefs.length > 0 ? callerRefs : senderDbRefs;
 
     // Avatar fallback: only use CDN-hosted avatars (media.base44.com) — these are canonical portraits.
-    // Never use generated_image URLs or internal base44.app API URLs as identity references.
-    const avatarPublic = character.avatar_url ? toPublicCDN(character.avatar_url) : null;
+    // Only apply sender avatar fallback when sender is the subject.
+    const avatarPublic = (senderIsSubject && character.avatar_url) ? toPublicCDN(character.avatar_url) : null;
     const avatarIsCanonicalCDN = avatarPublic &&
       avatarPublic.startsWith('https://media.base44.com/') &&
       isProviderAccessible(avatarPublic);
@@ -113,7 +117,8 @@ export async function dispatchImageGeneration({
       prompt: imageGenPrompt,
       characterReferenceImages: publicCharRefs,
       userReferenceImages: useUserRefs ? publicUserRefs : [],
-      characterName: character.name,
+      // characterName: use the SUBJECT's name when different from sender
+      characterName: characterName || character.name,
       userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
       subjectType,
       // senderCharacterId is ALWAYS the character who sent the message — separate from the subject

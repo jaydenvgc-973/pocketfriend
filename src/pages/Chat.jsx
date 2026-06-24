@@ -90,6 +90,7 @@ import VickCharacterSpeechToggle, { useVickCharacterSpeechMode } from "@/compone
 import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
 import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/worldPhoneCacheInvalidation";
+import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1574,40 +1575,70 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
 
-      // IDENTITY: The sender is always the subject for character-sent photos.
-      // generateImageAsync handles third-party detection on the backend using its own
-      // isThirdPartyPhoto guard. Running a second resolution here was stripping the
-      // sender's identity refs before they reached the backend, causing Caucasian defaults.
-      const resolvedCharRefs = charRefs;
-      const resolvedCharacterId = characterId;
-      const resolvedSubjectType = 'character';
+      // ── SUBJECT-AWARE CHARACTER RESOLUTION ──────────────────────────────────
+      // Resolve which characters are VISUAL SUBJECTS of the image prompt.
+      // This is the critical step that was regressed: the system must determine
+      // whether a named character is actually a subject of the image (not just mentioned),
+      // and bind their identity bundle before generation — not just pass a name as text.
+      //
+      // Cases:
+      //   "Send me a pic of Character B"        → B is primary subject, sender excluded
+      //   "Send me a pic of B and C together"   → B and C are co-subjects, sender excluded
+      //   "Send me a selfie"                    → Sender is subject
+      //   "Send me a pic of the room"           → Inanimate scene, no character injection
+      //
+      // The resolver uses intent-aware patterns, not just name scanning.
+      const allCachedCharsForSubjects = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+
+      let resolvedCharacterId = characterId; // default: sender is subject
+      let resolvedAdditionalCharacterIds = [];
+      let resolvedSubjectType = 'character';
+      let resolvedCharRefs = charRefs; // default: sender's refs
       const finalImageGenPrompt = imageGenPrompt;
 
-      // ── SECONDARY CHARACTER DETECTION — multi-subject image support ──────────
-      // Scan the image prompt for names of other characters in the current roster.
-      // When a character generates an image that includes another named character
-      // (e.g. "Jordan and Maya at the park"), we resolve the secondary IDs so
-      // generateImageAsync can build sealed identity bundles for all subjects.
-      // Only fires when the prompt explicitly names another known character.
-      let resolvedAdditionalCharacterIds = [];
       try {
-        const allCachedChars = queryClient.getQueryData(["characters", currentUser?.email]) || [];
-        const promptLowerForScan = finalImageGenPrompt.toLowerCase();
-        for (const c of allCachedChars) {
-          if (!c.name || c.id === characterId || c.status === 'deleted' || c.status === 'soft_deleted') continue;
-          const fullNameLower = c.name.toLowerCase();
-          const firstName = fullNameLower.split(' ')[0];
-          // Full name match: safest — no false positives
-          // First name match: only if ≥4 chars to avoid short-name collisions
-          if (promptLowerForScan.includes(fullNameLower) || (firstName.length >= 4 && promptLowerForScan.includes(firstName))) {
-            resolvedAdditionalCharacterIds.push(c.id);
-            console.log(`[Chat] Multi-subject detection: secondary char "${c.name}" (id=${c.id}) found in image prompt`);
-          }
+        const subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId);
+        // Log all resolution steps for diagnostics
+        subjectResult.log.forEach(entry => console.log(entry));
+
+        if (subjectResult.isInanimateScene) {
+          // Room/object/place — no character identity injection
+          resolvedCharacterId = null;
+          resolvedCharRefs = [];
+          resolvedSubjectType = 'character';
+          resolvedAdditionalCharacterIds = [];
+          console.log(`[Chat] Image subject: INANIMATE SCENE — no character identity injected`);
+
+        } else if (!subjectResult.includeSender && subjectResult.primarySubjectId && subjectResult.primarySubjectId !== characterId) {
+          // A named third-party character is the primary subject — sender NOT in image
+          const primarySubjectChar = allCachedCharsForSubjects.find(c => c.id === subjectResult.primarySubjectId);
+          resolvedCharacterId = subjectResult.primarySubjectId;
+          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
+          resolvedSubjectType = 'character';
+          // Use the primary subject's reference images (not the sender's)
+          resolvedCharRefs = (primarySubjectChar?.reference_image_urls || []).filter(Boolean);
+          console.log(`[Chat] Image subject: THIRD-PARTY primary="${primarySubjectChar?.name || subjectResult.primarySubjectId}" | additional=[${resolvedAdditionalCharacterIds.join(',')}]`);
+
+        } else if (subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {
+          // Sender + named co-subjects (joint image)
+          resolvedCharacterId = characterId;
+          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
+          resolvedSubjectType = 'character';
+          resolvedCharRefs = charRefs;
+          console.log(`[Chat] Image subject: JOINT sender + co-subjects=[${resolvedAdditionalCharacterIds.join(',')}]`);
+
+        } else {
+          // Sender is sole subject (selfie / default)
+          resolvedCharacterId = characterId;
+          resolvedAdditionalCharacterIds = [];
+          resolvedSubjectType = 'character';
+          resolvedCharRefs = charRefs;
+          console.log(`[Chat] Image subject: SENDER ONLY`);
         }
-        // Cap at 4 additional to match generateImageAsync's limit
-        resolvedAdditionalCharacterIds = resolvedAdditionalCharacterIds.slice(0, 4);
-      } catch (scanErr) {
-        console.warn('[Chat] Secondary character name scan failed (non-blocking):', scanErr?.message);
+      } catch (subjectErr) {
+        console.warn('[Chat] Subject resolution failed (non-blocking), defaulting to sender:', subjectErr?.message);
+        resolvedCharacterId = characterId;
+        resolvedCharRefs = charRefs;
         resolvedAdditionalCharacterIds = [];
       }
 
@@ -1633,7 +1664,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           generation_lock_id: null,  // image generation doesn't use generation lock
           generation_context: {
             prompt: imageGenPrompt,
-            character_id: characterId,
+            character_id: resolvedCharacterId,
             character_reference_images: resolvedCharRefs,
           },
         });
@@ -1647,6 +1678,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
       const targetMsgId = imgMsg.id;
       console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
+      // Resolve primary subject name for dispatch (may differ from sender when B is the subject)
+      const primarySubjectChar = resolvedCharacterId && resolvedCharacterId !== characterId
+        ? allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId)
+        : null;
+
       setTimeout(() => dispatchImageGeneration({
         targetMsgId,
         imageGenPrompt: finalImageGenPrompt,
@@ -1657,10 +1693,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         userSettings,
         currentUser,
         subjectType: resolvedSubjectType,
-        // CRITICAL: For described third parties with no saved character record,
-        // pass null explicitly — NOT the sender's characterId.
-        // The backend's isThirdPartyPhoto guard uses this to hard-block sender identity.
-        characterId: resolvedCharacterId, // null for described strangers — intentional
+        // resolvedCharacterId is the PRIMARY visual subject — may be a named third-party char,
+        // not necessarily the sender. When null, the backend treats it as an inanimate/no-char scene.
+        characterId: resolvedCharacterId,
+        characterName: primarySubjectChar?.name || null,
         isMountedRef,
         setMessages,
         convoId,
