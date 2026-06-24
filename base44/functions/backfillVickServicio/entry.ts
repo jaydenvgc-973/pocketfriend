@@ -52,7 +52,21 @@ Deno.serve(async (req) => {
     }
 
     // Collect distinct owner_emails
-    let emails = [...new Set(allChars.map(c => c.owner_email).filter(Boolean))];
+    // CRITICAL GUARD: Exclude service accounts, test harness accounts, and any account
+    // whose email pattern indicates it is infrastructure (not a real user world).
+    // These accounts must never receive Vick provisioning — they are not user worlds.
+    // Pattern: service+* accounts, test-harness@*, no-reply.base44.com accounts.
+    const SERVICE_EMAIL_PATTERNS = [
+      /^service\+/i,
+      /no-reply\.base44\.com$/i,
+      /test-harness@/i,
+      /^noreply@/i,
+      /^system@/i,
+    ];
+    const isServiceAccount = (email) => SERVICE_EMAIL_PATTERNS.some(p => p.test(email));
+    
+    let emails = [...new Set(allChars.map(c => c.owner_email).filter(Boolean))]
+      .filter(e => !isServiceAccount(e));
 
     // If a target email is specified, only process that one
     if (targetEmail) {

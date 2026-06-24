@@ -218,6 +218,33 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'ownerEmail could not be determined' }, { status: 400 });
     }
 
+    // ── SERVICE ACCOUNT GUARD ────────────────────────────────────────────────
+    // Service accounts, test harnesses, and infrastructure accounts are NOT user worlds.
+    // Provisioning Vick for them creates orphaned records that contaminate real-user lookups.
+    // This is the root-cause guard for the June 23 2026 duplicate creation incident:
+    //   backfillVickServicio included a service account (service+632904ee-...) in its scan,
+    //   ensureVickServicio had no guard, and created a real Vick + Recovery Yard for an
+    //   infrastructure account. That Vick was then selected by sendWorldPhoneMessage's
+    //   name-lookup, routing messages away from the real user-owned Vick.
+    const SERVICE_ACCOUNT_PATTERNS = [
+      /^service\+/i,
+      /no-reply\.base44\.com$/i,
+      /test-harness@/i,
+      /^noreply@/i,
+      /^system@/i,
+    ];
+    const isServiceAccountEmail = SERVICE_ACCOUNT_PATTERNS.some(p => p.test(ownerEmail));
+    if (isServiceAccountEmail) {
+      console.warn(`[ensureVickServicio] BLOCKED: service/infrastructure account "${ownerEmail}" is not a user world — refusing to provision Vick`);
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'service_account_not_a_user_world',
+        ownerEmail,
+        message: `Vick provisioning is blocked for infrastructure accounts. "${ownerEmail}" is not a real user world.`,
+      }, { status: 400 });
+    }
+
     const now = new Date().toISOString();
     let ownerCharacterId = null; // Track canonical Vick ID across all paths
     const results = { vick: null, recoveryYard: null, created: { vick: false, recoveryYard: false }, repaired: [] };

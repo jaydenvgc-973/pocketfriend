@@ -242,21 +242,42 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         c.display_name?.toLowerCase() === nameLower ||
         c.primary_name?.toLowerCase() === nameLower
       );
-      if (exactMatches.length === 1) {
-        recipient = exactMatches[0];
+      // ── OWNERSHIP PREFERENCE: always prefer user-owned over service/admin accounts ──
+      // Service accounts (e.g. service+* no-reply.base44.com) are infrastructure.
+      // They must never win an ambiguous name resolution against a user-owned character.
+      const SERVICE_PATTERNS_WP = [/^service\+/i, /no-reply\.base44\.com$/i, /test-harness@/i];
+      const isServiceOwner = (email) => !email || SERVICE_PATTERNS_WP.some(p => p.test(email));
+      // Sort: user-owned first, service-owned last
+      const sortedExactMatches = [...exactMatches].sort((a, b) => {
+        const aIsService = isServiceOwner(a.owner_email);
+        const bIsService = isServiceOwner(b.owner_email);
+        if (aIsService && !bIsService) return 1;
+        if (!aIsService && bIsService) return -1;
+        return 0;
+      });
+
+      if (sortedExactMatches.length === 1) {
+        recipient = sortedExactMatches[0];
         recipientResolutionPath = 'account_exact_name';
-      } else if (exactMatches.length > 1) {
+      } else if (sortedExactMatches.length > 1) {
         // Prefer the one with matching owner_email if there's ambiguity
-        const ownedMatch = exactMatches.find(c => c.owner_email === ownerEmail);
+        const ownedMatch = sortedExactMatches.find(c => c.owner_email === ownerEmail);
         if (ownedMatch) {
           recipient = ownedMatch;
           recipientResolutionPath = 'account_exact_name_owned';
         } else {
-          return Response.json({
-            success: false,
-            error: `Ambiguous recipient: "${effectiveRecipientIdentifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
-            ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
-          });
+          // Take the first non-service match
+          const nonServiceMatch = sortedExactMatches.find(c => !isServiceOwner(c.owner_email));
+          if (nonServiceMatch) {
+            recipient = nonServiceMatch;
+            recipientResolutionPath = 'account_exact_name_non_service';
+          } else {
+            return Response.json({
+              success: false,
+              error: `Ambiguous recipient: "${effectiveRecipientIdentifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
+              ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
+            });
+          }
         }
       } else {
         const partialMatches = allChars.filter(c =>
