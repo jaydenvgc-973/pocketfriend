@@ -3,10 +3,10 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw, AlertCircle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
-import { readCache, writeCache, isCacheStale, validateCharacterRoster } from "@/lib/mediaGridCache";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { validateZoneImages } from "@/lib/imageFormatValidator";
+
+function getInitial(name) { return name?.[0]?.toUpperCase() || '?'; }
 
 const REASONS = [
   {
@@ -117,8 +117,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [showSubjectPicker, setShowSubjectPicker] = useState(false);
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
-  const [rosterLoadStatus, setRosterLoadStatus] = useState('idle'); // 'idle'|'loading'|'cache'|'fresh'|'user_only'|'error'
-  const [rosterRepairDiagnostics, setRosterRepairDiagnostics] = useState([]);
+  const [rosterLoadStatus, setRosterLoadStatus] = useState('idle'); // 'idle'|'loading'|'fresh'|'error'
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [userEmail, setUserEmail] = useState(null);
   // Ref so openSubjectPicker always has the email even if state hasn't propagated yet
@@ -167,7 +166,6 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setSelectedZone(null);
       setShowSubjectPicker(false);
       setSelectedSubjectIds([]);
-      setRosterRepairDiagnostics([]);
       setRosterDiagnostics(null);
       setCombinedMode(false);
       setPendingSubjectSelection(null);
@@ -205,7 +203,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
          r.name?.toLowerCase().startsWith(nameLower) ||
          nameLower.startsWith(r.name?.toLowerCase() || '~~~'))
       );
-      if (match) preSelected.add(match.canonical_person_id || match.id);
+      if (match) preSelected.add(match.id);
     });
 
     // ── Step 2: Also apply generation_context IDs as fallback ────────────────
@@ -214,16 +212,15 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         if (s.subject_type === 'user' || s.subject_id === '__user__') {
           preSelected.add('__user__');
         } else if (s.subject_id) {
-          const rosterEntry = roster.find(r => r.id === s.subject_id || r.source_record_ids?.includes(s.subject_id));
-          const canonicalId = rosterEntry?.canonical_person_id || s.subject_id;
-          if (canonicalId) preSelected.add(canonicalId);
+          // Only pre-select if the ID exists in the account-scoped roster
+          const entry = roster.find(r => r.id === s.subject_id);
+          if (entry) preSelected.add(entry.id);
         }
       });
     } else if (ctx.character_id && characterSubjects.length === 0) {
-      // Legacy single-character context — only apply if no bracket-parsed characters
-      const rosterEntry = roster.find(r => r.id === ctx.character_id || r.source_record_ids?.includes(ctx.character_id));
-      const canonicalId = rosterEntry?.canonical_person_id || ctx.character_id;
-      if (canonicalId) preSelected.add(canonicalId);
+      // Legacy single-character context — only apply if ID is in the account-scoped roster
+      const entry = roster.find(r => r.id === ctx.character_id);
+      if (entry) preSelected.add(entry.id);
     }
     if (ctx.subject_type === 'user' || ctx.isUserSubject) {
       preSelected.add('__user__');
@@ -232,145 +229,97 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     setSelectedSubjectIds(preSelected.size > 0 ? Array.from(preSelected) : []);
   };
 
-  // Pre-select subjects from generation_context when opening subject picker.
-  // CRITICAL FIX: email is read from ref (always current) not state (may be null on first render).
-  // Uses last-known-good cache from mediaGridCache — same rules as Media Grid Image Generator.
+  // Load character list for subject picker.
+  // SOURCE OF TRUTH: Direct account-scoped Character.filter({ owner_email: email }) query only.
+  // No unified roster. No cache seeding from any external source. No cross-account fallback.
+  // The user entry is built from UserSettings (owner_email-scoped) only.
   const openSubjectPicker = () => {
     setShowSubjectPicker(true);
     setRosterDiagnostics(null);
 
-    // Use the ref so email is guaranteed available even if state hasn't updated yet
     const email = userEmailRef.current || userEmail;
 
-    // ── STEP 1: Show owner-scoped mediaGridCache immediately ──────────────────
-    // OWNER-SCOPE RULE: Only mg_cache is a valid character seed. localFirstCache (lfc)
-    // is the confirmed cross-account contamination vector and must NOT be used here.
-    const mgCached = email ? readCache(email, 'characters') : null;
-    const cached = mgCached;
-    const seedRecords = mgCached?.records ?? null;
-    const seedSource = mgCached ? 'mg_cache' : null;
-
-    if (seedRecords) {
-      setAllCharacters(seedRecords);
-      setRosterLoadStatus('cache');
-      applyPreSelection(seedRecords);
-      console.log(`[RegenerateModal] Seeded roster from ${seedSource} — ${seedRecords.length} entries`);
-      // If mgCache is fresh, no server fetch needed
-      if (mgCached && !isCacheStale(mgCached)) {
-        setRosterDiagnostics({
-          email, cacheKey: `mg_cache:${email}:characters`,
-          cachedCount: seedRecords.length, serverCount: null,
-          chatCharAvailable: !!(generationContext?.character_id),
-          finalCount: seedRecords.length, fallbackSource: seedSource,
-          lastLoad: new Date(mgCached.loaded_at).toISOString(),
-        });
-        return;
-      }
-    }
-
-    // ── STEP 2: Fetch from server ────────────────────────────────────────────
     if (!email) {
       setRosterLoadStatus('error');
       setRosterDiagnostics({ email: null, error: 'email_not_resolved' });
       return;
     }
 
-    setLoadingCharacters(seedRecords ? false : true);
-    setRosterLoadStatus(seedRecords ? 'cache' : 'loading');
-
-    // Fetch user settings for avatar + reference images (non-blocking, parallel with roster)
-    base44.entities.UserSettings.filter({ owner_email: email })
-      .then(s => setUserSettings(s?.[0] || null))
-      .catch(() => {});
+    setLoadingCharacters(true);
+    setRosterLoadStatus('loading');
 
     // Register foreground task — background systems yield while user is picking subjects
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
 
-    fetchUnifiedRoster(base44, email)
-      .then(({ roster, repairDiagnostics }) => {
-        if (repairDiagnostics?.length > 0) {
-          setRosterRepairDiagnostics(repairDiagnostics);
-          console.warn('[RegenerateModal] Roster unresolved people (needs_review):', repairDiagnostics);
-        }
-        const validation = validateCharacterRoster(roster);
-        const serverCount = Array.isArray(roster) ? roster.length : 0;
+    // Fetch user settings (for user entry avatar/name) and characters in parallel.
+    // Both queries are strictly scoped to owner_email — no cross-account data possible.
+    Promise.all([
+      base44.entities.UserSettings.filter({ owner_email: email }).catch(() => []),
+      base44.entities.Character.filter(
+        { owner_email: email },
+        '-created_date',
+        200
+      ).catch(() => []),
+    ]).then(([settingsList, chars]) => {
+      const settings = settingsList?.[0] || null;
+      setUserSettings(settings);
 
-        if (validation.valid) {
-          // DEFENSIVE OWNER-SCOPE FILTER: reject any entry whose owner_email does not match
-          // the authenticated user. Final hard guard — no foreign-account character may reach
-          // the dropdown regardless of upstream resolver behavior.
-          const scopedRoster = roster.filter(entry =>
-            entry.is_user ||
-            !entry.owner_email ||
-            entry.owner_email === email
-          );
-          // Floor protection: never shrink below existing seed count
-          const existingFloor = seedRecords?.length ?? 0;
-          if (scopedRoster.length >= existingFloor) {
-            setAllCharacters(scopedRoster);
-            writeCache(email, 'characters', scopedRoster);
-          }
-          setRosterLoadStatus('fresh');
-          applyPreSelection(scopedRoster.length >= existingFloor ? scopedRoster : (seedRecords || scopedRoster));
-          setRosterDiagnostics({
-            email, cacheKey: `mg_cache:${email}:characters`,
-            cachedCount: existingFloor, serverCount,
-            scopedCount: scopedRoster.length,
-            chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: Math.max(scopedRoster.length, existingFloor),
-            fallbackSource: scopedRoster.length >= existingFloor ? 'server' : 'cache_floor_protected',
-            lastLoad: new Date().toISOString(),
-            warning: scopedRoster.length < existingFloor ? `server_smaller(${scopedRoster.length}<${existingFloor})_floor_protected` : undefined,
-          });
-        } else if (validation.reason === 'user_only') {
-          // Keep mg_cache if available — never downgrade to user_only if seed had real characters
-          if (!seedRecords?.length) setAllCharacters(roster || []);
-          setRosterLoadStatus('user_only');
-          setRosterDiagnostics({
-            email,
-            cacheKey: `mg_cache:${email}:characters`,
-            cachedCount: seedRecords?.length ?? 0, serverCount,
-            chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: seedRecords?.length ?? serverCount,
-            fallbackSource: seedSource || 'server_user_only',
-            lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : new Date().toISOString(),
-            warning: 'server_returned_user_only',
-          });
-          console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. mg_cache preserved.');
-        } else {
-          // Server returned empty — keep mg_cache seed if available, surface error if not
-          setRosterLoadStatus(seedRecords ? 'cache' : 'error');
-          setRosterDiagnostics({
-            email, cacheKey: `mg_cache:${email}:characters`,
-            cachedCount: seedRecords?.length ?? 0, serverCount: 0,
-            chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: seedRecords?.length ?? 0, fallbackSource: seedSource || 'none',
-            lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : null,
-            warning: 'server_returned_empty',
-          });
-          console.warn('[RegenerateModal] Roster returned empty — preserving mg_cache if available.');
-        }
-      })
-      .catch(err => {
-        console.error('[RegenerateModal] fetchUnifiedRoster failed:', err?.message);
-        setRosterLoadStatus(seedRecords ? 'cache' : 'error');
-        setRosterDiagnostics({
-          email, cacheKey: `mg_cache:${email}:characters`,
-          cachedCount: seedRecords?.length ?? 0, serverCount: null,
-          chatCharAvailable: !!(generationContext?.character_id),
-          finalCount: seedRecords?.length ?? 0, fallbackSource: seedSource || 'none',
-          lastLoad: mgCached?.loaded_at ? new Date(mgCached.loaded_at).toISOString() : null,
-          error: err?.message,
-        });
-      })
-      .finally(() => {
-        setLoadingCharacters(false);
-        releaseForeground();
+      // Filter to live characters only — never show deleted/merged
+      const liveChars = chars.filter(c =>
+        c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
+      );
+
+      // Build user entry from UserSettings — always account-scoped
+      const userWorldName = settings?.fictional_world_name || email.split('@')[0] || 'Me';
+      const userAvatarUrl =
+        settings?.generated_avatar_urls?.[0] ||
+        settings?.reference_image_urls?.[0] ||
+        null;
+      const userEntry = {
+        id: '__user__',
+        canonical_person_id: '__user__',
+        name: userWorldName,
+        world_name: userWorldName,
+        avatar_url: userAvatarUrl,
+        reference_image_urls: [
+          ...(settings?.generated_avatar_urls || []),
+          ...(settings?.reference_image_urls || []),
+        ].filter(Boolean),
+        is_user: true,
+        owner_email: email,
+      };
+
+      // Build character entries — active first (desc by created_date), then inactive
+      const activeChars = liveChars
+        .filter(c => c.is_active_character)
+        .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
+      const inactiveChars = liveChars
+        .filter(c => !c.is_active_character)
+        .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
+
+      const roster = [userEntry, ...activeChars, ...inactiveChars];
+
+      setAllCharacters(roster);
+      setRosterLoadStatus('fresh');
+      applyPreSelection(roster);
+      setRosterDiagnostics({
+        email,
+        characterCount: liveChars.length,
+        source: 'direct_account_query',
+        loadedAt: new Date().toISOString(),
       });
+    }).catch(err => {
+      console.error('[RegenerateModal] Character load failed:', err?.message);
+      setRosterLoadStatus('error');
+      setRosterDiagnostics({ email, error: err?.message });
+    }).finally(() => {
+      setLoadingCharacters(false);
+      releaseForeground();
+    });
   };
 
   const handleRosterRetry = () => {
-    // Do NOT clear allCharacters — preserve whatever the user can see while retry runs
+    setAllCharacters([]);
     setRosterLoadStatus('idle');
     openSubjectPicker();
   };
@@ -394,24 +343,19 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     // rendering in the picker UI — if it shows on screen, it is accessible. Always use it first.
     let userRefImages = [];
     if (hasUser) {
-      const userRosterEntry = allCharacters.find(c => c.is_user);
+      const userEntry = allCharacters.find(c => c.is_user);
       const ctxUserRefs = (generationContext?.subjects || [])
         .find(s => s.subject_type === 'user')?.reference_images || [];
       const refs = [
-        userRosterEntry?.avatar_url,                                    // #1: already on screen = guaranteed accessible
-        ...(userRosterEntry?.reference_image_urls || []).slice(0, 2),  // #2: roster reference images
-        ...(userSettings?.reference_image_urls || []).slice(0, 2),     // #3: settings refs (may not be loaded yet)
-        ...(userSettings?.generated_avatar_urls || []).slice(0, 1),    // #4: settings generated avatars
-        ...ctxUserRefs.slice(0, 2),                                    // #5: original generation refs
+        userEntry?.avatar_url,
+        ...(userEntry?.reference_image_urls || []).slice(0, 3),
+        ...ctxUserRefs.slice(0, 2),
       ].filter(Boolean);
-      // Deduplicate while preserving order
       const seen = new Set();
       userRefImages = refs.filter(u => { if (seen.has(u)) return false; seen.add(u); return true; });
-      console.log(`[RegenerateModal] User refs resolved: ${userRefImages.length} | avatar=${!!userRosterEntry?.avatar_url} | settings=${(userSettings?.reference_image_urls||[]).length} | ctx=${ctxUserRefs.length}`);
     }
 
-    const userName = userSettings?.fictional_world_name ||
-      allCharacters.find(c => c.is_user)?.world_name ||
+    const userName = allCharacters.find(c => c.is_user)?.world_name ||
       allCharacters.find(c => c.is_user)?.name ||
       null;
 
@@ -637,16 +581,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     <details className="mt-2">
                       <summary className="cursor-pointer text-[10px] text-destructive/60 hover:text-destructive/80">Show diagnostics</summary>
                       <div className="mt-1.5 space-y-0.5 font-mono text-[9px] text-destructive/70 bg-destructive/5 rounded-lg p-2">
-                        <p>owner_email: {rosterDiagnostics.email ?? '—'}</p>
-                        <p>cache_key: {rosterDiagnostics.cacheKey ?? '—'}</p>
-                        <p>cached_roster_count: {rosterDiagnostics.cachedCount ?? 0}</p>
-                        <p>server_roster_count: {rosterDiagnostics.serverCount ?? 'failed'}</p>
-                        <p>chat_char_available: {String(rosterDiagnostics.chatCharAvailable)}</p>
-                        <p>final_dropdown_count: {rosterDiagnostics.finalCount ?? 0}</p>
-                        <p>fallback_source: {rosterDiagnostics.fallbackSource ?? 'none'}</p>
-                        <p>last_successful_load: {rosterDiagnostics.lastLoad ?? 'never'}</p>
-                        {rosterDiagnostics.error && <p>error: {rosterDiagnostics.error}</p>}
-                        {rosterDiagnostics.warning && <p>warning: {rosterDiagnostics.warning}</p>}
+                       <p>owner_email: {rosterDiagnostics.email ?? '—'}</p>
+                       <p>source: {rosterDiagnostics.source ?? 'direct_account_query'}</p>
+                       <p>character_count: {rosterDiagnostics.characterCount ?? 'failed'}</p>
+                       {rosterDiagnostics.error && <p>error: {rosterDiagnostics.error}</p>}
                       </div>
                     </details>
                   )}
@@ -662,58 +600,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       </button>
                     </div>
                   )}
-                  {(() => {
-                    // STRICT ISOLATION: Only surface repair diagnostics for names that are
-                    // DIRECTLY relevant to THIS image's subjects. Never show global roster warnings.
-                    //
-                    // Priority order for determining relevant names:
-                    //   1. Names explicitly bracket-tagged [character] in the source prompt
-                    //   2. Names from generationContext.subjects (image's own subject bundle)
-                    //   3. If neither available: show NOTHING (global pool must never leak)
-                    //
-                    // [user] subjects are NEVER Character records — never warn for them.
-                    // Names like "Miller (Previous Owner)", "Jayden" from unrelated roster
-                    // entries must NEVER appear here.
-                    const { characterSubjects, allTaggedNames } = parseMediaGridSubjects(originalPrompt || '');
-                    const hasPromptTags = allTaggedNames.size > 0;
 
-                    // Build image-specific name set from generation context subjects
-                    const imageSubjectNames = new Set();
-                    const ctx = generationContext || {};
-                    if (ctx.subjects?.length > 0) {
-                      ctx.subjects.forEach(s => {
-                        if (s.subject_name && s.subject_type !== 'user') {
-                          imageSubjectNames.add(s.subject_name.trim().toLowerCase());
-                        }
-                      });
-                    }
-                    if (ctx.character_name) {
-                      imageSubjectNames.add(ctx.character_name.trim().toLowerCase());
-                    }
-
-                    // Add bracket-tagged names
-                    characterSubjects.forEach(n => imageSubjectNames.add(n.toLowerCase()));
-
-                    // If we have no image-specific subjects, show nothing — never leak global pool
-                    if (imageSubjectNames.size === 0) return null;
-
-                    const relevantDiagnostics = rosterRepairDiagnostics.filter(f => {
-                      if (!f.name) return false;
-                      const nameLower = f.name.trim().toLowerCase();
-                      return imageSubjectNames.has(nameLower) ||
-                        [...imageSubjectNames].some(n => nameLower.startsWith(n) || n.startsWith(nameLower));
-                    });
-
-                    if (relevantDiagnostics.length === 0) return null;
-                    return (
-                      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-400 space-y-1 mb-1">
-                        <p className="font-semibold">Some people in this image need review:</p>
-                        {relevantDiagnostics.map((f, i) => (
-                          <p key={i} className="text-amber-400/80">• <span className="font-medium">{f.name}</span> — {f.failure_reason || 'Confidence too low to auto-resolve'}</p>
-                        ))}
-                      </div>
-                    );
-                  })()}
                   <div className="max-h-56 overflow-y-auto space-y-1">
                     {/* User entry — always shown first, shows avatar + world name like other characters */}
                     {(() => {
@@ -742,12 +629,11 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                         </button>
                       );
                     })()}
-                    {/* Characters — roster order from fetchUnifiedRoster is authoritative.
-                        active_created_character (is_active_character=true) desc by created_date,
-                        then inactive desc by created_date. Do NOT re-sort — preserve canonical order. */}
+                    {/* Characters — active first (desc by created_date), then inactive.
+                        Order is set at load time from direct account-scoped query. Do NOT re-sort. */}
                     {[...allCharacters.filter(c => !c.is_user)]
                       .map(char => {
-                        const pickerId = char.canonical_person_id || char.id;
+                        const pickerId = char.id;
                         const isSelected = selectedSubjectIds.includes(pickerId);
                         return (
                           <button
@@ -784,7 +670,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                 const hasVerifiedSubject = selectedSubjectIds.some(id => {
                   if (id === '__user__') return true; // user persona is always valid
                   // Check if this ID has a known name from roster OR from context/prompt
-                  const rosterEntry = allCharacters.find(c => (c.canonical_person_id || c.id) === id);
+                  const rosterEntry = allCharacters.find(c => c.id === id);
                   if (rosterEntry?.name) return true;
                   // Fallback: check context
                   const ctxName = generationContext?.character_name ||
