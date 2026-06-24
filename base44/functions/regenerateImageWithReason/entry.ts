@@ -237,6 +237,7 @@ function buildMultiSubjectRegenPrompt({
   scenePrompt, locationName, zoneName, locCategory, envRefs,
   subjectBundles,   // array of resolved bundle objects
   reason,
+  pickerOverride,   // true when subject list came from picker (not stored ctx)
 }) {
   const envCount = Math.min(envRefs.length, 4);
   const totalSubjects = subjectBundles.length;
@@ -344,6 +345,18 @@ UNIFIED COMPOSITION RULE
 ONE COHESIVE SCENE. All subjects are naturally integrated — same lighting, same floor plane, same perspective.
 Do NOT: paste subjects over background | disconnect from room perspective | invent props
 DO: move camera | change angle | apply time-of-day lighting | reframe from new camera position
+
+════════════════════════════════════════════════════════════
+⛔ MANDATORY SUBJECT COUNT ENFORCEMENT — ABSOLUTE LAW
+════════════════════════════════════════════════════════════
+This image MUST contain EXACTLY ${totalSubjects} visible foreground person${totalSubjects > 1 ? 's' : ''}.
+${subjectBundles.map((b, i) => `Person ${i+1}: "${b.displayName}" — sealed bundle above defines their identity.`).join('\n')}
+
+⛔ GENERATION INVALID if fewer than ${totalSubjects} distinct people are visible in the foreground.
+⛔ GENERATION INVALID if any named subject is absent, replaced by a generic person, or merged with another subject.
+⛔ Every subject listed above MUST be physically present and individually distinguishable in the image.
+${totalSubjects >= 3 ? `⛔ With ${totalSubjects} subjects: use wide shot, group arrangement, or split framing to ensure ALL are visible. Do NOT crop anyone out.` : ''}
+════════════════════════════════════════════════════════════
 `;
 }
 
@@ -1498,10 +1511,13 @@ Deno.serve(async (req) => {
     // Multi-subject detection: ctx.subjects array (set by mediaGridGenerate for all multi-person images)
     // has 2+ entries, OR the original image explicitly included the user persona alongside a character.
     const ctxSubjects = ctx.subjects || [];
-    // Multi-subject regen: fires when context has 2+ subjects (including secondary characters),
-    // OR when image_type='multi' (new flag written by generateImageAsync for char-char images),
-    // OR when single subject + user refs needed on a multi/joint image type.
-    const isMultiSubjectRegen = ctxSubjects.length >= 2 ||
+    // Multi-subject regen: fires when:
+    //   - picker selected 2+ characters (intendedCharacterIds.length >= 2) — HIGHEST PRIORITY
+    //   - context has 2+ subjects from original generation
+    //   - image_type='multi' was stamped at generation time
+    //   - single subject + user refs needed on a joint image
+    const isMultiSubjectRegen = intendedCharacterIds.length >= 2 ||
+      ctxSubjects.length >= 2 ||
       ctx.image_type === 'multi' ||
       (ctxSubjects.length === 1 && needsUserRefs && (ctx.subject_type === 'multi' || ctx.image_type === 'multi'));
 
@@ -1509,46 +1525,24 @@ Deno.serve(async (req) => {
 
     if (isMultiSubjectRegen) {
       // ── MULTI-SUBJECT PATH: build sealed per-subject bundles ────────────────
-      // Re-resolve each subject's outfit and appearance lock fresh from DB.
-      // This ensures the outfit stored at generation time is used — not re-derived from
-      // a stale prompt or context field that may have drifted.
-      console.log(`[regenerateImageWithReason] MULTI-SUBJECT regen: ${ctxSubjects.length} subjects in ctx — using sealed bundle prompt`);
+      // PICKER AUTHORITY: when intendedCharacterIds is non-empty, the picker selection
+      // is the SOLE authority for which characters appear — ctxSubjects from the original
+      // image is completely replaced. This is the fix for Test 5 and Test 6:
+      // previously the code looped ctxSubjects (old A+B) even when picker selected A+C or A+B+D+E.
+      const pickerOverride = intendedCharacterIds.length > 0;
+      const subjectIdsToResolve = pickerOverride
+        ? intendedCharacterIds  // picker wins: use exactly the selected IDs
+        : ctxSubjects.filter(s => s.subject_type !== 'user' && s.subject_id !== '__user__').map(s => s.subject_id).filter(Boolean);
 
-      // Helpers inlined (Deno cannot import local lib)
-      function normalizeOutfitFieldRegen(val) {
-        if (!val) return null;
-        const t = val.trim();
-        if (/^(n\/?a|none|-)$/i.test(t)) return null;
-        const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
-        if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
-        return s || null;
-      }
-      function buildOutfitTextBundle(outfit) {
-        if (!outfit) return null;
-        const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
-          .map(normalizeOutfitFieldRegen).filter(Boolean);
-        if (parts.length > 0) return parts.join(', ');
-        // full_description: only use if it's real clothing text, not an AI style/aesthetic prompt
-        const fd = outfit.full_description?.trim();
-        if (fd && !isAIGenerationPrompt(fd)) return fd;
-        return null;
-      }
+      console.log(`[regenerateImageWithReason] MULTI-SUBJECT regen: ${pickerOverride ? 'PICKER OVERRIDE' : 'ctx.subjects'} — ${subjectIdsToResolve.length} char subjects | picker=${pickerOverride} | ids=[${subjectIdsToResolve.join(',')}]`);
 
-      // Build bundles — one per subject
-      const subjectBundles = [];
-      let refCursor = 1; // 1-based, after env refs
-
-      // ── Process character subjects from ctx.subjects ──────────────────────
-      for (const s of ctxSubjects) {
-        if (s.subject_type === 'user' || s.subject_id === '__user__') continue; // handled separately below
-
-        const sid = s.subject_id;
-        if (!sid) continue;
-
-        // Resolve outfit and appearance from DB
+      // Helper: resolve a single character ID into a full bundle object
+      // Looks up DB record, refs, appearance lock, outfit fresh — picker-selected or stored subject.
+      async function resolveCharBundleForRegen(sid, ctxSubjectEntry) {
         let outfitText = null;
         let appearanceLock = null;
-        let subjectDisplayName = s.subject_name || charName || 'the character';
+        let subjectDisplayName = ctxSubjectEntry?.subject_name || 'the character';
+        let subjectRefs = [];
 
         try {
           let rec = null;
@@ -1559,26 +1553,39 @@ Deno.serve(async (req) => {
             rec = recListSR?.[0] || null;
           }
           if (rec) {
-          subjectDisplayName = rec.name || subjectDisplayName;
-          // Outfit: always resolve fresh from the single authority — never use stored metadata.
-          // Stored metadata is from a prior generation and may be stale.
-          const _bundlePresence = rec.resolved_presence_status || rec.location_status || '';
-          const _bundleLocId = sanitizedOriginalLocId
-            || (_bundlePresence === 'at_work' ? (rec.current_work_location_id || rec.occupation_location_id || null) : null)
-            || (_bundlePresence === 'at_school' ? (rec.current_school_location_id || rec.education_location_id || null) : null)
-            || (_bundlePresence === 'incarcerated' ? (rec.incarceration_facility_id || null) : null)
-            || null;
-          try {
-            const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
-              characterId: rec.id,
-              locationId: _bundleLocId,
-              locationCategory: null,
-              ownerEmail: requestingUser,
-            });
-            outfitText = outfitRes?.text || null;
-          } catch (bundleOutfitErr) {
-            console.warn(`[regenerateImageWithReason] Bundle outfit resolve failed for ${rec.id}: ${bundleOutfitErr?.message}`);
-          }
+            subjectDisplayName = rec.name || subjectDisplayName;
+
+            // Refs: prefer fresh reference_image_urls, CDN avatar fallback, then stored ctx refs
+            const freshAllRefs = cdnFilter(rec.reference_image_urls || []);
+            const freshRefs = freshAllRefs.filter(u => !u.includes('generated_image')).slice(0, 2);
+            if (freshRefs.length > 0) {
+              subjectRefs = freshRefs;
+            } else if (rec.avatar_url) {
+              const ap = toPublicCDN(rec.avatar_url);
+              if (isAccessible(ap)) subjectRefs = [ap];
+            } else if (ctxSubjectEntry?.reference_images?.length > 0) {
+              subjectRefs = cdnFilter(ctxSubjectEntry.reference_images).slice(0, 2);
+            }
+
+            // Outfit
+            const _bundlePresence = rec.resolved_presence_status || rec.location_status || '';
+            const _bundleLocId = sanitizedOriginalLocId
+              || (_bundlePresence === 'at_work' ? (rec.current_work_location_id || rec.occupation_location_id || null) : null)
+              || (_bundlePresence === 'at_school' ? (rec.current_school_location_id || rec.education_location_id || null) : null)
+              || (_bundlePresence === 'incarcerated' ? (rec.incarceration_facility_id || null) : null)
+              || null;
+            try {
+              const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+                characterId: rec.id,
+                locationId: _bundleLocId,
+                locationCategory: null,
+                ownerEmail: requestingUser,
+              });
+              outfitText = outfitRes?.text || null;
+            } catch (bundleOutfitErr) {
+              console.warn(`[regenerateImageWithReason] Bundle outfit resolve failed for ${rec.id}: ${bundleOutfitErr?.message}`);
+            }
+
             // Appearance lock
             const al = rec.appearance_lock || {};
             appearanceLock = {
@@ -1596,9 +1603,41 @@ Deno.serve(async (req) => {
         } catch (bundleErr) {
           console.warn(`[regenerateImageWithReason] Bundle resolution for char ${sid}: ${bundleErr?.message}`);
         }
+        return { sid, subjectDisplayName, subjectRefs, outfitText, appearanceLock };
+      }
 
-        // Ref slots for this subject
-        const subjectRefs = cdnFilter(s.reference_images || charRefs || []).slice(0, 2);
+      // Helpers inlined (Deno cannot import local lib)
+      function normalizeOutfitFieldRegen(val) {
+        if (!val) return null;
+        const t = val.trim();
+        if (/^(n\/?a|none|-)$/i.test(t)) return null;
+        const s = t.replace(/^n\/?a[,\-–]\s*/i, '').trim();
+        if (/^(shirtless|no top|no shirt)$/i.test(s)) return 'No shirt / bare torso';
+        return s || null;
+      }
+      function buildOutfitTextBundle(outfit) {
+        if (!outfit) return null;
+        const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
+          .map(normalizeOutfitFieldRegen).filter(Boolean);
+        if (parts.length > 0) return parts.join(', ');
+        const fd = outfit.full_description?.trim();
+        if (fd && !isAIGenerationPrompt(fd)) return fd;
+        return null;
+      }
+
+      // Build bundles — one per subject, using picker IDs or stored IDs
+      const subjectBundles = [];
+      let refCursor = 1; // 1-based, after env refs
+
+      // ── Process character subjects — picker-selected or from ctx ─────────
+      for (const sid of subjectIdsToResolve) {
+        if (!sid) continue;
+        // Find the matching stored ctx entry (for reference_images fallback if fresh lookup fails)
+        const ctxEntry = ctxSubjects.find(s => s.subject_id === sid) || null;
+        const { subjectDisplayName, subjectRefs, outfitText, appearanceLock } = await resolveCharBundleForRegen(sid, ctxEntry);
+
+        console.log(`[regenerateImageWithReason] ✅ Bundle resolved: "${subjectDisplayName}" refs=${subjectRefs.length} outfit="${outfitText?.substring(0,60) || 'none'}"`);
+
         subjectBundles.push({
           subjectKey: `character_${sid}`,
           subjectRole: 'character',
@@ -1675,10 +1714,11 @@ Deno.serve(async (req) => {
         scenePrompt,
         locationName: resolvedLocationName,
         zoneName: resolvedZoneName,
-        locCategory: resolvedLocCategory, // ← OCCUPANCY: location category for crowd rules
+        locCategory: resolvedLocCategory,
         envRefs: envRefs.slice(0, ENV_SLOTS),
         subjectBundles,
         reason,
+        pickerOverride,
       });
 
       // Override referenceImages with bundle-ordered refs for this path
