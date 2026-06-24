@@ -868,8 +868,9 @@ Deno.serve(async (req) => {
       characterEmotionalState,
       userUploadedReferenceUrl,
       ownerEmail,
-      manualLocationId,   // UI-selected location from Media Grid dropdown — overrides auto-resolve
-      manualZoneName,     // UI-selected zone from Media Grid dropdown — overrides auto-resolve
+      manualLocationId,       // UI-selected location from Media Grid dropdown — overrides auto-resolve
+      manualZoneName,         // UI-selected zone from Media Grid dropdown — overrides auto-resolve
+      additionalCharacterIds, // Additional character IDs to include as secondary subjects
     } = await req.json();
 
     if (!messageId) {
@@ -1444,6 +1445,93 @@ Deno.serve(async (req) => {
       envRefs = validEnvRefs;
     }
 
+    // ── ADDITIONAL CHARACTER RESOLUTION — sealed multi-subject bundles ────────
+    // Fires when additionalCharacterIds[] is passed (e.g. from character-generated images
+    // that include multiple people). Each secondary character is resolved exactly like the
+    // primary: DB record + reference images + appearance lock + outfit.
+    // When 2+ total character subjects exist, we switch to the multi-subject sealed prompt
+    // format (same as mediaGridGenerate) so every identity is locked independently.
+    const additionalCharRecords = []; // { record, refs, outfitText, desc }
+
+    const cleanAdditionalIds = (additionalCharacterIds || []).filter(
+      id => id && typeof id === 'string' && id !== characterId
+    );
+
+    if (cleanAdditionalIds.length > 0) {
+      console.log(`[generateImageAsync] Resolving ${cleanAdditionalIds.length} additional character(s): [${cleanAdditionalIds.join(', ')}]`);
+      for (const addlId of cleanAdditionalIds.slice(0, 4)) { // cap at 4 additional
+        try {
+          let addlRec = null;
+          const addlListSR = await base44.asServiceRole.entities.Character.filter({ id: addlId }, null, 1).catch(() => []);
+          const addlCandidate = addlListSR?.[0] || null;
+          if (addlCandidate) {
+            if (addlCandidate.owner_email && addlCandidate.owner_email !== requestingUser) {
+              console.error(`[generateImageAsync] ⛔ Cross-account additional char ${addlId}`);
+              continue;
+            }
+            addlRec = addlCandidate;
+          }
+          if (!addlRec && user) {
+            const addlListUser = await base44.entities.Character.filter({ id: addlId }, null, 1).catch(() => []);
+            addlRec = addlListUser?.[0] || null;
+          }
+          if (!addlRec) {
+            console.warn(`[generateImageAsync] Additional char ${addlId} not found — skipping`);
+            continue;
+          }
+
+          // Refs — same rules as primary: no generated_image, prefer reference_image_urls, avatar CDN fallback
+          const addlAllRefs = cdnFilter(addlRec.reference_image_urls || []);
+          let addlRefs = addlAllRefs.filter(u => !u.includes('generated_image')).slice(0, 2);
+          if (addlRefs.length === 0 && addlRec.avatar_url) {
+            const ap = toPublicCDN(addlRec.avatar_url);
+            const isCDN = ap.startsWith('https://media.base44.com/');
+            if (isAccessible(ap) && (isCDN || !ap.includes('generated_image'))) {
+              addlRefs = [ap];
+            }
+          }
+
+          // Outfit — delegate to resolveCharacterOutfitContext (same authority as primary)
+          const _addlPresence = addlRec.resolved_presence_status || addlRec.location_status || '';
+          const _addlOutfitLocId =
+            (_addlPresence === 'at_work' ? (addlRec.current_work_location_id || addlRec.occupation_location_id || null) : null)
+            || (_addlPresence === 'at_school' ? (addlRec.current_school_location_id || addlRec.education_location_id || null) : null)
+            || (_addlPresence === 'incarcerated' ? (addlRec.incarceration_facility_id || null) : null)
+            || null;
+          let addlOutfitText = null;
+          try {
+            const addlOutfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+              characterId: addlRec.id,
+              locationId: _addlOutfitLocId,
+              locationCategory: null,
+              ownerEmail: requestingUser,
+            });
+            addlOutfitText = addlOutfitRes?.text || null;
+          } catch (addlOutfitErr) {
+            console.warn(`[generateImageAsync] Outfit resolve failed for ${addlRec.name}: ${addlOutfitErr?.message}`);
+          }
+
+          // Demographics (same as primary — age/gender only)
+          const addlDescParts = [
+            addlRec.age_range ? `${addlRec.age_range} years old` : null,
+            addlRec.gender || null,
+          ].filter(Boolean);
+          let addlDesc = addlDescParts.join(', ');
+          if (addlOutfitText) {
+            addlDesc = addlDesc ? `${addlDesc}. Currently wearing: ${addlOutfitText}` : `Currently wearing: ${addlOutfitText}`;
+          }
+
+          additionalCharRecords.push({ record: addlRec, refs: addlRefs, outfitText: addlOutfitText, desc: addlDesc });
+          console.log(`[generateImageAsync] ✅ Additional char resolved: "${addlRec.name}" refs=${addlRefs.length} outfit="${addlOutfitText?.substring(0,60) || 'none'}"`);
+        } catch (addlErr) {
+          console.warn(`[generateImageAsync] Additional char resolution error for ${addlId}: ${addlErr?.message}`);
+        }
+      }
+    }
+
+    // Determine if this is a true multi-subject generation (2+ distinct character subjects)
+    const hasMultipleCharSubjects = charRecord && additionalCharRecords.length > 0;
+
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
     const CHAR_SLOTS = Math.min(charRefs.length, 5);
     const USER_SLOTS = Math.min(userRefs.length, 3);
@@ -1452,10 +1540,14 @@ Deno.serve(async (req) => {
     const charRefStart = ENV_SLOTS + 1;
     const userRefStart = ENV_SLOTS + CHAR_SLOTS + 1;
 
+    // For multi-subject: additional character refs are appended after primary refs
+    const additionalRefsFlat = additionalCharRecords.flatMap(a => a.refs.slice(0, 2));
+
     const referenceImages = [
       ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
+      ...additionalRefsFlat,
       ...(userUploadedReferenceUrl && cdnFilter([userUploadedReferenceUrl]).length > 0 ? [cdnFilter([userUploadedReferenceUrl])[0]] : []),
     ].filter(Boolean);
 
@@ -1521,27 +1613,172 @@ All reference images (if any) are environment/location refs only — do NOT trea
     // UTC is infrastructure metadata only. ET is the authoritative app timezone.
     const serverTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const nowETIso = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString();
-    let finalPrompt = thirdPartyPreamble + buildPrompt({
-      prompt: sanitizedPrompt,
-      charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
-      charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
-      charRecord: isThirdPartyPhoto && !characterId ? null : charRecord,  // ← KEY FIX: pass charRecord directly
-      locationName: resolvedLocationName,
-      zoneName: resolvedZoneName,
-      locCategory: resolvedLocCategory, envRefCount: ENV_SLOTS,
-      charRefCount: CHAR_SLOTS,
-      userRefCount: USER_SLOTS,
-      envRefStart,
-      charRefStart,
-      userRefStart,
-      serverHour: serverTime.getHours(), // ET hours (correct — serverTime is now ET-derived)
-      serverTime: serverTime.toLocaleTimeString('en-US'),
-      subjectType,
-      characterId,
-      userWorldName,
-      userOutfitText: userOutfitText || null,
-      userAppearanceLockText: userAppearanceLockText || null,
-    });
+
+    let finalPrompt;
+
+    if (hasMultipleCharSubjects) {
+      // ── MULTI-SUBJECT PATH: sealed bundle prompt ─────────────────────────────
+      // Same sealed bundle format as mediaGridGenerate and regenerateImageWithReason.
+      // Each character gets its own locked identity block. Cross-assignment is forbidden.
+      console.log(`[generateImageAsync] MULTI-SUBJECT path: primary="${charRecord.name}" + ${additionalCharRecords.length} additional`);
+
+      // Inlined helpers (Deno cannot import local lib files)
+      function _buildRefsRange(start, count) {
+        if (count === 0) return null;
+        return count === 1 ? `Image ${start}` : `Images ${start}–${start + count - 1}`;
+      }
+
+      function _buildSubjectBundle(rec, refs, outfitText, refStart, envCount) {
+        const name = rec.name || 'the character';
+        const firstName = name.split(/\s+/)[0];
+        const refsRange = _buildRefsRange(envCount + refStart, refs.length);
+        const al = rec.appearance_lock || {};
+        const ethnicities = (rec.ethnicities || []).filter(Boolean);
+        const skinTone = al.skin_tone || null;
+        const hairstyle = al.hairstyle || al.hair_type || null;
+        const facialHair = al.facial_hair || null;
+        const bodyType = al.body_type || al.overall_aesthetic || null;
+
+        const lines = [];
+        lines.push(`╔══════════════════════════════════════════════════════════╗`);
+        lines.push(`║ SUBJECT BUNDLE — SEALED — DO NOT MIX WITH OTHER SUBJECTS ║`);
+        lines.push(`╚══════════════════════════════════════════════════════════╝`);
+        lines.push(`DISPLAY NAME:  "${name}"`);
+        lines.push(`CHARACTER ID:  ${rec.id}`);
+        lines.push(`IDENTITY NOTE: "${firstName}" is a specific saved character with a locked visual identity.`);
+        lines.push(`  ⛔ Do NOT substitute a generic person for "${name}".`);
+        lines.push(``);
+
+        if (refs.length > 0) {
+          lines.push(`REFERENCE IMAGES: ${refsRange}`);
+          lines.push(`  Use ONLY for: face structure, skin tone, hair, body type of "${name}"`);
+          lines.push(`  ⛔ IGNORE background, pose, clothing in reference photos`);
+          lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject`);
+        } else {
+          lines.push(`REFERENCE IMAGES: None — generate "${name}" from appearance lock below only.`);
+        }
+
+        if (ethnicities.length > 0 || skinTone || hairstyle || facialHair || bodyType) {
+          lines.push(``);
+          lines.push(`APPEARANCE LOCK (for "${name}" ONLY — immutable):`);
+          if (ethnicities.length > 0) lines.push(`  • Ethnicity: ${ethnicities.join(', ')} — render EXACTLY. ⛔ No Caucasian default.`);
+          if (skinTone) lines.push(`  • Skin tone: ${skinTone} — do not alter.`);
+          if (hairstyle) lines.push(`  • Hair: ${hairstyle}`);
+          if (facialHair) lines.push(`  • Facial hair: ${facialHair}`);
+          if (bodyType) lines.push(`  • Body type: ${bodyType}`);
+        }
+
+        lines.push(``);
+        if (outfitText) {
+          lines.push(`OUTFIT LOCK (for "${name}" ONLY — canonical law):`);
+          outfitText.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lines.push(`  • ${item}`));
+          lines.push(`  ⛔ This outfit belongs EXCLUSIVELY to "${name}". Do NOT apply to any other subject.`);
+        } else {
+          lines.push(`OUTFIT: No outfit on file for "${name}". Use contextually neutral attire.`);
+        }
+
+        lines.push(``);
+        lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
+        lines.push(`  ⛔ "${name}"'s outfit MUST NOT be rendered on any other subject.`);
+        lines.push(`  ⛔ "${name}"'s appearance MUST NOT be applied to any other subject.`);
+
+        return lines.join('\n');
+      }
+
+      const ENV_COUNT = ENV_SLOTS;
+      let refCursor = 0;
+
+      // Build bundle for primary character
+      const primaryBundle = _buildSubjectBundle(charRecord, charRefs, charDesc.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null, refCursor, ENV_COUNT);
+      refCursor += charRefs.length;
+
+      // Build bundles for additional characters
+      const additionalBundles = additionalCharRecords.map(a => {
+        const bundle = _buildSubjectBundle(a.record, a.refs, a.outfitText, refCursor, ENV_COUNT);
+        refCursor += a.refs.length;
+        return bundle;
+      });
+
+      const allBundles = [primaryBundle, ...additionalBundles].join('\n\n');
+      const totalSubjects = 1 + additionalCharRecords.length;
+
+      const fictDecl = `════════════════════════════════════════════════════════════
+⚠️ CRITICAL: FICTIONAL CHARACTER NOTICE — READ BEFORE ALL OTHER INSTRUCTIONS
+════════════════════════════════════════════════════════════
+ALL subjects are 100% FICTIONAL CHARACTERS for a storytelling app. Not real people.
+✅ Treat as characters in a novel or video game. Render from descriptions and reference photos only.
+════════════════════════════════════════════════════════════
+
+`;
+
+      const envBlock = ENV_COUNT > 0
+        ? `════════════════════════════════════════════════════════════
+ENVIRONMENT — IMAGES 1–${ENV_COUNT}
+════════════════════════════════════════════════════════════
+✅ PRESERVE: walls, floor, furniture, fixtures, layout
+✓ REGENERATE: camera angle, lighting (time-of-day)
+⛔ Do NOT invent replacement furniture
+
+`
+        : '';
+
+      const serverHour = serverTime.getHours();
+      const timeLighting = getTimeLighting(serverHour);
+
+      finalPrompt = `${fictDecl}${envBlock}════════════════════════════════════════════════════════════
+CORE SCENE PROMPT:
+════════════════════════════════════════════════════════════
+${sanitizedPrompt}
+
+Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.
+TIME OF DAY: ${timeLighting.period} — ${timeLighting.desc}
+
+════════════════════════════════════════════════════════════
+SEALED SUBJECT BUNDLES — READ EACH BUNDLE INDEPENDENTLY
+ATTRIBUTES FROM ONE BUNDLE MUST NEVER BE APPLIED TO ANOTHER BUNDLE
+════════════════════════════════════════════════════════════
+
+${allBundles}
+
+════════════════════════════════════════════════════════════
+GLOBAL CROSS-ASSIGNMENT PROHIBITION — ABSOLUTE LAW
+════════════════════════════════════════════════════════════
+This scene contains ${totalSubjects} distinct subjects. Each has a sealed bundle above.
+⛔ NEVER swap outfits between subjects.
+⛔ NEVER swap appearance between subjects.
+⛔ NEVER apply one subject's reference images to render a different subject.
+⛔ NEVER replace any named subject with a generic person.
+✅ Each subject must be rendered using ONLY their own sealed bundle.
+
+════════════════════════════════════════════════════════════
+UNIFIED COMPOSITION RULE
+════════════════════════════════════════════════════════════
+ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — same lighting, same floor plane, same perspective.
+`;
+    } else {
+      // ── SINGLE-SUBJECT PATH: original format ─────────────────────────────────
+      finalPrompt = thirdPartyPreamble + buildPrompt({
+        prompt: sanitizedPrompt,
+        charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
+        charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
+        charRecord: isThirdPartyPhoto && !characterId ? null : charRecord,
+        locationName: resolvedLocationName,
+        zoneName: resolvedZoneName,
+        locCategory: resolvedLocCategory, envRefCount: ENV_SLOTS,
+        charRefCount: CHAR_SLOTS,
+        userRefCount: USER_SLOTS,
+        envRefStart,
+        charRefStart,
+        userRefStart,
+        serverHour: serverTime.getHours(),
+        serverTime: serverTime.toLocaleTimeString('en-US'),
+        subjectType,
+        characterId,
+        userWorldName,
+        userOutfitText: userOutfitText || null,
+        userAppearanceLockText: userAppearanceLockText || null,
+      });
+    }
 
     function extractCameraVarsFromPrompt(p) {
       const lower = (p || '').toLowerCase();
@@ -1568,6 +1805,21 @@ All reference images (if any) are environment/location refs only — do NOT trea
         outfit_injected: /Currently wearing:/i.test(charDesc),
       });
     }
+    // Store additional character subjects in the metadata so regeneration can reload them
+    for (const addl of additionalCharRecords) {
+      structuredSubjects.push({
+        subject_type: 'character',
+        subject_id: addl.record.id,
+        subject_name: addl.record.name,
+        role: 'secondary',
+        reference_image_count: addl.refs.length,
+        reference_images: addl.refs,
+        appearance_lock_snapshot: addl.record.appearance_lock || null,
+        outfit_snapshot: addl.outfitText || null,
+        appearance_lock_injected: !!(addl.record.appearance_lock && Object.keys(addl.record.appearance_lock).length > 0),
+        outfit_injected: !!addl.outfitText,
+      });
+    }
     if (subjectType === 'joint' || subjectType === 'user') {
       structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, outfit_snapshot: userOutfitText || null, outfit_injected: !!userOutfitText });
     }
@@ -1584,7 +1836,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
       generation_context_version: 2,
       context_origin: 'chat_image',
       schema_written_at: nowETIso(),
-      image_type: subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
+      image_type: hasMultipleCharSubjects ? 'multi' : subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
       subject_count: structuredSubjectsWithFingerprints.length,
       subjects: structuredSubjectsWithFingerprints,
       scene_prompt: sanitizedPrompt,

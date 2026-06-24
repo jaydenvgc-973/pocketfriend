@@ -954,8 +954,9 @@ Deno.serve(async (req) => {
 
         // ── OUTFIT RESOLUTION — single authority: resolveCharacterOutfitContext ──
         // Passes locationId so uniforms are resolved correctly (work/school/jail).
+        // Note: sanitizedOriginalLocId is declared later (after campus guards); use originalLocId here.
         const _regenPresence = charRecord.resolved_presence_status || charRecord.location_status || '';
-        const _regenOutfitLocId = sanitizedOriginalLocId
+        const _regenOutfitLocId = originalLocId
           || (_regenPresence === 'at_work' ? (charRecord.current_work_location_id || charRecord.occupation_location_id || null) : null)
           || (_regenPresence === 'at_school' ? (charRecord.current_school_location_id || charRecord.education_location_id || null) : null)
           || (_regenPresence === 'incarcerated' ? (charRecord.incarceration_facility_id || null) : null)
@@ -1497,7 +1498,11 @@ Deno.serve(async (req) => {
     // Multi-subject detection: ctx.subjects array (set by mediaGridGenerate for all multi-person images)
     // has 2+ entries, OR the original image explicitly included the user persona alongside a character.
     const ctxSubjects = ctx.subjects || [];
+    // Multi-subject regen: fires when context has 2+ subjects (including secondary characters),
+    // OR when image_type='multi' (new flag written by generateImageAsync for char-char images),
+    // OR when single subject + user refs needed on a multi/joint image type.
     const isMultiSubjectRegen = ctxSubjects.length >= 2 ||
+      ctx.image_type === 'multi' ||
       (ctxSubjects.length === 1 && needsUserRefs && (ctx.subject_type === 'multi' || ctx.image_type === 'multi'));
 
     let finalPrompt;
