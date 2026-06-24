@@ -7,19 +7,19 @@
  * When a character generates an image prompt from chat, this module determines
  * which characters (if any) are VISUAL SUBJECTS of the image — not just mentioned.
  *
- * INTENT CLASSIFICATION:
- * - "Send me a picture of Character B"       → B is sole subject, A is NOT in image
- * - "Send me a picture of A and B together"  → A and B are co-subjects
- * - "Send me a picture of the room"          → No character subjects
- * - "Can you send me a pic?" (selfie)        → Sender A is subject
- * - Context mention: "I told B about this"  → B is NOT a subject
+ * RESOLUTION STATES (returned as `resolutionState`):
+ *   'resolved'          — Named characters were found and identity-resolved
+ *   'sender_self'       — Sender is the subject (selfie / no named request)
+ *   'inanimate'         — Room/object/place — no character injection
+ *   'unresolved_named'  — Prompt requested a named person but no roster match found
+ *   'ambiguous_named'   — Prompt requested a name that matched multiple roster characters
  *
  * RULES:
  * - Full name match is preferred over first-name match
  * - First-name match only allowed if unique across active roster
  * - Deleted/soft-deleted characters are excluded
- * - The sender (Character A) is only included when the prompt explicitly indicates they appear
- * - Ambiguous first-name matches produce a warning and are excluded (no silent generic fallback)
+ * - The sender (Character A) is only included when the prompt explicitly signals their presence
+ * - Ambiguous or unresolved named subjects BLOCK image generation — no silent fallback to sender
  */
 
 /**
@@ -50,15 +50,27 @@ const THIRD_PARTY_SUBJECT_PATTERNS = [
  * Patterns indicating a room, object, place, or inanimate subject — no characters.
  */
 const INANIMATE_SUBJECT_PATTERNS = [
-  /\b(picture|photo|image|pic)\s+of\s+(the|your|his|her|my)\s+(room|bedroom|kitchen|living room|bathroom|office|house|apartment|place|car|desk|view|window|closet|setup|setup)\b/i,
+  /\b(picture|photo|image|pic)\s+of\s+(the|your|his|her|my)\s+(room|bedroom|kitchen|living room|bathroom|office|house|apartment|place|car|desk|view|window|closet|setup)\b/i,
   /\bpicture?\s+of\s+(a|an|the)\s+(object|item|thing|place|location|view|scene|room|space|area)\b/i,
   /\b(show me|send me|give me)\s+(a|an|the)\s+(room|kitchen|bedroom|view|scene|place|location)\b/i,
   /\b(the room|the space|your place|your apartment|your house|your room|your view)\b/i,
 ];
 
 /**
- * Determine whether the image prompt is requesting a room/object/inanimate scene
- * with no characters as subjects.
+ * Patterns that signal the prompt is requesting a NAMED person.
+ * Used to distinguish "no roster match for named request" from "no named request at all".
+ */
+const NAMED_PERSON_REQUEST_PATTERNS = [
+  /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\s+(of|showing)\s+[A-Z][a-z]/i,
+  /\b(pic|photo|picture|image)\s+of\s+[A-Z][a-z]/i,
+  /\bwhat (does|did)\s+[A-Z][a-z].{0,30}\s+(look|looked) like\b/i,
+  /\b(show|send|give)\s+.{0,10}(pic|photo|picture)\s+(of|showing)\s+[A-Z][a-z]/i,
+  // "send me a picture of them/her/him" — references a named person indirectly
+  /\b(pic|photo|picture|image)\s+of\s+(him|her|them|this person|that person)\b/i,
+];
+
+/**
+ * Determine whether the image prompt is requesting a room/object/inanimate scene.
  */
 function isInanimateSubjectPrompt(prompt) {
   const lower = prompt.toLowerCase();
@@ -67,28 +79,27 @@ function isInanimateSubjectPrompt(prompt) {
 
 /**
  * Determine whether the sender character should be present in the image.
- * Returns true only if the prompt explicitly signals sender presence.
  */
 function doesPromptIncludeSender(prompt) {
   const lower = prompt.toLowerCase();
-  // If a third-party pattern is matched, sender is definitely NOT included
   if (THIRD_PARTY_SUBJECT_PATTERNS.some(p => p.test(lower))) return false;
-  // If sender-present pattern matched, sender IS included
   return SENDER_PRESENT_PATTERNS.some(p => p.test(lower));
 }
 
 /**
+ * Determine whether the prompt appears to be requesting a NAMED person
+ * (even if that person wasn't found on the roster).
+ */
+function doesPromptRequestNamedPerson(prompt) {
+  return NAMED_PERSON_REQUEST_PATTERNS.some(p => p.test(prompt));
+}
+
+/**
  * Extract character names that appear in a visual-subject position in the prompt.
- * Returns an array of matched roster characters (full record).
  *
- * Strategy:
- * 1. Full-name match (sorted longest-first to prefer specific matches)
- * 2. First-name match (only if unique across active roster)
- * 3. Ambiguous first-name matches → logged warning, excluded
- *
- * @param {string} prompt - The image generation prompt
- * @param {Array} allChars - Full roster of Character objects
- * @param {string} senderCharacterId - ID of the character sending the message (excluded from secondary scan)
+ * @param {string} prompt
+ * @param {Array} allChars
+ * @param {string} senderCharacterId
  * @returns {{ subjects: Character[], ambiguous: string[], log: string[] }}
  */
 function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId) {
@@ -140,13 +151,11 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
 
     const count = firstNameCount[firstName] || 0;
     if (count > 1) {
-      // Ambiguous — multiple characters share this first name
       if (!ambiguous.includes(firstName)) {
         ambiguous.push(firstName);
         log.push(`[SubjectResolver] ⚠️ Ambiguous first-name "${firstName}" (${count} matches) — excluded from subjects`);
       }
     } else {
-      // Unique first-name match
       matchedIds.add(c.id);
       subjects.push(c);
       log.push(`[SubjectResolver] First-name match (unique): "${c.name}" via "${firstName}" (id=${c.id})`);
@@ -160,10 +169,13 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
  * Main export: resolve image subjects from a chat-generated image prompt.
  *
  * Returns:
- * - primarySubjectId: The character ID to use as the main subject (may differ from sender)
+ * - resolutionState: One of 'resolved' | 'sender_self' | 'inanimate' | 'unresolved_named' | 'ambiguous_named'
+ * - primarySubjectId: The character ID to use as the main subject (null for inanimate/unresolved)
  * - additionalCharacterIds: Array of additional character IDs (co-subjects)
  * - includeSender: Whether the sending character should be included in the image
  * - isInanimateScene: Whether no characters should appear (room/object prompt)
+ * - blockReason: Human-readable reason when generation should be blocked (unresolved/ambiguous)
+ * - ambiguousNames: Names that were ambiguous (for logging)
  * - log: Diagnostic log entries
  *
  * @param {string} imagePrompt - The image generation prompt produced by LLM
@@ -174,14 +186,32 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
   const log = [];
 
   if (!imagePrompt) {
-    return { primarySubjectId: senderCharacterId, additionalCharacterIds: [], includeSender: true, isInanimateScene: false, log };
+    return {
+      resolutionState: 'sender_self',
+      primarySubjectId: senderCharacterId,
+      additionalCharacterIds: [],
+      includeSender: true,
+      isInanimateScene: false,
+      blockReason: null,
+      ambiguousNames: [],
+      log,
+    };
   }
 
   // Step 1: Is this an inanimate scene (room, object)?
   const isInanimateScene = isInanimateSubjectPrompt(imagePrompt);
   if (isInanimateScene) {
     log.push(`[SubjectResolver] Inanimate scene detected — no character subjects injected`);
-    return { primarySubjectId: null, additionalCharacterIds: [], includeSender: false, isInanimateScene: true, log };
+    return {
+      resolutionState: 'inanimate',
+      primarySubjectId: null,
+      additionalCharacterIds: [],
+      includeSender: false,
+      isInanimateScene: true,
+      blockReason: null,
+      ambiguousNames: [],
+      log,
+    };
   }
 
   // Step 2: Resolve named characters that appear as visual subjects in the prompt
@@ -192,35 +222,55 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
   );
   log.push(...resolutionLog);
 
-  if (ambiguous.length > 0) {
-    log.push(`[SubjectResolver] ⚠️ Ambiguous names excluded: [${ambiguous.join(', ')}] — will not silently generate generic people`);
-  }
-
   // Step 3: Determine if the sender is also a visual subject
   const senderIsSubject = doesPromptIncludeSender(imagePrompt);
   log.push(`[SubjectResolver] Sender present in image: ${senderIsSubject}`);
 
-  // Step 4: Classify results
-  if (subjects.length === 0 && !senderIsSubject) {
-    // No named characters resolved and no sender-presence signal — sender is default subject (selfie/solo)
-    log.push(`[SubjectResolver] No named subjects found, no sender-present signal — defaulting to sender as subject`);
+  // Step 4: Handle ambiguous names — BLOCK generation, never silently default
+  if (ambiguous.length > 0 && subjects.length === 0 && !senderIsSubject) {
+    const blockReason = `Ambiguous character name(s): "${ambiguous.join('", "')}" — multiple characters share this name. Cannot determine the correct subject.`;
+    log.push(`[SubjectResolver] ⛔ BLOCKED — ${blockReason}`);
     return {
-      primarySubjectId: senderCharacterId,
+      resolutionState: 'ambiguous_named',
+      primarySubjectId: null,
       additionalCharacterIds: [],
-      includeSender: true,
+      includeSender: false,
       isInanimateScene: false,
+      blockReason,
+      ambiguousNames: ambiguous,
       log,
     };
   }
 
-  if (subjects.length === 0 && senderIsSubject) {
-    // Sender-only image
-    log.push(`[SubjectResolver] Sender-only image`);
+  // Step 5: Detect "named person requested but not found on roster"
+  // Only fires when: third-party subject pattern matched AND no subjects resolved AND no sender signal.
+  const isNamedPersonRequest = doesPromptRequestNamedPerson(imagePrompt);
+  if (subjects.length === 0 && !senderIsSubject && isNamedPersonRequest) {
+    const blockReason = `The prompt requests a specific named person but no matching character was found on your roster.`;
+    log.push(`[SubjectResolver] ⛔ BLOCKED — unresolved named subject. Named person requested but not on roster.`);
     return {
+      resolutionState: 'unresolved_named',
+      primarySubjectId: null,
+      additionalCharacterIds: [],
+      includeSender: false,
+      isInanimateScene: false,
+      blockReason,
+      ambiguousNames: [],
+      log,
+    };
+  }
+
+  // Step 6: Sender-only image (selfie, no named request)
+  if (subjects.length === 0) {
+    log.push(`[SubjectResolver] Sender-only image (no named subjects, no named request signal)`);
+    return {
+      resolutionState: 'sender_self',
       primarySubjectId: senderCharacterId,
       additionalCharacterIds: [],
       includeSender: true,
       isInanimateScene: false,
+      blockReason: null,
+      ambiguousNames: [],
       log,
     };
   }
@@ -230,25 +280,29 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
 
   if (senderIsSubject) {
     // Sender + named subjects (e.g. "send me a pic of me and Character B")
-    // Primary = sender, additional = named subjects
     log.push(`[SubjectResolver] Sender + ${subjects.length} named subject(s) — joint image`);
     return {
+      resolutionState: 'resolved',
       primarySubjectId: senderCharacterId,
       additionalCharacterIds: subjects.map(c => c.id),
       includeSender: true,
       isInanimateScene: false,
+      blockReason: null,
+      ambiguousNames: [],
       log,
     };
   }
 
   // Named subject(s) only — sender is NOT in the image
-  // Primary = first named subject, additional = remaining named subjects
   log.push(`[SubjectResolver] Named-only subjects: primary="${primaryNamedSubject.name}" additional=[${otherSubjects.map(c => c.name).join(', ')}]`);
   return {
+    resolutionState: 'resolved',
     primarySubjectId: primaryNamedSubject.id,
     additionalCharacterIds: otherSubjects.map(c => c.id),
     includeSender: false,
     isInanimateScene: false,
+    blockReason: null,
+    ambiguousNames: [],
     log,
   };
 }

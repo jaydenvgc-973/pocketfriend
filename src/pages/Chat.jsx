@@ -1601,7 +1601,22 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         // Log all resolution steps for diagnostics
         subjectResult.log.forEach(entry => console.log(entry));
 
-        if (subjectResult.isInanimateScene) {
+        // ── BLOCK: unresolved named subject ──────────────────────────────────
+        // The prompt requested a specific named person but they were not found on the roster.
+        // DO NOT default to sender — that produces a false image.
+        if (subjectResult.resolutionState === 'unresolved_named') {
+          console.error(`[Chat] ⛔ Image generation BLOCKED — unresolved named subject. Reason: ${subjectResult.blockReason}`);
+          return null; // abort image creation entirely
+        }
+
+        // ── BLOCK: ambiguous named subject ────────────────────────────────────
+        // Multiple characters share the requested name — cannot determine the correct subject.
+        if (subjectResult.resolutionState === 'ambiguous_named') {
+          console.error(`[Chat] ⛔ Image generation BLOCKED — ambiguous subject. Names: [${subjectResult.ambiguousNames.join(', ')}]. Reason: ${subjectResult.blockReason}`);
+          return null; // abort image creation entirely
+        }
+
+        if (subjectResult.resolutionState === 'inanimate') {
           // Room/object/place — no character identity injection
           resolvedCharacterId = null;
           resolvedCharRefs = [];
@@ -1609,17 +1624,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           resolvedAdditionalCharacterIds = [];
           console.log(`[Chat] Image subject: INANIMATE SCENE — no character identity injected`);
 
-        } else if (!subjectResult.includeSender && subjectResult.primarySubjectId && subjectResult.primarySubjectId !== characterId) {
+        } else if (subjectResult.resolutionState === 'resolved' && !subjectResult.includeSender && subjectResult.primarySubjectId !== characterId) {
           // A named third-party character is the primary subject — sender NOT in image
           const primarySubjectChar = allCachedCharsForSubjects.find(c => c.id === subjectResult.primarySubjectId);
           resolvedCharacterId = subjectResult.primarySubjectId;
           resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
           resolvedSubjectType = 'character';
-          // Use the primary subject's reference images (not the sender's)
           resolvedCharRefs = (primarySubjectChar?.reference_image_urls || []).filter(Boolean);
           console.log(`[Chat] Image subject: THIRD-PARTY primary="${primarySubjectChar?.name || subjectResult.primarySubjectId}" | additional=[${resolvedAdditionalCharacterIds.join(',')}]`);
 
-        } else if (subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {
+        } else if (subjectResult.resolutionState === 'resolved' && subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {
           // Sender + named co-subjects (joint image)
           resolvedCharacterId = characterId;
           resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
@@ -1628,7 +1642,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           console.log(`[Chat] Image subject: JOINT sender + co-subjects=[${resolvedAdditionalCharacterIds.join(',')}]`);
 
         } else {
-          // Sender is sole subject (selfie / default)
+          // Sender is sole subject (selfie / default — resolutionState === 'sender_self')
           resolvedCharacterId = characterId;
           resolvedAdditionalCharacterIds = [];
           resolvedSubjectType = 'character';
