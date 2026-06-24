@@ -214,9 +214,28 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
     }
 
     // 4. Account-wide name search — exact match only; partial match requires unique result
+    // CRITICAL: Must include ALL characters accessible to this account, including:
+    //   - npc_world_service characters (e.g. Vick Servicio) which have owner_email = null
+    //   - shared/global characters seeded by admin
+    // We query BOTH owner_email-scoped AND name-direct to ensure world service characters are found.
     if (!recipient) {
       const nameLower = effectiveRecipientIdentifier.toLowerCase().trim();
-      const allChars = await base44.asServiceRole.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
+
+      // Primary: owner-scoped characters (most characters)
+      const ownerChars = await base44.asServiceRole.entities.Character.filter({ owner_email: ownerEmail, status: 'active' }, null, 200).catch(() => []);
+
+      // Secondary: name-direct lookup for world service / shared characters that may have null owner_email
+      // This catches Vick Servicio and any other global service characters.
+      const nameDirectChars = await base44.asServiceRole.entities.Character.filter({ name: effectiveRecipientIdentifier, status: 'active' }, null, 10).catch(() => []);
+      const primaryNameDirectChars = await base44.asServiceRole.entities.Character.filter({ primary_name: effectiveRecipientIdentifier, status: 'active' }, null, 10).catch(() => []);
+
+      // Merge all candidates, deduplicate by id
+      const seenCharIds = new Set();
+      const allChars = [...ownerChars, ...nameDirectChars, ...primaryNameDirectChars].filter(c => {
+        if (seenCharIds.has(c.id)) return false;
+        seenCharIds.add(c.id);
+        return true;
+      });
 
       const exactMatches = allChars.filter(c =>
         c.name?.toLowerCase() === nameLower ||
@@ -227,11 +246,18 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
         recipient = exactMatches[0];
         recipientResolutionPath = 'account_exact_name';
       } else if (exactMatches.length > 1) {
-        return Response.json({
-          success: false,
-          error: `Ambiguous recipient: "${effectiveRecipientIdentifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
-          ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
-        });
+        // Prefer the one with matching owner_email if there's ambiguity
+        const ownedMatch = exactMatches.find(c => c.owner_email === ownerEmail);
+        if (ownedMatch) {
+          recipient = ownedMatch;
+          recipientResolutionPath = 'account_exact_name_owned';
+        } else {
+          return Response.json({
+            success: false,
+            error: `Ambiguous recipient: "${effectiveRecipientIdentifier}" matches ${exactMatches.length} characters. Use a character ID to be precise.`,
+            ambiguous_matches: exactMatches.map(c => ({ id: c.id, name: c.name })),
+          });
+        }
       } else {
         const partialMatches = allChars.filter(c =>
           c.name?.toLowerCase().includes(nameLower) ||

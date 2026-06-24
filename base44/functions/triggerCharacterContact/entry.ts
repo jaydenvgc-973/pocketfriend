@@ -70,9 +70,24 @@ Deno.serve(async (req) => {
 
     if (!recipientId) {
       const nameLower = (receiverCharacterName || '').toLowerCase().trim();
-      const allChars = await sr.entities.Character.filter(
+
+      // CRITICAL: Must include world service characters (e.g. Vick Servicio) which have null owner_email.
+      // Query owner-scoped chars AND do a direct name lookup for global/service characters.
+      const ownerChars = await sr.entities.Character.filter(
         { owner_email: ownerEmail, status: 'active' }, null, 200
       ).catch(() => []);
+
+      // Direct name fallback for characters with null owner_email (npc_world_service, shared NPCs)
+      const nameDirectChars = await sr.entities.Character.filter(
+        { name: receiverCharacterName, status: 'active' }, null, 10
+      ).catch(() => []);
+
+      const seenIds = new Set();
+      const allChars = [...ownerChars, ...nameDirectChars].filter(c => {
+        if (seenIds.has(c.id)) return false;
+        seenIds.add(c.id);
+        return true;
+      });
 
       const exact = allChars.find(c =>
         c.name?.toLowerCase() === nameLower || c.display_name?.toLowerCase() === nameLower

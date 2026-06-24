@@ -44,10 +44,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch both characters — ownership enforced by owner_email
+    // Fetch both characters — use asServiceRole for world service characters (e.g. Vick Servicio)
+    // which have null owner_email and are invisible to user-scoped queries.
+    // CRITICAL: World service characters MUST be reachable for memory sync.
     const [senderResults, receiverResults] = await Promise.all([
-      base44.entities.Character.filter({ id: senderCharacterId }),
-      base44.entities.Character.filter({ id: receiverCharacterId }),
+      base44.asServiceRole.entities.Character.filter({ id: senderCharacterId }).catch(() => []),
+      base44.asServiceRole.entities.Character.filter({ id: receiverCharacterId }).catch(() => []),
     ]);
 
     const sender = senderResults[0];
@@ -57,15 +59,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'One or both characters not found' }, { status: 404 });
     }
 
-    // LEGACY COMPATIBILITY OWNERSHIP CHECK:
-    // Legacy characters may not have owner_email set (created before that field was required).
-    // RLS already enforces scope at the DB layer — only allow the check to block when
-    // owner_email is explicitly set to a DIFFERENT user's email.
-    // Missing owner_email = legacy record = allowed (do not block).
+    // OWNERSHIP CHECK:
+    // Allow the sync if:
+    //   - the character's owner_email matches the authenticated user, OR
+    //   - the character has no owner_email (world service / shared / legacy character)
+    // Block only if owner_email is explicitly set to a DIFFERENT user's email.
     const senderEmailMismatch = sender.owner_email && sender.owner_email !== user.email;
     const receiverEmailMismatch = receiver.owner_email && receiver.owner_email !== user.email;
     if (senderEmailMismatch || receiverEmailMismatch) {
-      console.warn(`[syncWorldPhoneMemory] Ownership warning — sender=${sender.owner_email || 'unset'} receiver=${receiver.owner_email || 'unset'} user=${user.email}`);
+      console.warn(`[syncWorldPhoneMemory] Ownership violation — sender=${sender.owner_email || 'unset'} receiver=${receiver.owner_email || 'unset'} user=${user.email}`);
       return Response.json({ error: 'Ownership violation: characters must belong to current user' }, { status: 403 });
     }
 
@@ -73,8 +75,8 @@ Deno.serve(async (req) => {
     const timestamp = new Date().toISOString();
     const sourceCtx = conversationId ? `${contextLabel}_${conversationId}` : contextLabel;
 
-    // Write memory for SENDER — includes the full exchange (sent + received)
-    const senderMemory = base44.entities.Memory.create({
+    // Write memory for SENDER — use asServiceRole to handle world service characters (null owner_email)
+    const senderMemory = base44.asServiceRole.entities.Memory.create({
       character_id: senderCharacterId,
       title: `${contextLabel.replace(/_/g, ' ')} with ${receiver.name}`,
       description: `Exchange with ${receiver.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
@@ -83,8 +85,8 @@ Deno.serve(async (req) => {
       source_context: `${sourceCtx}_sender`,
     });
 
-    // Write memory for RECEIVER — they know both what was said to them AND what they replied
-    const receiverMemory = base44.entities.Memory.create({
+    // Write memory for RECEIVER — use asServiceRole for same reason
+    const receiverMemory = base44.asServiceRole.entities.Memory.create({
       character_id: receiverCharacterId,
       title: `${contextLabel.replace(/_/g, ' ')} from ${sender.name}`,
       description: `Exchange with ${sender.name} via ${contextLabel.replace(/_/g, ' ')}: ${messageContent.substring(0, 400)}`,
@@ -107,8 +109,13 @@ Deno.serve(async (req) => {
     // overwritten by a stale array. This is the primary cause of relationship data loss.
     // Sequential fetch+write (not parallel) ensures each write sees the latest state.
 
+    // CRITICAL: Use asServiceRole for all character reads/writes here.
+    // World service characters (e.g. Vick Servicio) have null owner_email —
+    // user-scoped queries return 0 results for them, causing silent write failures.
+    // asServiceRole bypasses RLS and allows memory sync for ALL character types.
+
     // Sender: re-fetch immediately before write
-    const freshSenderArr = await base44.entities.Character.filter({ id: senderCharacterId }).catch(() => []);
+    const freshSenderArr = await base44.asServiceRole.entities.Character.filter({ id: senderCharacterId }).catch(() => []);
     const freshSender = freshSenderArr[0];
     if (freshSender) {
       const senderRels = freshSender.fictional_relationships || [];
@@ -117,9 +124,9 @@ Deno.serve(async (req) => {
         const updatedSenderRels = senderRels.map((r, i) =>
           i === senderRelIdx ? { ...r, last_interaction_summary: senderInteractionSummary } : r
         );
-        await base44.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
+        await base44.asServiceRole.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
       } else {
-        await base44.entities.Character.update(senderCharacterId, {
+        await base44.asServiceRole.entities.Character.update(senderCharacterId, {
           fictional_relationships: [
             ...senderRels,
             {
@@ -140,7 +147,7 @@ Deno.serve(async (req) => {
     }
 
     // Receiver: re-fetch immediately before write (after sender write completes)
-    const freshReceiverArr = await base44.entities.Character.filter({ id: receiverCharacterId }).catch(() => []);
+    const freshReceiverArr = await base44.asServiceRole.entities.Character.filter({ id: receiverCharacterId }).catch(() => []);
     const freshReceiver = freshReceiverArr[0];
     if (freshReceiver) {
       const receiverRels = freshReceiver.fictional_relationships || [];
@@ -149,9 +156,9 @@ Deno.serve(async (req) => {
         const updatedReceiverRels = receiverRels.map((r, i) =>
           i === receiverRelIdx ? { ...r, last_interaction_summary: receiverInteractionSummary } : r
         );
-        await base44.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
+        await base44.asServiceRole.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
       } else {
-        await base44.entities.Character.update(receiverCharacterId, {
+        await base44.asServiceRole.entities.Character.update(receiverCharacterId, {
           fictional_relationships: [
             ...receiverRels,
             {
