@@ -1083,22 +1083,26 @@ function VickWorldPhoneProofPanel({ user }) {
   if (status === 'idle') return (
     <div className="space-y-4">
       <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
-        <p className="text-sm font-medium text-foreground">Vick World Phone Production Proof</p>
+        <p className="text-sm font-medium text-foreground">Vick → Ethan World Phone Production Proof</p>
         <p className="text-xs text-muted-foreground">
-          Runs the real deployed <code className="text-primary">sendWorldPhoneMessage</code> function to send a World Phone message from Vick Servicio to Ethan. Verifies the Message record, Conversation record, World Contacts visibility, World Phone visibility, unread state, and cleanup.
+          Calls the real deployed <code className="text-primary">sendWorldPhoneMessage</code> function with your live session. Vick sends Ethan a World Phone message. Verifies the Message and Conversation records were created by that real function — proof does not write anything itself.
         </p>
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 text-xs text-amber-400 space-y-1">
-          <p className="font-medium">Must run from this authenticated UI session</p>
-          <p className="text-amber-300/80">This proof calls the real deployed function — it requires a live user session. Any 403 or function failure is reported as FAIL with no fallback.</p>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2.5 text-xs text-emerald-400 space-y-1">
+          <p className="font-medium">✓ You are running this from the live authenticated UI</p>
+          <p className="text-emerald-300/80">Your session token is forwarded to the proof function, which calls the real deployed <code>sendWorldPhoneMessage</code>. This is the only valid execution context.</p>
         </div>
-        <p className="text-xs text-muted-foreground">The proof message sent by Vick will be deleted automatically after verification.</p>
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2.5 text-xs text-destructive/80 space-y-1">
+          <p className="font-medium">Previous "Path B" PASS result is invalid</p>
+          <p>That proof used inline <code>Message.create()</code> directly — not the real deployed function. It has been rejected.</p>
+        </div>
+        <p className="text-xs text-muted-foreground">The proof message is deleted automatically after verification.</p>
       </div>
       <button
         onClick={run}
         className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors text-sm"
       >
         <Radio className="w-4 h-4" />
-        Run Vick World Phone Production Proof
+        Run Real Deployed Function Proof
       </button>
     </div>
   );
