@@ -35,7 +35,9 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
-// ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
+// ── OUTFIT TEXT BUILDER — used only for prompt injection after outfit is resolved ──
+// The actual outfit SELECTION logic lives exclusively in resolveCharacterOutfitContext.
+// This function only formats the already-resolved outfit object into a prompt string.
 function isAIStylePrompt(t) {
   if (!t) return false;
   return /\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo|silhouette|atmosphere|moody|high contrast|film grain|depth of field|aesthetic|luxury editorial)\b/i.test(t);
@@ -51,36 +53,6 @@ function buildOutfitText(outfit) {
   const fd = outfit.full_description?.trim();
   if (fd && !isAIStylePrompt(fd)) return fd;
   return null;
-}
-
-const OUTFIT_FALLBACK_CHAINS = {bath:['bath','sleepwear','lounge'],sleepwear:['sleepwear','lounge','daily_casual'],swimwear:['swimwear','gym','daily_casual'],gym:['gym','outdoor','daily_casual'],work:['work','formal','daily_casual'],formal:['formal','work','daily_casual'],church:['church','formal','daily_casual'],nightlife:['nightlife','date_night','daily_casual'],date_night:['date_night','nightlife','formal','daily_casual'],school:['school','daily_casual'],lounge:['lounge','daily_casual'],outdoor:['outdoor','daily_casual'],travel:['travel','outdoor','daily_casual'],medical:['medical','daily_casual'],special:['special','formal','daily_casual'],cold_weather:['cold_weather','outdoor','daily_casual'],hot_weather:['hot_weather','outdoor','daily_casual'],daily_casual:['daily_casual','outdoor','lounge']};
-
-/**
- * resolveOutfitCategory — context-based outfit category resolver.
- * Uses resolved_presence_status, current_activity, and locationCategory.
- * This is the authoritative category decision for both rotation ON and OFF.
- */
-function resolveOutfitCategory(character, locationCategory) {
-  const presence = character?.resolved_presence_status || character?.location_status || '';
-  const activity = (character?.current_activity || '').toLowerCase();
-  if (/bath|shower|grooming/.test(activity)) return 'bath';
-  if (presence === 'sleeping' || presence === 'napping' || /\b(sleep|nap|asleep|bedtime)\b/.test(activity)) return 'sleepwear';
-  if (/\b(swim|pool|beach|ocean|water park)\b/.test(activity)) return 'swimwear';
-  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
-  if (locationCategory === 'gym') return 'gym';
-  if (presence === 'at_work') return 'work';
-  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
-  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
-  if (locationCategory === 'religion') return 'church';
-  if (/\b(wedding|funeral|gala|graduation|ceremony|formal)\b/.test(activity)) return 'formal';
-  if (/\b(club|nightclub|party|night out)\b/.test(activity)) return 'nightlife';
-  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
-  if (/\b(school|class|campus|lecture|college|university)\b/.test(activity)) return 'school';
-  if (locationCategory === 'school') return 'school';
-  if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
-  if (presence === 'home') return 'lounge';
-  if (locationCategory === 'home') return 'lounge';
-  return 'daily_casual';
 }
 
 // ── UNIFORM RESOLVER — inlined from lib/uniformResolver.js ───────────────────
@@ -157,132 +129,6 @@ function resolveUniformText(character, locationRecord) {
   }
 
   return null;
-}
-
-/**
- * resolveCharacterOutfitForPrompt — CANONICAL OUTFIT RESOLVER FOR IMAGE GENERATION
- *
- * This is the ONLY authority for non-sleep outfit resolution in image generation.
- * It mirrors the outfitRotationEngine.resolveCurrentOutfit logic exactly:
- *
- * PRIORITY ORDER:
- *   ROTATION ON:
- *     1. today_category_outfit_overrides (date-scoped manual override for the resolved category)
- *     2. Day-stable rotation from closet pool matching the resolved category chain
- *   ROTATION OFF:
- *     1. manual_category_selections for the resolved category
- *     2. current_outfit if it exists in the category chain (locked selection)
- *     3. Day-stable rotation fallback
- *
- * current_outfit is NEVER used as a standalone authority — it is stale state that
- * reflects the last manually clicked card, not the context-correct rotation result.
- * It is only consulted as a fallback when both rotation systems return empty.
- *
- * @param {object} character - Full character DB record
- * @param {string|null} locationCategory - Location category from resolved location record
- * @returns {{ text: string|null, source: string, name: string|null, category: string|null }}
- */
-function resolveCharacterOutfitForPrompt(character, locationCategory) {
-  if (!character) return { text: null, source: 'no_character', name: null, category: null };
-
-  function resolveOutfitText(outfit) {
-    if (!outfit) return null;
-    const t = buildOutfitText(outfit);
-    if (t) return t;
-    if (outfit.label?.trim()) return outfit.label.trim();
-    return null;
-  }
-
-  const outfits = (character.character_closet || []).filter(item => item.outfit_id);
-  if (!outfits.length) {
-    // No closet — absolute last resort: current_outfit stub as fallback only
-    const co = character.current_outfit;
-    const t = co ? resolveOutfitText(co) : null;
-    console.warn(`[OutfitResolver] ⚠️ No closet outfits — ${t ? 'using current_outfit stub as last resort' : 'no wardrobe constraint'}`);
-    return { text: t, source: t ? 'current_outfit_no_closet_fallback' : 'no_closet', name: co?.label || null, category: co?.category || null };
-  }
-
-  const rotationEnabled = character.outfit_rotation_enabled !== false;
-  // CRITICAL: pass locationCategory so resolveOutfitCategory knows gym/work/home/etc.
-  const targetCategory = resolveOutfitCategory(character, locationCategory);
-  const chain = OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
-
-  // Day-stable hash — same character + same day = same outfit every call
-  const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-  const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const stableIndex = dayOfYear + idHash;
-
-  console.log(`[OutfitResolver] category="${targetCategory}" rotation=${rotationEnabled ? 'ON' : 'OFF'} locationCategory="${locationCategory || 'none'}"`);
-
-  if (rotationEnabled) {
-    // ── ROTATION ON: today_category_outfit_overrides (date-scoped per-category override) ──
-    const overrideState = character.today_category_outfit_overrides;
-    if (overrideState?.date && overrideState?.overrides) {
-      // CRITICAL: Use Eastern Time for date comparison — UTC is infrastructure metadata only
-      const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-      if (overrideState.date === todayStr) {
-        for (const cat of chain) {
-          const overrideId = overrideState.overrides[cat];
-          if (overrideId) {
-            const overrideOutfit = outfits.find(o => o.outfit_id === overrideId);
-            if (overrideOutfit) {
-              const t = resolveOutfitText(overrideOutfit);
-              if (t) {
-                console.log(`[OutfitResolver] ✅ TODAY_OVERRIDE: cat="${cat}" → "${t.substring(0,120)}"`);
-                return { text: t, source: 'today_category_override', name: overrideOutfit.label || cat, category: cat };
-              }
-            }
-          }
-        }
-      } else {
-        console.log(`[OutfitResolver] today_category_outfit_overrides date="${overrideState.date}" ≠ today="${todayStr}" — stale, ignored`);
-      }
-    }
-
-    // ── ROTATION ON: day-stable closet rotation by category chain ──────────────
-    for (const cat of chain) {
-      const pool = outfits.filter(o => o.category === cat);
-      if (!pool.length) continue;
-      const idx = stableIndex % pool.length;
-      const t = resolveOutfitText(pool[idx]);
-      console.log(`[OutfitResolver] ✅ ROTATION_ON: cat="${cat}" idx=${idx}/${pool.length} → "${(t||'null').substring(0,80)}"`);
-      return { text: t, source: 'closet_rotation', name: pool[idx].label || cat, category: cat };
-    }
-
-    console.warn(`[OutfitResolver] ROTATION_ON: chain miss for "${targetCategory}" — no closet outfits in any chain category`);
-    return { text: null, source: 'closet_chain_miss', name: null, category: targetCategory };
-  }
-
-  // ── ROTATION OFF: manual_category_selections (persistent per-category selection) ──
-  const manualSelections = character.manual_category_selections;
-  if (manualSelections) {
-    for (const cat of chain) {
-      const selectedId = manualSelections[cat];
-      if (selectedId) {
-        const selectedOutfit = outfits.find(o => o.outfit_id === selectedId);
-        if (selectedOutfit) {
-          const t = resolveOutfitText(selectedOutfit);
-          if (t) {
-            console.log(`[OutfitResolver] ✅ ROTATION_OFF manual_category_selections: cat="${cat}" → "${t.substring(0,120)}"`);
-            return { text: t, source: 'rotation_off_manual_category', name: selectedOutfit.label || cat, category: cat };
-          }
-        }
-      }
-    }
-  }
-
-  // ── ROTATION OFF fallback: day-stable rotation ──────────────────────────────
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (!pool.length) continue;
-    const idx = stableIndex % pool.length;
-    const t = resolveOutfitText(pool[idx]);
-    console.log(`[OutfitResolver] ✅ ROTATION_OFF fallback rotation: cat="${cat}" → "${(t||'null').substring(0,80)}"`);
-    return { text: t, source: 'rotation_off_fallback', name: pool[idx].label || cat, category: cat };
-  }
-
-  return { text: null, source: 'closet_chain_miss', name: null, category: targetCategory };
 }
 
 // ── ZONE RESOLUTION ──────────────────────────────────────────────────────────
@@ -1423,14 +1269,21 @@ Deno.serve(async (req) => {
           }
 
           if (!/Currently wearing:/i.test(charDesc)) {
-            // No contextual outfit was injected — resolve from normal closet.
-            // Pass resolvedLocCategory so the resolver knows gym/work/home/etc.
-            // resolvedLocCategory is set during location resolution below — but at this point
-            // in the code it may not yet be set (location resolution runs after outfit).
-            // Use preCheckLocationId's category if available; the resolver falls back to
-            // resolved_presence_status for context without it.
+            // No contextual outfit was injected — resolve from the shared outfit authority.
+            // resolveCharacterOutfitContext is the ONLY function allowed to decide outfit.
+            // This backend function is a consumer — it receives the result and formats it.
             const _outfitLocCat = outfitLocationRecord?.category || null;
-            const resolvedOutfit = resolveCharacterOutfitForPrompt(charRecord, _outfitLocCat);
+            let resolvedOutfit = { text: null, source: 'not_called', category: null };
+            try {
+              const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+                characterId: charRecord.id,
+                locationCategory: _outfitLocCat,
+                ownerEmail: requestingUser,
+              });
+              resolvedOutfit = outfitRes || resolvedOutfit;
+            } catch (outfitErr) {
+              console.warn(`[generateImageAsync] resolveCharacterOutfitContext failed (non-blocking): ${outfitErr?.message}`);
+            }
             console.log(`[OutfitDiagnostic] char="${charRecord.name}" source="${resolvedOutfit.source}" cat="${resolvedOutfit.category}" locked=${!!resolvedOutfit.text}`);
             if (resolvedOutfit.text) {
               charDesc = charDesc ? `${charDesc}. Currently wearing: ${resolvedOutfit.text}` : `Currently wearing: ${resolvedOutfit.text}`;

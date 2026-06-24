@@ -88,97 +88,6 @@ function classifyPromptSubjectPresence(prompt, personName) {
   return 'ambiguous';
 }
 
-// ── OUTFIT RESOLVER FOR MULTI-PERSON MEDIA GRID ───────────────────────────────
-// Mirrors resolveCharacterOutfitForPrompt in generateImageAsync.
-// PRIORITY (same as outfitRotationEngine.resolveCurrentOutfit):
-//   ROTATION ON:  today_category_outfit_overrides → day-stable closet rotation
-//   ROTATION OFF: manual_category_selections → day-stable rotation fallback
-// current_outfit and closet[0] are NEVER the standalone authority.
-const MG_OUTFIT_FALLBACK_CHAINS = {bath:['bath','sleepwear','lounge'],sleepwear:['sleepwear','lounge','daily_casual'],swimwear:['swimwear','gym','daily_casual'],gym:['gym','outdoor','daily_casual'],work:['work','formal','daily_casual'],formal:['formal','work','daily_casual'],church:['church','formal','daily_casual'],nightlife:['nightlife','date_night','daily_casual'],date_night:['date_night','nightlife','formal','daily_casual'],school:['school','daily_casual'],lounge:['lounge','daily_casual'],outdoor:['outdoor','daily_casual'],travel:['travel','outdoor','daily_casual'],medical:['medical','daily_casual'],special:['special','formal','daily_casual'],cold_weather:['cold_weather','outdoor','daily_casual'],hot_weather:['hot_weather','outdoor','daily_casual'],daily_casual:['daily_casual','outdoor','lounge']};
-
-function resolveMGOutfitCategory(character, locationCategory) {
-  const presence = character?.resolved_presence_status || character?.location_status || '';
-  const activity = (character?.current_activity || '').toLowerCase();
-  if (/bath|shower|grooming/.test(activity)) return 'bath';
-  if (presence === 'sleeping' || presence === 'napping' || /\b(sleep|nap|asleep|bedtime)\b/.test(activity)) return 'sleepwear';
-  if (/\b(swim|pool|beach|ocean|water park)\b/.test(activity)) return 'swimwear';
-  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
-  if (locationCategory === 'gym') return 'gym';
-  if (presence === 'at_work') return 'work';
-  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
-  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
-  if (locationCategory === 'religion') return 'church';
-  if (/\b(wedding|funeral|gala|graduation|ceremony|formal)\b/.test(activity)) return 'formal';
-  if (/\b(club|nightclub|party|night out)\b/.test(activity)) return 'nightlife';
-  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
-  if (/\b(school|class|campus|lecture|college|university)\b/.test(activity)) return 'school';
-  if (locationCategory === 'school') return 'school';
-  if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
-  if (presence === 'home' || locationCategory === 'home') return 'lounge';
-  return 'daily_casual';
-}
-
-function resolveMGOutfitForCharacter(character, locationCategory) {
-  if (!character) return { text: null, source: 'no_character' };
-  const outfits = (character.character_closet || []).filter(item => item.outfit_id);
-  if (!outfits.length) {
-    const co = character.current_outfit;
-    const t = co ? buildMGOutfitText(co) || co.label?.trim() || null : null;
-    return { text: t, source: t ? 'current_outfit_no_closet_fallback' : 'no_closet' };
-  }
-  const rotationEnabled = character.outfit_rotation_enabled !== false;
-  const targetCategory = resolveMGOutfitCategory(character, locationCategory);
-  const chain = MG_OUTFIT_FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
-  const si = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000)
-    + (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-
-  if (rotationEnabled) {
-    const overrideState = character.today_category_outfit_overrides;
-    if (overrideState?.date && overrideState?.overrides) {
-      const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-      if (overrideState.date === todayStr) {
-        for (const cat of chain) {
-          const oid = overrideState.overrides[cat];
-          if (oid) {
-            const o = outfits.find(x => x.outfit_id === oid);
-            const t = o ? buildMGOutfitText(o) || o.label?.trim() || null : null;
-            if (t) return { text: t, source: 'today_category_override' };
-          }
-        }
-      }
-    }
-    for (const cat of chain) {
-      const pool = outfits.filter(o => o.category === cat);
-      if (pool.length) {
-        const t = buildMGOutfitText(pool[si % pool.length]) || pool[si % pool.length].label?.trim() || null;
-        if (t) return { text: t, source: 'closet_rotation' };
-      }
-    }
-    return { text: null, source: 'closet_chain_miss' };
-  }
-
-  const manualSelections = character.manual_category_selections;
-  if (manualSelections) {
-    for (const cat of chain) {
-      const sid = manualSelections[cat];
-      if (sid) {
-        const o = outfits.find(x => x.outfit_id === sid);
-        const t = o ? buildMGOutfitText(o) || o.label?.trim() || null : null;
-        if (t) return { text: t, source: 'rotation_off_manual_category' };
-      }
-    }
-  }
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length) {
-      const t = buildMGOutfitText(pool[si % pool.length]) || pool[si % pool.length].label?.trim() || null;
-      if (t) return { text: t, source: 'rotation_off_fallback' };
-    }
-  }
-  return { text: null, source: 'closet_chain_miss' };
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -392,12 +301,20 @@ Deno.serve(async (req) => {
               charRec = charListSR?.[0] || null;
             }
             if (charRec) {
-              // OUTFIT AUTHORITY: use the rotation engine — never current_outfit or closet[0] directly.
-              // Mirrors generateImageAsync resolveCharacterOutfitForPrompt: checks today_category_outfit_overrides
-              // (rotation ON) and manual_category_selections (rotation OFF) before falling back to rotation.
-              const mgOutfitResult = resolveMGOutfitForCharacter(charRec, null);
-              outfitText = mgOutfitResult.text;
-              outfitSource = mgOutfitResult.source;
+              // OUTFIT AUTHORITY: delegate to resolveCharacterOutfitContext — the single outfit authority.
+              // This backend function is a consumer only — no outfit rules live here.
+              try {
+                const mgOutfitResult = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+                  characterId: charRec.id,
+                  locationCategory: null, // location not yet resolved at this point in media grid
+                  ownerEmail: user.email,
+                });
+                outfitText = mgOutfitResult?.text || null;
+                outfitSource = mgOutfitResult?.source || 'not_called';
+              } catch (mgOutfitErr) {
+                console.warn(`[mediaGridGenerate] resolveCharacterOutfitContext failed for ${person.id}: ${mgOutfitErr?.message}`);
+                outfitSource = 'resolve_failed';
+              }
               const al = charRec.appearance_lock || {};
               appearanceLock = {
                 gender: charRec.gender || null,

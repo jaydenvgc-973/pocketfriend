@@ -84,150 +84,6 @@ function buildOutfitTextRegen(outfit) {
   return null;
 }
 
-const OUTFIT_FALLBACK_CHAINS_REGEN = {
-  bath:         ['bath', 'sleepwear', 'lounge'],
-  sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
-  swimwear:     ['swimwear', 'gym', 'daily_casual'],
-  gym:          ['gym', 'outdoor', 'daily_casual'],
-  work:         ['work', 'formal', 'daily_casual'],
-  formal:       ['formal', 'work', 'daily_casual'],
-  church:       ['church', 'formal', 'daily_casual'],
-  nightlife:    ['nightlife', 'date_night', 'daily_casual'],
-  date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
-  school:       ['school', 'daily_casual'],
-  lounge:       ['lounge', 'daily_casual'],
-  outdoor:      ['outdoor', 'daily_casual'],
-  travel:       ['travel', 'outdoor', 'daily_casual'],
-  medical:      ['medical', 'daily_casual'],
-  special:      ['special', 'formal', 'daily_casual'],
-  cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
-  hot_weather:  ['hot_weather', 'outdoor', 'daily_casual'],
-  daily_casual: ['daily_casual', 'outdoor', 'lounge'],
-};
-
-function resolveOutfitCategoryRegen(character, locationCategory) {
-  const presence = character?.resolved_presence_status || character?.location_status || '';
-  const activity = (character?.current_activity || '').toLowerCase();
-  if (/bath|shower|grooming/.test(activity)) return 'bath';
-  if (presence === 'sleeping' || presence === 'napping' || /\b(sleep|nap|asleep|bedtime)\b/.test(activity)) return 'sleepwear';
-  if (/\b(swim|pool|beach|ocean|water park)\b/.test(activity)) return 'swimwear';
-  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
-  if (locationCategory === 'gym') return 'gym';
-  if (presence === 'at_work') return 'work';
-  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
-  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
-  if (locationCategory === 'religion') return 'church';
-  if (/\b(wedding|funeral|gala|graduation|ceremony|formal)\b/.test(activity)) return 'formal';
-  if (/\b(club|nightclub|party|night out)\b/.test(activity)) return 'nightlife';
-  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
-  if (/\b(school|class|campus|lecture|college|university)\b/.test(activity)) return 'school';
-  if (locationCategory === 'school') return 'school';
-  if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
-  if (presence === 'home') return 'lounge';
-  if (locationCategory === 'home') return 'lounge';
-  return 'daily_casual';
-}
-
-/**
- * resolveOutfitTextFromCharacterRegen — CANONICAL OUTFIT RESOLVER FOR REGENERATION
- *
- * Identical authority order to resolveCharacterOutfitForPrompt in generateImageAsync.
- * Uses the same rotation engine rules:
- *
- * ROTATION ON:
- *   1. today_category_outfit_overrides (date-scoped, ET-aware)
- *   2. Day-stable closet rotation by resolved category chain
- * ROTATION OFF:
- *   1. manual_category_selections for resolved category
- *   2. Day-stable rotation fallback
- *
- * current_outfit is NEVER the standalone authority — stale state, bypasses rotation rules.
- *
- * @param {object} character - Full character DB record
- * @param {string|null} locationCategory - Location category for context-aware category resolution
- * @returns {string|null}
- */
-function resolveOutfitTextFromCharacterRegen(character, locationCategory) {
-  if (!character) return null;
-  const rt = o => { if (!o) return null; const t = buildOutfitTextRegen(o); return t || o.label?.trim() || null; };
-
-  const outfits = (character.character_closet || []).filter(o => o.outfit_id);
-  if (!outfits.length) {
-    // No closet — last resort: current_outfit stub only
-    return rt(character.current_outfit) || null;
-  }
-
-  const rotationEnabled = character.outfit_rotation_enabled !== false;
-  const targetCategory = resolveOutfitCategoryRegen(character, locationCategory);
-  const chain = OUTFIT_FALLBACK_CHAINS_REGEN[targetCategory] || ['daily_casual', 'lounge'];
-
-  // Day-stable hash
-  const si = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / 86400000)
-    + (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-
-  if (rotationEnabled) {
-    // ROTATION ON P1: today_category_outfit_overrides (date-scoped, ET-authoritative)
-    const overrideState = character.today_category_outfit_overrides;
-    if (overrideState?.date && overrideState?.overrides) {
-      const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const todayStr = `${etNow.getFullYear()}-${String(etNow.getMonth()+1).padStart(2,'0')}-${String(etNow.getDate()).padStart(2,'0')}`;
-      if (overrideState.date === todayStr) {
-        for (const cat of chain) {
-          const overrideId = overrideState.overrides[cat];
-          if (overrideId) {
-            const overrideOutfit = outfits.find(o => o.outfit_id === overrideId);
-            const t = rt(overrideOutfit);
-            if (t) {
-              console.log(`[OutfitResolverRegen] ✅ TODAY_OVERRIDE cat="${cat}" → "${t.substring(0,80)}"`);
-              return t;
-            }
-          }
-        }
-      }
-    }
-    // ROTATION ON P2: day-stable closet rotation
-    for (const cat of chain) {
-      const pool = outfits.filter(o => o.category === cat);
-      if (pool.length) {
-        const t = rt(pool[si % pool.length]);
-        if (t) {
-          console.log(`[OutfitResolverRegen] ✅ ROTATION_ON cat="${cat}" → "${t.substring(0,80)}"`);
-          return t;
-        }
-      }
-    }
-    return null;
-  }
-
-  // ROTATION OFF P1: manual_category_selections
-  const manualSelections = character.manual_category_selections;
-  if (manualSelections) {
-    for (const cat of chain) {
-      const selectedId = manualSelections[cat];
-      if (selectedId) {
-        const selectedOutfit = outfits.find(o => o.outfit_id === selectedId);
-        const t = rt(selectedOutfit);
-        if (t) {
-          console.log(`[OutfitResolverRegen] ✅ ROTATION_OFF manual_category_selections cat="${cat}" → "${t.substring(0,80)}"`);
-          return t;
-        }
-      }
-    }
-  }
-  // ROTATION OFF fallback: day-stable rotation
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length) {
-      const t = rt(pool[si % pool.length]);
-      if (t) {
-        console.log(`[OutfitResolverRegen] ✅ ROTATION_OFF fallback cat="${cat}" → "${t.substring(0,80)}"`);
-        return t;
-      }
-    }
-  }
-  return null;
-}
-
 // ── buildAppearanceLockText ───────────────────────────────────────────────────
 // Inlined from generateImageAsync — Deno cannot import local lib files.
 // SYNC: keep in structural parity with the same function in generateImageAsync.
@@ -1096,22 +952,32 @@ Deno.serve(async (req) => {
         charResolvedRecord = charRecord;
         console.log(`[regenerateImageWithReason] charDesc built (demographics only): "${charDesc.substring(0, 120)}"`);
 
-        // ── OUTFIT INJECTION — CLOSET IS CANONICAL LAW ───────────────────────
+        // ── OUTFIT INJECTION — delegates to the shared outfit authority ──────────
+        // resolveCharacterOutfitContext is the ONLY function allowed to decide outfit.
+        // This backend function is a consumer — it receives the result and injects it.
         const alreadyHasOutfitRegen = /Currently wearing:/i.test(charDesc);
         if (!alreadyHasOutfitRegen) {
-          // Pass resolvedLocCategory so the resolver applies correct context (gym/work/home/etc.)
-          // resolvedLocCategory is built from ctx.loc_category or inferred from loc name
-          const outfitText = resolveOutfitTextFromCharacterRegen(charRecord, resolvedLocCategory);
+          let outfitText = null;
+          try {
+            const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+              characterId: charRecord.id,
+              locationCategory: resolvedLocCategory || null,
+              ownerEmail: requestingUser,
+            });
+            outfitText = outfitRes?.text || null;
+            if (outfitRes?.source) console.log(`[regenerateImageWithReason] OutfitAuthority source="${outfitRes.source}" cat="${outfitRes.category}"`);
+          } catch (outfitErr) {
+            console.warn(`[regenerateImageWithReason] resolveCharacterOutfitContext failed (non-blocking): ${outfitErr?.message}`);
+          }
           if (outfitText) {
             charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitText}` : `Currently wearing: ${outfitText}`;
-            // Strip LLM-invented clothing from the scene prompt so it can't compete with closet lock.
             scenePromptRaw = scenePromptRaw
               .replace(/,?\s*wearing\s+(?:a\s+)?[^,.]{3,80}(?=\s*[,.]|\s+(?:and|with|who|while|looking|standing|sitting|leaning|facing|near|at|in\s+the))/gi, '')
               .replace(/,?\s*dressed\s+in\s+[^,.]{3,80}(?=\s*[,.])/gi, '')
               .replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').trim();
             console.log(`[regenerateImageWithReason] ✅ Closet outfit: "${outfitText.substring(0, 80)}"`);
           } else {
-            console.log(`[regenerateImageWithReason] ⚠️ No closet outfit for "${charRecord.name}" — empty closet`);
+            console.log(`[regenerateImageWithReason] ⚠️ No outfit resolved for "${charRecord.name}" — renders without wardrobe constraint`);
           }
         } else {
           console.log(`[regenerateImageWithReason] Outfit already in charDesc — skipping duplicate`);
@@ -1690,16 +1556,24 @@ Deno.serve(async (req) => {
             rec = recListSR?.[0] || null;
           }
           if (rec) {
-            subjectDisplayName = rec.name || subjectDisplayName;
-            // Outfit: prefer stored outfit metadata from ctx, then re-resolve using rotation engine.
-            // NEVER use current_outfit or closet[0] directly — they bypass rotation and context rules.
-            const storedMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'character' && m.name === rec.name);
-            if (storedMeta?.text) {
-              outfitText = storedMeta.text;
-            } else {
-              // Re-resolve using the same rotation engine as single-subject paths.
-              outfitText = resolveOutfitTextFromCharacterRegen(rec, resolvedLocCategory);
+          subjectDisplayName = rec.name || subjectDisplayName;
+          // Outfit: prefer stored outfit metadata from ctx, then delegate to shared outfit authority.
+          const storedMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'character' && m.name === rec.name);
+          if (storedMeta?.text) {
+            outfitText = storedMeta.text;
+          } else {
+            // Delegate to resolveCharacterOutfitContext — the single outfit authority.
+            try {
+              const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+                characterId: rec.id,
+                locationCategory: resolvedLocCategory || null,
+                ownerEmail: requestingUser,
+              });
+              outfitText = outfitRes?.text || null;
+            } catch (bundleOutfitErr) {
+              console.warn(`[regenerateImageWithReason] Bundle outfit resolve failed for ${rec.id}: ${bundleOutfitErr?.message}`);
             }
+          }
             // Appearance lock
             const al = rec.appearance_lock || {};
             appearanceLock = {
