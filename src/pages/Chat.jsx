@@ -80,6 +80,7 @@ import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
+import { enforceWorldPhoneStateGuard } from "@/lib/worldPhoneStateGuard";
 import { buildWorldPhonePayload } from "@/hooks/useWorldPhoneIntentSend";
 import { enforceFamilyTruth } from "@/lib/familyTruthGuard";
 import { hasVickDiagnosticIntent, isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
@@ -1406,6 +1407,38 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         responseText = actionResult.responseText;
         if (actionResult.worldPhoneSendResult) {
           worldPhoneSendResult = actionResult.worldPhoneSendResult;
+        }
+      }
+
+      // ── WORLD PHONE STATE VERIFICATION GATE ─────────────────────────────────
+      // LIVE-PATH GUARD: Runs on EVERY response before it reaches the DB or UI.
+      // Detects World Phone state claims (delivery confirmation, visibility claims,
+      // "it definitely sent", "I can see it", "I'm looking at it now", etc.).
+      // If a claim is detected, verifies against authoritative Message + Conversation
+      // records. If no verified record exists, strips the claim and replaces with
+      // honest uncertainty. This is the primary defense for the failure class where
+      // the character responds to "is the message there?" with invented confirmation.
+      // worldPhoneIntent = user explicitly asked to send → character response doesn't claim state
+      if (responseText && characterId && currentUser?.email) {
+        try {
+          const guardResult = await enforceWorldPhoneStateGuard(
+            responseText,
+            characterId,
+            currentUser.email
+          );
+          if (guardResult.guardFired) {
+            responseText = guardResult.text;
+            console.log(
+              `[Chat] WP_STATE_GUARD fired | verified=${guardResult.verified}` +
+              ` | reason=${guardResult.reason}` +
+              ` | char=${character?.name}` +
+              ` | wp_msgs=${guardResult.wp_query_count ?? 0}` +
+              ` | wc_convos=${guardResult.wc_query_count ?? 0}`
+            );
+          }
+        } catch (guardErr) {
+          // Non-blocking — never interrupt chat flow on guard failure
+          console.warn('[Chat] worldPhoneStateGuard error (non-blocking):', guardErr.message);
         }
       }
 
