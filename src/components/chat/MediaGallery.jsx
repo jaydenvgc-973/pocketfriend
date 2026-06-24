@@ -3,12 +3,13 @@ import { createPortal } from "react-dom";
 import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check, ImagePlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
-import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 import { registerUserForegroundTask, clearUserForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
-import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
+import { readCache, writeCache, isCacheStale, isValidLocationList } from "@/lib/mediaGridCache";
+
+function getInitial(name) { return name?.[0]?.toUpperCase() || '?'; }
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -82,8 +83,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [userSettings, setUserSettings] = useState(null);
   const [allCharacters, setAllCharacters] = useState([]);
 
-  // Load status for dropdowns — drives visible error/retry UI
-  // 'loading' | 'cache' | 'fresh' | 'user_only' | 'empty_warned' | 'error'
+  // Load status for character dropdown — drives visible error/retry UI
+  // 'loading' | 'fresh' | 'error'
   const [charsLoadStatus, setCharsLoadStatus] = useState('loading');
   const [locsLoadStatus, setLocsLoadStatus] = useState('loading');
   // Diagnostics for the character dropdown failure panel
@@ -155,133 +156,80 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     const releaseForeground = () => { if (email2 && mediaTaskId) clearUserForegroundTask(email2, mediaTaskId); };
 
     // ── STEP 1: Show last-known-good cache immediately ──────────────────────
-    // OWNER-SCOPE RULE: Only the owner-scoped mediaGridCache (mg_cache) is a valid
-    // character seed. localFirstCache (lfc) is written by multiple hooks with varying
-    // scoping guarantees and MUST NOT be used as a character roster seed — it is the
-    // confirmed cross-account contamination vector.
-    const cachedChars = readCache(email, 'characters');
+    // Only the owner-scoped mg_cache is a valid seed — no lfc, no cross-account fallback.
     const cachedLocs = readCache(email, 'locations');
 
-    if (cachedChars) {
-      setAllCharacters(cachedChars.records);
-      setCharsLoadStatus('cache');
-    }
     if (cachedLocs) {
       setLocations(cachedLocs.records);
       setLocsLoadStatus('cache');
     }
 
-    // If both caches are fresh, no server fetch needed — release foreground now
-    const charsFresh = cachedChars && !isCacheStale(cachedChars);
     const locsFresh = cachedLocs && !isCacheStale(cachedLocs);
-    // lfcChars intentionally removed — lfc is not a valid character roster seed (contamination risk)
 
-    if (charsFresh && locsFresh) {
-      setCharsLoadStatus('fresh');
-      setLocsLoadStatus('fresh');
-      base44.entities.UserSettings.filter({ owner_email: email })
-        .then(s => setUserSettings(s?.[0] || null))
-        .catch(() => {});
-      releaseForeground();
-      return;
-    }
-
-    // ── STEP 2: Refresh stale/missing data from server in parallel ──────────
+    // ── STEP 2: Fetch characters + settings + locations from server ──────────
+    // SOURCE OF TRUTH: Direct account-scoped Character.filter({ owner_email: email }).
+    // No unified roster. No cache seeding. No cross-account paths.
     const refreshPromises = [];
 
-    if (!charsFresh) {
-      refreshPromises.push(
-        fetchUnifiedRoster(base44, email)
-          .then(({ roster, repairDiagnostics }) => {
-            if (repairDiagnostics?.length > 0) {
-              console.warn('[MediaGallery] Roster unresolved people (needs_review — no creation):', repairDiagnostics);
-            }
-            const validation = validateCharacterRoster(roster);
-            const serverCount = Array.isArray(roster) ? roster.length : 0;
-            const nowStr = new Date().toISOString();
-            if (validation.valid) {
-              // DEFENSIVE OWNER-SCOPE FILTER: reject any entry whose owner_email does not match
-              // the authenticated user. This is a final hard guard — no foreign-account character
-              // may reach the dropdown regardless of upstream resolver behavior.
-              const scopedRoster = roster.filter(entry =>
-                entry.is_user ||
-                !entry.owner_email ||
-                entry.owner_email === email
-              );
-              // Floor protection: never replace a larger cached roster with a smaller server result.
-              // A partial server response (rate limit, filter, etc.) must not shrink the visible list.
-              const existingFloor = cachedChars?.records?.length ?? 0;
-              if (scopedRoster.length >= existingFloor) {
-                setAllCharacters(scopedRoster);
-                writeCache(email, 'characters', scopedRoster);
-              }
-              // Always update status to fresh — server confirmed the data is real
-              setCharsLoadStatus('fresh');
-              setCharsDiagnostics({
-                owner_email: email, cache_key: `mg_cache:${email}:characters`,
-                cached_roster_count: existingFloor,
-                server_roster_count: serverCount,
-                scoped_count: scopedRoster.length,
-                chat_char_available: !!character?.id,
-                final_dropdown_count: Math.max(scopedRoster.length, existingFloor),
-                fallback_source: scopedRoster.length >= existingFloor ? 'server' : 'cache_floor_protected',
-                last_successful_load: nowStr,
-                warning: scopedRoster.length < existingFloor ? `server_smaller_than_cache(${scopedRoster.length}<${existingFloor})_floor_protected` : undefined,
-              });
-            } else if (validation.reason === 'user_only') {
-              // Keep mg_cache if available. Only fall back to server user_only if no cache exists.
-              const bestCacheCount = cachedChars?.records?.length ?? 0;
-              if (!cachedChars) setAllCharacters(roster);
-              setCharsLoadStatus('user_only');
-              setCharsDiagnostics({
-                owner_email: email,
-                cache_key: `mg_cache:${email}:characters`,
-                cached_roster_count: bestCacheCount,
-                server_roster_count: serverCount,
-                chat_char_available: !!character?.id,
-                final_dropdown_count: bestCacheCount || serverCount,
-                fallback_source: cachedChars ? 'mg_cache' : 'server_user_only',
-                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
-                warning: 'server_returned_user_only',
-              });
-              console.warn('[MediaGallery] Character roster returned user-only — may be incomplete. Not overwriting cache.');
-            } else {
-              // Server returned empty — use mg_cache only (lfc is not a valid seed)
-              if (!cachedChars) setCharsLoadStatus('error');
-              else setCharsLoadStatus('cache');
-              setCharsDiagnostics({
-                owner_email: email,
-                cache_key: `mg_cache:${email}:characters`,
-                cached_roster_count: cachedChars?.records?.length ?? 0,
-                server_roster_count: 0,
-                chat_char_available: !!character?.id,
-                final_dropdown_count: cachedChars?.records?.length ?? 0,
-                fallback_source: cachedChars ? 'mg_cache' : 'none',
-                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
-                warning: 'server_returned_empty',
-              });
-              console.warn('[MediaGallery] Character roster returned empty — preserving existing cache.');
-            }
-          })
-          .catch(err => {
-            console.error('[MediaGallery] Character roster fetch failed:', err?.message);
-            setCharsLoadStatus(cachedChars ? 'cache' : 'error');
-            setCharsDiagnostics({
-              owner_email: email,
-              cache_key: `mg_cache:${email}:characters`,
-              cached_roster_count: cachedChars?.records?.length ?? 0,
-              server_roster_count: null,
-              chat_char_available: !!character?.id,
-              final_dropdown_count: cachedChars?.records?.length ?? 0,
-              fallback_source: cachedChars ? 'mg_cache' : 'none',
-              last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
-              error: err?.message,
-            });
-          })
-      );
-    } else {
-      setCharsLoadStatus('fresh');
-    }
+    // Always fetch fresh characters — direct account-scoped query only
+    refreshPromises.push(
+      Promise.all([
+        base44.entities.UserSettings.filter({ owner_email: email }).catch(() => []),
+        base44.entities.Character.filter({ owner_email: email }, '-created_date', 200).catch(() => []),
+      ]).then(([settingsList, chars]) => {
+        const settings = settingsList?.[0] || null;
+        setUserSettings(settings);
+
+        // Filter to live characters only — never show deleted/merged
+        const liveChars = chars.filter(c =>
+          c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
+        );
+
+        // Build user entry from UserSettings — always account-scoped
+        const userWorldName = settings?.fictional_world_name || email.split('@')[0] || 'Me';
+        const userAvatarUrl =
+          settings?.generated_avatar_urls?.[0] ||
+          settings?.reference_image_urls?.[0] ||
+          null;
+        const userEntry = {
+          id: '__user__',
+          name: userWorldName,
+          world_name: userWorldName,
+          avatar_url: userAvatarUrl,
+          reference_image_urls: [
+            ...(settings?.generated_avatar_urls || []),
+            ...(settings?.reference_image_urls || []),
+          ].filter(Boolean),
+          is_user: true,
+          owner_email: email,
+        };
+
+        // Active first (desc by created_date), then inactive
+        const activeChars = liveChars
+          .filter(c => c.is_active_character)
+          .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
+        const inactiveChars = liveChars
+          .filter(c => !c.is_active_character)
+          .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
+
+        const roster = [userEntry, ...activeChars, ...inactiveChars];
+
+        setAllCharacters(roster);
+        // Write to mg_cache for same-session reuse in RegenerateImageModal
+        writeCache(email, 'characters', roster);
+        setCharsLoadStatus('fresh');
+        setCharsDiagnostics({
+          owner_email: email,
+          source: 'direct_account_query',
+          character_count: liveChars.length,
+          loaded_at: new Date().toISOString(),
+        });
+      }).catch(err => {
+        console.error('[MediaGallery] Character/settings load failed:', err?.message);
+        setCharsLoadStatus('error');
+        setCharsDiagnostics({ owner_email: email, error: err?.message });
+      })
+    );
 
     if (!locsFresh) {
       refreshPromises.push(
@@ -1032,27 +980,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                               <summary className="cursor-pointer text-[10px] text-destructive/60 hover:text-destructive/80">Show diagnostics</summary>
                               <div className="mt-1.5 space-y-0.5 font-mono text-[9px] text-destructive/70 bg-destructive/5 rounded-lg p-2">
                                 <p>owner_email: {charsDiagnostics.owner_email ?? '—'}</p>
-                                <p>cache_key: {charsDiagnostics.cache_key ?? '—'}</p>
-                                <p>cached_roster_count: {charsDiagnostics.cached_roster_count ?? 0}</p>
-                                <p>server_roster_count: {charsDiagnostics.server_roster_count ?? 'failed'}</p>
-                                <p>chat_char_available: {String(charsDiagnostics.chat_char_available)}</p>
-                                <p>final_dropdown_count: {charsDiagnostics.final_dropdown_count ?? 0}</p>
-                                <p>fallback_source: {charsDiagnostics.fallback_source ?? 'none'}</p>
-                                <p>last_successful_load: {charsDiagnostics.last_successful_load ?? 'never'}</p>
+                                <p>source: {charsDiagnostics.source ?? 'direct_account_query'}</p>
+                                <p>character_count: {charsDiagnostics.character_count ?? 'failed'}</p>
                                 {charsDiagnostics.error && <p>error: {charsDiagnostics.error}</p>}
-                                {charsDiagnostics.warning && <p>warning: {charsDiagnostics.warning}</p>}
                               </div>
                             </details>
                           )}
                         </div>
                       )}
-                      {showCharacterPicker && charsLoadStatus === 'user_only' && (
-                        <div className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-400 space-y-1.5">
-                          <p className="font-medium">Character list may be incomplete.</p>
-                          <p className="text-amber-400/70">Only your user profile was returned. Your characters may not have loaded yet.</p>
-                          <button onClick={handleDropdownRetry} className="mt-1 px-3 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 font-medium transition-colors">Retry</button>
-                        </div>
-                      )}
+
                       {showCharacterPicker && charsLoadStatus === 'loading' && allCharacters.length === 0 && (
                         <div className="rounded-xl border border-border bg-card px-3 py-4 text-xs text-muted-foreground flex items-center gap-2">
                           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading characters...
