@@ -70,10 +70,11 @@ const WP_STATE_CLAIM_PATTERNS = [
   /\b(?:it|that|the\s+message)\s+(?:went|came)\s+through\b/i,
   /\b(?:it|that|the\s+message)\s+(?:is\s+)?delivered\b/i,
   /\bit\s+should\s+(?:be\s+there|have\s+(?:arrived|sent|gone\s+through|delivered))\b/i,
-  // Visual/visibility claims
-  /\bI'?m\s+(?:looking|staring|looking\s+right)\s+at\s+it\b/i,
+  // Visual/visibility claims — narrowed to avoid false positives on normal conversation
+  /\bI'?m\s+(?:looking|staring|looking\s+right)\s+at\s+it\s+(?:now|right\s+now)\b/i,
   /\bthe\s+message\s+is\s+(?:right\s+)?here\s+on\s+my\s+(?:phone|screen|contacts)\b/i,
-  /\bI\s+(?:can\s+)?see\s+(?:it|the\s+message|my\s+message)\b/i,
+  // "I can see the message" / "I can see my message" — requires explicit message reference
+  /\bI\s+(?:can\s+)?see\s+(?:the\s+message|my\s+message)\b/i,
   /\bI\s+already\s+sent\s+it[^.!?]*(?:it'?s?\s+there|it\s+(?:went|came)\s+through)\b/i,
   /\bI\s+checked\s+and\s+it\s+(?:sent|went\s+through|delivered)\b/i,
   // World Phone / World Contacts UI claims
@@ -89,12 +90,20 @@ const WP_STATE_CLAIM_PATTERNS = [
 
 // ── SEND-CLAIM PATTERNS (different from delivery confirmation) ─────────────────
 // These are "I sent a message" claims — allowed if a verified WP record exists.
+// IMPORTANT: Keep these narrow to avoid false positives on normal conversation.
+// "I can see it" is NOT here — too broad (matches "I can see why you feel that way").
+// Only match clear, specific World Phone send-action language.
 const WP_SEND_CLAIM_PATTERNS = [
-  /\bI\s+(?:just\s+)?(?:texted|messaged|called|hit\s+up|contacted)\s+[A-Z][a-z]+/i,
-  /\bI\s+sent\s+(?:[A-Z][a-z]+\s+)?(?:a\s+)?(?:text|message|dm)\b/i,
+  // "I texted Vick", "I messaged Sarah" — capitalized name required for specificity
+  /\bI\s+(?:just\s+)?(?:texted|messaged|hit\s+up|contacted)\s+[A-Z][a-z]+/i,
+  // "I sent Vick a text/message/dm" — requires named recipient
+  /\bI\s+sent\s+[A-Z][a-z]+\s+(?:a\s+)?(?:text|message|dm)\b/i,
+  // "I let Vick know" / "I told Vick" — requires capitalized name
   /\bI\s+(?:let|told)\s+[A-Z][a-z]+\s+know\b/i,
+  // "I reached out to Vick" — requires capitalized name
   /\bI\s+reached\s+out\s+to\s+[A-Z][a-z]+\b/i,
-  /\b(?:already|just)\s+(?:texted|messaged|called|contacted)\s+[A-Z][a-z]+\b/i,
+  // "already texted/messaged Sarah" — requires capitalized name
+  /\b(?:already|just)\s+(?:texted|messaged|contacted)\s+[A-Z][a-z]+\b/i,
 ];
 
 /**
