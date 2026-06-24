@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw, Moon, AlarmClock, Lock, Briefcase } from 'lucide-react';
+import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw, Moon, AlarmClock, Lock, Briefcase, Radio } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -1049,6 +1049,141 @@ function EmploymentDiagnosticPanel({ user }) {
   );
 }
 
+// ── VICK WORLD PHONE PRODUCTION PROOF PANEL ──────────────────────────────────
+
+function VickWorldPhoneProofPanel({ user }) {
+  const [status, setStatus] = useState('idle'); // idle | running | done | error
+  const [result, setResult] = useState(null);
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  const run = async () => {
+    setStatus('running');
+    setResult(null);
+    setErrorMsg(null);
+    try {
+      const res = await base44.functions.invoke('proofProductionPathVickIntegrity', {});
+      const d = res?.data;
+      if (!d) throw new Error('No response from proof function');
+      setResult(d);
+      setStatus('done');
+    } catch (err) {
+      setErrorMsg(err.message || 'Proof function threw an error');
+      setStatus('error');
+    }
+  };
+
+  const reset = () => { setStatus('idle'); setResult(null); setErrorMsg(null); };
+
+  const getStepColor = (stepStatus) => {
+    if (stepStatus === 'PASS') return 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400';
+    if (stepStatus === 'FAIL') return 'bg-destructive/10 border-destructive/30 text-destructive';
+    return 'bg-secondary border-border text-muted-foreground';
+  };
+
+  if (status === 'idle') return (
+    <div className="space-y-4">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
+        <p className="text-sm font-medium text-foreground">Vick World Phone Production Proof</p>
+        <p className="text-xs text-muted-foreground">
+          Runs the real deployed <code className="text-primary">sendWorldPhoneMessage</code> function to send a World Phone message from Vick Servicio to Ethan. Verifies the Message record, Conversation record, World Contacts visibility, World Phone visibility, unread state, and cleanup.
+        </p>
+        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5 text-xs text-amber-400 space-y-1">
+          <p className="font-medium">Must run from this authenticated UI session</p>
+          <p className="text-amber-300/80">This proof calls the real deployed function — it requires a live user session. Any 403 or function failure is reported as FAIL with no fallback.</p>
+        </div>
+        <p className="text-xs text-muted-foreground">The proof message sent by Vick will be deleted automatically after verification.</p>
+      </div>
+      <button
+        onClick={run}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors text-sm"
+      >
+        <Radio className="w-4 h-4" />
+        Run Vick World Phone Production Proof
+      </button>
+    </div>
+  );
+
+  if (status === 'running') return (
+    <div className="flex flex-col items-center justify-center py-10 gap-3">
+      <Loader2 className="w-6 h-6 text-primary animate-spin" />
+      <p className="text-sm text-muted-foreground">Running real production-path proof…</p>
+      <p className="text-xs text-muted-foreground">Calling sendWorldPhoneMessage as Vick → Ethan</p>
+    </div>
+  );
+
+  if (status === 'error') return (
+    <div className="space-y-3">
+      <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+        <p className="text-xs font-semibold text-destructive mb-1">PROOF FUNCTION THREW AN ERROR</p>
+        <p className="text-sm text-destructive">{errorMsg}</p>
+      </div>
+      <button onClick={reset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground text-sm font-medium">Try Again</button>
+    </div>
+  );
+
+  if (status === 'done' && result) {
+    const overallPass = result.overall_status?.startsWith('PASS');
+    const passCount = (result.results || []).filter(r => r.status === 'PASS').length;
+    const failCount = (result.results || []).filter(r => r.status === 'FAIL').length;
+
+    return (
+      <div className="space-y-4">
+        {/* Overall verdict */}
+        <div className={`p-3 rounded-xl border ${overallPass ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-destructive/10 border-destructive/30'}`}>
+          <p className={`text-sm font-bold ${overallPass ? 'text-emerald-400' : 'text-destructive'}`}>
+            {overallPass ? '✅ PASS' : '❌ FAIL'} — {result.overall_status}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">{passCount} passed · {failCount} failed</p>
+          {result.required_case && (
+            <div className="mt-2 text-xs space-y-0.5">
+              <p className="text-foreground font-medium">Required case: {result.required_case.case}</p>
+              <p className={result.required_case.result === 'PASS' ? 'text-emerald-400' : 'text-destructive'}>
+                {result.required_case.result} · message: {result.required_case.message_id || 'none'} · convo: {result.required_case.conversation_id || 'none'}
+              </p>
+              <p className="text-muted-foreground">
+                Message confirmed: {result.required_case.message_record_confirmed ? '✓' : '✗'} · 
+                Conversation confirmed: {result.required_case.conversation_record_confirmed ? '✓' : '✗'}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Execution note if 403 */}
+        {result.execution_note && result.execution_note.includes('EXECUTION CONTEXT FAILURE') && (
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-400">
+            <p className="font-medium mb-1">Session issue detected</p>
+            <p>{result.execution_note}</p>
+          </div>
+        )}
+
+        {/* Individual step results */}
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Step Results</p>
+          {(result.results || []).map((step, i) => (
+            <div key={i} className={`rounded-lg p-2.5 border text-xs ${getStepColor(step.status)}`}>
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-medium">{step.step?.replace(/_/g, ' ')}</p>
+                <span className={`flex-shrink-0 font-bold text-[10px] ${step.status === 'PASS' ? 'text-emerald-400' : 'text-destructive'}`}>
+                  {step.status}
+                </span>
+              </div>
+              {step.reason && <p className="mt-0.5 text-destructive">{step.reason}</p>}
+              {step.content_preview && <p className="mt-0.5 text-muted-foreground">Content: "{step.content_preview}…"</p>}
+              {step.message_id && <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">msg: {step.message_id?.substring(0, 12)}…</p>}
+            </div>
+          ))}
+        </div>
+
+        <button onClick={reset} className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm">
+          Run Again
+        </button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // ── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -1060,6 +1195,7 @@ const TABS = [
   { id: 'confinement', label: 'Confinement', icon: Lock, issues: null, fn: null },
   { id: 'employment', label: 'Employment', icon: Briefcase, issues: null, fn: null },
   { id: 'sync', label: 'Sync', icon: RefreshCw, issues: null, fn: null },
+  { id: 'vick_proof', label: 'WP Proof', icon: Radio, issues: null, fn: null },
 ];
 
 export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) {
@@ -1126,8 +1262,10 @@ export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) 
                 <ConfinementReleasePanel user={user} />
               ) : activeTab === 'employment' ? (
                 <EmploymentDiagnosticPanel user={user} />
+              ) : activeTab === 'vick_proof' ? (
+                <VickWorldPhoneProofPanel user={user} />
               ) : (
-                TABS.filter(t => !['sync', 'sleep', 'alarm', 'confinement', 'employment'].includes(t.id)).map(tab => (
+                TABS.filter(t => !['sync', 'sleep', 'alarm', 'confinement', 'employment', 'vick_proof'].includes(t.id)).map(tab => (
                   activeTab === tab.id && (
                     <TabPanel
                       key={tab.id}
