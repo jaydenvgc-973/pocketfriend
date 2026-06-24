@@ -84,6 +84,18 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
   // Remove old family-sourced entries, keep non-family ones
   const nonFamily = existing.filter(r => !r._from_family);
 
+  // Index non-family entries by related_character_id for merge lookups
+  // MERGE RULE: if a non-family entry already exists for the same person,
+  // the new family entry must absorb its last_interaction_summary and
+  // replace the organic entry rather than appending alongside it.
+  // This prevents two visible entries for the same Vick (or any family member
+  // who also has an organic WP/chat relationship entry).
+  const nonFamilyById = new Map(
+    nonFamily
+      .filter(r => r.related_character_id)
+      .map(r => [r.related_character_id, r])
+  );
+
   // Build new entries from family members — ensuring real Character records exist
   const familyEntries = await Promise.all(
     familyMembers
@@ -167,6 +179,10 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
           }
         }
 
+        // Merge: if an organic (non-family) entry already exists for this same character ID,
+        // carry its last_interaction_summary into the new family entry so interaction
+        // history is never lost. The family entry's relationship_type and bars win.
+        const existingOrganic = linkedCharId ? nonFamilyById.get(linkedCharId) : null;
         return {
           person_name: m.name,
           related_character_id: linkedCharId || null,
@@ -175,7 +191,8 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
           current_status: "part of the family",
           emotional_impact: "",
           history_summary: "",
-          last_interaction_summary: "",
+          // Preserve last_interaction_summary from organic entry if present
+          last_interaction_summary: existingOrganic?.last_interaction_summary || "",
           photo_url: m.photo_url || null,
           avatar_url: m.photo_url || null,
           _from_family: true,
@@ -184,7 +201,15 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
       })
   );
 
-  return [...nonFamily, ...familyEntries];
+  // Remove any non-family entries that are now covered by a family entry
+  // (same related_character_id) — prevents duplicate rows in fictional_relationships.
+  const familyCharIds = new Set(
+    familyEntries.map(e => e.related_character_id).filter(Boolean)
+  );
+  const deduplicatedNonFamily = nonFamily.filter(r =>
+    !r.related_character_id || !familyCharIds.has(r.related_character_id)
+  );
+  return [...deduplicatedNonFamily, ...familyEntries];
 }
 
 export default function FamilyEditor({ character, readOnly = false, allCharacters = [], currentUser = null, userSettings = null }) {
