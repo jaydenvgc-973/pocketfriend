@@ -47,6 +47,7 @@ import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
 import ImageGenerationDiagnostics from './pages/ImageGenerationDiagnostics';
 import SchoolContaminationProof from './pages/SchoolContaminationProof';
+import MultiCharacterProof from './pages/MultiCharacterProof';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
@@ -151,6 +152,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/scene" element={<Scene />} />
       <Route path="/image-diagnostics" element={<ImageGenerationDiagnostics />} />
       <Route path="/school-contamination-proof" element={<SchoolContaminationProof />} />
+      <Route path="/multi-character-proof" element={<MultiCharacterProof />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
