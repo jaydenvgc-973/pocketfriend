@@ -1060,14 +1060,163 @@ function VickWorldPhoneProofPanel({ user }) {
     setStatus('running');
     setResult(null);
     setErrorMsg(null);
+
+    const steps = [];
+    const pass = (step, detail = {}) => steps.push({ step, status: 'PASS', ...detail });
+    const fail = (step, reason, detail = {}) => steps.push({ step, status: 'FAIL', reason, ...detail });
+
     try {
-      const res = await base44.functions.invoke('proofProductionPathVickIntegrity', {});
-      const d = res?.data;
-      if (!d) throw new Error('No response from proof function');
-      setResult(d);
+      // ── STEP 1: Resolve Vick ──────────────────────────────────────────────
+      const allChars = await base44.entities.Character.filter({ status: 'active' }, null, 200);
+      const vick = allChars.find(c => c.is_world_service === true || c.character_type === 'npc_world_service' || c.name === 'Vick Servicio');
+      if (!vick) { fail('step_1_resolve_vick', 'Vick Servicio not found'); }
+      else pass('step_1_resolve_vick', { vick_id: vick.id, vick_name: vick.name, character_type: vick.character_type });
+
+      // ── STEP 2: Resolve Ethan ─────────────────────────────────────────────
+      const ethan = allChars.find(c => c.name?.toLowerCase().includes('ethan') && c.character_type === 'active_created_character');
+      if (!ethan) { fail('step_2_resolve_ethan', 'No active Ethan (active_created_character) found'); }
+      else pass('step_2_resolve_ethan', { ethan_id: ethan.id, ethan_name: ethan.name });
+
+      if (!vick || !ethan) {
+        setResult({ overall_status: 'FAIL — real deployed production path not verified', proof_verified: false, results: steps, required_case: { result: 'FAIL', message_record_confirmed: false, conversation_record_confirmed: false } });
+        setStatus('done');
+        return;
+      }
+
+      // ── STEP 3: Dedup baseline ────────────────────────────────────────────
+      const sortedIds = [vick.id, ethan.id].sort();
+      const canonicalKey = `world_phone::${sortedIds[0]}::${sortedIds[1]}`;
+      const existingConvos = await base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, '-updated_date', 5);
+      const preExistingConvoId = existingConvos[0]?.id || null;
+      pass('step_3_dedup_baseline', { canonical_key: canonicalKey, pre_existing_conversation_id: preExistingConvoId });
+
+      // ── CASE REQUIRED: Call real deployed sendWorldPhoneMessage directly from UI session ──
+      // This is the ONLY valid path. Called directly from the browser with the live
+      // authenticated session — not via a proof backend function, not via sr.functions.invoke.
+      // The live browser session is forwarded with the request, so the function executes
+      // with full auth. This is the real production path.
+      let sendResult = null;
+      let sendError = null;
+      try {
+        const res = await base44.functions.invoke('sendWorldPhoneMessage', {
+          sender_character_id: vick.id,
+          recipient_identifier: ethan.id,
+          requested_message: "Hey Ethan, it's Vick — just reaching out to see how you're doing.",
+          source: 'character_action',
+          owner_email: user?.email,
+          generate_recipient_response: false,
+          autonomy_marker: 'vick_ethan_proof::path_a_direct_ui_session',
+        });
+        sendResult = res?.data || res;
+      } catch (e) {
+        sendError = e.message;
+      }
+
+      if (sendError || !sendResult?.success) {
+        fail('case_required_real_deployed_sendWorldPhoneMessage',
+          sendError || `sendWorldPhoneMessage returned success:false — ${sendResult?.error || 'unknown'}`,
+          { function: 'sendWorldPhoneMessage', invocation_method: 'direct UI browser session', message_record_created: false }
+        );
+        setResult({ overall_status: 'FAIL — real deployed production path not verified', proof_verified: false, results: steps, required_case: { result: 'FAIL', message_record_confirmed: false, conversation_record_confirmed: false } });
+        setStatus('done');
+        return;
+      }
+
+      const sentMsgId = sendResult.message_id;
+      const sentConvoId = sendResult.conversation_id;
+      pass('case_required_real_deployed_sendWorldPhoneMessage', {
+        function: 'sendWorldPhoneMessage',
+        invocation_method: 'direct UI browser session (live authenticated)',
+        message_id: sentMsgId,
+        conversation_id: sentConvoId,
+        shared_key: sendResult.shared_conversation_key,
+      });
+
+      // ── STEP 4: Message read-back ─────────────────────────────────────────
+      let verifiedMsg = null;
+      if (sentMsgId) {
+        const msgs = await base44.entities.Message.filter({ id: sentMsgId }, null, 1);
+        verifiedMsg = msgs[0];
+        if (!verifiedMsg) fail('step_4_message_readback', `Message ${sentMsgId} not found in DB`);
+        else if (verifiedMsg.channel !== 'world_phone') fail('step_4_message_readback', `Wrong channel: ${verifiedMsg.channel}`);
+        else if (verifiedMsg.sender_character_id !== vick.id) fail('step_4_message_readback', 'sender_character_id mismatch');
+        else if (verifiedMsg.receiver_character_id !== ethan.id) fail('step_4_message_readback', 'receiver_character_id mismatch');
+        else pass('step_4_message_readback', {
+          id: verifiedMsg.id,
+          channel: verifiedMsg.channel,
+          sender_character_id: verifiedMsg.sender_character_id,
+          receiver_character_id: verifiedMsg.receiver_character_id,
+          shared_conversation_key: verifiedMsg.shared_conversation_key,
+          content_preview: (verifiedMsg.content || '').substring(0, 80),
+          written_by: 'sendWorldPhoneMessage (real deployed function)',
+        });
+      } else fail('step_4_message_readback', 'No message_id returned');
+
+      // ── STEP 5: Conversation record ───────────────────────────────────────
+      let verifiedConvo = null;
+      if (sentConvoId) {
+        const convos = await base44.entities.Conversation.filter({ id: sentConvoId }, null, 1);
+        verifiedConvo = convos[0];
+        if (!verifiedConvo) fail('step_5_conversation_record', `Conversation ${sentConvoId} not found`);
+        else pass('step_5_conversation_record', { id: verifiedConvo.id, channel: verifiedConvo.channel, shared_conversation_key: verifiedConvo.shared_conversation_key });
+      } else fail('step_5_conversation_record', 'No conversation_id returned');
+
+      // ── STEP 6: World Contacts visibility ─────────────────────────────────
+      if (sendResult.shared_conversation_key) {
+        const byKey = await base44.entities.Conversation.filter({ shared_conversation_key: sendResult.shared_conversation_key }, null, 5);
+        if (byKey.length === 0) fail('step_6_world_contacts_visibility', 'Conversation NOT visible via shared_conversation_key query');
+        else pass('step_6_world_contacts_visibility', { shared_key: sendResult.shared_conversation_key, conversations_found: byKey.length });
+      } else fail('step_6_world_contacts_visibility', 'No shared_conversation_key to query');
+
+      // ── STEP 7: World Phone visibility ────────────────────────────────────
+      if (sentConvoId) {
+        const wpMsgs = await base44.entities.Message.filter({ sender_character_id: vick.id, channel: 'world_phone', conversation_id: sentConvoId }, null, 10);
+        if (wpMsgs.length === 0) fail('step_7_world_phone_visibility', 'Vick outbound message NOT visible via World Phone query');
+        else pass('step_7_world_phone_visibility', { vick_outbound_messages: wpMsgs.length, conversation_id: sentConvoId });
+      } else fail('step_7_world_phone_visibility', 'No conversation_id to query');
+
+      // ── STEP 8: No duplicate ──────────────────────────────────────────────
+      if (sendResult.shared_conversation_key) {
+        const allConvos = await base44.entities.Conversation.filter({ shared_conversation_key: sendResult.shared_conversation_key }, null, 10);
+        if (preExistingConvoId && sentConvoId !== preExistingConvoId) fail('step_8_no_duplicate', `Pre-existing thread not reused — duplicate created`);
+        else if (!preExistingConvoId && allConvos.length > 1) fail('step_8_no_duplicate', `${allConvos.length} conversations for same key`);
+        else pass('step_8_no_duplicate', { total_for_key: allConvos.length, pre_existing_reused: !!preExistingConvoId });
+      } else fail('step_8_no_duplicate', 'Cannot verify');
+
+      // ── CLEANUP: delete proof message only ───────────────────────────────
+      if (sentMsgId) await base44.entities.Message.delete(sentMsgId).catch(() => {});
+      if (sentConvoId && !preExistingConvoId) {
+        const leftover = await base44.entities.Message.filter({ conversation_id: sentConvoId }, null, 50).catch(() => []);
+        for (const m of leftover) { if (m.id !== sentMsgId) await base44.entities.Message.delete(m.id).catch(() => {}); }
+        await base44.entities.Conversation.delete(sentConvoId).catch(() => {});
+      }
+
+      const passCount = steps.filter(s => s.status === 'PASS').length;
+      const failCount = steps.filter(s => s.status === 'FAIL').length;
+      const overallPass = failCount === 0;
+
+      setResult({
+        overall_status: overallPass ? 'PASS — real deployed production path verified' : 'FAIL — real deployed production path not verified',
+        proof_verified: overallPass,
+        summary: `${passCount} passed, ${failCount} failed`,
+        invocation_method: 'base44.functions.invoke from live authenticated browser session',
+        results: steps,
+        required_case: {
+          case: 'Vick Servicio → Ethan Thompson via real deployed sendWorldPhoneMessage',
+          invocation: 'base44.functions.invoke("sendWorldPhoneMessage", ...) — direct from UI',
+          result: steps.find(s => s.step === 'case_required_real_deployed_sendWorldPhoneMessage')?.status || 'NOT_RUN',
+          message_id: verifiedMsg?.id || null,
+          conversation_id: sentConvoId || null,
+          message_record_confirmed: !!verifiedMsg,
+          conversation_record_confirmed: !!verifiedConvo,
+          message_written_by: verifiedMsg ? 'sendWorldPhoneMessage (real deployed function)' : 'not written',
+          content_preview: verifiedMsg ? (verifiedMsg.content || '').substring(0, 80) : null,
+        },
+      });
       setStatus('done');
+
     } catch (err) {
-      setErrorMsg(err.message || 'Proof function threw an error');
+      setErrorMsg(err.message || 'Unexpected error during proof');
       setStatus('error');
     }
   };
