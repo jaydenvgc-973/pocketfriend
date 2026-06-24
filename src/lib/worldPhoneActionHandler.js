@@ -37,6 +37,62 @@ import { base44 } from "@/api/base44Client";
 import { checkEcho } from "@/lib/worldPhoneEchoGuard";
 
 /**
+ * stripWorldPhoneStateConfirmationClaims
+ *
+ * Strips backend-state confirmation claims from character responses.
+ * These are claims that assert delivery, visibility, or verification of a World Phone
+ * message — none of which the character can know without a backend lookup.
+ *
+ * Applies on BOTH the failure path (send failed, message doesn't exist) AND
+ * the success path (message exists, but character still cannot claim to visually
+ * verify it on the recipient's device/World Contacts).
+ *
+ * This covers the live failure class seen in screenshots:
+ *   "It definitely sent."
+ *   "I'm looking at it now."
+ *   "I'm staring right at the message I just sent."
+ *   "The message is right here on my phone."
+ *   "It went through."
+ *   "It should be there."
+ *   "I can see it."
+ */
+function stripWorldPhoneStateConfirmationClaims(text) {
+  if (!text) return text;
+
+  // Patterns that assert delivery confirmation, visual verification, or "it's definitely there"
+  const confirmationPatterns = [
+    // "it definitely sent" / "that definitely sent" / "it definitely went through"
+    /\b(?:it|that|the\s+message)\s+definitely\s+(?:sent|went\s+through|delivered|arrived|came\s+through)\b[^.!?]*[.!?]?/gi,
+    // "I'm looking at it now" / "I'm staring at it"
+    /\bI'?m\s+(?:looking|staring|looking\s+right)\s+at\s+it\s+(?:now|right\s+now)\b[^.!?]*[.!?]?/gi,
+    // "the message is right here on my phone"
+    /\bthe\s+message\s+is\s+(?:right\s+)?here\s+on\s+my\s+(?:phone|screen|contacts)\b[^.!?]*[.!?]?/gi,
+    // "I can see it" / "I see it" — in context of sent messages
+    /\bI\s+(?:can\s+)?see\s+(?:it|the\s+message|my\s+message)\b[^.!?]*[.!?]?/gi,
+    // "it went through" / "it came through"
+    /\b(?:it|that|the\s+message)\s+(?:went|came)\s+through\b[^.!?]*[.!?]?/gi,
+    // "it should be there" / "it should have arrived"
+    /\b(?:it|that|the\s+message)\s+should\s+(?:be\s+there|have\s+(?:arrived|sent|gone\s+through|delivered))\b[^.!?]*[.!?]?/gi,
+    // "it delivered" / "it's delivered"
+    /\b(?:it|that|the\s+message)\s+(?:is\s+)?delivered\b[^.!?]*[.!?]?/gi,
+    // "I already sent it — it's there" / "I already sent it and it's there"
+    /\bI\s+already\s+sent\s+it[^.!?]*(it'?s?\s+there|it\s+(?:went|came)\s+through|you\s+should\s+have\s+it)[^.!?]*[.!?]?/gi,
+    // "I checked and it sent"
+    /\bI\s+checked\s+and\s+it\s+(?:sent|went\s+through|delivered)\b[^.!?]*[.!?]?/gi,
+    // "the phone is glitching" style deflections that still assert the message is there
+    /\bif\s+(?:the\s+)?(?:phone|app|system)\s+(?:is\s+)?(?:glitching|bugging|acting\s+up)[^.!?]*(?:it\s+(?:did|definitely|still)\s+(?:go|went|send|sent|came)\s+through)[^.!?]*[.!?]?/gi,
+  ];
+
+  let result = text;
+  for (const pattern of confirmationPatterns) {
+    result = result.replace(pattern, '');
+  }
+
+  // Clean up double spaces and trim
+  return result.replace(/\s{2,}/g, ' ').trim() || text;
+}
+
+/**
  * Resolves a pronoun to a real recipient name from recent conversation messages.
  * Scans backwards — most recent mention of a known contact wins.
  */
@@ -120,14 +176,22 @@ export async function handleCharacterWorldPhoneAction({
         .replace(/\s{2,}/g, ' ')
         .trim();
 
+      // Step 3: Strip delivery-state confirmation claims — these are backend state claims
+      // that must be stripped when the send failed. These are the class of failures
+      // seen in live behavior: "it definitely sent", "I can see it", "I'm looking at it".
+      cleaned = stripWorldPhoneStateConfirmationClaims(cleaned);
+
       modifiedResponseText = cleaned || '...';
     } else {
       // Send succeeded — a real Message record exists.
       // Now safe to allow the narrative claim, but strip any fabricated reply summary.
       // Character B's real response is in the World Phone record — not invented here.
-      const stripped = stripFabricatedReplyFromResponse(modifiedResponseText);
+      // Also strip delivery-state confirmation claims — even on success, the character
+      // cannot claim to visually verify the message on the recipient's side.
+      let stripped = stripFabricatedReplyFromResponse(modifiedResponseText);
+      stripped = stripWorldPhoneStateConfirmationClaims(stripped);
       if (stripped !== modifiedResponseText) {
-        console.log('[WorldPhone] past-tense: stripped fabricated reply summary');
+        console.log('[WorldPhone] past-tense: stripped fabricated reply summary and/or delivery-state claims');
       }
       modifiedResponseText = stripped;
       console.log(`[WorldPhone] past-tense send CONFIRMED | msg=${data.message_id} | conv=${data.conversation_id}`);
@@ -169,8 +233,10 @@ export async function handleCharacterWorldPhoneAction({
 
       if (data?.success) {
         console.log(`[WorldPhone] proactive send CONFIRMED: "${character.name}" → "${recipient}" | msg=${data.message_id} | conv=${data.conversation_id}`);
-        // Real record exists. Strip fabricated reply summary — real reply is in World Phone.
+        // Real record exists. Strip fabricated reply summary AND delivery-state confirmation claims.
+        // Even on success, the character cannot claim to visually verify delivery on recipient's end.
         modifiedResponseText = stripFabricatedReplyFromResponse(modifiedResponseText);
+        modifiedResponseText = stripWorldPhoneStateConfirmationClaims(modifiedResponseText);
       } else {
         // ARCHITECTURAL ENFORCEMENT: Send failed — no World Phone record exists.
         // The proactive outreach claim ("I'll text her") may stay since it's future-tense intent,
