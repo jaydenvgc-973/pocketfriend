@@ -9,7 +9,6 @@ import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 import { registerUserForegroundTask, clearUserForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster, isValidLocationList } from "@/lib/mediaGridCache";
-import { lfcRead } from "@/lib/localFirstCache.js";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -156,30 +155,16 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     const releaseForeground = () => { if (email2 && mediaTaskId) clearUserForegroundTask(email2, mediaTaskId); };
 
     // ── STEP 1: Show last-known-good cache immediately ──────────────────────
-    // Two-layer character cache: mediaGridCache (mg_cache) first, then localFirstCache (lfc).
-    // lfc is written by useOwnedCharacters / other roster hooks — it may have characters
-    // even when mg_cache is cold (first open, cleared cache, different browser session).
+    // OWNER-SCOPE RULE: Only the owner-scoped mediaGridCache (mg_cache) is a valid
+    // character seed. localFirstCache (lfc) is written by multiple hooks with varying
+    // scoping guarantees and MUST NOT be used as a character roster seed — it is the
+    // confirmed cross-account contamination vector.
     const cachedChars = readCache(email, 'characters');
-    const lfcChars = !cachedChars ? lfcRead(email, 'characters') : null; // only read lfc if mg_cache miss
     const cachedLocs = readCache(email, 'locations');
 
     if (cachedChars) {
       setAllCharacters(cachedChars.records);
       setCharsLoadStatus('cache');
-    } else if (lfcChars?.data?.length > 0) {
-      // lfc fallback — show immediately, still attempt server refresh
-      setAllCharacters(lfcChars.data);
-      setCharsLoadStatus('cache');
-      setCharsDiagnostics({
-        owner_email: email,
-        cache_key: `lfc:${email}:characters`,
-        cached_roster_count: lfcChars.data.length,
-        server_roster_count: null,
-        chat_char_available: !!character?.id,
-        final_dropdown_count: lfcChars.data.length,
-        fallback_source: 'lfc_cache',
-        last_successful_load: lfcChars.loaded_at ? new Date(lfcChars.loaded_at).toISOString() : null,
-      });
     }
     if (cachedLocs) {
       setLocations(cachedLocs.records);
@@ -189,6 +174,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     // If both caches are fresh, no server fetch needed — release foreground now
     const charsFresh = cachedChars && !isCacheStale(cachedChars);
     const locsFresh = cachedLocs && !isCacheStale(cachedLocs);
+    // lfcChars intentionally removed — lfc is not a valid character roster seed (contamination risk)
 
     if (charsFresh && locsFresh) {
       setCharsLoadStatus('fresh');
@@ -214,12 +200,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
             const serverCount = Array.isArray(roster) ? roster.length : 0;
             const nowStr = new Date().toISOString();
             if (validation.valid) {
+              // DEFENSIVE OWNER-SCOPE FILTER: reject any entry whose owner_email does not match
+              // the authenticated user. This is a final hard guard — no foreign-account character
+              // may reach the dropdown regardless of upstream resolver behavior.
+              const scopedRoster = roster.filter(entry =>
+                entry.is_user ||
+                !entry.owner_email ||
+                entry.owner_email === email
+              );
               // Floor protection: never replace a larger cached roster with a smaller server result.
               // A partial server response (rate limit, filter, etc.) must not shrink the visible list.
-              const existingFloor = cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0;
-              if (roster.length >= existingFloor) {
-                setAllCharacters(roster);
-                writeCache(email, 'characters', roster);
+              const existingFloor = cachedChars?.records?.length ?? 0;
+              if (scopedRoster.length >= existingFloor) {
+                setAllCharacters(scopedRoster);
+                writeCache(email, 'characters', scopedRoster);
               }
               // Always update status to fresh — server confirmed the data is real
               setCharsLoadStatus('fresh');
@@ -227,44 +221,43 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                 owner_email: email, cache_key: `mg_cache:${email}:characters`,
                 cached_roster_count: existingFloor,
                 server_roster_count: serverCount,
+                scoped_count: scopedRoster.length,
                 chat_char_available: !!character?.id,
-                final_dropdown_count: Math.max(roster.length, existingFloor),
-                fallback_source: roster.length >= existingFloor ? 'server' : 'cache_floor_protected',
+                final_dropdown_count: Math.max(scopedRoster.length, existingFloor),
+                fallback_source: scopedRoster.length >= existingFloor ? 'server' : 'cache_floor_protected',
                 last_successful_load: nowStr,
-                warning: roster.length < existingFloor ? `server_smaller_than_cache(${roster.length}<${existingFloor})_floor_protected` : undefined,
+                warning: scopedRoster.length < existingFloor ? `server_smaller_than_cache(${scopedRoster.length}<${existingFloor})_floor_protected` : undefined,
               });
             } else if (validation.reason === 'user_only') {
-              // Keep best available cache — mg_cache first, then lfc. Only fall back to server
-              // user_only if no cache exists at all.
-              const bestCacheCount = cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0;
-              if (!cachedChars && !lfcChars?.data?.length) setAllCharacters(roster);
+              // Keep mg_cache if available. Only fall back to server user_only if no cache exists.
+              const bestCacheCount = cachedChars?.records?.length ?? 0;
+              if (!cachedChars) setAllCharacters(roster);
               setCharsLoadStatus('user_only');
               setCharsDiagnostics({
                 owner_email: email,
-                cache_key: cachedChars ? `mg_cache:${email}:characters` : (lfcChars?.data?.length ? `lfc:${email}:characters` : `mg_cache:${email}:characters`),
+                cache_key: `mg_cache:${email}:characters`,
                 cached_roster_count: bestCacheCount,
                 server_roster_count: serverCount,
                 chat_char_available: !!character?.id,
                 final_dropdown_count: bestCacheCount || serverCount,
-                fallback_source: cachedChars ? 'mg_cache' : (lfcChars?.data?.length ? 'lfc_cache' : 'server_user_only'),
-                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : (lfcChars?.loaded_at ? new Date(lfcChars.loaded_at).toISOString() : null),
+                fallback_source: cachedChars ? 'mg_cache' : 'server_user_only',
+                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
                 warning: 'server_returned_user_only',
               });
               console.warn('[MediaGallery] Character roster returned user-only — may be incomplete. Not overwriting cache.');
             } else {
-              // Server returned empty — use whichever cache layer we have
-              const hasAnyCache = !!(cachedChars || lfcChars?.data?.length);
-              if (!hasAnyCache) setCharsLoadStatus('error');
+              // Server returned empty — use mg_cache only (lfc is not a valid seed)
+              if (!cachedChars) setCharsLoadStatus('error');
               else setCharsLoadStatus('cache');
               setCharsDiagnostics({
                 owner_email: email,
-                cache_key: cachedChars ? `mg_cache:${email}:characters` : `lfc:${email}:characters`,
-                cached_roster_count: cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0,
+                cache_key: `mg_cache:${email}:characters`,
+                cached_roster_count: cachedChars?.records?.length ?? 0,
                 server_roster_count: 0,
                 chat_char_available: !!character?.id,
-                final_dropdown_count: cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0,
-                fallback_source: cachedChars ? 'mg_cache' : (lfcChars?.data?.length ? 'lfc_cache' : 'none'),
-                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : (lfcChars?.loaded_at ? new Date(lfcChars.loaded_at).toISOString() : null),
+                final_dropdown_count: cachedChars?.records?.length ?? 0,
+                fallback_source: cachedChars ? 'mg_cache' : 'none',
+                last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
                 warning: 'server_returned_empty',
               });
               console.warn('[MediaGallery] Character roster returned empty — preserving existing cache.');
@@ -272,17 +265,16 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           })
           .catch(err => {
             console.error('[MediaGallery] Character roster fetch failed:', err?.message);
-            const hasAnyCache = !!(cachedChars || lfcChars?.data?.length);
-            setCharsLoadStatus(hasAnyCache ? 'cache' : 'error');
+            setCharsLoadStatus(cachedChars ? 'cache' : 'error');
             setCharsDiagnostics({
               owner_email: email,
-              cache_key: cachedChars ? `mg_cache:${email}:characters` : `lfc:${email}:characters`,
-              cached_roster_count: cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0,
+              cache_key: `mg_cache:${email}:characters`,
+              cached_roster_count: cachedChars?.records?.length ?? 0,
               server_roster_count: null,
               chat_char_available: !!character?.id,
-              final_dropdown_count: cachedChars?.records?.length ?? lfcChars?.data?.length ?? 0,
-              fallback_source: cachedChars ? 'mg_cache' : (lfcChars?.data?.length ? 'lfc_cache' : 'none'),
-              last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : (lfcChars?.loaded_at ? new Date(lfcChars.loaded_at).toISOString() : null),
+              final_dropdown_count: cachedChars?.records?.length ?? 0,
+              fallback_source: cachedChars ? 'mg_cache' : 'none',
+              last_successful_load: cachedChars?.loaded_at ? new Date(cachedChars.loaded_at).toISOString() : null,
               error: err?.message,
             });
           })

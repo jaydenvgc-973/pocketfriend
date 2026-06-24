@@ -6,7 +6,6 @@ import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { readCache, writeCache, isCacheStale, validateCharacterRoster } from "@/lib/mediaGridCache";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
-import { lfcRead } from "@/lib/localFirstCache.js";
 import { validateZoneImages } from "@/lib/imageFormatValidator";
 
 const REASONS = [
@@ -243,15 +242,13 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     // Use the ref so email is guaranteed available even if state hasn't updated yet
     const email = userEmailRef.current || userEmail;
 
-    // ── STEP 1a: Show mediaGridCache immediately ─────────────────────────────
+    // ── STEP 1: Show owner-scoped mediaGridCache immediately ──────────────────
+    // OWNER-SCOPE RULE: Only mg_cache is a valid character seed. localFirstCache (lfc)
+    // is the confirmed cross-account contamination vector and must NOT be used here.
     const mgCached = email ? readCache(email, 'characters') : null;
-    // ── STEP 1b: Fallback to localFirstCache if mediaGridCache is empty ──────
-    const lfCached = (!mgCached && email) ? lfcRead(email, 'characters') : null;
-    const lfCachedRecords = lfCached?.data && Array.isArray(lfCached.data) && lfCached.data.length > 0 ? lfCached.data : null;
-
-    const cached = mgCached; // primary source for cache freshness check
-    const seedRecords = mgCached?.records ?? lfCachedRecords;
-    const seedSource = mgCached ? 'mg_cache' : lfCachedRecords ? 'lfc_cache' : null;
+    const cached = mgCached;
+    const seedRecords = mgCached?.records ?? null;
+    const seedSource = mgCached ? 'mg_cache' : null;
 
     if (seedRecords) {
       setAllCharacters(seedRecords);
@@ -299,30 +296,39 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         const serverCount = Array.isArray(roster) ? roster.length : 0;
 
         if (validation.valid) {
+          // DEFENSIVE OWNER-SCOPE FILTER: reject any entry whose owner_email does not match
+          // the authenticated user. Final hard guard — no foreign-account character may reach
+          // the dropdown regardless of upstream resolver behavior.
+          const scopedRoster = roster.filter(entry =>
+            entry.is_user ||
+            !entry.owner_email ||
+            entry.owner_email === email
+          );
           // Floor protection: never shrink below existing seed count
           const existingFloor = seedRecords?.length ?? 0;
-          if (roster.length >= existingFloor) {
-            setAllCharacters(roster);
-            writeCache(email, 'characters', roster);
+          if (scopedRoster.length >= existingFloor) {
+            setAllCharacters(scopedRoster);
+            writeCache(email, 'characters', scopedRoster);
           }
           setRosterLoadStatus('fresh');
-          applyPreSelection(roster.length >= existingFloor ? roster : (seedRecords || roster));
+          applyPreSelection(scopedRoster.length >= existingFloor ? scopedRoster : (seedRecords || scopedRoster));
           setRosterDiagnostics({
             email, cacheKey: `mg_cache:${email}:characters`,
             cachedCount: existingFloor, serverCount,
+            scopedCount: scopedRoster.length,
             chatCharAvailable: !!(generationContext?.character_id),
-            finalCount: Math.max(roster.length, existingFloor),
-            fallbackSource: roster.length >= existingFloor ? 'server' : 'cache_floor_protected',
+            finalCount: Math.max(scopedRoster.length, existingFloor),
+            fallbackSource: scopedRoster.length >= existingFloor ? 'server' : 'cache_floor_protected',
             lastLoad: new Date().toISOString(),
-            warning: roster.length < existingFloor ? `server_smaller(${roster.length}<${existingFloor})_floor_protected` : undefined,
+            warning: scopedRoster.length < existingFloor ? `server_smaller(${scopedRoster.length}<${existingFloor})_floor_protected` : undefined,
           });
         } else if (validation.reason === 'user_only') {
-          // Keep best available cache — never downgrade to user_only if seed had real characters
+          // Keep mg_cache if available — never downgrade to user_only if seed had real characters
           if (!seedRecords?.length) setAllCharacters(roster || []);
           setRosterLoadStatus('user_only');
           setRosterDiagnostics({
             email,
-            cacheKey: seedRecords ? (mgCached ? `mg_cache:${email}:characters` : `lfc:${email}:characters`) : `mg_cache:${email}:characters`,
+            cacheKey: `mg_cache:${email}:characters`,
             cachedCount: seedRecords?.length ?? 0, serverCount,
             chatCharAvailable: !!(generationContext?.character_id),
             finalCount: seedRecords?.length ?? serverCount,
@@ -330,9 +336,9 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
             lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : new Date().toISOString(),
             warning: 'server_returned_user_only',
           });
-          console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. Cache preserved.');
+          console.warn('[RegenerateModal] Roster returned user-only — may be incomplete. mg_cache preserved.');
         } else {
-          // Server returned empty — keep seed if available, surface error if not
+          // Server returned empty — keep mg_cache seed if available, surface error if not
           setRosterLoadStatus(seedRecords ? 'cache' : 'error');
           setRosterDiagnostics({
             email, cacheKey: `mg_cache:${email}:characters`,
@@ -342,7 +348,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
             lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : null,
             warning: 'server_returned_empty',
           });
-          console.warn('[RegenerateModal] Roster returned empty — preserving cache if available.');
+          console.warn('[RegenerateModal] Roster returned empty — preserving mg_cache if available.');
         }
       })
       .catch(err => {
@@ -353,7 +359,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
           cachedCount: seedRecords?.length ?? 0, serverCount: null,
           chatCharAvailable: !!(generationContext?.character_id),
           finalCount: seedRecords?.length ?? 0, fallbackSource: seedSource || 'none',
-          lastLoad: cached?.loaded_at ? new Date(cached.loaded_at).toISOString() : null,
+          lastLoad: mgCached?.loaded_at ? new Date(mgCached.loaded_at).toISOString() : null,
           error: err?.message,
         });
       })
@@ -736,9 +742,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                         </button>
                       );
                     })()}
-                    {/* Characters — every entry is a resolved canonical Character.id at this point */}
+                    {/* Characters — roster order from fetchUnifiedRoster is authoritative.
+                        active_created_character (is_active_character=true) desc by created_date,
+                        then inactive desc by created_date. Do NOT re-sort — preserve canonical order. */}
                     {[...allCharacters.filter(c => !c.is_user)]
-                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
                       .map(char => {
                         const pickerId = char.canonical_person_id || char.id;
                         const isSelected = selectedSubjectIds.includes(pickerId);
