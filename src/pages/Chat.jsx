@@ -1772,10 +1772,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
       const targetMsgId = imgMsg.id;
       console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${validatedPrompt.substring(0, 80)}"`);
-      // Resolve primary subject name for dispatch (may differ from sender when B is the subject)
+      // Resolve primary subject name for dispatch (may differ from sender when B is the subject).
+      // When sender IS the primary subject (sender_self or joint with sender), characterName
+      // should be the sender's name so the backend can reliably identify the character record.
       const primarySubjectChar = resolvedCharacterId && resolvedCharacterId !== characterId
         ? allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId)
         : null;
+      // If sender is primary subject, use sender's name; if third-party char, use their name; if none, null.
+      const primarySubjectName = resolvedCharacterId === characterId
+        ? character.name
+        : (primarySubjectChar?.name || null);
 
       setTimeout(() => dispatchImageGeneration({
         targetMsgId,
@@ -1790,7 +1796,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         // resolvedCharacterId is the PRIMARY visual subject — may be a named third-party char,
         // not necessarily the sender. When null, the backend treats it as an inanimate/no-char scene.
         characterId: resolvedCharacterId,
-        characterName: primarySubjectChar?.name || null,
+        characterName: primarySubjectName,
         isMountedRef,
         setMessages,
         convoId,

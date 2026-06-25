@@ -208,6 +208,33 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
     };
   }
 
+  // Step 0: [JOINT] prefix detection — LLM's explicit signal that sender IS in the image.
+  // When the LLM prefixes a prompt with [JOINT], it means the SENDER is one of the visual
+  // subjects regardless of whether the sender's name appears in the prompt text.
+  // This MUST be checked BEFORE inanimate detection and before sender pattern matching
+  // because [JOINT] prompts contain location words ("looking out into the room", "living room zone")
+  // that would otherwise incorrectly trigger inanimate classification.
+  const hasJointTag = /^\[JOINT\]/i.test(imagePrompt.trim());
+  if (hasJointTag) {
+    log.push(`[SubjectResolver] [JOINT] tag detected — sender is confirmed visual subject`);
+    // Still resolve named co-subjects from the prompt for additionalCharacterIds
+    const { subjects: jointSubjects, log: jointLog } = resolveSubjectCharactersFromPrompt(
+      imagePrompt, allChars, senderCharacterId
+    );
+    log.push(...jointLog);
+    log.push(`[SubjectResolver] [JOINT] co-subjects found: [${jointSubjects.map(c => c.name).join(', ')}]`);
+    return {
+      resolutionState: 'resolved',
+      primarySubjectId: senderCharacterId,
+      additionalCharacterIds: jointSubjects.map(c => c.id),
+      includeSender: true,
+      isInanimateScene: false,
+      blockReason: null,
+      ambiguousNames: [],
+      log,
+    };
+  }
+
   // Step 1: Is this an inanimate scene (room, object)?
   const isInanimateScene = isInanimateSubjectPrompt(imagePrompt);
   if (isInanimateScene) {
