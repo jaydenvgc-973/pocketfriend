@@ -251,16 +251,17 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     // Register foreground task — background systems yield while user is picking subjects
     const releaseForeground = registerForegroundTask(FOREGROUND_TASKS.MEDIA_GRID, 'high');
 
-    // Fetch user settings (for user entry avatar/name) and characters in parallel.
-    // Both queries are strictly scoped to owner_email — no cross-account data possible.
+    // Fetch user entity (for avatar/reference images), user settings (for world name), and characters in parallel.
+    // User entity is the authoritative source for reference images; UserSettings holds the world name.
     Promise.all([
+      base44.auth.me().catch(() => null),
       base44.entities.UserSettings.filter({ owner_email: email }).catch(() => []),
       base44.entities.Character.filter(
         { owner_email: email },
         '-created_date',
         200
       ).catch(() => []),
-    ]).then(([settingsList, chars]) => {
+    ]).then(([userEntity, settingsList, chars]) => {
       const settings = settingsList?.[0] || null;
       setUserSettings(settings);
 
@@ -269,12 +270,26 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
       );
 
-      // Build user entry from UserSettings — always account-scoped
+      // Build user entry — avatar priority:
+      // 1. User entity reference_image_urls[0]  (authoritative — uploaded face photos)
+      // 2. User entity generated_avatar_urls[0]  (generated portrait)
+      // 3. User entity avatar_url  (profile avatar)
+      // 4. UserSettings equivalents as last resort
+      // Legacy is_user Character is NOT used here.
+      const userRefImgs = (userEntity?.reference_image_urls || []).filter(Boolean);
+      const userGenAvatars = (userEntity?.generated_avatar_urls || []).filter(Boolean);
+      let userAvatarUrl = userRefImgs[0] || userGenAvatars[0] || userEntity?.avatar_url || null;
+      let userAvatarSource = 'placeholder';
+      if (userRefImgs[0]) userAvatarSource = 'user_entity_reference_image';
+      else if (userGenAvatars[0]) userAvatarSource = 'user_entity_generated_avatar';
+      else if (userEntity?.avatar_url) userAvatarSource = 'user_profile_avatar';
+      else if (settings?.generated_avatar_urls?.[0] || settings?.reference_image_urls?.[0]) {
+        userAvatarUrl = settings?.generated_avatar_urls?.[0] || settings?.reference_image_urls?.[0] || null;
+        userAvatarSource = userAvatarUrl ? 'user_settings_fallback' : 'placeholder';
+      }
+      console.log(`[RegenerateModal] user_picker_avatar_source=${userAvatarSource} has_url=${!!userAvatarUrl}`);
+
       const userWorldName = settings?.fictional_world_name || email.split('@')[0] || 'Me';
-      const userAvatarUrl =
-        settings?.generated_avatar_urls?.[0] ||
-        settings?.reference_image_urls?.[0] ||
-        null;
       const userEntry = {
         id: '__user__',
         canonical_person_id: '__user__',
@@ -282,6 +297,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         world_name: userWorldName,
         avatar_url: userAvatarUrl,
         reference_image_urls: [
+          ...userRefImgs,
+          ...userGenAvatars,
           ...(settings?.generated_avatar_urls || []),
           ...(settings?.reference_image_urls || []),
         ].filter(Boolean),
