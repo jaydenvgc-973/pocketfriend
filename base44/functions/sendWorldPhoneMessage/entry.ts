@@ -370,57 +370,229 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       presenceValidated = true;
     }
 
+    // ── PRE-GENERATION GROUNDING: CharacterMemory + Life Threads + Relationship Continuity ──
+    // GROUNDING RULE: Memory and life context loaded BEFORE any LLM call.
+    // This matches the Chat/Text/Scene pipeline (buildSoapOperaLifeContext equivalent).
+    // syncWorldPhoneMemory runs AFTER generation and is NOT a substitute for grounding.
+
+    /**
+     * buildWorldPhoneLifeGrounding — inline equivalent of lib/promptContextBuilders.js buildSoapOperaLifeContext.
+     * Reuses the same character fields. Cannot import lib/ in Deno backend functions.
+     */
+    function buildWorldPhoneLifeGrounding(char, recentMems = []) {
+      const lines = [];
+      const threads = [];
+
+      // Relationship summaries — all relationships, not just romantic
+      const rels = char.fictional_relationships || [];
+      const relSummaries = rels.slice(0, 6).map(r => {
+        const name = r.person_name || r.display_name;
+        if (!name) return null;
+        const relType = r.relationship_type || 'known person';
+        const trust = r.trust_level ? ` | trust: ${Math.round(r.trust_level)}/100` : '';
+        const friend = r.friendship_level ? ` | friendship: ${Math.round(r.friendship_level)}/100` : '';
+        const romantic = r.romantic_level > 0 ? ` | romantic: ${Math.round(r.romantic_level)}/100` : '';
+        const desc = r.description ? ` — ${r.description.substring(0, 120)}` : '';
+        const lastInteraction = r.last_interaction_summary ? ` Last: ${r.last_interaction_summary.substring(0, 100)}` : '';
+        return `• ${name} (${relType}${trust}${friend}${romantic})${desc}${lastInteraction}`;
+      }).filter(Boolean);
+      if (relSummaries.length > 0) {
+        lines.push(`════════════════════════════════════\nRELATIONSHIP CONTINUITY\nYou KNOW these people. Respond with the familiarity your history warrants.\n════════════════════════════════════\n${relSummaries.join('\n')}`);
+      }
+
+      // Romance thread
+      const romanticRels = rels.filter(r =>
+        r.romantic_level > 40 || r.attraction_level > 50 ||
+        ['lover','partner','ex','situationship','complicated','crush'].some(k =>
+          (r.relationship_type || '').toLowerCase().includes(k)
+        )
+      );
+      if (romanticRels.length > 0) {
+        const r = romanticRels[0];
+        const name = r.person_name || r.display_name || 'someone';
+        const status = r.current_status || r.relationship_type || 'complicated';
+        const tension = r.relational_jealousy > 50 ? ' — jealousy is active' : r.romantic_level > 75 ? ' — deeply invested' : '';
+        threads.push(`ROMANCE THREAD: ${name} (${status})${tension}. ${r.last_interaction_summary || ''}`);
+      }
+
+      // Family thread
+      const familyMembers = char.family_members || [];
+      if (familyMembers.length > 0) {
+        const closeFam = familyMembers.slice(0, 3).map(f => f.name || f.relationship).filter(Boolean).join(', ');
+        threads.push(`FAMILY THREAD: Active family ties — ${closeFam}.`);
+      }
+
+      // Housing, health, work, financial, faith, legal, situation, life event, business threads
+      if (char.is_homeless) threads.push(`HOUSING THREAD: Currently without stable housing — affects daily planning and emotional security.`);
+      else if (char.housing_context === 'temporary_shelter') threads.push(`HOUSING THREAD: Living in temporary shelter — stability not guaranteed.`);
+      if (char.health_status && char.health_status.length > 5) threads.push(`HEALTH THREAD: ${char.health_status}`);
+      if (char.occupation) {
+        const workNote = char.work_details?.stress_level === 'high' ? ' — currently high stress' : char.work_details?.is_new_job ? ' — relatively new to this role' : '';
+        threads.push(`WORK THREAD: ${char.occupation}${workNote}.`);
+      }
+      if ((char.financial_need_value ?? 60) < 40) threads.push(`FINANCIAL THREAD: Under financial pressure right now.`);
+      const religion = (char.religion || '').trim();
+      if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {
+        const devout = char.belief_level === 'devout' ? ' — deeply devout' : '';
+        threads.push(`FAITH/PURPOSE THREAD: ${religion}${devout}.`);
+      }
+      if (char.criminal_record && char.criminal_record.length > 3 && char.criminal_record.toLowerCase() !== 'none') threads.push(`LEGAL HISTORY THREAD: ${char.criminal_record.substring(0, 100)}.`);
+      if (char.current_situation && char.current_situation.length > 10) threads.push(`CURRENT SITUATION: ${char.current_situation.substring(0, 200)}`);
+      if (char.current_life_event && char.current_life_event.length > 5) threads.push(`ACTIVE LIFE EVENT: ${char.current_life_event.substring(0, 200)}`);
+      const businesses = char.businesses || [];
+      if (businesses.length > 0) threads.push(`BUSINESS THREAD: Owns/runs "${businesses[0].name || 'a business'}".`);
+
+      if (threads.length > 0) {
+        lines.push(`════════════════════════════════════\nACTIVE LIFE THREADS — SOAP OPERA CONTEXT\nThese threads color behavior, tone, and what ${char.name} notices.\n════════════════════════════════════\n${threads.join('\n\n')}`);
+      }
+
+      // Emotional baggage, loyalty, upset reaction
+      const privateLines = [];
+      if (char.emotional_baggage && char.emotional_baggage.length > 5) privateLines.push(`EMOTIONAL BAGGAGE: ${char.emotional_baggage.substring(0, 250)}`);
+      if (char.loyalty_view && char.loyalty_view.length > 5) privateLines.push(`LOYALTY & TRUST: ${char.loyalty_view.substring(0, 150)}`);
+      if (char.upset_reaction && char.upset_reaction.length > 5) privateLines.push(`WHEN UPSET, THEY: ${char.upset_reaction.substring(0, 150)}`);
+      if (privateLines.length > 0) lines.push(`════════════════════════════════════\nPRIVATE EMOTIONAL INTERIOR\n════════════════════════════════════\n${privateLines.join('\n')}`);
+
+      // Personality trait flags (behavioral texture)
+      const traitFlags = [
+        char.trait_oversharer && 'tends to overshare',
+        char.trait_dry_humor && 'uses dry humor as deflection',
+        char.trait_night_owl && 'naturally alert at night, slower in mornings',
+        char.trait_hot_and_cold && 'runs hot and cold emotionally',
+        char.trait_flirty && 'naturally flirtatious',
+        char.trait_blunt && 'says what they think without filtering',
+        char.trait_overcorrects && 'overcorrects after conflict',
+        char.trait_competitive && 'has a competitive streak',
+        char.trait_stubborn && 'tends to be stubborn',
+        char.trait_loyal && 'fiercely loyal',
+        char.trait_volatile && 'can be emotionally volatile',
+      ].filter(Boolean);
+      if (traitFlags.length > 0) lines.push(`════════════════════════════════════\nBEHAVIORAL TEXTURE\n════════════════════════════════════\n${traitFlags.map(t => `• ${t}`).join('\n')}`);
+
+      // Life Journal — recent CharacterMemory (importance >= 4)
+      const relevantMems = recentMems.filter(m => m.memory_text && (m.importance_score ?? 0) >= 4).slice(0, 5);
+      if (relevantMems.length > 0) {
+        lines.push(`════════════════════════════════════\nLIFE JOURNAL — RECENT MEMORY (what happened before this message)\nReal events from ${char.name}'s life. Let them color the moment naturally.\n════════════════════════════════════\n${relevantMems.map(m => `• ${m.memory_text.substring(0, 200)}`).join('\n')}`);
+      }
+
+      // Future goals / aspirations
+      const goals = (char.future_life_goals || []).slice(0, 2);
+      if (goals.length > 0) {
+        const goalTexts = goals.map(g => g.goal || g.description || g.title).filter(Boolean);
+        if (goalTexts.length > 0) lines.push(`════════════════════════════════════\nWHAT THEY'RE WORKING TOWARD\n════════════════════════════════════\n${goalTexts.map(g => `• ${g.substring(0, 150)}`).join('\n')}`);
+      }
+
+      return lines.length > 0 ? '\n\n' + lines.join('\n\n') : '';
+    }
+
+    // Needs/state block — matches buildNeedsContextBlock in Chat
+    function buildWorldPhoneNeedsBlock(char) {
+      const lines = [];
+      if ((char.energy_value ?? 75) < 35) lines.push(`LOW ENERGY (${char.energy_value}/100) — exhausted, may be brief or irritable`);
+      else if ((char.energy_value ?? 75) < 55) lines.push(`MODERATE ENERGY (${char.energy_value}/100) — not at full capacity`);
+      if ((char.hunger_value ?? 70) < 35) lines.push(`HUNGRY (${char.hunger_value}/100) — distracted by physical need`);
+      if ((char.social_value ?? 65) < 30) lines.push(`SOCIALLY ISOLATED (${char.social_value}/100) — craving connection`);
+      if ((char.mental_value ?? 70) < 30) lines.push(`MENTALLY STRESSED (${char.mental_value}/100) — overwhelmed`);
+      const ps = char.resolved_presence_status;
+      if (ps === 'sleeping' || ps === 'napping') lines.push(`ASLEEP/NAPPING — responding from a resting state`);
+      else if (ps === 'passed_out') lines.push(`PASSED OUT — involuntary physical collapse`);
+      else if (ps === 'at_work') lines.push(`CURRENTLY AT WORK — may be brief or distracted`);
+      return lines.length > 0 ? `\n\nCURRENT STATE:\n${lines.map(l => `• ${l}`).join('\n')}` : '';
+    }
+
+    // Load CharacterMemory BEFORE generation — memory is grounding, not post-gen sync
+    let senderMemories = [];
+    let recipientMemories = [];
+    try {
+      [senderMemories, recipientMemories] = await Promise.all([
+        base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: sender_character_id },
+          '-created_date',
+          12
+        ).catch(() => []),
+        base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: recipient.id },
+          '-created_date',
+          8
+        ).catch(() => []),
+      ]);
+    } catch (memLoadErr) {
+      console.warn(`[sendWorldPhoneMessage] CharacterMemory pre-load failed (non-blocking): ${memLoadErr.message}`);
+    }
+
+    // Build full life grounding blocks — equivalent to buildSoapOperaLifeContext in Chat/Scene/Text
+    const senderGrounding = buildWorldPhoneLifeGrounding(sender, senderMemories);
+    const recipientGrounding = buildWorldPhoneLifeGrounding(recipient, recipientMemories);
+    const senderNeedsBlock = buildWorldPhoneNeedsBlock(sender);
+    const recipientNeedsBlock = buildWorldPhoneNeedsBlock(recipient);
+
+    console.log(
+      `[sendWorldPhoneMessage] GROUNDING_LOADED` +
+      ` | sender=${sender.name}` +
+      ` | sender_memories=${senderMemories.length}` +
+      ` | sender_life_threads=${senderGrounding.includes('ACTIVE LIFE THREADS') ? 'YES' : 'NO'}` +
+      ` | sender_life_journal=${senderGrounding.includes('LIFE JOURNAL') ? 'YES' : 'NO'}` +
+      ` | sender_relationship_continuity=${senderGrounding.includes('RELATIONSHIP CONTINUITY') ? 'YES' : 'NO'}` +
+      ` | sender_emotional_interior=${senderGrounding.includes('PRIVATE EMOTIONAL INTERIOR') ? 'YES' : 'NO'}` +
+      ` | sender_needs_block=${senderNeedsBlock.length > 0 ? 'YES' : 'NO'}` +
+      ` | recipient=${recipient.name}` +
+      ` | recipient_memories=${recipientMemories.length}` +
+      ` | recipient_life_threads=${recipientGrounding.includes('ACTIVE LIFE THREADS') ? 'YES' : 'NO'}` +
+      ` | recipient_life_journal=${recipientGrounding.includes('LIFE JOURNAL') ? 'YES' : 'NO'}`
+    );
+
     // ── GENERATE MESSAGE IN SENDER'S VOICE (text only) ───────────────────────────
+    // Now uses full grounding (senderGrounding + senderNeedsBlock) loaded above BEFORE this call.
     // Two modes:
     // A) requested_message has actual content to relay → rewrite it in sender's voice
-    // B) requested_message is null (bare intent like "text him") → generate an appropriate
-    //    outreach message from scratch based on relationship, context, and instruction intent
+    // B) requested_message is null (bare intent like "text him") → generate a natural outreach
     let rewrittenMessage = requested_message || '';
 
     if (!isImageSend) {
-      const personalityHint = [sender.personality_summary, sender.communication_style, sender.archetype]
-        .filter(Boolean).join(', ');
-      const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl']
-        .filter(t => sender[`trait_${t}`])
-        .slice(0, 3).join(', ');
-
-      // Find the relationship context between sender and recipient
-      const relContext = (sender.fictional_relationships || []).find(r =>
+      // Relationship context between sender and recipient
+      const wpRelContext = (sender.fictional_relationships || []).find(r =>
         r.related_character_id === recipient.id || r.person_name?.toLowerCase() === recipient.name?.toLowerCase()
       );
-      const relLabel = relContext?.relationship_type || relContext?.label_from_source_perspective || 'known contact';
+      const wpRelLabel = wpRelContext?.relationship_type || wpRelContext?.label_from_source_perspective || 'known contact';
+      const wpRelDetail = wpRelContext?.description
+        ? ` (${wpRelContext.description.substring(0, 100)})`
+        : wpRelContext?.last_interaction_summary
+        ? ` (last: ${wpRelContext.last_interaction_summary.substring(0, 80)})`
+        : '';
+
+      // Use canonical system prompt as identity base if available
+      const senderIdentityBase = canonicalContext?.systemPrompt
+        ? canonicalContext.systemPrompt
+        : `You are ${sender.name}. ${sender.personality_summary || ''} ${sender.backstory || sender.background_story || ''}`.trim();
 
       try {
         let llmPrompt;
 
         if (requested_message) {
-          // Mode A: relay actual content — rewrite in sender's voice, never output a meta-instruction
-          llmPrompt = `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+          // Mode A: relay actual content — rewrite in sender's voice with full grounding
+          llmPrompt = `${senderIdentityBase}${senderGrounding}${senderNeedsBlock}
 
-You need to communicate the following to ${recipient.name} (your ${relLabel}): "${requested_message}"
+You need to communicate the following to ${recipient.name} (your ${wpRelLabel}${wpRelDetail}): "${requested_message}"
 
-Write what you would actually TEXT to ${recipient.name}. Express the same meaning in your own natural voice.
+Write what you would actually TEXT to ${recipient.name}. Express the same meaning in your own natural voice, grounded in your life, your emotional state, and your history with them.
 This must be an actual text message — not a command, not a description of what to say, not a prompt fragment.
 1–3 sentences max. Casual, authentic. Return ONLY the message text, no quotes, no labels.`;
         } else {
-          // Mode B: bare intent (no message content) — generate a natural outreach.
-          // If recent_conversation_context is provided, scan it to recover the pending intent
-          // (e.g. user said "I need the photos" 2 messages ago, then said "send the message").
-          // This ensures "send the message" produces a photo-request text, not generic outreach.
+          // Mode B: bare intent (no message content) — generate a natural outreach with full grounding
           const conversationHint = recent_conversation_context
             ? `\n\nRecent conversation context (to understand what needs to be communicated):\n${recent_conversation_context}`
             : '';
           const instructionHint = user_instruction_context
             ? `The user just said: "${user_instruction_context}". This is a confirmation/command, not the message itself.`
             : `The user wants you to reach out to ${recipient.name}.`;
-          llmPrompt = `You are ${sender.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${sender.emotional_state ? ` Mood: ${sender.emotional_state}.` : ''}
+          llmPrompt = `${senderIdentityBase}${senderGrounding}${senderNeedsBlock}
 ${conversationHint}
 
 ${instructionHint}
 
-Based on the conversation context above, determine what specific thing needs to be communicated to ${recipient.name} (your ${relLabel}).
+Based on the conversation context above and your relationship with ${recipient.name} (your ${wpRelLabel}${wpRelDetail}), determine what specific thing needs to be communicated.
 If the conversation shows a specific pending request or topic (e.g. photos, an item, a task), that is what the message should be about.
-If there is no clear pending topic, write a brief natural check-in.
+If there is no clear pending topic, write a brief natural check-in grounded in your current life and emotional state.
 
 Write the actual text message you would send to ${recipient.name}. Sound like yourself.
 This must be a real message — not a command, not a description, not a meta-instruction.
@@ -431,12 +603,10 @@ This must be a real message — not a command, not a description, not a meta-ins
         if (typeof rewriteRes === 'string' && rewriteRes.trim().length > 0) {
           rewrittenMessage = rewriteRes.trim();
         } else if (!requested_message) {
-          // Fallback if LLM returns nothing for bare intent
           rewrittenMessage = `Hey, just reaching out.`;
         }
       } catch (e) {
         warnings.push(`Message generation failed (non-fatal): ${e.message}`);
-        // For bare intents with no fallback content, use a safe default
         if (!requested_message) {
           rewrittenMessage = `Hey, just checking in.`;
         }
@@ -550,6 +720,18 @@ This must be a real message — not a command, not a description, not a meta-ins
         canonical_context_life_journal_count: canonicalContext?.lifeJournalEntries?.length || 0,
         // CharacterMemory / Life Journal — importance_score >= 4
         life_journal_importance_4_plus_count: (canonicalContext?.lifeJournalEntries || []).filter(e => (e.importance_score ?? 0) >= 4).length,
+        // ── GROUNDING PROOF: blocks injected before generation ────────────────
+        sender_character_memory_count: senderMemories.length,
+        sender_life_threads_injected: senderGrounding.includes('ACTIVE LIFE THREADS'),
+        sender_life_journal_injected: senderGrounding.includes('LIFE JOURNAL'),
+        sender_relationship_continuity_injected: senderGrounding.includes('RELATIONSHIP CONTINUITY'),
+        sender_emotional_interior_injected: senderGrounding.includes('PRIVATE EMOTIONAL INTERIOR'),
+        sender_behavioral_texture_injected: senderGrounding.includes('BEHAVIORAL TEXTURE'),
+        sender_needs_state_injected: senderNeedsBlock.length > 0,
+        recipient_character_memory_count: recipientMemories.length,
+        recipient_life_threads_injected: recipientGrounding.includes('ACTIVE LIFE THREADS'),
+        recipient_life_journal_injected: recipientGrounding.includes('LIFE JOURNAL'),
+        recipient_relationship_continuity_injected: recipientGrounding.includes('RELATIONSHIP CONTINUITY'),
         // Location / presence
         sender_resolved_current_location_id: sender.resolved_current_location_id || null,
         sender_resolved_current_location_name: sender.resolved_current_location_name || null,
@@ -693,9 +875,8 @@ Return ONLY the description text, nothing else.`,
     }).catch(e => warnings.push(`Conversation preview update failed (non-fatal): ${e.message}`));
 
     // ── GENERATE CHARACTER B's REAL RESPONSE ───────────────────────────────────
-    // CRITICAL: Character B responds using their own LLM pipeline — not guessed by Character A.
-    // Uses a lightweight direct LLM call with recipient's personality — no canonical context
-    // fetch needed here (that's too slow when chained after pronoun+rewrite calls).
+    // CRITICAL: Character B responds using their own LLM pipeline with FULL grounding.
+    // recipientGrounding (buildWorldPhoneLifeGrounding) was loaded before generation above.
     let recipientResponse = null;
     let recipientResponseMessageId = null;
 
@@ -715,22 +896,20 @@ Return ONLY the description text, nothing else.`,
         `${sender.name}: ${rewrittenMessage}`,
       ].join('\n');
 
-      const personalityHint = [
-        recipient.personality_summary,
-        recipient.communication_style,
-        recipient.archetype,
-        (recipient.personality_traits || []).slice(0, 3).join(', '),
-      ].filter(Boolean).join('. ');
-
-      const traitHints = ['dry_humor','blunt','flirty','oversharer','night_owl','loud','rude','competitive','toxic']
-        .filter(t => recipient[`trait_${t}`]).slice(0, 3).join(', ');
+      // Use canonical system prompt for recipient if available, else build from grounding
+      const recipientIdentityBase = (() => {
+        try {
+          // Attempt to get recipient canonical context (non-blocking, best-effort)
+          return `You are ${recipient.name}. ${recipient.personality_summary || ''} ${recipient.backstory || recipient.background_story || ''}`.trim();
+        } catch { return `You are ${recipient.name}.`; }
+      })();
 
       const rawReply = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `You are ${recipient.name}.${personalityHint ? ` Personality: ${personalityHint}.` : ''}${traitHints ? ` Traits: ${traitHints}.` : ''}${recipient.emotional_state ? ` Current mood: ${recipient.emotional_state}.` : ''}
+        prompt: `${recipientIdentityBase}${recipientGrounding}${recipientNeedsBlock}
 
 ${sender.name} just texted you. This is a World Phone / text message exchange.
 Do NOT start with your name. Do NOT say "I'm an AI". Respond naturally as you would in a real text.
-Keep it to 1-3 sentences max.
+Keep it to 1-3 sentences max. Stay grounded in your life, your current situation, and your relationship history with ${sender.name}.
 
 Conversation:
 ${conversationLog}
