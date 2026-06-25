@@ -347,10 +347,62 @@ Pronouns: ${charPronouns} | Subject: ${subjectPronoun} | Object: ${objectPronoun
 • No heteronormative defaults — do NOT assume opposite-gender attraction
 • No pronoun inference from name or appearance
 
+════════════════════════════════════
+NARRATIVE REALITY GROUNDING — ABSOLUTE ENFORCEMENT
+This rule overrides all other narrative instincts, world knowledge, and associations.
+════════════════════════════════════
+THE AUTHORITATIVE WORLD STATE IS THE ONLY SOURCE OF TRUTH.
+Every descriptive detail in this narrative must be directly supported by the data above.
+
+WHAT IS PERMITTED:
+• The character's current canonical location (as stated in the SITUATION block above)
+• The active environment for that location (as explicitly named above — not inferred)
+• The current scene details derived from the location name, category, and description above
+• Characters physically present and listed above
+• Objects and activities that naturally belong to this specific location type
+• Current time-of-day, weather (if stated above), and needs state
+
+WHAT IS FORBIDDEN:
+• Importing scenery, objects, equipment, sounds, smells, people, businesses, or activities
+  from any other location — even if that location is related to this character
+• Placing any person (family member, coworker, friend, contact) into this scene
+  unless they are explicitly listed as present above
+• Inventing environmental details that are not supported by the location name/category/description above
+• Using generic words in the narrative as evidence of a specific named location:
+  — "yard" in dialogue or narration does NOT mean VGC Recovery Yard or any named yard
+  — "shop" does NOT mean a business location
+  — "office" does NOT mean Business Operations or any named office
+  — "campus" does NOT mean North Campus Quarters or any named campus
+  — "garage" does NOT mean a repair shop
+  — "home" / "house" does NOT mean any specific residence unless the location is confirmed above
+  — Any generic noun used in narration is ORDINARY LANGUAGE — never a location reference
+• Filling in unknown environmental details with typical, familiar, probable, or associated details
+  — If the location description above does not specify what is in a room, yard, or area, keep it generic
+  — Do NOT add scrap metal, machinery, equipment, industrial elements, or any specific objects
+    unless the location description above explicitly includes them
+  — Do NOT add businesses, storefronts, or nearby places unless explicitly named in the location above
+• Creating a scene that contradicts the authoritative location type:
+  — A residential home location must be described as residential, not industrial or commercial
+  — A workplace location must be described as that specific workplace, not generalized
+  — Do NOT blend two locations together
+
+CHARACTER PRESENCE RULE — ABSOLUTE:
+A character (family member, coworker, friend, romantic partner, neighbor, anyone) may only appear in this
+narrative if they are physically present at the authoritative location right now.
+Relationships alone are NOT evidence of presence. Knowing a person exists is NOT evidence they are here.
+The character is alone unless the situation block above confirms otherwise.
+
+UNKNOWN = GENERIC:
+If information about the environment, nearby objects, or surroundings is not provided above,
+describe that aspect generically or omit it entirely.
+A sparse, accurate narrative is always correct.
+A rich, invented narrative is always a failure.
+════════════════════════════════════
+
 CRITICAL RULES:
 1. NEVER contradict the situation block above — it is the ground truth.
 2. Write in present tense, third-person using the LOCKED pronouns above.
-3. Make it immersive and specific to the location and time.
+3. Make it immersive and specific to the confirmed location and time — no invented details.
 4. Let the LIFE THREADS above color tone and behavior naturally — not every thread needs to surface, but they should shape the moment.
 5. No dialogue. No speculation about the future. Just this exact moment.
 6. 2-4 sentences only. No preamble, no labels.

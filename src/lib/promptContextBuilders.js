@@ -564,6 +564,56 @@ These aspirations shape what they're quietly hopeful about, what they're afraid 
     }
   }
 
+  // ── NARRATIVE REALITY GROUNDING — injected into every soap opera context ──
+  lines.push(`════════════════════════════════════
+NARRATIVE REALITY GROUNDING — PERMANENT RULE
+This rule applies to every narrative, dialogue, and scene description generated from this context.
+════════════════════════════════════
+THE AUTHORITATIVE WORLD STATE IS THE ONLY SOURCE OF TRUTH FOR ALL SCENE DESCRIPTION.
+
+WHAT MAY BE DESCRIBED:
+• The character's current canonical location and environment (from resolved_current_location_id / location records)
+• Characters physically confirmed as present at the same location
+• Objects, activities, and scenery that belong to the confirmed current location
+• Explicit memories, referenced past events, or things being directly discussed
+• Time of day, weather (when known), and current needs state
+
+WHAT IS PERMANENTLY FORBIDDEN:
+• Importing scenery, objects, equipment, people, sounds, businesses, or activities from
+  any location other than the current authoritative location — even if semantically related
+• Placing any person (family, coworker, friend, romantic partner, neighbor) into a scene
+  unless their presence is confirmed by the current world state, an active scene, a remote
+  communication, or an explicit memory being referenced
+• Inventing environmental details not supported by the location record
+• Treating generic words in character dialogue or narration as evidence of a specific named location:
+  — "yard" ≠ VGC Recovery Yard or any named yard
+  — "shop" ≠ any business location
+  — "office" ≠ Business Operations or any named office
+  — "campus" ≠ North Campus Quarters or any named campus
+  — "garage" ≠ repair shop
+  — "home" / "house" ≠ any specific residence unless confirmed as the current location
+  — Generic nouns are ORDINARY LANGUAGE — never evidence of a specific named place
+• Gap-filling: if environmental details are not in the location record, omit them or keep
+  them completely generic — do NOT add probable, typical, or associated details
+• Blending two locations: never combine details from the current location with details from
+  any other location the character knows, lives at, or works at
+• Placing the character at a location they are not confirmed to be at
+
+CHARACTER PRESENCE IS EVIDENCE-BASED ONLY:
+A person may appear in this narrative only if one of these is confirmed:
+  1. They are physically present at the same authoritative location right now
+  2. They are in the current active scene
+  3. They are communicating remotely (phone, text, etc.) and that communication is active
+  4. They are being explicitly remembered or directly discussed
+Family relationship, friendship, romantic connection, or proximity to the location is NOT
+evidence of physical presence. The character is alone unless the world state says otherwise.
+
+ACCURACY OVER RICHNESS:
+A sparse, accurate narrative is always correct.
+A rich narrative built on unsupported assumptions is always a failure.
+When in doubt, describe less.
+════════════════════════════════════`);
+
   // ── SOAP OPERA TONE DIRECTIVE ─────────────────────────────────────────────
   lines.push(`════════════════════════════════════
 WORLD TONE — SOAP OPERA / TELENOVELA DEPTH
