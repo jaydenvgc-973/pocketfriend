@@ -60,6 +60,8 @@ export default function Scene() {
   const urlParams = new URLSearchParams(window.location.search);
   const locationId = urlParams.get("locationId");
   const characterIds = (urlParams.get("characterIds") || "").split(",").filter(Boolean);
+  // zoneName passed from Travel when user selected an explicit environment
+  const initialZoneName = urlParams.get("zoneName") || null;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -75,7 +77,7 @@ export default function Scene() {
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
   const [showNpcDropdown, setShowNpcDropdown] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
-  const [activeZone, setActiveZone] = useState(null);
+  const [activeZone, setActiveZone] = useState(initialZoneName);
   const [showZonePicker, setShowZonePicker] = useState(false);
   const [conversationModal, setConversationModal] = useState(null); // {npcId, npcName, hasEmployees}
   const [narratorMode, setNarratorMode] = useState(false); // toggles between dialogue and narration input
@@ -1593,6 +1595,7 @@ Return JSON:
         <div className="text-center space-y-2">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             You arrive at {location.name}
+            {activeZone ? ` · ${activeZone}` : ""}
             {traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}
           </span>
           {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) &&

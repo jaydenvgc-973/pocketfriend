@@ -538,6 +538,51 @@
         ]
       }
     },
+    "environments": {
+      "type": "array",
+      "description": "Explicit user-configured environments for mixed-use locations. Each environment is user-defined \u2014 never inferred from zone names, category, or any other heuristic. A location has mixed-use environments ONLY when this array is non-empty.",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique stable ID for this environment (e.g. uuid or slug)"
+          },
+          "name": {
+            "type": "string",
+            "description": "User-facing environment name (e.g. 'Business Operations', 'North Campus Quarters')"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "operational",
+              "residential"
+            ],
+            "description": "operational = subject to business hours; residential = always available regardless of business hours"
+          },
+          "follows_business_hours": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, this environment respects the location operating_hours. When false (residential), travel is never blocked by hours."
+          },
+          "zone_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Zone names from the location zones array that belong to this environment. User-assigned, never auto-classified."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "zone_names"
+        ]
+      }
+    },
     "image_urls": {
       "type": "array",
       "items": {

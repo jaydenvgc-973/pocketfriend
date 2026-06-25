@@ -1,82 +1,39 @@
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Building2, Home, Clock, CheckCircle } from "lucide-react";
+import { X, Building2, Home, Clock } from "lucide-react";
 import { createPortal } from "react-dom";
 
 /**
- * Detects whether a location has mixed-use environments.
- * A location is mixed-use if it has zones tagged with environment_type,
- * OR if it matches the known VGC Recovery Yard pattern (has both operational zones
- * and residential zones such as "North Campus Quarters").
+ * getLocationEnvironments
  *
- * Returns an array of environment objects:
- *   { id, label, description, type: 'business'|'residential', zones, alwaysAvailable }
+ * Returns the explicit user-configured environments from a LocationReference record.
+ * STRICT RULE: No inference. No regex. No keyword matching. No auto-classification.
+ * A location has environments ONLY when location.environments is a non-empty array.
+ * Absence of the field means no mixed-use environments exist.
+ */
+export function getLocationEnvironments(location) {
+  if (!location) return [];
+  const envs = location.environments;
+  if (!Array.isArray(envs) || envs.length === 0) return [];
+  return envs;
+}
+
+/**
+ * @deprecated Use getLocationEnvironments instead.
+ * Kept as a re-export alias so any import of detectMixedUseEnvironments
+ * silently receives the new explicit-only implementation.
+ * All callers that previously used name-based detection will now receive []
+ * for any location without explicit environment metadata.
  */
 export function detectMixedUseEnvironments(location) {
-  if (!location) return [];
-  const zones = location.zones || [];
-
-  // Detect residential zones by name patterns
-  const RESIDENTIAL_ZONE_PATTERNS = [
-    /north campus quarters/i,
-    /man cave/i,
-    /residential/i,
-    /quarters/i,
-    /living quarters/i,
-    /apartment/i,
-    /suite/i,
-  ];
-
-  const residentialZones = zones.filter(z =>
-    RESIDENTIAL_ZONE_PATTERNS.some(p => p.test(z.zone_name))
-  );
-
-  const businessZones = zones.filter(z =>
-    !RESIDENTIAL_ZONE_PATTERNS.some(p => p.test(z.zone_name))
-  );
-
-  // Only return mixed-use if there are both types OR explicit env metadata
-  if (residentialZones.length === 0) return [];
-  if (businessZones.length === 0 && residentialZones.length === zones.length) return [];
-
-  const environments = [];
-
-  if (businessZones.length > 0) {
-    environments.push({
-      id: "business_operations",
-      label: "Business Operations",
-      description: "Follows operating hours. Normal business travel rules apply.",
-      type: "business",
-      zones: businessZones,
-      alwaysAvailable: false,
-    });
-  }
-
-  if (residentialZones.length > 0) {
-    // Find primary residential zone name
-    const primaryZone = residentialZones.find(z => /north campus quarters/i.test(z.zone_name))
-      || residentialZones[0];
-
-    environments.push({
-      id: "residential",
-      label: primaryZone.zone_name,
-      description: "Residential environment. Available regardless of business operating hours.",
-      type: "residential",
-      zones: residentialZones,
-      alwaysAvailable: true,
-    });
-  }
-
-  return environments;
+  return getLocationEnvironments(location);
 }
 
 export default function EnvironmentSelectorModal({ location, isOpen, onClose, onSelect, isLocationOpenNow }) {
   if (!isOpen || !location) return null;
 
-  const environments = detectMixedUseEnvironments(location);
+  const environments = getLocationEnvironments(location);
   if (environments.length === 0) return null;
-
-  const businessClosed = isLocationOpenNow === false;
 
   return createPortal(
     <AnimatePresence>
@@ -115,8 +72,8 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
             {/* Environment options */}
             <div className="px-4 pb-5 space-y-3">
               {environments.map((env) => {
-                const isBusiness = env.type === "business";
-                const isBlocked = isBusiness && businessClosed;
+                const isResidential = env.type === "residential";
+                const isBlocked = !isResidential && env.follows_business_hours !== false && isLocationOpenNow === false;
 
                 return (
                   <button
@@ -135,12 +92,12 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      {isBusiness
+                      {!isResidential
                         ? <Building2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
                         : <Home className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                       }
-                      <span className="text-sm font-semibold text-foreground">{env.label}</span>
-                      {env.alwaysAvailable && (
+                      <span className="text-sm font-semibold text-foreground">{env.name}</span>
+                      {isResidential && (
                         <span className="ml-auto text-[10px] font-medium text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full">
                           Always Open
                         </span>
@@ -151,10 +108,9 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed pl-6">{env.description}</p>
-                    {env.zones.length > 0 && (
+                    {env.zone_names?.length > 0 && (
                       <p className="text-[10px] text-muted-foreground/60 pl-6">
-                        {env.zones.map(z => z.zone_name).join(" · ")}
+                        {env.zone_names.join(" · ")}
                       </p>
                     )}
                   </button>

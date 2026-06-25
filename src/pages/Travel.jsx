@@ -17,7 +17,7 @@ import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilit
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import RealLocationModal from "@/components/travel/RealLocationModal";
-import EnvironmentSelectorModal, { detectMixedUseEnvironments } from "@/components/location/EnvironmentSelectorModal";
+import EnvironmentSelectorModal, { getLocationEnvironments } from "@/components/location/EnvironmentSelectorModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -374,8 +374,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   const handleTravel = async () => {
     if (!selectedLocation) return;
     const isOpen = isLocationActiveNow(selectedLocation);
-    // Residential environments bypass business hours
-    const isResidentialBypass = selectedEnvironment?.type === 'residential';
+    // Residential environments (explicit metadata only) bypass business hours
+    const isResidentialBypass = selectedEnvironment?.type === 'residential' && selectedEnvironment?.follows_business_hours === false;
     if (isOpen === false && !isResidentialBypass) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
@@ -400,9 +400,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const travelMs = 2000 + Math.random() * 6000;
     await new Promise(r => setTimeout(r, travelMs));
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
-    if (selectedEnvironment?.zones?.[0]?.zone_name) {
-      params.set("zoneName", selectedEnvironment.zones[0].zone_name);
-    }
+    // Pass the first zone assigned to this environment so Scene starts in the correct zone
+    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    if (envZone) params.set("zoneName", envZone);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -580,7 +580,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             locations={sortedLocations}
             selectedLocation={selectedLocation}
             onSelect={(loc) => {
-              const envs = detectMixedUseEnvironments(loc);
+              const envs = getLocationEnvironments(loc);
               if (envs.length > 0) {
                 setPendingEnvironmentLocation(loc);
                 setSelectedEnvironment(null);
@@ -619,8 +619,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                         onClick={() => { setPendingEnvironmentLocation(selectedLocation); setShowEnvironmentModal(true); }}
                         className="flex items-center gap-1 text-xs text-primary hover:underline"
                       >
-                        <span>{selectedEnvironment.type === 'business' ? '🏢' : '🏠'}</span>
-                        <span>{selectedEnvironment.label}</span>
+                        <span>{selectedEnvironment.type === 'residential' ? '🏠' : '🏢'}</span>
+                        <span>{selectedEnvironment.name}</span>
                         <span className="text-muted-foreground">· change</span>
                       </button>
                     ) : (
@@ -639,10 +639,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const isClosed = isLocationActiveNow(selectedLocation) === false;
 
                   // For mixed-use locations: residential environments bypass business closing.
-                  const isResidentialEnv = selectedEnvironment?.type === 'residential';
+                  const isResidentialEnv = selectedEnvironment?.type === 'residential' && selectedEnvironment?.follows_business_hours === false;
                   if (isClosed && !isResidentialEnv) {
-                    // Check if mixed-use — if so, allow re-selection of environment
-                    const envs = detectMixedUseEnvironments(selectedLocation);
+                    // Check if explicitly configured mixed-use — if so, allow re-selection of environment
+                    const envs = getLocationEnvironments(selectedLocation);
                     if (envs.length > 0) {
                       return (
                         <div className="space-y-2">
