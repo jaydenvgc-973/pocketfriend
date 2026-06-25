@@ -1572,6 +1572,75 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
     const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
+    // ── PROMPT NAME ENFORCEMENT ──────────────────────────────────────────────
+    // Ensures the resolved subject's real name appears in the final prompt.
+    // Called AFTER subject resolution so the correct name is known.
+    //
+    // Rules:
+    //   "[CHARACTER] sitting at the table"  → "[CHARACTER] Vick Servicio sitting at the table"
+    //   "[character] sitting at the table"  → "[character] Vick Servicio sitting at the table"
+    //   "sitting at the table"              → "[CHARACTER] Vick Servicio sitting at the table"
+    //   "[CHARACTER] Vick Servicio sitting" → unchanged (name already present)
+    //   "[Joint] X and Y together"          → validated that both names are present
+    //
+    // For multi-subject: every resolved subject name must appear.
+    const enforceSubjectNamesInPrompt = (prompt, resolvedPrimaryName, resolvedAdditionalNames = []) => {
+      if (!resolvedPrimaryName) return prompt; // inanimate or no-subject — leave unchanged
+
+      let result = prompt;
+      const allSubjectNames = [resolvedPrimaryName, ...resolvedAdditionalNames].filter(Boolean);
+
+      // Check if each resolved name is already present in the prompt (case-insensitive)
+      const promptLowerCheck = result.toLowerCase();
+      const allNamesPresent = allSubjectNames.every(name =>
+        promptLowerCheck.includes(name.toLowerCase())
+      );
+
+      if (allNamesPresent) return result; // already correct
+
+      // Single or primary subject: fix the [character] tag or prepend
+      const primaryNameInPrompt = promptLowerCheck.includes(resolvedPrimaryName.toLowerCase());
+
+      if (!primaryNameInPrompt) {
+        // Replace "[CHARACTER]", "[character]", "[Character]" (tag only) with "[CHARACTER] Name"
+        const taggedReplace = result.replace(/^\[character\]/i, `[CHARACTER] ${resolvedPrimaryName}`);
+        if (taggedReplace !== result) {
+          result = taggedReplace;
+        } else if (/^\[character\]/i.test(result.trim())) {
+          // Handles whitespace edge cases
+          result = result.trim().replace(/^\[character\]/i, `[CHARACTER] ${resolvedPrimaryName}`);
+        } else if (!result.match(/^\[CHARACTER\]/i)) {
+          // No tag at all — prepend the full subject header
+          result = `[CHARACTER] ${resolvedPrimaryName} ${result}`;
+        } else {
+          // Tag present but name not following — inject name right after tag
+          result = result.replace(/(\[CHARACTER\])\s*/i, `$1 ${resolvedPrimaryName} `);
+        }
+        console.log(`[SubjectNameEnforcement] Injected primary name "${resolvedPrimaryName}" into prompt`);
+      }
+
+      // Multi-subject: ensure additional names are present too
+      if (resolvedAdditionalNames.length > 0) {
+        const resultLower = result.toLowerCase();
+        const missingNames = resolvedAdditionalNames.filter(
+          name => !resultLower.includes(name.toLowerCase())
+        );
+        if (missingNames.length > 0) {
+          // Append missing co-subject names before the action phrase
+          // e.g. "and [Name]" inserted after primary subject name
+          const insertAfter = resolvedPrimaryName;
+          const insertIdx = result.toLowerCase().indexOf(insertAfter.toLowerCase()) + insertAfter.length;
+          const before = result.slice(0, insertIdx);
+          const after = result.slice(insertIdx);
+          result = `${before} and ${missingNames.join(' and ')}${after}`;
+          console.log(`[SubjectNameEnforcement] Injected co-subject name(s) [${missingNames.join(', ')}] into prompt`);
+        }
+      }
+
+      console.log(`[SubjectNameEnforcement] Final prompt: "${result.substring(0, 120)}"`);
+      return result;
+    };
+
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
 
@@ -1656,7 +1725,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         resolvedAdditionalCharacterIds = [];
       }
 
-      console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
+      // ── ENFORCE SUBJECT NAMES IN PROMPT ────────────────────────────────────
+      // Resolve names for the primary and additional subjects to validate prompt naming.
+      const _primarySubjectChar = resolvedCharacterId
+        ? (resolvedCharacterId === characterId ? character : allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId))
+        : null;
+      const _primarySubjectName = _primarySubjectChar?.name || null;
+      const _additionalSubjectNames = resolvedAdditionalCharacterIds
+        .map(id => allCachedCharsForSubjects.find(c => c.id === id)?.name)
+        .filter(Boolean);
+      const validatedPrompt = enforceSubjectNamesInPrompt(finalImageGenPrompt, _primarySubjectName, _additionalSubjectNames);
+
+      console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${validatedPrompt.substring(0, 80)}"`);
 
       let imgMsg;
       try {
@@ -1677,7 +1757,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           reply_to_message_id: userMsg?.id || null,
           generation_lock_id: null,  // image generation doesn't use generation lock
           generation_context: {
-            prompt: imageGenPrompt,
+            prompt: validatedPrompt,
             character_id: resolvedCharacterId,
             character_reference_images: resolvedCharRefs,
           },
@@ -1691,7 +1771,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
       }
       const targetMsgId = imgMsg.id;
-      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${finalImageGenPrompt.substring(0, 80)}"`);
+      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${validatedPrompt.substring(0, 80)}"`);
       // Resolve primary subject name for dispatch (may differ from sender when B is the subject)
       const primarySubjectChar = resolvedCharacterId && resolvedCharacterId !== characterId
         ? allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId)
@@ -1699,7 +1779,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       setTimeout(() => dispatchImageGeneration({
         targetMsgId,
-        imageGenPrompt: finalImageGenPrompt,
+        imageGenPrompt: validatedPrompt,
         charRefs: resolvedCharRefs,
         userRefImages,
         useUserRefs: false,
