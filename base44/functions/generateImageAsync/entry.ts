@@ -383,7 +383,7 @@ The face appearance is the ONLY data used from these references.` : `No referenc
 `;
     }
     if (hasUser) {
-      preamble += `Images ${userRefStart}–${userEnd}: User identity reference — match face, skin tone, hair, body type only.
+      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY REFERENCE PHOTOS — User appearance. Match face, skin tone, hair, body type only. ⛔ FACE RESEMBLANCE MANDATORY — do NOT use a generic face.
 
 `;
     }
@@ -488,8 +488,9 @@ The character's face is the ONLY data. Their body, pose, and position in the sce
     }
 
     if (hasUser) {
-      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
-Extract: face, skin tone, hair, body type. Discard: background, lighting, camera angle.
+      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY REFERENCE PHOTOS — User appearance.
+Extract ONLY: face bone structure, skin tone, hair color/length/style, body type. ⛔ DISCARD: pose, background, clothing, lighting.
+⚠️ FACE RESEMBLANCE MANDATORY: the user's face in this image MUST match images ${userRefStart}–${userEnd} exactly. Do NOT substitute a generic face.
 
 `;
     }
@@ -743,7 +744,25 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   }
 
   if (hasUser && subjectType !== 'joint') {
-    identityLock += `\n\nUSER IDENTITY:\n${hasUser ? `Images ${userRefStart}–${userEnd} are this exact person's photos.\nMatch: face structure, skin tone, hair, body type.` : userAppearanceLockText ? `No reference photos. Canonical appearance (ABSOLUTE — do NOT default to any ethnicity/gender/body type):\n${userAppearanceLockText}` : `No reference photos. Render as a realistic human. ⛔ DO NOT default to Caucasian/white/female.`}\n✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
+    identityLock += `\n\nUSER IDENTITY — "${userWorldName || 'the user'}":\n${hasUser
+      ? `Images ${userRefStart}–${userEnd} are FACE/IDENTITY REFERENCE PHOTOGRAPHS of this specific person.
+Extract ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.
+
+════════════════════════════════════════════════════════════
+⛔ FACE RESEMBLANCE IS MANDATORY — NOT OPTIONAL
+════════════════════════════════════════════════════════════
+The face in this image MUST be recognizably the same person as shown in reference images ${userRefStart}–${userEnd}.
+Preserve EXACTLY: facial bone structure, nose shape, jaw shape, brow ridge, eye spacing, lip shape, complexion, hairline, expression style.
+⛔ DO NOT generate a "similar" person, lookalike, or stock photo person.
+⛔ DO NOT average the face toward a generic ideal.
+⛔ DO NOT let the outfit, environment, or scene styling influence facial structure.
+GENERATION INVALID if the face is not recognizably the same person shown in images ${userRefStart}–${userEnd}.`
+      : userAppearanceLockText
+      ? `No reference photos. Canonical appearance (ABSOLUTE — do NOT default to any ethnicity/gender/body type):\n${userAppearanceLockText}`
+      : `No reference photos. Render as a realistic human. ⛔ DO NOT default to Caucasian/white/female.`
+    }
+✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
   }
 
   if (isSelfieMode) {
