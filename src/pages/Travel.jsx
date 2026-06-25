@@ -17,6 +17,7 @@ import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilit
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import RealLocationModal from "@/components/travel/RealLocationModal";
+import EnvironmentSelectorModal, { detectMixedUseEnvironments } from "@/components/location/EnvironmentSelectorModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -44,6 +45,9 @@ export default function Travel() {
   const [wakeUpModal, setWakeUpModal] = useState(null);
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [showRealLocationModal, setShowRealLocationModal] = useState(false);
+  const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
+  const [pendingEnvironmentLocation, setPendingEnvironmentLocation] = useState(null);
+  const [selectedEnvironment, setSelectedEnvironment] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);
@@ -137,6 +141,11 @@ export default function Travel() {
   // and character selector render from locationsData directly without coordinates.
   // Coordinates are only needed for LivePresenceMap pin rendering.
   // Called inside the showMap toggle handler below.
+
+  // Clear environment selection when location is deselected
+  useEffect(() => {
+    if (!selectedLocation) setSelectedEnvironment(null);
+  }, [selectedLocation]);
 
   // Close popup on outside click/tap or Escape key
   useEffect(() => {
@@ -365,7 +374,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   const handleTravel = async () => {
     if (!selectedLocation) return;
     const isOpen = isLocationActiveNow(selectedLocation);
-    if (isOpen === false) {
+    // Residential environments bypass business hours
+    const isResidentialBypass = selectedEnvironment?.type === 'residential';
+    if (isOpen === false && !isResidentialBypass) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
         character: { id: "closed", name: selectedLocation.name, avatar_url: null },
@@ -389,6 +400,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const travelMs = 2000 + Math.random() * 6000;
     await new Promise(r => setTimeout(r, travelMs));
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
+    if (selectedEnvironment?.zones?.[0]?.zone_name) {
+      params.set("zoneName", selectedEnvironment.zones[0].zone_name);
+    }
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -565,7 +579,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
           <TravelLocationGrid
             locations={sortedLocations}
             selectedLocation={selectedLocation}
-            onSelect={setSelectedLocation}
+            onSelect={(loc) => {
+              const envs = detectMixedUseEnvironments(loc);
+              if (envs.length > 0) {
+                setPendingEnvironmentLocation(loc);
+                setSelectedEnvironment(null);
+                setShowEnvironmentModal(true);
+              } else {
+                setSelectedLocation(loc);
+              }
+            }}
             characters={mapCharacters}
             presenceEntities={allPresenceEntities}
           />
@@ -589,11 +612,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
                     <MapPin className="w-5 h-5 text-primary" />
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-foreground">{selectedLocation.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">
-                      {selectedCharacterIds.length === 0 ? "Going alone" : `${selectedCharacterIds.length + 1} people`}
-                    </p>
+                    {selectedEnvironment ? (
+                      <button
+                        onClick={() => { setPendingEnvironmentLocation(selectedLocation); setShowEnvironmentModal(true); }}
+                        className="flex items-center gap-1 text-xs text-primary hover:underline"
+                      >
+                        <span>{selectedEnvironment.type === 'business' ? '🏢' : '🏠'}</span>
+                        <span>{selectedEnvironment.label}</span>
+                        <span className="text-muted-foreground">· change</span>
+                      </button>
+                    ) : (
+                      <p className="text-xs text-muted-foreground capitalize">
+                        {selectedCharacterIds.length === 0 ? "Going alone" : `${selectedCharacterIds.length + 1} people`}
+                      </p>
+                    )}
                   </div>
                   <button onClick={() => setSelectedLocation(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
                     <span className="text-base leading-none">✕</span>
@@ -604,7 +638,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const isHome = selectedLocation.category === "home";
                   const isClosed = isLocationActiveNow(selectedLocation) === false;
 
-                  if (isClosed) {
+                  // For mixed-use locations: residential environments bypass business closing.
+                  const isResidentialEnv = selectedEnvironment?.type === 'residential';
+                  if (isClosed && !isResidentialEnv) {
+                    // Check if mixed-use — if so, allow re-selection of environment
+                    const envs = detectMixedUseEnvironments(selectedLocation);
+                    if (envs.length > 0) {
+                      return (
+                        <div className="space-y-2">
+                          <p className="text-xs text-amber-400">Business Operations are currently closed.</p>
+                          <button
+                            onClick={() => { setPendingEnvironmentLocation(selectedLocation); setShowEnvironmentModal(true); }}
+                            className="w-full py-2 rounded-xl border border-primary/40 text-xs text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            Choose a different environment →
+                          </button>
+                        </div>
+                      );
+                    }
                     return (
                       <div className="text-center py-1">
                         <p className="text-xs text-amber-400">{selectedLocation.name} is currently closed.</p>
@@ -792,6 +843,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         onConfirm={(locationData) => {
           setShowRealLocationModal(false);
           handleRealLocationConfirm(locationData);
+        }}
+      />
+
+      <EnvironmentSelectorModal
+        location={pendingEnvironmentLocation}
+        isOpen={showEnvironmentModal}
+        isLocationOpenNow={pendingEnvironmentLocation ? isLocationOpen(pendingEnvironmentLocation) : null}
+        onClose={() => {
+          setShowEnvironmentModal(false);
+          setPendingEnvironmentLocation(null);
+        }}
+        onSelect={(env) => {
+          setSelectedEnvironment(env);
+          setSelectedLocation(pendingEnvironmentLocation);
+          setPendingEnvironmentLocation(null);
+          setShowEnvironmentModal(false);
         }}
       />
 
