@@ -48,12 +48,22 @@ const THIRD_PARTY_SUBJECT_PATTERNS = [
 
 /**
  * Patterns indicating a room, object, place, or inanimate subject — no characters.
+ *
+ * CRITICAL: These must be INTENT-specific — requiring explicit "photo/picture OF [place]" phrasing.
+ * DO NOT use bare noun phrases like "the room" or "the space" — these appear in normal character
+ * scene prompts ("looking out into the room", "sitting in the space") and would wrongly classify
+ * character scenes as inanimate, causing characterId to be set to null and identity to be lost.
  */
 const INANIMATE_SUBJECT_PATTERNS = [
+  // "picture/photo/image of the bedroom" — explicit photo-of-room request
   /\b(picture|photo|image|pic)\s+of\s+(the|your|his|her|my)\s+(room|bedroom|kitchen|living room|bathroom|office|house|apartment|place|car|desk|view|window|closet|setup)\b/i,
+  // "picture of an object/scene/area" — explicit inanimate subject request
   /\bpicture?\s+of\s+(a|an|the)\s+(object|item|thing|place|location|view|scene|room|space|area)\b/i,
+  // "show me the room / send me the kitchen" — direct room request without character
   /\b(show me|send me|give me)\s+(a|an|the)\s+(room|kitchen|bedroom|view|scene|place|location)\b/i,
-  /\b(the room|the space|your place|your apartment|your house|your room|your view)\b/i,
+  // "your place / your apartment / your house / your room / your view" ONLY as a standalone photo request
+  // Requires explicit photo/show/send signal before it — not just the phrase in passing
+  /\b(send|show|give|share|post)\s+.{0,30}\b(your place|your apartment|your house|your room|your view)\b/i,
 ];
 
 /**
