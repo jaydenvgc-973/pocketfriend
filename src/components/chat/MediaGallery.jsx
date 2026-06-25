@@ -176,33 +176,57 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       Promise.all([
         base44.entities.UserSettings.filter({ owner_email: email }).catch(() => []),
         base44.entities.Character.filter({ owner_email: email }, '-created_date', 200).catch(() => []),
-      ]).then(([settingsList, chars]) => {
+        base44.entities.User.filter({ email }).catch(() => []),
+      ]).then(([settingsList, chars, userEntityList]) => {
         const settings = settingsList?.[0] || null;
         setUserSettings(settings);
+
+        // User entity is the authoritative source for reference images and avatar.
+        // UserSettings is used only for world name and as a legacy fallback for images.
+        const userEntity = userEntityList?.[0] || null;
 
         // Filter to live characters only — never show deleted/merged
         const liveChars = chars.filter(c =>
           c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
         );
 
-        // Build user entry from UserSettings — always account-scoped
+        // Build user entry — User entity is authoritative for images; UserSettings for world name
         const userWorldName = settings?.fictional_world_name || email.split('@')[0] || 'Me';
+
+        // Avatar priority: User.reference_image_urls[0] → User.generated_avatar_urls[0] →
+        //   User.avatar_url → UserSettings fallbacks → null
         const userAvatarUrl =
+          userEntity?.reference_image_urls?.[0] ||
+          userEntity?.generated_avatar_urls?.[0] ||
+          userEntity?.avatar_url ||
           settings?.generated_avatar_urls?.[0] ||
           settings?.reference_image_urls?.[0] ||
           null;
+
+        // Reference images for generation — User entity first, UserSettings as fallback
+        const userRefImageUrls = [
+          ...(userEntity?.reference_image_urls || []),
+          ...(userEntity?.generated_avatar_urls || []),
+          ...(userEntity?.avatar_url ? [userEntity.avatar_url] : []),
+          ...(settings?.reference_image_urls || []),
+          ...(settings?.generated_avatar_urls || []),
+        ].filter(Boolean);
+
         const userEntry = {
           id: '__user__',
           name: userWorldName,
           world_name: userWorldName,
           avatar_url: userAvatarUrl,
-          reference_image_urls: [
-            ...(settings?.generated_avatar_urls || []),
-            ...(settings?.reference_image_urls || []),
-          ].filter(Boolean),
+          reference_image_urls: userRefImageUrls,
           is_user: true,
           owner_email: email,
         };
+
+        console.log(
+          `[MediaGallery] User entry built | world_name="${userWorldName}"` +
+          ` | avatar_source=${userEntity?.reference_image_urls?.[0] ? 'user_entity_ref' : userEntity?.generated_avatar_urls?.[0] ? 'user_entity_gen_avatar' : userEntity?.avatar_url ? 'user_entity_avatar' : 'settings_fallback'}` +
+          ` | ref_count=${userRefImageUrls.length}`
+        );
 
         // Active first (desc by created_date), then inactive
         const activeChars = liveChars
@@ -629,13 +653,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
     let userRefImages = [];
     if (needsUserRefs) {
-      // Build fresh candidate list using all sources in priority order
+      // Build fresh candidate list — User entity (via picker row) is authoritative.
+      // userChar is the __user__ entry built from User entity data during dropdown load.
+      // Fall back to UserSettings fields only when User entity data is absent.
       const freshRefs = [
-        ...(userSettings?.reference_image_urls || []).slice(0, 3),
-        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
+        ...(userChar?.reference_image_urls || []).slice(0, 3),
         // Selector list image: the avatar_url already shown beside the user in the picker dropdown.
         // If it's visible in the UI, it's a valid identity reference — must be usable.
         userChar?.avatar_url,
+        // UserSettings fallback (legacy mirror)
+        ...(userSettings?.reference_image_urls || []).slice(0, 3),
+        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
       ].filter(Boolean);
 
       if (freshRefs.length > 0) {

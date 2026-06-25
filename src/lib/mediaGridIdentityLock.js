@@ -23,27 +23,47 @@ export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
   if (!userEmail) return { refs: [], missing: true, error: 'User email not available — cannot resolve user identity.' };
 
   try {
-    // OWNERSHIP: use owner_email — created_by is permanently forbidden
-    const settingsList = await base44.entities.UserSettings.filter(
-      { owner_email: userEmail },
+    // PRIMARY: User entity — authoritative source for reference_image_urls and generated_avatar_urls.
+    // These fields live on User, NOT on UserSettings. UserSettings is checked as a secondary fallback
+    // only, since some legacy setups may have mirrored data there.
+    const userEntityList = await base44.entities.User.filter(
+      { email: userEmail },
       null,
       1
     ).catch(() => []);
+    const userEntity = userEntityList?.[0] || null;
 
-    const sett = settingsList?.[0] || {};
-
-    // Priority order for user identity references:
-    // 1. reference_image_urls (real uploaded face photos — best identity lock)
-    // 2. generated_avatar_urls (AI-generated avatars — weaker but valid)
-    // 3. world-self Character avatar_url (fallback when UserSettings arrays are empty)
-    // Note: We do NOT use appearance_lock fields here — those are text descriptions,
-    // not image URLs. They are injected into the prompt text by the caller if needed.
     const refs = [
-      ...(sett.reference_image_urls || []),
-      ...(sett.generated_avatar_urls || []),
+      ...(userEntity?.reference_image_urls || []),
+      ...(userEntity?.generated_avatar_urls || []),
     ].filter(Boolean);
 
-    // If UserSettings arrays are empty, fetch world-self Character record and check avatar_url
+    console.log(
+      `[resolveUserVisualRefs] User entity | email=${userEmail}` +
+      ` | ref_urls=${(userEntity?.reference_image_urls || []).length}` +
+      ` | gen_avatars=${(userEntity?.generated_avatar_urls || []).length}` +
+      ` | resolved_refs=${refs.length}`
+    );
+
+    // Secondary fallback: UserSettings (legacy mirror — only used when User entity has no refs)
+    if (refs.length === 0) {
+      const settingsList = await base44.entities.UserSettings.filter(
+        { owner_email: userEmail },
+        null,
+        1
+      ).catch(() => []);
+      const sett = settingsList?.[0] || {};
+      const settingsRefs = [
+        ...(sett.reference_image_urls || []),
+        ...(sett.generated_avatar_urls || []),
+      ].filter(Boolean);
+      if (settingsRefs.length > 0) {
+        refs.push(...settingsRefs);
+        console.log(`[resolveUserVisualRefs] UserSettings fallback: found ${settingsRefs.length} refs`);
+      }
+    }
+
+    // Tertiary fallback: world-self Character avatar_url
     if (refs.length === 0) {
       try {
         const userCharList = await base44.entities.Character.filter(
@@ -54,7 +74,7 @@ export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
         const userChar = userCharList?.[0];
         if (userChar?.avatar_url && typeof userChar.avatar_url === 'string') {
           refs.push(userChar.avatar_url);
-          console.log(`[resolveUserVisualRefs] Fallback: world-self Character avatar_url found`);
+          console.log(`[resolveUserVisualRefs] Tertiary fallback: world-self Character avatar_url found`);
         }
       } catch (charErr) {
         console.warn(`[resolveUserVisualRefs] World-self Character lookup failed: ${charErr?.message}`);
