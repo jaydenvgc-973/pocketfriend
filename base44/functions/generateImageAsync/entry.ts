@@ -1223,38 +1223,112 @@ Deno.serve(async (req) => {
 
     let userRefs = [];
     let _userSettingsRecord = null;
+    let _resolvedUserBundle = null;
     if (subjectType === 'user' || subjectType === 'joint') {
+      // ── BACKEND USER IDENTITY RESOLUTION ─────────────────────────────────────
+      // Authority order (matches resolveUserIdentityForImageGen contract):
+      //   1. User entity (reference_image_urls, generated_avatar_urls) — PRIMARY
+      //   2. UserSettings (appearance_lock, outfit, world_name mirror)
+      //   3. callerBundle (frontend-passed) — fallback only
+      //   4. Character.is_user — legacy last resort, logged as [LEGACY_FALLBACK]
+      //
+      // The frontend-passed userReferenceImages is used ONLY as a caller bundle fallback,
+      // not as the primary source. Backend reloads from authoritative sources first.
+      const callerBundleForFallback = userReferenceImages?.length > 0
+        ? { visual_reference_images: userReferenceImages }
+        : null;
+
+      // Inline resolver (Deno cannot import local functions directly —
+      // we inline the same contract as resolveUserIdentityForImageGen.js)
       if (requestingUser) {
-        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-        _userSettingsRecord = settingsList?.[0] || null;
-        const sett = _userSettingsRecord || {};
-        const dbUserRefs = [
-          ...(sett.reference_image_urls || []),
-          ...(sett.generated_avatar_urls || []),
-        ];
-        userRefs = cdnFilter(dbUserRefs).slice(0, 3);
-      }
-      if (userRefs.length === 0 && userReferenceImages?.length > 0) {
-        userRefs = cdnFilter(userReferenceImages).slice(0, 3);
-      }
-      if (userRefs.length === 0) {
+        // Step 1: User entity — PRIMARY authority
+        let userEntityRefs = [];
+        let userEntityAvatars = [];
+        let userEntityWorldName = null;
+        let userEntityGender = null;
         try {
-          const userCharList = await base44.asServiceRole.entities.Character.filter(
-            { owner_email: requestingUser, is_user: true },
-            null,
-            1
-          ).catch(() => []);
-          const userChar = userCharList?.[0];
-          if (userChar?.avatar_url) {
-            const avatarPublic = toPublicCDN(userChar.avatar_url);
-            if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
-              userRefs = [avatarPublic];
-              console.log(`[generateImageAsync] User identity fallback: world-self Character avatar_url used`);
-            }
+          const userEntityList = await base44.asServiceRole.entities.User.filter({ email: requestingUser }, null, 1).catch(() => []);
+          const userEntityRecord = userEntityList?.[0] || null;
+          if (userEntityRecord) {
+            userEntityRefs = cdnFilter(userEntityRecord.reference_image_urls || []);
+            userEntityAvatars = cdnFilter(userEntityRecord.generated_avatar_urls || []);
+            userEntityWorldName = userEntityRecord.world_name || null;
+            userEntityGender = userEntityRecord.gender || null;
+            console.log(`[IdentityAudit] user_entity_found=true ref_urls=${userEntityRefs.length} gen_avatars=${userEntityAvatars.length} world_name="${userEntityWorldName || 'none'}"`);
+          } else {
+            console.warn(`[IdentityAudit] user_entity_found=false email=${requestingUser}`);
           }
-        } catch (fallbackErr) {
-          console.warn(`[generateImageAsync] World-self Character fallback lookup failed: ${fallbackErr?.message}`);
+        } catch (ueErr) {
+          console.warn(`[generateImageAsync] User entity lookup failed (non-blocking): ${ueErr?.message}`);
         }
+
+        // Step 2: UserSettings — appearance lock, outfit, legacy world name
+        let settingsAppearanceLock = {};
+        let settingsOutfit = null;
+        let settingsWorldName = null;
+        try {
+          const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+          _userSettingsRecord = settingsList?.[0] || null;
+          if (_userSettingsRecord) {
+            settingsAppearanceLock = _userSettingsRecord.appearance_lock || {};
+            settingsOutfit = _userSettingsRecord.user_current_outfit || null;
+            settingsWorldName = _userSettingsRecord.fictional_world_name || null;
+            console.log(`[IdentityAudit] settings_found=true appearance_lock_fields="${Object.keys(settingsAppearanceLock).join(',') || 'none'}" world_name_legacy="${settingsWorldName || 'none'}"`);
+          }
+        } catch (settErr) {
+          console.warn(`[generateImageAsync] UserSettings lookup failed (non-blocking): ${settErr?.message}`);
+        }
+
+        // Step 3: Build ordered refs — User entity only
+        let resolvedRefs = [
+          ...userEntityRefs.slice(0, 3),
+          ...userEntityAvatars.slice(0, 2),
+        ].filter(Boolean);
+        let userRefSource = 'none';
+        if (userEntityRefs.length > 0) userRefSource = 'user_entity_reference_images';
+        else if (userEntityAvatars.length > 0) userRefSource = 'user_entity_generated_avatars';
+
+        // Step 4: Caller bundle fallback — only when User entity returned nothing
+        if (resolvedRefs.length === 0 && callerBundleForFallback?.visual_reference_images?.length > 0) {
+          const callerRefs = cdnFilter(callerBundleForFallback.visual_reference_images);
+          if (callerRefs.length > 0) {
+            resolvedRefs = callerRefs.slice(0, 3);
+            userRefSource = 'caller_bundle_fallback';
+            console.warn(`[generateImageAsync] ⚠️ [CALLER_BUNDLE_FALLBACK] User entity empty — using frontend-passed refs (${callerRefs.length})`);
+          }
+        }
+
+        // Step 5: Legacy is_user Character — absolute last resort
+        if (resolvedRefs.length === 0) {
+          try {
+            const legacyList = await base44.asServiceRole.entities.Character.filter(
+              { owner_email: requestingUser, is_user: true }, null, 1
+            ).catch(() => []);
+            const legacyChar = legacyList?.[0];
+            if (legacyChar?.avatar_url) {
+              const ap = toPublicCDN(legacyChar.avatar_url);
+              if (isAccessible(ap) && !ap.includes('generated_image')) {
+                resolvedRefs = [ap];
+                userRefSource = 'legacy_is_user_character';
+                console.warn(`[generateImageAsync] ⚠️ [LEGACY_FALLBACK] is_user Character avatar used for email=${requestingUser}. Add reference photos for a stronger identity lock.`);
+              }
+            }
+          } catch (legacyErr) {
+            console.warn(`[generateImageAsync] Legacy is_user lookup failed (non-blocking): ${legacyErr?.message}`);
+          }
+        }
+
+        userRefs = resolvedRefs.slice(0, 3);
+        _resolvedUserBundle = {
+          worldName: userEntityWorldName || settingsWorldName || null,
+          worldNameSource: userEntityWorldName ? 'user_entity' : (settingsWorldName ? 'settings_legacy_mirror' : 'none'),
+          appearanceLock: settingsAppearanceLock,
+          currentOutfit: settingsOutfit,
+          gender: userEntityGender || _userSettingsRecord?.user_gender || null,
+          userRefSource,
+        };
+
+        console.log(`[IdentityAudit] user_ref_source=${userRefSource} final_user_refs=${userRefs.length} world_name="${_resolvedUserBundle.worldName || 'none'}" (${_resolvedUserBundle.worldNameSource})`);
       }
       console.log(`[generateImageAsync] User identity refs: ${userRefs.length}`);
     }
@@ -1573,18 +1647,25 @@ Deno.serve(async (req) => {
 
     let userOutfitText = null;
     if (subjectType === 'joint' || subjectType === 'user') {
-      const uoArr = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-      const uoSett = uoArr?.[0] || {};
-      const uco = uoSett.user_current_outfit;
-      userOutfitText = uco ? (uco.full_description || [uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(Boolean).join(', ') || null) : null;
-      if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit pre-buildPrompt: "${userOutfitText.substring(0, 80)}"`);
+      // Use outfit from already-resolved bundle (avoids duplicate UserSettings query)
+      const uco = _resolvedUserBundle?.currentOutfit || null;
+      userOutfitText = uco
+        ? ([uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(v => {
+            if (!v) return false;
+            const t = v.trim();
+            return !(/^(n\/?a|none|-)$/i.test(t));
+          }).join(', ') || uco.full_description?.trim() || null)
+        : null;
+      if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit (from resolved bundle): "${userOutfitText.substring(0, 80)}"`);
     }
 
-    // User appearance-lock fallback: only resolves when no refs available AND subject name matches account world name
+    // User appearance-lock fallback: use resolved bundle's appearanceLock — no second UserSettings query
+    // buildUserAppearanceLockFallback name-matches against worldName; use resolved world name from bundle
+    const _effectiveUserWorldName = _resolvedUserBundle?.worldName || userWorldName || '';
     const userAppearanceLockText = (subjectType === 'user' || subjectType === 'joint') && userRefs.length === 0
-      ? buildUserAppearanceLockFallback(_userSettingsRecord, userWorldName || '')
+      ? buildUserAppearanceLockFallback(_userSettingsRecord, _effectiveUserWorldName)
       : null;
-    if (userAppearanceLockText) console.log(`[generateImageAsync] ✅ User appearance-lock fallback: "${userAppearanceLockText}" (account: ${requestingUser}, worldName: "${userWorldName}")`);
+    if (userAppearanceLockText) console.log(`[generateImageAsync] ✅ User appearance-lock fallback: "${userAppearanceLockText}" (worldName: "${_effectiveUserWorldName}")`);
 
     let thirdPartyPreamble = '';
     if (isThirdPartyPhoto && !characterId) {
@@ -1821,7 +1902,19 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
       });
     }
     if (subjectType === 'joint' || subjectType === 'user') {
-      structuredSubjects.push({ subject_type: 'user', subject_id: requestingUser, subject_name: userWorldName || 'user', role: 'primary', reference_image_count: USER_SLOTS, reference_images: userRefs, outfit_snapshot: userOutfitText || null, outfit_injected: !!userOutfitText });
+      structuredSubjects.push({
+        subject_type: 'user',
+        subject_id: requestingUser,
+        subject_name: _resolvedUserBundle?.worldName || userWorldName || 'user',
+        role: 'primary',
+        reference_image_count: USER_SLOTS,
+        reference_images: userRefs,
+        outfit_snapshot: userOutfitText || null,
+        outfit_injected: !!userOutfitText,
+        // Identity audit — which source provided the user refs
+        user_identity_source: _resolvedUserBundle?.userRefSource || 'none',
+        world_name_source: _resolvedUserBundle?.worldNameSource || 'none',
+      });
     }
 
     const structuredSubjectsWithFingerprints = structuredSubjects.map(s => ({ ...s, subject_fingerprint: `${s.subject_id}:${s.reference_image_count}` }));

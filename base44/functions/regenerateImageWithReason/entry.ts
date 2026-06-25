@@ -1023,6 +1023,7 @@ Deno.serve(async (req) => {
 
     // ── 2b. RESOLVE USER IDENTITY REFS ───────────────────────────────────────
     let userRefs = [];
+    let _regenResolvedUserBundle = null;
     // needsUserRefs fires when:
     //   - original image was a user/joint subject (from stored context)
     //   - user explicitly selected '__user__' in the repair picker (userSelectedAsSubject)
@@ -1031,73 +1032,128 @@ Deno.serve(async (req) => {
       || userSelectedAsSubject
       || (reason === 'no_avatar' && includeUserSubject);
     if (needsUserRefs) {
-      // PRIORITY 0: Caller-provided refs from RegenerateImageModal subject picker.
-      // These are the SAME images displayed in the picker UI — if the picker shows the avatar,
-      // these URLs are accessible. Apply CDN conversion but do NOT filter them out if they
-      // fail the isAccessible check — the picker already confirmed they load in the browser.
-      if (callerUserRefImages?.length > 0) {
-        // Try CDN-converted first, fall back to original URL (picker already validated it loads)
-        userRefs = callerUserRefImages
+      // ── BACKEND USER IDENTITY RESOLUTION (same contract as resolveUserIdentityForImageGen) ──
+      // Authority order:
+      //   1. User entity (reference_image_urls, generated_avatar_urls) — PRIMARY
+      //   2. UserSettings (appearance_lock, outfit, world_name mirror)
+      //   3. Caller-provided refs from picker — fallback only
+      //   4. Stored ctx.user_reference_images — stale snapshot fallback
+      //   5. Character.is_user — legacy last resort, logged as [LEGACY_FALLBACK]
+
+      // Step 1: User entity — PRIMARY authority
+      let regenUserEntityRefs = [];
+      let regenUserEntityAvatars = [];
+      let regenUserEntityWorldName = null;
+      let regenUserEntityGender = null;
+      try {
+        const regenUserEntityList = await base44.asServiceRole.entities.User.filter({ email: requestingUser }, null, 1).catch(() => []);
+        const regenUserEntityRecord = regenUserEntityList?.[0] || null;
+        if (regenUserEntityRecord) {
+          regenUserEntityRefs = cdnFilter(regenUserEntityRecord.reference_image_urls || []);
+          regenUserEntityAvatars = cdnFilter(regenUserEntityRecord.generated_avatar_urls || []);
+          regenUserEntityWorldName = regenUserEntityRecord.world_name || null;
+          regenUserEntityGender = regenUserEntityRecord.gender || null;
+          console.log(`[IdentityAudit][regen] user_entity_found=true ref_urls=${regenUserEntityRefs.length} gen_avatars=${regenUserEntityAvatars.length}`);
+        } else {
+          console.warn(`[IdentityAudit][regen] user_entity_found=false email=${requestingUser}`);
+        }
+      } catch (regenUEErr) {
+        console.warn(`[regenerateImageWithReason] User entity lookup failed (non-blocking): ${regenUEErr?.message}`);
+      }
+
+      // Step 2: UserSettings — appearance lock, outfit, legacy world name
+      let regenSettingsRecord = null;
+      let regenAppearanceLock = {};
+      let regenCurrentOutfit = null;
+      let regenSettingsWorldName = null;
+      try {
+        const regenSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
+        regenSettingsRecord = regenSettingsList?.[0] || null;
+        if (regenSettingsRecord) {
+          regenAppearanceLock = regenSettingsRecord.appearance_lock || {};
+          regenCurrentOutfit = regenSettingsRecord.user_current_outfit || null;
+          regenSettingsWorldName = regenSettingsRecord.fictional_world_name || null;
+        }
+      } catch (regenSettErr) {
+        console.warn(`[regenerateImageWithReason] UserSettings lookup failed (non-blocking): ${regenSettErr?.message}`);
+      }
+
+      // Step 3: Build ordered refs from User entity only
+      let regenResolvedRefs = [
+        ...regenUserEntityRefs.slice(0, 3),
+        ...regenUserEntityAvatars.slice(0, 2),
+      ].filter(Boolean);
+      let regenUserRefSource = 'none';
+      if (regenUserEntityRefs.length > 0) regenUserRefSource = 'user_entity_reference_images';
+      else if (regenUserEntityAvatars.length > 0) regenUserRefSource = 'user_entity_generated_avatars';
+
+      // Step 4a: Caller-provided refs from picker — first non-entity fallback
+      // Picker refs are pre-validated by the UI. Accept them before ctx snapshot (which is older).
+      if (regenResolvedRefs.length === 0 && callerUserRefImages?.length > 0) {
+        const callerCDN = callerUserRefImages
           .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
-          .map(u => toPublicCDN(u))
-          .slice(0, 3);
-        console.log(`[regenerateImageWithReason] Using caller-provided user refs from picker (no filter): ${userRefs.length} | urls: ${userRefs.map(u => u.substring(0, 60)).join(', ')}`);
-      }
-      // Use user refs from generation_context (the ORIGINAL saved refs)
-      if (userRefs.length === 0 && ctx.user_reference_images?.length > 0) {
-        userRefs = cdnFilter(ctx.user_reference_images).slice(0, 3);
-        console.log(`[regenerateImageWithReason] Using saved user refs from context: ${userRefs.length}`);
-      }
-      // If no saved refs, try fetching from UserSettings
-      if (userRefs.length === 0) {
-        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
-        const sett = settingsList?.[0] || {};
-        const dbUserRefs = [...(sett.reference_image_urls || []), ...(sett.generated_avatar_urls || [])];
-        userRefs = cdnFilter(dbUserRefs).slice(0, 3);
-        if (userRefs.length > 0) console.log(`[regenerateImageWithReason] User refs fetched from UserSettings: ${userRefs.length}`);
-      }
-      // CRITICAL FALLBACK: If all UserSettings sources are empty, check the world-self Character avatar_url.
-      // This is the same image displayed in the Media Grid selector — if the UI shows it, the generator must use it.
-      if (userRefs.length === 0) {
-        try {
-          const userCharList = await base44.asServiceRole.entities.Character.filter(
-            { owner_email: requestingUser, is_user: true },
-            null,
-            1
-          ).catch(() => []);
-          const userChar = userCharList?.[0];
-          if (userChar?.avatar_url) {
-            const avatarPublic = toPublicCDN(userChar.avatar_url);
-            if (isAccessible(avatarPublic) && !avatarPublic.includes('generated_image')) {
-              userRefs = [avatarPublic];
-              console.log(`[regenerateImageWithReason] User identity fallback: world-self Character avatar_url used (matches selector display)`);
-            }
-          }
-        } catch (fallbackErr) {
-          console.warn(`[regenerateImageWithReason] World-self Character fallback lookup failed: ${fallbackErr?.message}`);
+          .map(u => toPublicCDN(u));
+        if (callerCDN.length > 0) {
+          regenResolvedRefs = callerCDN.slice(0, 3);
+          regenUserRefSource = 'caller_bundle_fallback';
+          console.warn(`[regenerateImageWithReason] ⚠️ [CALLER_BUNDLE_FALLBACK] User entity empty — using picker refs (${callerCDN.length})`);
         }
       }
 
-      // If still empty after all sources, use caller URLs raw as absolute last resort
-      if (userRefs.length === 0 && callerUserRefImages?.length > 0) {
-        userRefs = callerUserRefImages
-          .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
-          .slice(0, 3);
-        console.log(`[regenerateImageWithReason] User refs last resort — raw caller URLs: ${userRefs.length}`);
+      // Step 4b: Stored ctx.user_reference_images — stale snapshot, use only when all live sources empty
+      if (regenResolvedRefs.length === 0 && ctx.user_reference_images?.length > 0) {
+        regenResolvedRefs = cdnFilter(ctx.user_reference_images).slice(0, 3);
+        if (regenResolvedRefs.length > 0) {
+          regenUserRefSource = 'ctx_snapshot_fallback';
+          console.warn(`[regenerateImageWithReason] ⚠️ [STALE_SNAPSHOT_FALLBACK] Using saved user refs from generation_context — these may be outdated`);
+        }
       }
 
+      // Step 5: Legacy is_user Character — absolute last resort
+      if (regenResolvedRefs.length === 0) {
+        try {
+          const legacyList = await base44.asServiceRole.entities.Character.filter(
+            { owner_email: requestingUser, is_user: true }, null, 1
+          ).catch(() => []);
+          const legacyChar = legacyList?.[0];
+          if (legacyChar?.avatar_url) {
+            const ap = toPublicCDN(legacyChar.avatar_url);
+            if (isAccessible(ap) && !ap.includes('generated_image')) {
+              regenResolvedRefs = [ap];
+              regenUserRefSource = 'legacy_is_user_character';
+              console.warn(`[regenerateImageWithReason] ⚠️ [LEGACY_FALLBACK] is_user Character avatar used for email=${requestingUser}. Add reference photos for a stronger identity lock.`);
+            }
+          }
+        } catch (legacyErr) {
+          console.warn(`[regenerateImageWithReason] Legacy is_user lookup failed (non-blocking): ${legacyErr?.message}`);
+        }
+      }
+
+      // Raw caller URLs as absolute last resort (picker confirmed they load in browser)
+      if (regenResolvedRefs.length === 0 && callerUserRefImages?.length > 0) {
+        regenResolvedRefs = callerUserRefImages
+          .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
+          .slice(0, 3);
+        if (regenResolvedRefs.length > 0) {
+          regenUserRefSource = 'caller_raw_last_resort';
+          console.log(`[regenerateImageWithReason] User refs last resort — raw caller URLs: ${regenResolvedRefs.length}`);
+        }
+      }
+
+      userRefs = regenResolvedRefs.slice(0, 3);
+      _regenResolvedUserBundle = {
+        worldName: regenUserEntityWorldName || regenSettingsWorldName || callerUserName || null,
+        worldNameSource: regenUserEntityWorldName ? 'user_entity' : (regenSettingsWorldName ? 'settings_legacy_mirror' : 'caller_name'),
+        appearanceLock: regenAppearanceLock,
+        currentOutfit: regenCurrentOutfit,
+        gender: regenUserEntityGender || regenSettingsRecord?.user_gender || null,
+        userRefSource: regenUserRefSource,
+      };
+
+      console.log(`[IdentityAudit][regen] user_ref_source=${regenUserRefSource} final_user_refs=${userRefs.length} world_name="${_regenResolvedUserBundle.worldName || 'none'}" (${_regenResolvedUserBundle.worldNameSource})`);
+
       // ── USER REFS MISSING — VISIBLE FAILURE GATE ─────────────────────────────
-      // If the user/persona was selected as a subject AND we have zero visual references after
-      // exhausting all sources (UserSettings, world-self Character), we MUST NOT silently
-      // generate a random-looking person and call it a likeness repair.
-      //
-      // For 'no_avatar' (explicit likeness repair): block entirely — the whole purpose of this
-      // path is to correct "doesn't look like them". Without refs, there is nothing to correct with.
-      //
-      // For other reasons (dont_like, flawed, etc.): the user may not care about user-likeness;
-      // continue but include the warning in the response so the UI can surface it.
       if (userRefs.length === 0 && userSelectedAsSubject) {
-        const missingRefSubjects = ['user/persona'];
         const selectedSubjectRoles = [
           ...(userSelectedAsSubject ? ['user'] : []),
           ...(intendedCharacterIds.length > 0 ? ['character'] : []),
@@ -1108,16 +1164,10 @@ Deno.serve(async (req) => {
           user_selected_as_subject: true,
           user_ref_count: 0,
           character_ref_count: charRefs.length,
-          missing_reference_subjects: missingRefSubjects,
+          missing_reference_subjects: ['user/persona'],
           message: 'Your persona does not have visual reference photos yet. Add or select reference photos before regenerating for accurate likeness.',
         };
-        console.warn(`[regenerateImageWithReason] ⚠️ user_ref_count=0 with userSelectedAsSubject=true — user/persona has no visual references`);
-        // NEVER hard-block regen due to missing user refs.
-        // If the user persona has no reference photos, we simply skip them from the subject bundle
-        // and proceed with character-only generation. Hard-blocking is worse UX than a partial result.
-        // The user is told what happened via the warning in the response.
-        console.warn(`[regenerateImageWithReason] WARNING (non-blocking for reason="${reason}"): user selected as subject but has zero visual reference photos — proceeding as character-only`);
-        // Store warning for later — attach to success response
+        console.warn(`[regenerateImageWithReason] ⚠️ user_ref_count=0 with userSelectedAsSubject=true — proceeding as character-only`);
         req.__userRefWarning = diagnosticPayload;
       }
     }
@@ -1655,27 +1705,26 @@ Deno.serve(async (req) => {
 
       // ── Process user/persona subject ───────────────────────────────────────
       if (needsUserRefs && userRefs.length > 0) {
+        // Use already-resolved bundle (from Step 1–5 above) — no second UserSettings query
+        const regenBundle = _regenResolvedUserBundle || {};
         let userOutfitText = null;
         let userAppearanceLock = null;
-        let userPersonaDisplayName = 'User / My Persona';
+        let userPersonaDisplayName = regenBundle.worldName || callerUserName || 'User / My Persona';
 
         try {
-          const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
-            { owner_email: requestingUser }, null, 1
-          ).catch(() => []);
-          const sett = settingsList?.[0] || null;
-          userPersonaDisplayName = sett?.fictional_world_name || userPersonaDisplayName;
-          // Outfit: prefer stored metadata from ctx, then re-resolve from settings
+          // ── BUNDLE-FIRST: use already-resolved data, no second query needed ──
+          const sett = null; // intentionally null — we use regenBundle below
+          userPersonaDisplayName = regenBundle.worldName || callerUserName || userPersonaDisplayName;
+          // Outfit: prefer stored ctx metadata (historical), then live outfit from resolved bundle
           const storedUserMeta = (ctx.resolved_outfit_metadata || []).find(m => m.subjectType === 'user');
           if (storedUserMeta?.text) {
             userOutfitText = storedUserMeta.text;
-          } else {
-            const uco = sett?.user_current_outfit;
-            userOutfitText = uco ? buildOutfitTextBundle(uco) || uco.full_description?.trim() || null : null;
+          } else if (regenBundle.currentOutfit) {
+            userOutfitText = buildOutfitTextBundle(regenBundle.currentOutfit) || regenBundle.currentOutfit.full_description?.trim() || null;
           }
-          const ual = sett?.appearance_lock || {};
+          const ual = regenBundle.appearanceLock || {};
           userAppearanceLock = {
-            gender: sett?.user_gender || null,
+            gender: regenBundle.gender || null,
             skinTone: ual.skin_tone || null,
             hairStyle: ual.hairstyle || ual.hair_type || null,
             bodyType: ual.overall_aesthetic || null,
@@ -1683,7 +1732,7 @@ Deno.serve(async (req) => {
             customKeywords: (ual.custom_keywords || []).join(', ') || null,
           };
         } catch (userBundleErr) {
-          console.warn(`[regenerateImageWithReason] User bundle resolution: ${userBundleErr?.message}`);
+          console.warn(`[regenerateImageWithReason] User bundle assembly: ${userBundleErr?.message}`);
         }
 
         subjectBundles.push({
@@ -1697,6 +1746,9 @@ Deno.serve(async (req) => {
           outfitText: userOutfitText,
           appearanceLock: userAppearanceLock,
           _refs: userRefs.slice(0, USER_SLOTS),
+          // Identity audit fields — stored in metadata so future regenerations can trace the source
+          user_identity_source: _regenResolvedUserBundle?.userRefSource || 'none',
+          world_name_source: _regenResolvedUserBundle?.worldNameSource || 'none',
         });
         refCursor += userRefs.slice(0, USER_SLOTS).length;
       }
