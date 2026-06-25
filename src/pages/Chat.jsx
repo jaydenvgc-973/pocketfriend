@@ -91,6 +91,7 @@ import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/
 import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/worldPhoneCacheInvalidation";
 import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
+import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1563,12 +1564,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       console.log(`[SUBJECT-TYPE] World name "${worldNameLower}" detected in prompt → subjectType=user`);
     }
 
-    const userRefImages = [
-      ...(currentUser.generated_avatar_urls || []),
-      ...(userSettings.generated_avatar_urls || []),
-      ...(currentUser.reference_image_urls || []),
-      ...(userSettings.reference_image_urls || []),
-    ].filter((v, i, a) => v && a.indexOf(v) === i);
+    // Resolve user identity through the unified resolver — single source of truth.
+    // Reads User entity + UserSettings; returns ordered visual_reference_images with
+    // correct priority (uploaded refs > generated avatars).
+    const resolvedCurrentUser = resolveAuthenticatedUser(currentUser, userSettings);
+    const userRefImages = resolvedCurrentUser?.visual_reference_images || [];
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
     const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
