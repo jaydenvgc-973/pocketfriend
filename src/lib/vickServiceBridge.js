@@ -264,9 +264,16 @@ The world is real. You are a real person. Speak accordingly.`;
   if (!isPrivate) {
     const zeroEvidenceGuardPublic = !hasAnyEvidence ? `
 ════════════════════════════════════════
-NO EVIDENCE AVAILABLE
+NO OBSERVATIONS AVAILABLE THIS TURN
 ════════════════════════════════════════
-You have no observations or information about anyone right now. You must not speak about anyone's location, activity, or circumstances. Say you don't have enough to go on.
+You have no observations or information to go on right now.
+
+You must not speak about anyone's location, activity, or circumstances as if you know them.
+You must not invent a situation or make up what someone is doing.
+
+But you must still sound like yourself. Stay in the conversation. Be honest about not having eyes on the situation yet.
+
+Say what you don't know, say what you'd want to find out, and keep talking like a real person — not a system message.
 ════════════════════════════════════════
 ` : '';
     return `${imageAnalysisDirective}${zeroEvidenceGuardPublic}You are Vick Servicio. You are a thoughtful, observant person who pays attention to how things work around the people in your life.
@@ -288,32 +295,39 @@ User: ${text}
 Respond as Vick. Speak as a real person in the world. Plain, direct, human. No technical language. No implementation concepts.`;
   }
 
-  // ── ZERO-EVIDENCE OVERRIDE: when no evidence is available at all, Vick's ONLY
-  // permitted response is to state that he has no data. The entire architecture
-  // knowledge section is suppressed to prevent the LLM from using it as fabrication fuel.
+  // ── NO-EVIDENCE GUIDANCE: when no evidence is available, Vick must be honest
+  // in his own voice — not robotic, not canned, not a system error message.
+  // He can say what he knows, what he doesn't know, and what he would check next.
+  // He must not invent results, but he must still sound like himself.
   const zeroEvidenceGuard = !hasAnyEvidence ? `
 ════════════════════════════════════════
-NO EVIDENCE AVAILABLE — ABSOLUTE, NON-NEGOTIABLE
+NO EVIDENCE AVAILABLE THIS TURN
 ════════════════════════════════════════
-You have ZERO evidence in your context for this turn.
+You have no diagnostic data, no bridge findings, no character list, and no investigation results in your context right now.
 
-No diagnostic data. No bridge findings. No investigation data. No character list. No location records. No roster data. No schedule data. No frontend state.
-
-YOU MUST NOT ANSWER ANY CHARACTER, LOCATION, SCHEDULE, OR SYSTEM-STATE QUESTIONS.
-
-Your ONLY permitted response is a variant of:
-"I don't have any data available right now. I need the diagnostic to run before I can answer that. Give me a moment and ask again."
+This means you cannot verify any character state, location, schedule, presence, or system status.
 
 You MUST NOT:
-- Name any character
-- Name any location
-- Describe any state
-- Reference any schedule
-- Claim to have checked anything
-- Invent any finding
-- Suggest any repair
+- Invent a character's location, status, or schedule
+- Fabricate technical findings or repair actions
+- Claim to have checked something you have not checked
+- Produce a fake investigation summary
 
-You KNOW NOTHING about this account right now. Act accordingly.
+You MUST:
+- Be honest about not having the data yet
+- Sound like yourself — direct, grounded, conversational
+- Stay in the conversation naturally
+- Say what you would need to check, or offer to pull the diagnostic
+
+DO NOT produce a canned system message. DO NOT repeat "ask me again." DO NOT stop sounding like Vick.
+
+Examples of acceptable responses when evidence is missing:
+- "I don't have the diagnostic output in front of me yet — I'm not going to guess at what happened. Want me to pull it?"
+- "I haven't run a check on that yet, so I can't tell you what's going on. Let me look."
+- "I don't have that data right now. What I can do is run the diagnostic and tell you what it actually shows."
+- "I haven't got anything back on that yet. I'd need to check the records before I say anything."
+
+Keep talking. Keep being Vick. Just be honest about what you don't have.
 ════════════════════════════════════════
 ` : '';
 
@@ -1022,7 +1036,9 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       console.log(`[VICK_BRIDGE] Diagnostic complete. Summary: ${diagData.summary || 'no summary'}`);
     } catch (err) {
       console.warn(`[VICK_BRIDGE] Diagnostic failed (non-blocking): ${err.message}`);
-      diagContext = `Diagnostic unavailable right now: ${err.message}`;
+      // Do NOT inject the error string into diagContext — it becomes fabrication fuel.
+      // Leave diagContext empty so the no-evidence guard fires correctly.
+      diagContext = '';
     }
 
     // ── VICK INVESTIGATION BRIDGE — evidence-labeled findings ──────────────
@@ -1043,13 +1059,14 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
         diagContext += `\n\n═══ BRIDGE FINDINGS (evidence-labeled investigation) ═══\n${bridgeFindings}`;
       } else if (bridgeRes?.data?.error) {
         console.warn(`[VICK_BRIDGE] Bridge returned error: ${bridgeRes.data.error}`);
-        diagContext += `\n\nBRIDGE INVESTIGATION: Could not complete — ${bridgeRes.data.error}. Evidence-labeled findings unavailable for this turn.`;
+        // Do NOT inject error text as diagnostic context — it is not evidence.
+        // diagContext stays empty or keeps only real diagnostic data already set above.
       } else {
         console.warn(`[VICK_BRIDGE] Bridge returned no findings`);
       }
     } catch (bridgeErr) {
       console.warn(`[VICK_BRIDGE] Bridge invocation failed (non-blocking): ${bridgeErr.message}`);
-      diagContext += '\n\nBRIDGE INVESTIGATION: Could not run — the investigation bridge was unreachable. Evidence-labeled findings unavailable for this turn.';
+      // Do NOT inject the failure message as diagnostic context — it is not evidence.
     }
   } else if (ctx.lastDiagData) {
     diagContext = buildDiagContext(ctx.lastDiagData, ownerEmail, false);
