@@ -263,6 +263,7 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
 
   // ── PATTERNS WITH RECIPIENT BUT NO EXPLICIT MESSAGE CONTENT ───────────────
   // Catches: "I texted Maya", "I called Devon", "I sent Sarah a message"
+  // Also catches narrative-adjacent forms: "Oh yeah, I reached out to him earlier"
   // message will be null — caller must derive content from context.
   const patternsNameOnly = [
     // "I texted/messaged/called/hit up [Name]" — no message body
@@ -275,6 +276,22 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
     new RegExp(`\\bI\\s+reached\\s+out\\s+to\\s+${NAME}\\b`, 'i'),
     // "Already texted/messaged [Name]"
     new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called|contacted)\\s+${NAME}\\b`, 'i'),
+    // "I asked [Name]" / "I told [Name]" / "I informed [Name]"
+    new RegExp(`\\bI\\s+(?:asked|told|informed|notified|warned|updated|checked\\s+(?:on|in\\s+with))\\s+${NAME}\\b`, 'i'),
+    // "I shot [Name] a text/message" — colloquial form
+    new RegExp(`\\bI\\s+shot\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm|quick text|quick message)\\b`, 'i'),
+    // "I hit [Name] up"
+    new RegExp(`\\bI\\s+hit\\s+${NAME}\\s+up\\b`, 'i'),
+    // "I sent a text/message to [Name]"
+    new RegExp(`\\bI\\s+sent\\s+(?:a\\s+)?(?:text|message|dm)\\s+to\\s+${NAME}\\b`, 'i'),
+    // "I got in touch with [Name]"
+    new RegExp(`\\bI\\s+got\\s+in\\s+touch\\s+with\\s+${NAME}\\b`, 'i'),
+    // "I checked in with [Name]" / "I checked on [Name]"
+    new RegExp(`\\bI\\s+checked\\s+(?:in\\s+with|on)\\s+${NAME}\\b`, 'i'),
+    // "I dropped [Name] a text/message/line"
+    new RegExp(`\\bI\\s+dropped\\s+${NAME}\\s+(?:a\\s+)?(?:text|message|dm|line)\\b`, 'i'),
+    // "I gave [Name] a call"
+    new RegExp(`\\bI\\s+gave\\s+${NAME}\\s+(?:a\\s+)?call\\b`, 'i'),
   ];
 
   for (const pattern of patternsNameOnly) {

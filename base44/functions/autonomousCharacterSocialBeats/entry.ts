@@ -519,87 +519,47 @@ Deno.serve(async (req) => {
         const beatType = selectBeatType(sender, receiver, rel, pair.source);
         const messageText = await generateMessage(base44, sender, receiver, beatType, rel, pair.eventName);
 
-        // ── FIND OR CREATE CONVERSATION ─────────────────────────────────────────
-        const convoKey = canonicalConvoKey(pair.senderId, pair.receiverId);
-        const participantIds = [pair.senderId, pair.receiverId].sort();
+        // ── ROUTE THROUGH CANONICAL WORLD PHONE PIPELINE ──────────────────────
+        // ARCHITECTURAL RULE: All character-to-character communication MUST route
+        // through sendWorldPhoneMessage. This is the ONLY authoritative write path.
+        // Direct Message.create calls are FORBIDDEN for character-to-character sends
+        // because they bypass:
+        //   - assertNotNarrative guard
+        //   - canonical sender-voice generation
+        //   - bilateral memory sync (syncWorldPhoneMemory)
+        //   - conversation key enforcement
+        //   - routing evidence / generation_context
+        //
+        // CAUSALITY RULE: Memory and LifeEvent records may ONLY be created after
+        // sendWorldPhoneMessage returns success:true and a verified message_id.
+        // A memory must never pre-authorize a communication that has no UI-visible record.
 
-        const existingConvos = await base44.asServiceRole.entities.Conversation.filter({
-          shared_conversation_key: convoKey,
-        }).catch(() => []);
-
-        let conversationId;
-        if (existingConvos.length > 0) {
-          conversationId = existingConvos[0].id;
-        } else {
-          // Check legacy title-based thread
-          const legacyConvos = await base44.asServiceRole.entities.Conversation.filter({
-            character_ids: [pair.senderId],
-          }).catch(() => []);
-          const legacyMatch = legacyConvos.find(c =>
-            Array.isArray(c.character_ids) &&
-            c.character_ids.includes(pair.receiverId) &&
-            c.channel === 'world_phone'
-          );
-
-          if (legacyMatch) {
-            conversationId = legacyMatch.id;
-            await base44.asServiceRole.entities.Conversation.update(conversationId, {
-              shared_conversation_key: convoKey,
-              participant_character_ids: participantIds,
-            }).catch(() => {});
-          } else {
-            const newConvo = await base44.asServiceRole.entities.Conversation.create({
-              title: `world_phone::${participantIds.join('::')}`,
-              type: 'direct',
-              character_ids: [pair.senderId, pair.receiverId],
-              participant_character_ids: participantIds,
-              shared_conversation_key: convoKey,
-              owner_email: userEmail,
-              channel: 'world_phone',
-              sync_status: 'complete',
-              world_contact_mode: 'character_to_character',
-              participant_character_types: [sender.character_type, receiver.character_type].filter(Boolean),
-            }).catch(err => {
-              console.warn(`[autonomousSocialBeats] Convo create failed: ${err.message}`);
-              return null;
-            });
-            if (!newConvo) continue;
-            conversationId = newConvo.id;
-          }
-        }
-
-        // ── CREATE MESSAGE ──────────────────────────────────────────────────────
-        const savedMsg = await base44.asServiceRole.entities.Message.create({
-          conversation_id: conversationId,
-          sender_type: 'character',
-          character_id: pair.senderId,
-          character_name: sender.name || sender.display_name,
+        const wpResult = await base44.functions.invoke('sendWorldPhoneMessage', {
           sender_character_id: pair.senderId,
-          receiver_character_id: pair.receiverId,
-          participant_character_ids: participantIds,
-          shared_conversation_key: convoKey,
-          content: messageText,
-          timestamp: nowIso,
-          channel: 'world_phone',
-          is_read: false,
-          sync_status: 'complete',
-          recovery_signal: false,
-          memory_eligible: true,
-          relationship_eligible: true,
-          trigger_source: 'autonomous_social_beat',
+          recipient_identifier: pair.receiverId,
+          requested_message: messageText,
+          source: 'character_action',
+          owner_email: userEmail,
+          autonomy_marker: `autonomous_social_beat::${beatType}`,
+          // Do NOT generate a recipient response from social beats — the recipient
+          // may reply naturally in their own proactive beat cycle.
+          generate_recipient_response: false,
         }).catch(err => {
-          console.warn(`[autonomousSocialBeats] Message create failed: ${err.message}`);
-          return null;
+          console.warn(`[autonomousSocialBeats] sendWorldPhoneMessage failed for ${sender.name} → ${receiver.name}: ${err.message}`);
+          return { data: { success: false, error: err.message } };
         });
 
-        if (!savedMsg) continue;
+        const wpData = wpResult?.data;
+        if (!wpData?.success || !wpData?.message_id) {
+          console.warn(`[autonomousSocialBeats] SKIPPING memory/LifeEvent — no verified World Phone message. Error: ${wpData?.error || 'unknown'}`);
+          userDiag.pairs_skipped.push({ pair: pairKey(pair.senderId, pair.receiverId), reason: `wp_send_failed: ${wpData?.error || 'unknown'}` });
+          continue;
+        }
 
-        await base44.asServiceRole.entities.Conversation.update(conversationId, {
-          last_message_preview: messageText.substring(0, 100),
-          last_message_date: nowIso,
-        }).catch(() => {});
+        const conversationId = wpData.conversation_id;
 
-        // ── BILATERAL LIFE EVENTS ───────────────────────────────────────────────
+        // ── BILATERAL LIFE EVENTS — created ONLY after confirmed World Phone message ──
+        // CAUSALITY ENFORCED: wpData.message_id must exist before these writes.
         const senderLEDef = lifeEventDef(beatType, true);
         const receiverLEDef = lifeEventDef(beatType, false);
         const senderTitle = beatType === 'community_event_followup'
@@ -617,7 +577,7 @@ Deno.serve(async (req) => {
             valence: senderLEDef.valence,
             severity: senderLEDef.severity,
             title: senderTitle,
-            description: `Reached out to ${receiver.name || receiver.display_name}: "${messageText.substring(0, 200)}"`,
+            description: `Reached out to ${receiver.name || receiver.display_name} via World Phone: "${messageText.substring(0, 200)}" [msg_id=${wpData.message_id}]`,
             emotional_impact: senderLEDef.valence === 'positive' ? 'felt connected' : 'stirred up emotions',
             triggered_by: 'life_simulation',
             timestamp: nowIso,
@@ -629,20 +589,21 @@ Deno.serve(async (req) => {
             valence: receiverLEDef.valence,
             severity: receiverLEDef.severity,
             title: receiverTitle,
-            description: `${sender.name || sender.display_name} reached out: "${messageText.substring(0, 200)}"`,
+            description: `${sender.name || sender.display_name} reached out via World Phone: "${messageText.substring(0, 200)}" [msg_id=${wpData.message_id}]`,
             emotional_impact: receiverLEDef.valence === 'positive' ? 'felt thought of' : 'brought up tension',
             triggered_by: 'life_simulation',
             timestamp: nowIso,
           }).catch(() => null),
         ]);
 
-        // ── BILATERAL CHARACTER MEMORY ──────────────────────────────────────────
-        // Tagged [autonomous_beat] so cooldown check can find them next run
+        // ── BILATERAL CHARACTER MEMORY — created ONLY after confirmed World Phone message ──
+        // CAUSALITY ENFORCED: memory_text references wpData.message_id as proof.
+        // [autonomous_beat] tag lets the cooldown check find these memories next run.
         const [senderMem, receiverMem] = await Promise.all([
           base44.asServiceRole.entities.CharacterMemory.create({
             character_id: pair.senderId,
             memory_type: 'relationship',
-            memory_text: `Reached out to ${receiver.name || receiver.display_name} (${beatType.replace(/_/g, ' ')}). Message: "${messageText.substring(0, 200)}"`,
+            memory_text: `Reached out to ${receiver.name || receiver.display_name} via World Phone (${beatType.replace(/_/g, ' ')}). Message: "${messageText.substring(0, 200)}" [verified_msg_id=${wpData.message_id}]`,
             memory_summary: `[autonomous_beat] Contacted ${receiver.name || receiver.display_name} — ${beatType}`,
             related_character_id: pair.receiverId,
             importance_score: 4,
@@ -653,7 +614,7 @@ Deno.serve(async (req) => {
           base44.asServiceRole.entities.CharacterMemory.create({
             character_id: pair.receiverId,
             memory_type: 'relationship',
-            memory_text: `${sender.name || sender.display_name} reached out (${beatType.replace(/_/g, ' ')}): "${messageText.substring(0, 200)}"`,
+            memory_text: `${sender.name || sender.display_name} reached out via World Phone (${beatType.replace(/_/g, ' ')}): "${messageText.substring(0, 200)}" [verified_msg_id=${wpData.message_id}]`,
             memory_summary: `[autonomous_beat] Received contact from ${sender.name || sender.display_name} — ${beatType}`,
             related_character_id: pair.senderId,
             importance_score: 4,
@@ -685,7 +646,8 @@ Deno.serve(async (req) => {
           eventName: pair.eventName || null,
           messagePreview: messageText.substring(0, 80),
           conversationId,
-          messageId: savedMsg.id,
+          messageId: wpData.message_id,
+          wpVerified: true,
           lifeEventsCreated: [senderLE?.id, receiverLE?.id].filter(Boolean).length,
           memoriesCreated: [senderMem?.id, receiverMem?.id].filter(Boolean).length,
           senderLEId: senderLE?.id || null,
@@ -694,7 +656,7 @@ Deno.serve(async (req) => {
           receiverMemId: receiverMem?.id || null,
         };
 
-        console.log(`[autonomousSocialBeats] ✓ Beat | ${sender.name} → ${receiver.name} | type=${beatType} | source=${pair.source} | msg=${savedMsg.id} | senderLE=${senderLE?.id} | receiverLE=${receiverLE?.id}`);
+        console.log(`[autonomousSocialBeats] ✓ Beat | ${sender.name} → ${receiver.name} | type=${beatType} | source=${pair.source} | msg=${wpData.message_id} | wp_verified=true | senderLE=${senderLE?.id} | receiverLE=${receiverLE?.id}`);
         results.push(beatResult);
 
         await new Promise(r => setTimeout(r, 300));

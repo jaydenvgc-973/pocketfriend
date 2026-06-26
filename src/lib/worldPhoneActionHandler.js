@@ -113,6 +113,43 @@ function resolvePronounRecipient(character, recentMessages) {
   return null;
 }
 
+/**
+ * stripFabricatedIncomingReplyClaimsIfUnverified
+ *
+ * Strips claims about what another character "said" or "replied" when that claim
+ * cannot be verified against an actual World Phone incoming message.
+ *
+ * Pattern: "She said she's fine", "He replied that he can come", "They texted back saying..."
+ * These are fabricated unless a real incoming World Phone message exists in the thread.
+ *
+ * This function is CONSERVATIVE — it only strips patterns that are clearly
+ * reporting speech from a third party (not self-speech or general narrative).
+ *
+ * Called BEFORE saving the response — not as a post-hoc strip.
+ */
+function stripFabricatedIncomingReplyClaims(responseText) {
+  if (!responseText) return responseText;
+
+  // Patterns: third-person attribution of speech/replies
+  const fabricatedReplyPatterns = [
+    // "She/he/they said [X]" — third-party speech attribution
+    /\b(?:she|he|they)\s+said\s+(?:that\s+)?["']?[^.!?]{5,}["']?[.!]/gi,
+    // "She/he/they replied [X]" / "She/he/they texted back [X]"
+    /\b(?:she|he|they)\s+(?:replied|texted\s+back|messaged\s+back|wrote\s+back|responded)\s+(?:that\s+|saying\s+)?["']?[^.!?]{5,}["']?[.!]/gi,
+    // "[Name] said/replied that..." — named third party
+    /\b([A-Z][a-zA-Z]+)\s+(?:said|replied|texted\s+back|messaged\s+back|wrote\s+back|responded)\s+(?:that\s+|saying\s+)?["']?[^.!?]{5,}["']?[.!]/g,
+    // "and she/he/they said..." — conjunction form
+    /\band\s+(?:she|he|they)\s+said\s+(?:that\s+)?["']?[^.!?]{5,}["']?[.!]/gi,
+  ];
+
+  let result = responseText;
+  for (const pattern of fabricatedReplyPatterns) {
+    result = result.replace(pattern, '');
+  }
+
+  return result.replace(/\s{2,}/g, ' ').trim() || responseText;
+}
+
 export async function handleCharacterWorldPhoneAction({
   responseText,
   character,
@@ -267,6 +304,32 @@ export async function handleCharacterWorldPhoneAction({
         confidence_score: 0.6,
         permanence: 'short_term',
       }).catch(err => console.warn('[WorldPhone] failed to persist unresolved proactive outreach record:', err.message));
+    }
+  }
+
+  // ── PATH 3: STANDALONE FABRICATED REPLY GUARD ──────────────────────────────
+  // Even when no send was detected, the character may have fabricated what another
+  // character said back without a real World Phone incoming message existing.
+  // This guard ONLY fires when no World Phone send happened this turn —
+  // if a send succeeded, the recipient response is real and must not be stripped.
+  //
+  // Example failure: user asks "What did Maya say?" and character replies
+  // "She said she's coming over tonight" — fabricated without a real WP message.
+  //
+  // CONSERVATIVE: only strips patterns that are unambiguously fabricated third-party
+  // speech attribution. Never strips self-reporting or general narrative.
+  if (!pastTenseAction && !outreach) {
+    // No World Phone activity detected this turn — check for standalone fabricated replies.
+    // Only apply the strip when the response contains third-party speech attribution patterns.
+    const hasFabricatedReplyPattern = /\b(?:she|he|they)\s+(?:said|replied|texted\s+back|messaged\s+back|wrote\s+back|responded)\b/i.test(modifiedResponseText) ||
+      /\b[A-Z][a-zA-Z]+\s+(?:replied|texted\s+back|messaged\s+back|wrote\s+back)\b/.test(modifiedResponseText);
+
+    if (hasFabricatedReplyPattern) {
+      const stripped = stripFabricatedIncomingReplyClaims(modifiedResponseText);
+      if (stripped !== modifiedResponseText) {
+        console.log('[WorldPhone] PATH 3: Stripped standalone fabricated incoming reply claim from response');
+        modifiedResponseText = stripped;
+      }
     }
   }
 

@@ -605,6 +605,12 @@ RULES:
     }
 
     // ── SAVE MESSAGE ─────────────────────────────────────────────────────────
+    // ARCHITECTURAL RULE: This proactive message is from the character to the USER
+    // (direct chat, channel='direct'). It is NOT a World Phone character-to-character
+    // communication. World Phone is ONLY used when a character contacts ANOTHER CHARACTER.
+    // If a pendingCommitment involves a third-party relay to another character, that is
+    // handled by processUnresolvedCommunicationCommitments → triggerCharacterContact → sendWorldPhoneMessage.
+    // This function's scope is: character proactively reaching out to the user.
     const msg = await sr.entities.Message.create({
       conversation_id: conversationId,
       sender_type: 'character',
@@ -628,12 +634,18 @@ RULES:
     });
 
     // ── MARK COMMITMENT FULFILLED ────────────────────────────────────────────
-    if (pendingCommitment) {
+    // CAUSALITY RULE: Commitment is marked fulfilled ONLY after the message record
+    // is confirmed created. If msg.id is absent, the commitment stays pending.
+    if (pendingCommitment && msg?.id) {
       await sr.entities.CommunicationCommitment.update(pendingCommitment.id, {
         status: 'fulfilled',
         fulfilled_at: now.toISOString(),
         fulfilled_message_id: msg.id,
       }).catch(() => {});
+    } else if (pendingCommitment && !msg?.id) {
+      // Message write failed — do NOT mark the commitment fulfilled.
+      // It will be retried on the next run.
+      console.warn(`[sendProactiveMessageForCharacter] Message write failed — commitment ${pendingCommitment.id} NOT marked fulfilled. Will retry next run.`);
     }
 
     // ── UPDATE CONVERSATION ──────────────────────────────────────────────────
