@@ -34,6 +34,42 @@ function getCtx(conversationId) {
   return conversationContexts.get(conversationId);
 }
 
+// ── Classify a diagnostic failure into a machine-readable status ─────────────
+function classifyDiagnosticFailure(error) {
+  const code = error?.status || error?.code;
+  if (code === 429 || error?.message?.toLowerCase?.().includes('rate limit')) return 'rate_limited';
+  if (code === 403) return 'permission_denied';
+  if (code === 401) return 'permission_denied';
+  if (code === 408 || code === 'ETIMEDOUT' || error?.name === 'TimeoutError' || error?.message?.toLowerCase?.().includes('timeout')) return 'timed_out';
+  if (code === 503 || code === 502) return 'dependency_failure';
+  return 'failed';
+}
+
+// ── Build a structured diagnostic failure context string for the LLM prompt ──
+// Returns a string Vick can parse and explain — never an empty string.
+function buildFailureContext(error, source) {
+  const status = classifyDiagnosticFailure(error);
+  const checkedAt = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true }) + ' Eastern';
+  const obj = {
+    status,
+    source,
+    freshness: 'live_attempt_failed',
+    checked_at: checkedAt,
+    error_code: error?.code || error?.status || error?.name || null,
+    error_message: error?.message || String(error),
+    fallback_used: false,
+    fallback_reason: null,
+  };
+  const statusLabels = {
+    rate_limited: 'RATE LIMITED (429)',
+    permission_denied: 'PERMISSION DENIED',
+    timed_out: 'TIMED OUT',
+    dependency_failure: 'DEPENDENCY FAILURE',
+    failed: 'DIAGNOSTIC FUNCTION FAILED',
+  };
+  return `[DIAGNOSTIC_FAILURE] ${statusLabels[status] || status} | source=${source} | error="${obj.error_message}" | code=${obj.error_code || 'none'} | freshness=live_attempt_failed | checked_at=${checkedAt}\nThis is a real diagnostic failure — not missing data. The diagnostic function was called and returned an error. Vick must report this error state, not treat it as "no evidence."`;
+}
+
 // ── Full account diagnostic — SAME call as SupportAssistant ──────────────────
 async function runFullDiagnostic() {
   const res = await base44.functions.invoke('userAccountDiagnostic', { categories: 'all' });
@@ -1035,10 +1071,10 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       diagContext = buildDiagContext(diagData, ownerEmail, true);
       console.log(`[VICK_BRIDGE] Diagnostic complete. Summary: ${diagData.summary || 'no summary'}`);
     } catch (err) {
-      console.warn(`[VICK_BRIDGE] Diagnostic failed (non-blocking): ${err.message}`);
-      // Do NOT inject the error string into diagContext — it becomes fabrication fuel.
-      // Leave diagContext empty so the no-evidence guard fires correctly.
-      diagContext = '';
+      // CRITICAL: Never suppress this into an empty string.
+      // A diagnostic failure IS evidence. Vick must see it and report it.
+      console.warn(`[VICK_BRIDGE] Diagnostic failed: ${err.message}`);
+      diagContext = buildFailureContext(err, 'userAccountDiagnostic');
     }
 
     // ── VICK INVESTIGATION BRIDGE — evidence-labeled findings ──────────────
@@ -1054,19 +1090,29 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
       });
       if (bridgeRes?.data?.findingsText) {
         const bridgeFindings = bridgeRes.data.findingsText;
-        console.log(`[VICK_BRIDGE] Bridge findings received: ${bridgeRes.data.observedCount} observed, ${bridgeRes.data.inferredCount} inferred, ${bridgeRes.data.unknownCount} unknown`);
+        const bridgeStatus = bridgeRes.data.diagnosticStatus || {};
+        console.log(`[VICK_BRIDGE] Bridge findings received: ${bridgeRes.data.observedCount} observed, ${bridgeRes.data.inferredCount} inferred, ${bridgeRes.data.unknownCount} unknown | status=${bridgeStatus.status}`);
         // Inject evidence-labeled bridge findings into Vick's prompt context
         diagContext += `\n\n═══ BRIDGE FINDINGS (evidence-labeled investigation) ═══\n${bridgeFindings}`;
+        if (bridgeStatus.status && bridgeStatus.status !== 'completed') {
+          diagContext += `\n[BRIDGE STATUS] ${bridgeStatus.status} | freshness=${bridgeStatus.freshness} | source=${bridgeStatus.source}`;
+        }
+      } else if (bridgeRes?.data?.diagnosticStatus) {
+        // Bridge ran but returned no findings — surface the structured status so Vick knows why
+        const bs = bridgeRes.data.diagnosticStatus;
+        diagContext += `\n\n═══ BRIDGE STATUS (no findings returned) ═══\n[BRIDGE_STATUS] status=${bs.status} | source=${bs.source} | freshness=${bs.freshness} | error=${bs.error_message || 'none'} | checked_at=${bs.checked_at}\nThe investigation bridge completed but returned no findings text. This is itself a diagnostic observation — Vick must report it, not treat it as absence of data.`;
       } else if (bridgeRes?.data?.error) {
+        // Bridge returned a top-level error
+        diagContext += `\n\n[BRIDGE_FAILURE] source=vickInvestigationBridge | error="${bridgeRes.data.error}" | status=failed | freshness=live_attempt_failed\nThe investigation bridge returned an error. This is a diagnostic finding. Vick must report it.`;
         console.warn(`[VICK_BRIDGE] Bridge returned error: ${bridgeRes.data.error}`);
-        // Do NOT inject error text as diagnostic context — it is not evidence.
-        // diagContext stays empty or keeps only real diagnostic data already set above.
       } else {
-        console.warn(`[VICK_BRIDGE] Bridge returned no findings`);
+        diagContext += `\n\n[BRIDGE_FAILURE] source=vickInvestigationBridge | status=failed | freshness=live_attempt_failed | reason=no_findings_and_no_status_returned\nThe investigation bridge returned no data and no status. This is a diagnostic failure. Vick must report it.`;
+        console.warn(`[VICK_BRIDGE] Bridge returned no findings and no status`);
       }
     } catch (bridgeErr) {
-      console.warn(`[VICK_BRIDGE] Bridge invocation failed (non-blocking): ${bridgeErr.message}`);
-      // Do NOT inject the failure message as diagnostic context — it is not evidence.
+      // Bridge invocation itself failed — this is evidence, not silence
+      console.warn(`[VICK_BRIDGE] Bridge invocation failed: ${bridgeErr.message}`);
+      diagContext += `\n\n${buildFailureContext(bridgeErr, 'vickInvestigationBridge')}`;
     }
   } else if (ctx.lastDiagData) {
     diagContext = buildDiagContext(ctx.lastDiagData, ownerEmail, false);
@@ -1124,24 +1170,36 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
           scope: `character_snapshot:${targetChar.id}`,
           dryRun: true,
         });
+        const bridgeStatus = bridgeRes?.data?.diagnosticStatus || {};
         if (bridgeRes?.data?.findingsText) {
           scopedBridgeRan = true;
           investigationContext += '\n\n═══ SCOPED INVESTIGATION FINDINGS (bridge evidence — backend + frontend + schedule + roster + contradictions) ═══\n' + bridgeRes.data.findingsText;
+          // Append structured status alongside prose so Vick can report freshness/snapshot vs live
+          if (bridgeStatus.status) {
+            investigationContext += `\n[BRIDGE_STATUS] status=${bridgeStatus.status} | freshness=${bridgeStatus.freshness} | source=${bridgeStatus.source} | fallback_used=${bridgeStatus.fallback_used}`;
+            if (bridgeStatus.fallback_used && bridgeStatus.fallback_reason) {
+              investigationContext += ` | fallback_reason=${bridgeStatus.fallback_reason}`;
+            }
+          }
           scopedEvidenceReachedContext = true;
-          console.log(`[VICK_BRIDGE] Scoped bridge EVIDENCE REACHED CONTEXT: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions, ${bridgeRes.data.frontendEvidenceCount} frontend evidence lines`);
+          console.log(`[VICK_BRIDGE] Scoped bridge EVIDENCE REACHED CONTEXT: ${bridgeRes.data.observedCount} obs, ${bridgeRes.data.inferredCount} inf, ${bridgeRes.data.contradictionCount} contradictions, ${bridgeRes.data.frontendEvidenceCount} frontend evidence lines | status=${bridgeStatus.status}`);
+        } else if (bridgeStatus.status) {
+          // Bridge ran but returned no prose findings — structured status tells us why
+          scopedBridgeRan = true;
+          investigationContext += `\n\n═══ SCOPED INVESTIGATION STATUS (no prose findings returned) ═══\n[BRIDGE_STATUS] status=${bridgeStatus.status} | freshness=${bridgeStatus.freshness} | source=${bridgeStatus.source} | error=${bridgeStatus.error_message || 'none'} | error_code=${bridgeStatus.error_code || 'none'} | checked_at=${bridgeStatus.checked_at}\nThe bridge ran for this character but returned no findings text. This is a diagnostic observation. Vick must report this status honestly.`;
+          console.warn(`[VICK_BRIDGE] Scoped bridge returned no findings — status: ${bridgeStatus.status}`);
         } else {
-          console.warn(`[VICK_BRIDGE] Scoped bridge returned no findings — investigationContext will be EMPTY`);
-          investigationContext += '\n\n═══ SCOPED INVESTIGATION FAILED ═══\nThe investigation bridge ran but returned no findings for this character. You have NO character-specific evidence. You MUST NOT answer questions about this character. Say: "I ran the check but the bridge returned no data. I would need to look at this differently."';
+          console.warn(`[VICK_BRIDGE] Scoped bridge returned no findings and no status`);
+          investigationContext += `\n\n[BRIDGE_FAILURE] source=vickInvestigationBridge | character="${scopedName}" | status=failed | freshness=live_attempt_failed | reason=no_findings_no_status\nThe bridge ran for this character but returned nothing — no findings and no status object. Vick must report this as a diagnostic failure, not as "no data."`;
         }
       } else {
-        // Character name was detected but could not be found in the database.
-        // This is a critical guard: Vick must NOT invent anything about this character.
-        console.log(`[VICK_BRIDGE] Character NOT FOUND: "${scopedName}" — investigationContext will record this gap explicitly`);
-        investigationContext += `\n\n═══ CHARACTER NOT FOUND ═══\nThe name "${scopedName}" was detected in the user's question but no matching character was found in the database for this account. The character either does not exist, belongs to a different account, or the name is a partial match that could not be resolved. You MUST NOT answer any questions about this character. You MUST NOT invent a location, status, schedule, or presence for this character. Say: "I don't have that character in my records. I checked — no match for that name on this account. Can you clarify who you mean?"`;
+        // Character name detected but not found in database — this is a lookup result, not a failure
+        console.log(`[VICK_BRIDGE] Character NOT FOUND: "${scopedName}" — recording as no_matching_records`);
+        investigationContext += `\n\n═══ CHARACTER LOOKUP RESULT ═══\n[LOOKUP_STATUS] status=no_matching_records | searched_for="${scopedName}" | source=Character_database | freshness=live | scope=owner_email=${ownerEmail}\nThe name "${scopedName}" was searched in the database for this account. No matching active character was found. This is a definitive lookup result — the character does not exist on this account or the name does not match. Vick must report this clearly: NOT as "I don't have the data" but as "I checked and that character is not in the records for this account."`;
       }
     } catch (scopedErr) {
-      console.warn(`[VICK_BRIDGE] Scoped bridge ERROR (non-blocking): ${scopedErr.message}`);
-      investigationContext += `\n\n═══ SCOPED INVESTIGATION ERROR ═══\nThe investigation bridge failed with error: ${scopedErr.message}. You have NO evidence. You MUST NOT answer character-state questions. Say: "I hit an error trying to pull that data. Let me try again or we can approach this from a different angle."`;
+      console.warn(`[VICK_BRIDGE] Scoped bridge ERROR: ${scopedErr.message}`);
+      investigationContext += `\n\n${buildFailureContext(scopedErr, `vickInvestigationBridge/character_snapshot:${scopedName}`)}\nVick must report this error to the user — it is a real diagnostic failure, not absence of evidence.`;
     }
   }
 

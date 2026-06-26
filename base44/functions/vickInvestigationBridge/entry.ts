@@ -22,33 +22,109 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
  * PRIVACY: Vick is not made omniscient. Sensitive content is summarized.
  * Raw private message content is never dumped.
  */
+// ── DIAGNOSTIC STATUS MODEL ───────────────────────────────────────────────────
+// Every evidence-collection call returns a structured status object alongside its data.
+// This is the canonical shape that the bridge includes in every return payload.
+function buildDiagnosticStatus({
+  status,          // completed | running | blocked | failed | timed_out | rate_limited | permission_denied | no_matching_records | stale_snapshot_only | partial
+  source,          // database | scheduler | dashboard | frontend_evidence | snapshot | vickInvestigationBridge | readCharacterStateSnapshot
+  freshness,       // live | snapshot | cached | unknown | live_attempt_failed
+  errorCode = null,
+  errorMessage = null,
+  fallbackUsed = false,
+  fallbackReason = null,
+  dependencyChain = null,
+}) {
+  const nowET = new Date().toLocaleString('en-US', {
+    timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+  }) + ' Eastern';
+  return {
+    status,
+    source,
+    freshness,
+    checked_at: nowET,
+    checked_at_iso: new Date().toISOString(),
+    error_code: errorCode,
+    error_message: errorMessage,
+    fallback_used: fallbackUsed,
+    fallback_reason: fallbackReason,
+    dependency_chain: dependencyChain,
+  };
+}
+
+function classifyError(e) {
+  const code = e?.status || e?.code;
+  if (code === 429 || e?.message?.toLowerCase?.().includes('rate limit')) return 'rate_limited';
+  if (code === 403 || code === 401) return 'permission_denied';
+  if (code === 408 || e?.name === 'TimeoutError' || e?.message?.toLowerCase?.().includes('timeout')) return 'timed_out';
+  if (code === 503 || code === 502) return 'dependency_failure';
+  return 'failed';
+}
+
 // ── FRONTEND EVIDENCE COLLECTOR ──────────────────────────────────────────────
-// Calls readCharacterStateSnapshot — the existing reconciler that runs the actual
-// frontend resolvers (home card, profile, travel, locations, map) AND auto-detects
-// contradictions between database records and page-facing UI state.
-// This is what restores Vick's cross-reference responsibility: the bridge now
-// supplies frontend/UI evidence, not backend records alone.
+// Calls readCharacterStateSnapshot — labeled as SNAPSHOT evidence, never live truth.
+// Always returns a structured result that includes evidence freshness and failure state.
 async function collectFrontendEvidence(base44, characterId, ownerEmail) {
+  const nowET = new Date().toLocaleString('en-US', {
+    timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+  }) + ' Eastern';
+
   try {
     const res = await base44.functions.invoke('readCharacterStateSnapshot', {
       characterId, ownerEmail,
     });
     const data = res?.data || res;
     if (!data || data.error) {
-      return { available: false, reason: data?.error || 'snapshot returned no data' };
+      return {
+        available: false,
+        // STRUCTURED FAILURE — not an empty object
+        diagnosticStatus: buildDiagnosticStatus({
+          status: 'failed',
+          source: 'readCharacterStateSnapshot',
+          freshness: 'live_attempt_failed',
+          errorMessage: data?.error || 'snapshot returned no data',
+          fallbackUsed: false,
+        }),
+        reason: data?.error || 'snapshot returned no data',
+      };
     }
+    // readCharacterStateSnapshot uses cached/snapshot resolvers — label correctly
+    const snapshotCapturedAt = data.checked_at_app_time_et || nowET;
     return {
       available: true,
-      appTimeET: data.checked_at_app_time_et || null,
-      databaseState: data.database_state || null,   // = Backend State Inspector
-      pageFacing: data.page_facing_state || null,    // = Home card, Profile, Travel, Locations, Map UI
-      scheduleState: data.schedule_state || null,    // = expected state from schedule + Eastern time
-      rosterState: data.roster_state || null,        // = location-roster membership
+      // CRITICAL: label as snapshot so Vick knows this is NOT live UI truth
+      diagnosticStatus: buildDiagnosticStatus({
+        status: 'completed',
+        source: 'readCharacterStateSnapshot',
+        freshness: 'snapshot',
+        fallbackUsed: false,
+      }),
+      snapshot_freshness: 'snapshot',
+      snapshot_captured_at: snapshotCapturedAt,
+      live_attempted: true,
+      live_attempt_status: 'snapshot_used',
+      appTimeET: snapshotCapturedAt,
+      databaseState: data.database_state || null,
+      pageFacing: data.page_facing_state || null,
+      scheduleState: data.schedule_state || null,
+      rosterState: data.roster_state || null,
       contradictions: Array.isArray(data.contradictions) ? data.contradictions : [],
       missingAccess: Array.isArray(data.missing_access) ? data.missing_access : [],
     };
   } catch (e) {
-    return { available: false, reason: e.message };
+    const status = classifyError(e);
+    return {
+      available: false,
+      diagnosticStatus: buildDiagnosticStatus({
+        status,
+        source: 'readCharacterStateSnapshot',
+        freshness: 'live_attempt_failed',
+        errorCode: e?.status || e?.code || e?.name || null,
+        errorMessage: e.message,
+        fallbackUsed: false,
+      }),
+      reason: e.message,
+    };
   }
 }
 
@@ -171,7 +247,21 @@ Deno.serve(async (req) => {
     }
 
     if (!convo) {
-      return Response.json({ error: 'Conversation not found' }, { status: 404 });
+      const nowET = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true }) + ' Eastern';
+      return Response.json({
+        error: 'Conversation not found',
+        diagnosticStatus: {
+          status: 'failed',
+          source: 'vickInvestigationBridge/conversation_lookup',
+          freshness: 'live_attempt_failed',
+          checked_at: nowET,
+          checked_at_iso: new Date().toISOString(),
+          error_code: 404,
+          error_message: `Conversation not found for conversationId=${conversationId}`,
+          fallback_used: false,
+          fallback_reason: null,
+        },
+      }, { status: 404 });
     }
 
     // ── STEP 3: Parse scope ────────────────────────────────────────────────
@@ -534,7 +624,39 @@ Deno.serve(async (req) => {
       }).catch(() => {});
     }
 
-    console.log(`[vickInvestigationBridge] ${dryRun ? 'Returned' : 'Delivered'} findings ${dryRun ? '' : `to conversation ${conversationId}`} for ${ownerEmail}`);
+    // ── STRUCTURED DIAGNOSTIC STATUS MODEL ───────────────────────────────────
+    // Every return path from this bridge must include a machine-readable status object.
+    // This is what the caller (vickServiceBridge) uses to determine freshness, failure type,
+    // and whether to present evidence as live, snapshot, or failed.
+    const hasLiveData = sourceAvailability.CHARACTER_RECORD === 'CHECKED' || sourceAvailability.LOCATION_FILE === 'CHECKED';
+    const hasSnapshotData = sourceAvailability.HOMEPAGE_CARD_UI === 'CHECKED' || sourceAvailability.CHARACTER_PROFILE_UI === 'CHECKED';
+    const hasFrontendErrors = frontendLines.some(l => l.includes('SOURCE NOT AVAILABLE'));
+
+    let bridgeStatus = 'completed';
+    let bridgeFreshness = 'live';
+    if (observed.length === 0 && inferred.length === 0 && frontendLines.length === 0) {
+      bridgeStatus = 'no_matching_records';
+      bridgeFreshness = 'live';
+    } else if (unknown.length > 0 && observed.length === 0) {
+      bridgeStatus = 'failed';
+      bridgeFreshness = 'live_attempt_failed';
+    } else if (hasSnapshotData && !hasLiveData) {
+      bridgeStatus = 'stale_snapshot_only';
+      bridgeFreshness = 'snapshot';
+    } else if (hasFrontendErrors && hasLiveData) {
+      bridgeStatus = 'partial';
+      bridgeFreshness = 'live';
+    }
+
+    const diagnosticStatus = buildDiagnosticStatus({
+      status: bridgeStatus,
+      source: `vickInvestigationBridge/${scope}`,
+      freshness: bridgeFreshness,
+      fallbackUsed: hasSnapshotData && !hasLiveData,
+      fallbackReason: (hasSnapshotData && !hasLiveData) ? 'live_db_unavailable_snapshot_used' : null,
+    });
+
+    console.log(`[vickInvestigationBridge] ${dryRun ? 'Returned' : 'Delivered'} findings ${dryRun ? '' : `to conversation ${conversationId}`} for ${ownerEmail} | bridgeStatus=${bridgeStatus} | freshness=${bridgeFreshness}`);
 
     return Response.json({
       success: true,
@@ -545,6 +667,8 @@ Deno.serve(async (req) => {
       scope,
       dryRun,
       findingsText,
+      // STRUCTURED STATUS MODEL — required fields for Vick's diagnostic transparency
+      diagnosticStatus,
       observedCount: observed.length,
       inferredCount: inferred.length,
       assumedCount: assumed.length,
@@ -557,6 +681,25 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[vickInvestigationBridge]', error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+    const nowET = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true }) + ' Eastern';
+    const errStatus = (error?.status || error?.code) === 429 ? 'rate_limited'
+      : (error?.status === 403 || error?.status === 401) ? 'permission_denied'
+      : error?.name === 'TimeoutError' || error?.message?.toLowerCase?.().includes('timeout') ? 'timed_out'
+      : 'failed';
+    return Response.json({
+      error: error.message,
+      // Always return structured status even on hard failure
+      diagnosticStatus: {
+        status: errStatus,
+        source: 'vickInvestigationBridge',
+        freshness: 'live_attempt_failed',
+        checked_at: nowET,
+        checked_at_iso: new Date().toISOString(),
+        error_code: error?.code || error?.status || error?.name || null,
+        error_message: error.message,
+        fallback_used: false,
+        fallback_reason: null,
+      },
+    }, { status: 500 });
   }
 });
