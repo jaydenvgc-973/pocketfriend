@@ -38,6 +38,17 @@ Deno.serve(async (req) => {
       status: 'pending',
     }, 'due_after', 50).catch(() => []);
 
+    // ── PROMISE-TRACK: Load ready_to_deliver commitments separately ──────────
+    // These are Vick diagnostic commitments (metadata.promise_track === true) whose
+    // investigation has reached a terminal state. They bypass due_after entirely —
+    // the investigation completing IS the trigger. Normal commitments are unaffected.
+    const allReadyToDeliver = await sr.entities.CommunicationCommitment.filter({
+      status: 'ready_to_deliver',
+    }, 'created_at', 20).catch(() => []);
+
+    // Only Promise-Track commitments use the ready_to_deliver fast path
+    const promiseTrackReady = allReadyToDeliver.filter(c => c.metadata?.promise_track === true);
+
     const due = allPending.filter(c => {
       if (!c.due_after) return true; // no due date = immediately due
       return new Date(c.due_after) <= now;
@@ -52,7 +63,135 @@ Deno.serve(async (req) => {
       }).catch(() => {});
     }
 
+    // Promise-Track commitments older than 7 days without delivery → failed_delivery
+    for (const c of promiseTrackReady) {
+      const age = (now.getTime() - new Date(c.created_at || now).getTime()) / (24 * 3600 * 1000);
+      if (age > 7) {
+        await sr.entities.CommunicationCommitment.update(c.id, {
+          status: 'failed_delivery',
+        }).catch(() => {});
+      }
+    }
+
     const actionable = due.filter(c => new Date(c.created_at || c.due_after) >= sevenDaysAgo).slice(0, 5);
+
+    // ── PROMISE-TRACK DELIVERY LOOP ───────────────────────────────────────────
+    // Runs BEFORE the normal commitment loop. Scoped strictly to promise_track commitments.
+    // Does NOT affect normal follow_up / third_party_relay commitments.
+    const promiseTrackResults = [];
+    const promiseTrackToProcess = promiseTrackReady
+      .filter(c => {
+        const age = (now.getTime() - new Date(c.created_at || now).getTime()) / (24 * 3600 * 1000);
+        return age <= 7;
+      })
+      .slice(0, 5);
+
+    for (const commitment of promiseTrackToProcess) {
+      try {
+        const conversationId = commitment.metadata?.original_conversation_id;
+        const investigationId = commitment.metadata?.investigation_id;
+        const vickCharacterId = commitment.character_id;
+        const ownerEmail = commitment.owner_email;
+
+        if (!conversationId || !vickCharacterId) {
+          console.warn(`[processUnresolvedCommunicationCommitments] Promise-Track ${commitment.id} missing conversationId or vickCharacterId — skipping`);
+          promiseTrackResults.push({ id: commitment.id, result: 'skipped_missing_fields' });
+          continue;
+        }
+
+        // Load the linked investigation to get findings text
+        let findingsContent = commitment.commitment_text || 'Investigation complete — no findings text available.';
+        if (investigationId) {
+          const invRecords = await sr.entities.VickInvestigation.filter({ id: investigationId }, null, 1).catch(() => []);
+          const inv = invRecords[0] || null;
+          if (inv?.findings) {
+            findingsContent = inv.findings;
+          } else if (inv) {
+            // Investigation exists but has no findings — report the status honestly
+            const invStatus = inv.status || 'unknown';
+            const bridgeStatus = commitment.metadata?.bridge_status || invStatus;
+            const bridgeFreshness = commitment.metadata?.bridge_freshness || 'unknown';
+            const nowET_deliver = new Date().toLocaleString('en-US', {
+              timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+            }) + ' Eastern';
+            findingsContent = `Investigation reached terminal state at ${nowET_deliver}.\nStatus: ${bridgeStatus} | Freshness: ${bridgeFreshness}\nNo prose findings were produced. This is itself a diagnostic result — the investigation ran but returned no text. This is not "no data" — it is a documented failure to produce findings.`;
+          }
+        }
+
+        // Write the Vick-authored follow-up message directly to the original conversation.
+        // fulfillment_message_id is set ONLY after confirmed message creation succeeds.
+        const nowIso_deliver = new Date().toISOString();
+        let deliveredMessageId = null;
+        let deliveryError = null;
+
+        try {
+          const savedMsg = await sr.entities.Message.create({
+            conversation_id: conversationId,
+            sender_type: 'character',
+            character_id: vickCharacterId,
+            character_name: commitment.character_name || 'Vick Servicio',
+            content: findingsContent,
+            recovery_signal: false,
+            memory_eligible: false,
+            relationship_eligible: false,
+            is_read: false,
+            timestamp: nowIso_deliver,
+          });
+          deliveredMessageId = savedMsg?.id || null;
+        } catch (msgErr) {
+          deliveryError = msgErr.message;
+          console.error(`[processUnresolvedCommunicationCommitments] Promise-Track message write failed for ${commitment.id}: ${msgErr.message}`);
+        }
+
+        if (deliveredMessageId) {
+          // Message exists — mark fulfilled with proof
+          await sr.entities.CommunicationCommitment.update(commitment.id, {
+            status: 'fulfilled',
+            fulfilled_at: nowIso_deliver,
+            fulfilled_message_id: deliveredMessageId,
+          }).catch(e => console.error('[processUnresolvedCommunicationCommitments] Commitment fulfill update failed:', e.message));
+
+          // Mark the linked investigation as delivered
+          if (investigationId) {
+            await sr.entities.VickInvestigation.update(investigationId, {
+              status: 'delivered',
+              findings_delivered: true,
+              delivered_at: nowIso_deliver,
+            }).catch(() => {});
+          }
+
+          // Update conversation preview
+          await sr.entities.Conversation.update(conversationId, {
+            last_message_preview: findingsContent.substring(0, 100),
+            last_message_date: nowIso_deliver,
+          }).catch(() => {});
+
+          promiseTrackResults.push({
+            id: commitment.id,
+            result: 'fulfilled',
+            fulfillment_message_id: deliveredMessageId,
+            investigation_id: investigationId,
+          });
+        } else {
+          // Message write failed — mark failed_delivery, never mark fulfilled
+          await sr.entities.CommunicationCommitment.update(commitment.id, {
+            status: 'failed_delivery',
+          }).catch(() => {});
+
+          promiseTrackResults.push({
+            id: commitment.id,
+            result: 'failed_delivery',
+            error: deliveryError || 'message_create_returned_no_id',
+            investigation_id: investigationId,
+          });
+        }
+
+        await new Promise(r => setTimeout(r, 300));
+      } catch (ptErr) {
+        console.error(`[processUnresolvedCommunicationCommitments] Promise-Track error for ${commitment.id}: ${ptErr.message}`);
+        promiseTrackResults.push({ id: commitment.id, result: 'error', error: ptErr.message });
+      }
+    }
 
     const results = [];
 
@@ -232,7 +371,7 @@ Deno.serve(async (req) => {
 
     console.log(
       `[processUnresolvedCommunicationCommitments] ` +
-      `pending=${allPending.length} | due=${due.length} | expired=${expired.length} | processed=${actionable.length}`
+      `pending=${allPending.length} | due=${due.length} | expired=${expired.length} | processed=${actionable.length} | promise_track_ready=${promiseTrackReady.length} | promise_track_processed=${promiseTrackToProcess.length}`
     );
 
     return Response.json({
@@ -242,6 +381,9 @@ Deno.serve(async (req) => {
       expired_this_run: expired.length,
       processed: actionable.length,
       results,
+      promise_track_ready: promiseTrackReady.length,
+      promise_track_processed: promiseTrackToProcess.length,
+      promise_track_results: promiseTrackResults,
       timestamp: nowIso,
     });
 

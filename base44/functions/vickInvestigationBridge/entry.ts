@@ -600,6 +600,113 @@ Deno.serve(async (req) => {
 
     const findingsText = lines.join('\n');
 
+    // ── PROMISE-TRACK: Create durable investigation + commitment records ─────
+    // Only when caller passes promiseTrack: true (Vick has made a promise to report back).
+    // This section creates two linked records BEFORE writing any message, ensuring
+    // persistence survives session resets, crashes, or delivery failures.
+    const promiseTrack = payload.promiseTrack || payload.promise_track || false;
+    const existingInvestigationId = payload.investigationId || payload.investigation_id || null;
+    const existingCommitmentId = payload.commitmentId || payload.commitment_id || null;
+
+    let investigationId = existingInvestigationId;
+    let commitmentId = existingCommitmentId;
+
+    if (promiseTrack && !dryRun && conversationId) {
+      try {
+        // Determine terminal state for investigation based on bridge outcome
+        const terminalInvestigationStatus =
+          bridgeStatus === 'completed' ? 'findings_ready' :
+          bridgeStatus === 'no_matching_records' ? 'findings_ready' :
+          bridgeStatus === 'partial' ? 'findings_ready' :
+          bridgeStatus === 'stale_snapshot_only' ? 'findings_ready' :
+          bridgeStatus === 'failed' ? 'failed' :
+          bridgeStatus === 'rate_limited' ? 'failed' :
+          bridgeStatus === 'timed_out' ? 'failed' :
+          bridgeStatus === 'permission_denied' ? 'failed' :
+          bridgeStatus === 'dependency_failure' ? 'failed' :
+          bridgeStatus === 'blocked' ? 'failed' :
+          'findings_ready';
+
+        if (!investigationId) {
+          // Create the VickInvestigation record
+          const inv = await base44.asServiceRole.entities.VickInvestigation.create({
+            owner_email: ownerEmail,
+            title: `Investigation: ${scope}`,
+            description: `Vick investigation — scope: ${scope} | conversation: ${conversationId}`,
+            status: terminalInvestigationStatus,
+            priority: 'normal',
+            findings: findingsText,
+            findings_delivered: false,
+            vick_character_id: vick.id,
+            conversation_id: conversationId,
+            started_at: nowIso,
+            tags: ['promise_track', scope.split(':')[0]],
+          }).catch(e => { console.error('[vickInvestigationBridge] VickInvestigation create failed:', e.message); return null; });
+          investigationId = inv?.id || null;
+        } else {
+          // Update existing investigation to terminal state
+          await base44.asServiceRole.entities.VickInvestigation.update(investigationId, {
+            status: terminalInvestigationStatus,
+            findings: findingsText,
+            findings_delivered: false,
+          }).catch(e => console.error('[vickInvestigationBridge] VickInvestigation update failed:', e.message));
+        }
+
+        if (!commitmentId && investigationId) {
+          // Create the CommunicationCommitment linked to the investigation
+          const nowET_commit = new Date().toLocaleString('en-US', {
+            timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+          }) + ' Eastern';
+          const comm = await base44.asServiceRole.entities.CommunicationCommitment.create({
+            character_id: vick.id,
+            character_name: vick.name || 'Vick Servicio',
+            owner_email: ownerEmail,
+            commitment_type: 'will_let_you_know',
+            commitment_text: `Vick promised to investigate and report back (${scope}) — created ${nowET_commit}`,
+            source_conversation_id: conversationId,
+            status: 'ready_to_deliver',
+            created_at: nowIso,
+            metadata: {
+              promise_track: true,
+              investigation_id: investigationId,
+              responsible_character_id: vick.id,
+              original_conversation_id: conversationId,
+              scope,
+              bridge_status: bridgeStatus,
+              bridge_freshness: bridgeFreshness,
+            },
+          }).catch(e => { console.error('[vickInvestigationBridge] CommunicationCommitment create failed:', e.message); return null; });
+          commitmentId = comm?.id || null;
+        } else if (commitmentId) {
+          // Update existing commitment to ready_to_deliver
+          await base44.asServiceRole.entities.CommunicationCommitment.update(commitmentId, {
+            status: 'ready_to_deliver',
+            metadata: {
+              promise_track: true,
+              investigation_id: investigationId,
+              responsible_character_id: vick.id,
+              original_conversation_id: conversationId,
+              scope,
+              bridge_status: bridgeStatus,
+              bridge_freshness: bridgeFreshness,
+            },
+          }).catch(e => console.error('[vickInvestigationBridge] CommunicationCommitment update failed:', e.message));
+        }
+
+        // Back-link commitment_id into the investigation's metadata
+        if (investigationId && commitmentId) {
+          await base44.asServiceRole.entities.VickInvestigation.update(investigationId, {
+            metadata: { commitment_id: commitmentId },
+          }).catch(() => {});
+        }
+
+        console.log(`[vickInvestigationBridge] Promise-Track: investigationId=${investigationId} commitmentId=${commitmentId} status=${terminalInvestigationStatus}`);
+      } catch (ptErr) {
+        console.error('[vickInvestigationBridge] Promise-Track record creation failed:', ptErr.message);
+        // Non-fatal: continue to write findings message even if tracking records fail
+      }
+    }
+
     // ── STEP 6: Write findings as Vick message (skip if dryRun) ────────────
     if (!dryRun && conversationId) {
       await base44.asServiceRole.entities.Message.create({
@@ -667,6 +774,10 @@ Deno.serve(async (req) => {
       scope,
       dryRun,
       findingsText,
+      // PROMISE-TRACK identifiers — returned so callers can pass them back on re-invocation
+      promiseTrack,
+      investigationId,
+      commitmentId,
       // STRUCTURED STATUS MODEL — required fields for Vick's diagnostic transparency
       diagnosticStatus,
       observedCount: observed.length,
