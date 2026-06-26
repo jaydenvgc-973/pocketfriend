@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
           const relayMessage = commitment.third_party_message;
 
           if (!targetName || !relayMessage) {
-            await base44.entities.CommunicationCommitment.update(commitment.id, {
+            await sr.entities.CommunicationCommitment.update(commitment.id, {
               status: 'expired',
             }).catch(() => {});
             results.push({ id: commitment.id, type: 'third_party_relay', result: 'expired_missing_target' });
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
           }
 
           // Look up the third-party character by name — use service role since no user session in automation
-          const charOwnerEmail = commitment.owner_email || user.email;
+          const charOwnerEmail = commitment.owner_email;
           const allChars = await sr.entities.Character.filter({
             owner_email: charOwnerEmail,
             status: 'active',
