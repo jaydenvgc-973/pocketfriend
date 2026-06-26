@@ -636,7 +636,16 @@ RULES:
     // ── MARK COMMITMENT FULFILLED ────────────────────────────────────────────
     // CAUSALITY RULE: Commitment is marked fulfilled ONLY after the message record
     // is confirmed created. If msg.id is absent, the commitment stays pending.
-    if (pendingCommitment && msg?.id) {
+    //
+    // ROUTING RULE: This function writes channel='direct' (character→user).
+    // A commitment with target_character_id is character→character — it MUST NOT
+    // be fulfilled here. Those commitments require a World Phone message_id.
+    // processUnresolvedCommunicationCommitments routes them to triggerCharacterContact.
+    if (pendingCommitment && pendingCommitment.target_character_id) {
+      // Character-to-character commitment — cannot be fulfilled by a direct chat message.
+      // Leave it pending so the correct World Phone path can handle it.
+      console.warn(`[sendProactiveMessageForCharacter] Commitment ${pendingCommitment.id} has target_character_id=${pendingCommitment.target_character_id} — this is a character-to-character commitment and CANNOT be fulfilled by a direct message. Leaving pending for World Phone routing.`);
+    } else if (pendingCommitment && msg?.id) {
       await sr.entities.CommunicationCommitment.update(pendingCommitment.id, {
         status: 'fulfilled',
         fulfilled_at: now.toISOString(),

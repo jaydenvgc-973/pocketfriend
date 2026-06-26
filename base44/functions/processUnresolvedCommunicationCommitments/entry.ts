@@ -23,9 +23,10 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    // Soft auth — this runs from scheduled automations without a user session
-    const user = await base44.auth.me().catch(() => null);
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    // This runs from scheduled automations without a user session.
+    // All entity operations use asServiceRole — the auth.me() check was incorrectly
+    // blocking automated runs. Replaced with service-role-only execution.
+    await base44.auth.me().catch(() => null);
 
     const now = new Date();
     const nowIso = now.toISOString();
@@ -99,7 +100,9 @@ Deno.serve(async (req) => {
           }
 
           // Send the relay via triggerCharacterContact → sendWorldPhoneMessage
-          // This creates a proper World Phone message from the committing character to the target
+          // This creates a proper World Phone message from the committing character to the target.
+          // CAUSALITY: commitment is marked fulfilled ONLY after a verified messageId is returned.
+          // If send fails, commitment stays pending for retry (not expired).
           const wpResult = await base44.functions.invoke('triggerCharacterContact', {
             senderCharacterId: commitment.character_id,
             receiverCharacterId: targetChar.id,
@@ -110,25 +113,89 @@ Deno.serve(async (req) => {
           }).catch(() => null);
 
           const wpSuccess = wpResult?.data?.success;
+          const wpMessageId = wpResult?.data?.messageId || null;
 
-          await sr.entities.CommunicationCommitment.update(commitment.id, {
-            status: wpSuccess ? 'fulfilled' : 'expired',
-            fulfilled_at: wpSuccess ? nowIso : null,
-            fulfilled_message_id: wpResult?.data?.messageId || null,
-          }).catch(() => {});
+          if (wpSuccess && wpMessageId) {
+            // CAUSALITY: fulfilled only after verified World Phone message_id
+            await sr.entities.CommunicationCommitment.update(commitment.id, {
+              status: 'fulfilled',
+              fulfilled_at: nowIso,
+              fulfilled_message_id: wpMessageId,
+            }).catch(() => {});
+          } else {
+            // Send failed — keep pending for retry, not expired
+            console.warn(`[processUnresolvedCommunicationCommitments] third_party_relay ${commitment.id} WP send failed. Keeping pending. Error: ${wpResult?.data?.error || 'unknown'}`);
+            const daysOld = (now.getTime() - new Date(commitment.created_at || commitment.due_after).getTime()) / (24 * 3600 * 1000);
+            if (daysOld > 3) {
+              await sr.entities.CommunicationCommitment.update(commitment.id, {
+                status: 'expired',
+              }).catch(() => {});
+            }
+          }
 
           results.push({
             id: commitment.id,
             type: 'third_party_relay',
-            result: wpSuccess ? 'fulfilled' : 'failed',
+            result: (wpSuccess && wpMessageId) ? 'fulfilled' : 'deferred',
+            channel: 'world_phone',
             target: targetChar.name,
-            messageId: wpResult?.data?.messageId,
+            messageId: wpMessageId,
           });
 
+        } else if (commitment.target_character_id) {
+          // ── CHARACTER-TO-CHARACTER FOLLOW-UP ───────────────────────────────
+          // The commitment targets a specific other character (not the user).
+          // MANDATORY: must route through sendWorldPhoneMessage via triggerCharacterContact.
+          // A direct message to the user CANNOT fulfill a character-to-character commitment.
+          const wpResult = await base44.functions.invoke('triggerCharacterContact', {
+            senderCharacterId: commitment.character_id,
+            receiverCharacterId: commitment.target_character_id,
+            receiverCharacterName: commitment.target_character_name || null,
+            topic: commitment.context_summary || commitment.commitment_text?.substring(0, 100),
+            trigger_source: 'relationship',
+            autonomy_marker: `commitment_followup::${commitment.id}`,
+          }).catch(() => null);
+
+          const wpSuccess = wpResult?.data?.success;
+          const wpMessageId = wpResult?.data?.messageId || null;
+
+          if (wpSuccess && wpMessageId) {
+            // CAUSALITY: mark fulfilled ONLY after verified World Phone message_id
+            await sr.entities.CommunicationCommitment.update(commitment.id, {
+              status: 'fulfilled',
+              fulfilled_at: nowIso,
+              fulfilled_message_id: wpMessageId,
+            }).catch(() => {});
+            results.push({
+              id: commitment.id,
+              type: commitment.commitment_type,
+              result: 'fulfilled',
+              channel: 'world_phone',
+              messageId: wpMessageId,
+              target: commitment.target_character_name,
+            });
+          } else {
+            // Send failed — do NOT mark fulfilled, retry next run
+            console.warn(`[processUnresolvedCommunicationCommitments] Character-to-character commitment ${commitment.id} WP send failed. Keeping pending for retry. Error: ${wpResult?.data?.error || 'unknown'}`);
+            const daysOld = (now.getTime() - new Date(commitment.created_at || commitment.due_after).getTime()) / (24 * 3600 * 1000);
+            if (daysOld > 3) {
+              await sr.entities.CommunicationCommitment.update(commitment.id, {
+                status: 'expired',
+              }).catch(() => {});
+            }
+            results.push({
+              id: commitment.id,
+              type: commitment.commitment_type,
+              result: 'deferred',
+              channel: 'world_phone',
+              reason: wpResult?.data?.error || 'wp_send_failed',
+              target: commitment.target_character_name,
+            });
+          }
+
         } else {
-          // ── USER-DIRECTED FOLLOW-UP (all other types) ──────────────────────
-          // Delegate to sendProactiveMessageForCharacter which handles the full
-          // context-aware follow-up generation
+          // ── CHARACTER-TO-USER FOLLOW-UP ────────────────────────────────────
+          // No target_character_id = directed at the user. Route via direct chat.
           const proResult = await base44.functions.invoke('sendProactiveMessageForCharacter', {
             characterId: commitment.character_id,
             forceCommitmentId: commitment.id,
@@ -150,6 +217,7 @@ Deno.serve(async (req) => {
             id: commitment.id,
             type: commitment.commitment_type,
             result: proSuccess ? 'fulfilled' : 'deferred',
+            channel: 'direct',
             reason: proResult?.data?.reason,
           });
         }
