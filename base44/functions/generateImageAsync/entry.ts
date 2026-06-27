@@ -12,6 +12,38 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── SHARED: PARTICIPANT NAME REFERENCE KEY ────────────────────────────────────
+// Single source of truth for [NAME REFERENCE KEY — SELECTED PARTICIPANTS].
+// MUST be kept in structural sync with the identical copy in regenerateImageWithReason.js.
+// Deno functions cannot import local lib files — this is intentionally inlined in both.
+//
+// RUNTIME USER RULE: user_id is always the authenticated session email/id — never hardcoded.
+// User participants are included ONLY when runtime evidence identifies them as visual subjects
+// (subjectType='joint'/'user', userIsVisualSubject flag, or explicit picker selection).
+// Names in prompts are examples — authenticated users are never resolved by name matching alone.
+function buildParticipantNameReferenceKeyBlock(participants) {
+  if (!participants || participants.length === 0) return '';
+  const lines = [];
+  lines.push(`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`);
+  lines.push(`Every name in the scene prompt maps to exactly one sealed subject bundle below.`);
+  lines.push(`Do NOT infer any appearance, gender, outfit, or body from a name alone.`);
+  lines.push(`Do NOT assign any subject's attributes to a different subject.`);
+  lines.push(``);
+  for (const p of participants) {
+    const displayName = p.display_name || 'Unknown';
+    const promptName = p.matched_prompt_name || displayName.split(/\s+/)[0];
+    if (p.participant_type === 'user') {
+      const userIdLabel = p.user_id ? `User ID: ${p.user_id}` : 'authenticated user';
+      lines.push(`"${promptName}" / "${displayName}" → Current authenticated user / world persona (${userIdLabel}) — visual identity ONLY from user reference images and user appearance lock`);
+    } else {
+      const charIdLabel = p.character_id ? `Character ID: ${p.character_id}` : 'character';
+      lines.push(`"${promptName}" / "${displayName}" → Saved character (${charIdLabel}) — visual identity ONLY from character reference images and character appearance lock`);
+    }
+  }
+  lines.push(`[END NAME REFERENCE KEY]`);
+  return `\n════════════════════════════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════════════════════════════\n`;
+}
+
 // ── URL UTILITIES ─────────────────────────────────────────────────────────────
 
 function toPublicCDN(url) {
@@ -1721,6 +1753,45 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const serverTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const nowETIso = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString();
 
+    // ── BUILD UNIFIED PARTICIPANT NAME REFERENCE KEY ──────────────────────────
+    // Participants are included when runtime evidence identifies them as visual subjects.
+    // Characters: present when charRecord is resolved.
+    // Authenticated User: present ONLY when effectiveUserSubject===true (subjectType='user'/'joint'
+    // or userIsVisualSubject flag). NEVER included by name matching alone.
+    const nameKeyParticipants = [];
+    if (charRecord) {
+      nameKeyParticipants.push({
+        participant_type: 'character',
+        character_id: charRecord.id,
+        user_id: null,
+        display_name: charRecord.name,
+        matched_prompt_name: charRecord.name.split(/\s+/)[0],
+      });
+    }
+    for (const addl of additionalCharRecords) {
+      nameKeyParticipants.push({
+        participant_type: 'character',
+        character_id: addl.record.id,
+        user_id: null,
+        display_name: addl.record.name,
+        matched_prompt_name: addl.record.name.split(/\s+/)[0],
+      });
+    }
+    if (effectiveUserSubject) {
+      // Runtime authenticated user only — resolved from session (requestingUser = user.email)
+      // worldName from User entity or UserSettings — never hardcoded
+      const _nkWorldName = _resolvedUserBundle?.worldName || userWorldName || 'User / My Persona';
+      nameKeyParticipants.push({
+        participant_type: 'user',
+        character_id: null,
+        user_id: requestingUser, // runtime authenticated session email/id — never hardcoded
+        display_name: _nkWorldName,
+        matched_prompt_name: _nkWorldName.split(/\s+/)[0],
+      });
+    }
+    const participantNameRefKeyBlock = buildParticipantNameReferenceKeyBlock(nameKeyParticipants);
+    console.log(`[generateImageAsync] NAME REFERENCE KEY: ${nameKeyParticipants.length} participant(s) — ${nameKeyParticipants.map(p => `${p.participant_type}:${p.display_name}`).join(', ')}`);
+
     let finalPrompt;
 
     if (hasMultipleCharSubjects) {
@@ -1832,7 +1903,7 @@ ENVIRONMENT — IMAGES 1–${ENV_COUNT}
       const serverHour = serverTime.getHours();
       const timeLighting = getTimeLighting(serverHour);
 
-      finalPrompt = `${fictDecl}${envBlock}════════════════════════════════════════════════════════════
+      finalPrompt = `${fictDecl}${envBlock}${participantNameRefKeyBlock}════════════════════════════════════════════════════════════
 CORE SCENE PROMPT:
 ════════════════════════════════════════════════════════════
 ${sanitizedPrompt}
@@ -1863,8 +1934,8 @@ UNIFIED COMPOSITION RULE
 ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — same lighting, same floor plane, same perspective.
 `;
     } else {
-      // ── SINGLE-SUBJECT PATH: original format ─────────────────────────────────
-      finalPrompt = thirdPartyPreamble + buildPrompt({
+      // ── SINGLE-SUBJECT PATH: original format with Name Reference Key prepended ─
+      finalPrompt = participantNameRefKeyBlock + thirdPartyPreamble + buildPrompt({
         prompt: sanitizedPrompt,
         charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
         charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
