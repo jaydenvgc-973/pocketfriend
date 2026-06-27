@@ -85,6 +85,8 @@ export default function SceneProductCard({
         productId: msg.id,
         preview_image_url: itemImageUrl,
         item_label: msg.item_label,
+        item_category: msg.item_category,
+        action_id: msg.id,
         purchase_type: msg.purchase_type,
         action_class: msg.action_class || 'purchase',
         purchase_source: msg.purchase_source || 'menu',

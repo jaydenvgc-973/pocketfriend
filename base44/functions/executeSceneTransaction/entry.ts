@@ -10,7 +10,10 @@
  * - cost is a real positive number (no invented, fallback, or random prices)
  * - payer is explicitly defined
  * - action_id exists
- * - source context exists (purchase_source, service_source, or fee_source)
+ * - source context exists (purchase_source for purchase, service_source for service, fee_source for fee)
+ *
+ * After every successful user balance deduction, writes a FinancialTransaction record
+ * for full ledger traceability and audit support.
  *
  * Rejects any transaction that does not meet ALL criteria.
  */
@@ -35,7 +38,12 @@ Deno.serve(async (req) => {
       fee_source,
       action_label,
       location_name,
-      character_id
+      character_id,
+      // Extended context fields (from ProductPurchaseModal and product card)
+      item_label,
+      item_category,
+      target_character_id,
+      scene_instance_id,
     } = data;
 
     // ── TRANSACTION AUTHORITY VALIDATION ────────────────────────────────────────
@@ -45,7 +53,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Transaction rejected: action.is_paid must be true' }, { status: 400 });
     }
 
-    if (!['purchase', 'service', 'fee'].includes(action_class)) {
+    if (!action_class || !['purchase', 'service', 'fee'].includes(action_class)) {
       return Response.json({ error: `Transaction rejected: invalid action_class "${action_class}". Only purchase, service, or fee may be paid.` }, { status: 400 });
     }
 
@@ -62,7 +70,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Transaction rejected: action_id is required' }, { status: 400 });
     }
 
-    // Source context: at least one of purchase_source, service_source, fee_source must exist
+    // Source context: class-specific validation
+    if (action_class === 'purchase' && !purchase_source) {
+      return Response.json({ error: 'Transaction rejected: purchase_source is required for purchase class' }, { status: 400 });
+    }
+    // For service and fee, also accept a general source fallback
     const hasSource = purchase_source || service_source || fee_source;
     if (!hasSource) {
       return Response.json({ error: 'Transaction rejected: source context required (purchase_source, service_source, or fee_source)' }, { status: 400 });
@@ -79,9 +91,54 @@ Deno.serve(async (req) => {
       }
 
       const currentBalance = typeof settings.user_balance === 'number' ? settings.user_balance : 6000;
-      const newBalance = Math.max(0, currentBalance - numericCost);
+
+      // Affordability check — server-side authority; UI pre-check is advisory only
+      if (currentBalance < numericCost) {
+        return Response.json({ error: 'Transaction rejected: insufficient balance', balance: currentBalance, cost: numericCost }, { status: 400 });
+      }
+
+      const newBalance = currentBalance - numericCost;
 
       await base44.entities.UserSettings.update(settings.id, { user_balance: newBalance });
+
+      // ── WRITE FINANCIAL TRANSACTION LEDGER RECORD ────────────────────────────
+      // Every successful Scene charge must produce a FinancialTransaction record.
+      // This enables audit, reversal lookups, and the finance dashboard.
+      const now = new Date().toISOString();
+      try {
+        await base44.entities.FinancialTransaction.create({
+          // Ownership / scope
+          character_id: target_character_id || null,
+          character_name: null,
+          sender_id: user.id,
+          sender_type: 'user',
+          sender_name: user.full_name || user.email,
+          receiver_id: null,
+          receiver_type: 'system',
+          receiver_name: location_name || 'Scene',
+          // Transaction amounts
+          amount: numericCost,
+          direction: 'expense',
+          // Classification
+          transaction_type: 'scene_purchase',
+          description: [
+            action_label || item_label || 'Scene purchase',
+            location_name ? `at ${location_name}` : null,
+            target_character_id ? `(gift)` : null,
+          ].filter(Boolean).join(' '),
+          // Location
+          location_id: null,
+          location_name: location_name || null,
+          // Balance snapshot
+          balance_after: newBalance,
+          // Timestamp
+          timestamp: now,
+        });
+      } catch (ledgerErr) {
+        // Ledger write failure must NOT roll back the balance deduction — the deduction already succeeded.
+        // Log it prominently so the gap is visible in diagnostics.
+        console.error(`[executeSceneTransaction] LEDGER WRITE FAILED after successful balance deduction. action_id=${action_id}, cost=${numericCost}, user=${user.email}. Error: ${ledgerErr.message}`);
+      }
 
       console.log(`[executeSceneTransaction] USER transaction approved: ${action_class} "${action_label}" at ${location_name} — $${numericCost} deducted. Balance: ${currentBalance} → ${newBalance}`);
 

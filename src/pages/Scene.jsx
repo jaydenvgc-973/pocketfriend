@@ -36,7 +36,7 @@ import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLoc
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
-import { extractSceneItemLabel, isPurchaseIntent } from "@/lib/sceneItemResolver";
+import { extractSceneItemLabel } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
@@ -1289,36 +1289,20 @@ Return JSON:
 
     try {
       // ── ACTION CLASSIFICATION ────────────────────────────────────────────────
-      // Derive action_class from action definition.
-      // Actions in the catalog use 'type' for functional grouping.
-      // Commerce actions must have cost > 0 AND payer defined.
-      // Environmental/free actions are never commerce.
-      const actionClass = action.action_class || (() => {
-        if (!action.cost || action.cost <= 0) {
-          // No cost = free. Map type to non-commercial class.
-          if (action.type === 'social') return 'social';
-          if (action.type === 'observational') return 'narrative';
-          if (action.type === 'functional') return 'free_activity';
-          if (action.type === 'spontaneous') return 'narrative';
-          if (action.type === 'risky' || action.type === 'awkward') return 'social';
-          return 'free_activity';
-        }
-        // Has cost — classify by presence of action_category (purchase) or not (service/fee)
-        if (action.action_category) return 'purchase';
-        // Salon services and similar are service class
-        if (['salon_cut','salon_color','salon_nails'].includes(action.id)) return 'service';
-        // Fee-type actions
-        if (['gov_payment'].includes(action.id)) return 'fee';
-        return 'purchase';
-      })();
+      // action_class is the SOLE classification source — set by classifyAll() in actionGenerator.js.
+      // No runtime inference is permitted. If action_class is absent, fail closed: treat as free.
+      const actionClass = action.action_class;
+      if (!actionClass) {
+        console.warn(`[Scene handleAction] action_class missing for action.id="${action.id}" — treating as free action, no commerce.`);
+      }
 
       const payer = action.payer || "user";
       const cost = Number(action.cost) || 0;
 
       // STRICT COMMERCE GATE:
-      // Only actions classified as 'purchase', 'service', or 'fee' may involve money.
-      // FREE activities (free_activity, social, navigation, environment, narrative) NEVER charge.
-      const isPaidClass = ['purchase', 'service', 'fee'].includes(actionClass);
+      // Only actions with an explicit catalog-set action_class of purchase/service/fee may involve money.
+      // Missing action_class = free. Free activities NEVER charge.
+      const isPaidClass = actionClass && ['purchase', 'service', 'fee'].includes(actionClass);
 
       // PRODUCT CARD RULE: Only 'purchase' class renders a product card.
       // Service and fee actions use inline confirm (no product card).
@@ -1331,6 +1315,7 @@ Return JSON:
         action.purchase_source != null; // must have real inventory/menu source
 
       // EATING EVENT RECORDING (need-system side-effect, not a commerce event)
+      // action.id is now the stable catalog ID (sceneInteractionEngine no longer mutates it).
       const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch'];
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
         const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' :
@@ -1369,7 +1354,8 @@ Return JSON:
         }).catch(() => {});
       }
 
-      // Determine if this action should trigger a scene image update
+      // Determine if this action should trigger a scene image update.
+      // action.id is the stable catalog ID — ACTION_IMAGE_PROMPTS lookup now works correctly.
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
       if (actionImageFn) {
         const presentPeople = [
@@ -1752,7 +1738,7 @@ Return JSON:
             const isDisabled = action.disabled || actionCooldown;
             return (
               <button
-                key={action.id}
+                key={action.scene_instance_id || action.id}
                 onClick={() => {
                   if (isDisabled) return;
                   if (needsZone) {handleZoneChange(action.suggested_zone_name);setTimeout(() => handleAction(action), 400);} else
@@ -1941,6 +1927,11 @@ Return JSON:
         userSettings={settings}
         currentUser={currentUser}
         traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)}
+        item_label={pendingPurchase?.item_label}
+        item_category={pendingPurchase?.item_category}
+        action_id={pendingPurchase?.action_id}
+        purchase_source={pendingPurchase?.purchase_source}
+        location_name={location?.name}
         onClose={() => setPendingPurchase(null)}
         onPurchased={(message) => {
           const price = pendingPurchase?.price;

@@ -65,9 +65,18 @@ export function getSceneInteractions(location, activeZone, character, options = 
     return nowMinutes >= startH * 60 + startM && nowMinutes < endH * 60 + endM;
   });
 
-  // Enrich each action with zone and staff metadata
+  // Enrich each action with zone and staff metadata.
+  // action.id is preserved unchanged — it is the stable catalog ID used by ACTION_IMAGE_PROMPTS,
+  // eating event detection, and transaction action_id.
+  // scene_instance_id is added as a separate field for React key uniqueness only.
   const enriched = rawActions.map(action => {
-    const result = { ...action, id: `${action.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}` };
+    const result = {
+      ...action,
+      // id is the STABLE catalog id — never mutated
+      id: action.id,
+      // scene_instance_id is for UI key uniqueness only — never used for commerce or image lookup
+      scene_instance_id: `${action.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    };
 
     // Zone hint: if the action declares a preferred zone and it exists on the location, attach it
     if (action.suggested_zone) {
