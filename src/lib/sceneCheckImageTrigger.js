@@ -97,33 +97,41 @@ export function checkImageTrigger({
   }
 
   const effectiveCategory = resolveVenuePurchaseCategory(location, actionCategory);
-  const isActionTriggered = !!actionCategory;
   const isPurchasable = effectiveCategory !== null;
 
-  if (isActionTriggered || (isPurchasable && isPurchaseIntent(text))) {
+  // Product cards are ONLY spawned for user-typed purchase-intent messages at purchasable venues.
+  // Strip actions must never reach here with actionCategory set — they are handled entirely in
+  // handleAction (cost already deducted there). Only user-typed text goes through this path.
+  //
+  // PRICE RULE: Only use a price explicitly stated in the message. Never invent a random price.
+  // If no price is found, spawn the card without a price (free / not orderable) OR skip the card.
+  if (isPurchasable && isPurchaseIntent(text)) {
     const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
-    const [pMin, pMax] = PRICE_RANGES[effectiveCategory] || [8, 50];
-    const price = ep
-      ? Math.min(Math.max(parseInt(ep[1]), pMin), pMax)
-      : Math.floor(Math.random() * (pMax - pMin + 1)) + pMin;
+    if (!ep) {
+      // No explicit price in the message — do not spawn a product card with an invented price.
+      // Fall through to the "show me X" image trigger below.
+    } else {
+      const [pMin, pMax] = PRICE_RANGES[effectiveCategory] || [8, 50];
+      const price = Math.min(Math.max(parseInt(ep[1]), pMin), pMax);
 
-    const resolved = extractSceneItemLabel(text, messages, effectiveCategory);
-    const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(effectiveCategory)
-      ? 'purchase'
-      : 'consumable';
+      const resolved = extractSceneItemLabel(text, messages, effectiveCategory);
+      const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(effectiveCategory)
+        ? 'purchase'
+        : 'consumable';
 
-    setMessages(prev => [...prev, {
-      id: `product_${Date.now()}`,
-      sender: 'product',
-      price,
-      locationName: location.name,
-      preview_image_url: null,
-      purchase_type: purchaseType,
-      item_label: resolved.label,
-      item_category: resolved.category,
-      timestamp: new Date().toISOString(),
-    }]);
-    return;
+      setMessages(prev => [...prev, {
+        id: `product_${Date.now()}`,
+        sender: 'product',
+        price,
+        locationName: location.name,
+        preview_image_url: null,
+        purchase_type: purchaseType,
+        item_label: resolved.label,
+        item_category: resolved.category,
+        timestamp: new Date().toISOString(),
+      }]);
+      return;
+    }
   }
 
   // "show me X" — general focused image trigger

@@ -1342,7 +1342,10 @@ Return JSON:
       ` (${broughtCharacters[0].name} pays)` :
       cost > 0 ? ` — $${cost}` : "";
 
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, action.action_category || action.type || null);
+      // Strip actions are fully handled above (cost already deducted, image already triggered).
+      // Do NOT pass actionCategory — that would send the message into the product card pipeline
+      // and either double-charge (for paid actions) or charge for free activities.
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, null);
 
       setTimeout(() => {
         const newActions = getSceneInteractions(
