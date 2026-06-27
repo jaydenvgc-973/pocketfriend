@@ -17,16 +17,38 @@ const TYPE_LABELS = {
   npc_world_service: 'World Services',
 };
 
-export default function CharacterInteractionSimulator({ characters, currentUser }) {
+// Stable synthetic IDs for non-character participants.
+// These are NOT entity ObjectIds — they must be handled specially in the payload.
+const USER_SYNTHETIC_ID = '__user__';
+const VICK_PLACEHOLDER_ID = '__vick__';
+
+export default function CharacterInteractionSimulator({ characters, currentUser, userSettings }) {
   const alpha = (a, b) => (a.display_name || a.name || '').toLowerCase().localeCompare((b.display_name || b.name || '').toLowerCase());
 
   const eligibleByType = SUPPORTED_TYPES.reduce((acc, type) => {
-    const group = characters
+    let group = characters
       .filter(c => c.character_type === type && c.status !== 'deleted' && c.status !== 'soft_deleted')
       .sort(alpha);
+
+    // npc_world_service: only allow Vick Servicio by name — do not expose all world service records
+    if (type === 'npc_world_service') {
+      group = group.filter(c => (c.name || '').toLowerCase().includes('vick servicio'));
+    }
+
     if (group.length > 0) acc[type] = group;
     return acc;
   }, {});
+
+  // Build the user participant object from currentUser + userSettings
+  const userDisplayName = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
+  const userParticipant = currentUser ? {
+    id: USER_SYNTHETIC_ID,
+    name: userDisplayName,
+    participant_type: 'user',
+    user_id: currentUser.id,
+    avatar_url: null,
+    _isUser: true,
+  } : null;
 
   const [selected, setSelected] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -56,11 +78,13 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
 
   // MongoDB ObjectId = 24 hex chars exactly.
   // Any id that isn't exactly 24 chars is not a real Character entity id.
+  // Special synthetic IDs (__user__, __vick__) are exempt from this check.
   const OBJECT_ID_LENGTH = 24;
+  const SYNTHETIC_IDS = new Set([USER_SYNTHETIC_ID, VICK_PLACEHOLDER_ID]);
 
   const toggleSelect = (id, char) => {
-    // ID integrity guard — block selection of corrupted/transformed objects
-    if (!id || id.length !== OBJECT_ID_LENGTH) {
+    // Allow synthetic IDs through without length check
+    if (!SYNTHETIC_IDS.has(id) && (!id || id.length !== OBJECT_ID_LENGTH)) {
       console.error('[SimulateInteraction] BLOCKED: invalid character id', {
         id,
         idLength: id?.length,
@@ -71,11 +95,10 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
       });
       return;
     }
-    console.log('[SimulateInteraction] Selecting character', {
+    console.log('[SimulateInteraction] Selecting participant', {
       id,
       name: char?.name,
-      type: char?.character_type,
-      owner_email: char?.owner_email,
+      type: char?.participant_type || char?.character_type,
     });
     if (selected.includes(id)) {
       setSelected(selected.filter(s => s !== id));
@@ -127,9 +150,12 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
     setIsApprovalMode(false);
     setSimulationError(null);
 
-    const selectedChars = characters.filter(c => selected.includes(c.id));
+    // Separate real character IDs from synthetic participant IDs
+    const realCharIds = selected.filter(id => !SYNTHETIC_IDS.has(id));
+    const selectedChars = characters.filter(c => realCharIds.includes(c.id));
+    const hasUserSelected = selected.includes(USER_SYNTHETIC_ID);
 
-    // Pre-submit ID integrity audit — every submitted id must be a real 24-char ObjectId
+    // Pre-submit ID integrity audit — every real character id must be a 24-char ObjectId
     const invalidChars = selectedChars.filter(c => !c.id || c.id.length !== OBJECT_ID_LENGTH);
     if (invalidChars.length > 0) {
       const details = invalidChars.map(c => `"${c.name}" (id="${c.id}", len=${c.id?.length})`).join(', ');
@@ -138,6 +164,13 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
       setIsRunning(false);
       return;
     }
+
+    // Build the user participant context if selected
+    const userParticipantPayload = hasUserSelected ? {
+      user_id: currentUser?.id,
+      display_name: userSettings?.fictional_world_name || currentUser?.full_name || 'You',
+      participant_type: 'user',
+    } : undefined;
 
     console.log('[SimulateInteraction] Starting simulation — all IDs verified', {
       currentUser: currentUser?.email,
@@ -148,13 +181,15 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
         type: c.character_type,
         owner_email: c.owner_email,
       })),
+      user_participant: userParticipantPayload || null,
     });
 
     let res;
     try {
       res = await base44.functions.invoke('simulateCharacterInteraction', {
-        character_ids: selected,
+        character_ids: realCharIds,
         userPrompt: userPrompt || undefined,
+        user_participant: userParticipantPayload,
       });
 
       if (res?.data?.success) {
@@ -193,9 +228,17 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
     setSimulationError(null);
     let res;
     try {
+      const regenRealCharIds = selected.filter(id => !SYNTHETIC_IDS.has(id));
+      const regenHasUser = selected.includes(USER_SYNTHETIC_ID);
+      const regenUserPayload = regenHasUser ? {
+        user_id: currentUser?.id,
+        display_name: userSettings?.fictional_world_name || currentUser?.full_name || 'You',
+        participant_type: 'user',
+      } : undefined;
       res = await base44.functions.invoke('simulateCharacterInteraction', {
-        character_ids: selected,
+        character_ids: regenRealCharIds,
         userPrompt: userPrompt || undefined,
+        user_participant: regenUserPayload,
       });
 
       if (res?.data?.success) {
@@ -231,6 +274,8 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
 
     if (result && selected.length > 0) {
       for (const characterId of selected) {
+        // Skip synthetic IDs (user, vick placeholder) — they are not Character entities
+        if (SYNTHETIC_IDS.has(characterId)) continue;
         const char = characters.find(c => c.id === characterId);
         if (!char) continue;
 
@@ -294,8 +339,27 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
           className="min-h-20 text-xs rounded-xl"
         />
 
-        {/* Character selection grid — all supported types */}
+        {/* Character selection grid — all supported types + user + Vick */}
         <div className="overflow-y-auto" style={{ maxHeight: '11rem' }}>
+          {/* You (the user) */}
+          {userParticipant && (
+            <div className="mb-3">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">You</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => toggleSelect(USER_SYNTHETIC_ID, userParticipant)}
+                  className={`p-2 rounded-xl border transition-colors text-left text-xs ${
+                    selected.includes(USER_SYNTHETIC_ID)
+                      ? 'bg-primary/10 border-primary'
+                      : 'bg-secondary border-border hover:border-primary/40'
+                  }`}
+                >
+                  <div className="font-medium text-foreground truncate">{userParticipant.name}</div>
+                  <div className="text-muted-foreground text-[10px] truncate">You (player)</div>
+                </button>
+              </div>
+            </div>
+          )}
           {SUPPORTED_TYPES.filter(type => eligibleByType[type]).map(type => (
             <div key={type} className="mb-3">
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{TYPE_LABELS[type]}</p>

@@ -271,6 +271,8 @@ export default function Moments() {
         {/* Calendar */}
         <MomentsCalendar
           characters={characters}
+          currentUser={currentUser}
+          userSettings={userSettings}
           userBirthday={userSettings?.user_birthday || null}
           communityEvents={communityEvents}
           appLocations={appLocations}

@@ -3,7 +3,10 @@ import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
 import { Loader2, BookOpen, Users, MapPin, Star } from 'lucide-react';
 
-export default function StoryEventCreator({ date, characters = [], appLocations = [], onCreated, onCancel }) {
+// Stable synthetic ID for the user participant (not a Character entity ObjectId)
+const USER_STORY_ID = '__user__';
+
+export default function StoryEventCreator({ date, characters = [], currentUser = null, userSettings = null, appLocations = [], onCreated, onCancel }) {
   const [title, setTitle] = useState('');
   const [plot, setPlot] = useState('');
   const [notes, setNotes] = useState('');
@@ -15,8 +18,21 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
   const [rabbitHoleName, setRabbitHoleName] = useState('');
   const [focusIds, setFocusIds] = useState([]);
   const [participantIds, setParticipantIds] = useState([]);
+  const [userIsParticipant, setUserIsParticipant] = useState(false);
+  const [userIsFocus, setUserIsFocus] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Build user participant identity
+  const userDisplayName = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
+  const userParticipant = currentUser ? {
+    id: USER_STORY_ID,
+    name: userDisplayName,
+    participant_type: 'user',
+    user_id: currentUser.id,
+    avatar_url: null,
+    reference_images: userSettings?.appearance_lock ? [] : [],
+  } : null;
 
   const dateStr = date ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0] : '';
 
@@ -54,10 +70,20 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
   const handleSubmit = async () => {
     if (!title.trim()) { setError('Please enter a title.'); return; }
     if (!plot.trim()) { setError('Please enter a plot/plan for the event.'); return; }
-    if (participantIds.length === 0) { setError('Please select at least one participant.'); return; }
+    const hasAnyParticipant = participantIds.length > 0 || userIsParticipant;
+    if (!hasAnyParticipant) { setError('Please select at least one participant.'); return; }
 
     setSaving(true);
     setError('');
+
+    // Build user participant payload if selected
+    const userParticipantPayload = userIsParticipant && userParticipant ? {
+      user_id: currentUser?.id,
+      display_name: userDisplayName,
+      participant_type: 'user',
+      is_focus: userIsFocus,
+    } : null;
+
     try {
       const res = await base44.functions.invoke('createStoryEvent', {
         title: title.trim(),
@@ -73,6 +99,7 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
         rabbit_hole_venue_name: isRabbitHole ? (rabbitHoleName || 'Custom venue') : null,
         focus_character_ids: focusIds,
         participant_character_ids: participantIds,
+        user_participant: userParticipantPayload,
       });
 
       if (res?.data?.storyEventId) {
@@ -207,12 +234,52 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
       <div>
         <div className="flex items-center gap-1 mb-2">
           <Users className="w-3 h-3 text-muted-foreground" />
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Characters</span>
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Participants</span>
         </div>
-        {eligibleChars.length === 0 ? (
-          <p className="text-xs text-muted-foreground italic">No eligible characters available. Create characters first.</p>
-        ) : (
-          <div className="space-y-3 max-h-64 overflow-y-auto">
+        <div className="space-y-3 max-h-64 overflow-y-auto">
+          {/* User row — always first */}
+          {userParticipant && (
+            <div>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5 px-1">👤 You</p>
+              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground truncate">{userParticipant.name}</p>
+                  <div className="flex gap-1.5 text-[9px] text-muted-foreground mt-0.5">
+                    <span className="px-1 rounded bg-secondary/80">You</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-2">
+                  <button
+                    onClick={() => {
+                      setUserIsFocus(f => !f);
+                      if (!userIsParticipant) setUserIsParticipant(true);
+                    }}
+                    className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                      userIsFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
+                    }`}
+                    title="Focus — you get greater narrative attention"
+                  >
+                    <Star className={`w-2.5 h-2.5 inline mr-0.5 ${userIsFocus ? 'fill-primary' : ''}`} />
+                    Focus
+                  </button>
+                  <button
+                    onClick={() => { if (!userIsFocus) setUserIsParticipant(p => !p); }}
+                    className={`px-2 py-1 rounded text-[10px] font-medium transition-colors ${
+                      userIsParticipant && !userIsFocus ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-secondary/60 text-muted-foreground border border-border hover:border-primary/30'
+                    }`}
+                    disabled={userIsFocus}
+                    title={userIsFocus ? 'Focus users are automatically participants' : 'Include yourself as participant'}
+                  >
+                    {userIsFocus ? 'Included' : userIsParticipant ? 'Participant' : 'Include'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {eligibleChars.length === 0 && !userParticipant ? (
+            <p className="text-xs text-muted-foreground italic">No eligible characters available. Create characters first.</p>
+          ) : (
+            <>
             {[
               { group: '★ My Characters', chars: activeChars },
               { group: '👪 Family', chars: familyChars },
@@ -266,17 +333,18 @@ export default function StoryEventCreator({ date, characters = [], appLocations 
                 </div>
               </div>
             ))}
-          </div>
-        )}
+            </>
+          )}
+        </div>
         <p className="text-[9px] text-muted-foreground mt-1">
-          ★ Focus = greater narrative attention, richer memories. Selected: {focusIds.length}. Participants: {participantIds.length}.
+          ★ Focus = greater narrative attention, richer memories. Selected: {focusIds.length + (userIsFocus ? 1 : 0)}. Participants: {participantIds.length + (userIsParticipant ? 1 : 0)}.
         </p>
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       <div className="flex gap-2 pt-1">
-        <Button size="sm" onClick={handleSubmit} disabled={saving || !title.trim() || !plot.trim() || participantIds.length === 0} className="h-8 flex-1 text-xs">
+        <Button size="sm" onClick={handleSubmit} disabled={saving || !title.trim() || !plot.trim() || (participantIds.length === 0 && !userIsParticipant)} className="h-8 flex-1 text-xs">
           {saving ? <><Loader2 className="w-3 h-3 animate-spin mr-1" />Creating…</> : <><Star className="w-3 h-3 mr-1" />Generate Story Event</>}
         </Button>
         <Button size="sm" variant="outline" onClick={onCancel} className="h-8 text-xs">

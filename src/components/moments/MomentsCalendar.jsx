@@ -267,7 +267,7 @@ function parseBirthday(bdStr) {
 }
 
 // ── MAIN COMPONENT ─────────────────────────────────────────────────────────────
-export default function MomentsCalendar({ characters = [], userBirthday = null, communityEvents = [], appLocations = [], onEventCreated }) {
+export default function MomentsCalendar({ characters = [], currentUser = null, userSettings = null, userBirthday = null, communityEvents = [], appLocations = [], onEventCreated }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [userEvents, setUserEvents] = useState([]); // mirrors persisted CommunityEvent records owned by user
   const [selectedDay, setSelectedDay] = useState(null);
@@ -731,6 +731,8 @@ export default function MomentsCalendar({ characters = [], userBirthday = null, 
             <StoryEventCreator
               date={selectedDay}
               characters={characters}
+              currentUser={currentUser}
+              userSettings={userSettings}
               appLocations={appLocations}
               onCreated={(storyEventId, eventPreview) => {
                 setViewingStoryEventId(storyEventId);

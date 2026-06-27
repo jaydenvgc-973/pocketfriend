@@ -378,6 +378,7 @@ export default function Home() {
           {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
             <CharacterInteractionSimulator
               currentUser={currentUser}
+              userSettings={userSettings}
               characters={[
                 ...(defaultChar ? [defaultChar] : []),
                 ...activeCustomChars,
