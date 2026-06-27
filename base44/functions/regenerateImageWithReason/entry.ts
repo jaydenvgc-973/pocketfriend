@@ -2,18 +2,34 @@
 // Reads generation_context from message, re-resolves identity/location, guards school contamination.
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── SHARED: PARTICIPANT NAME REFERENCE KEY ────────────────────────────────────
-// Single source of truth for [NAME REFERENCE KEY — SELECTED PARTICIPANTS].
-// MUST be kept in structural sync with the identical copy in generateImageAsync.js.
-// Deno functions cannot import local lib files — this is intentionally inlined in both.
+// ── PARTICIPANT NAME REFERENCE KEY ────────────────────────────────────────────
 //
-// RUNTIME USER RULE: user_id is always the authenticated session email/id — never hardcoded.
-// User participants are included ONLY when runtime evidence identifies them as visual subjects.
+// ARCHITECTURE NOTE — ENFORCED DUPLICATION (not abandoned scaffolding):
+// Deno backend functions are deployed as isolated sandboxes. They cannot import
+// from local lib/ files — only from npm: or jsr: URLs. This is a verified platform
+// constraint: any `import` from a relative path throws "Module not found" at runtime.
+//
+// Therefore, this function MUST be inlined in both generateImageAsync.js and
+// regenerateImageWithReason.js. The two copies are the enforced strategy, not a
+// maintenance oversight. lib/participantNameReferenceKey.js was deleted precisely
+// because it was an abandoned file that created a false impression of a shared import.
+//
+// ANTI-DRIFT RULE: The function body below is the canonical source.
+// Any change here MUST be applied identically to generateImageAsync.js.
+// The required format is:
+//   "PromptName" = Canonical Display Name (Character ID: ...) — use their visual identity references
+//   "PromptName" = User Display Name (User ID: <runtime_authenticated_user_id>) — use their visual identity references
+//
+// USER ID RULE: user_id = user.id from base44.auth.me() — the authenticated user's
+// platform entity ID. NOT email. email is used only for owner_email scoping.
+// User participants are included ONLY when runtime evidence identifies them as visual
+// subjects (subjectType='joint'/'user', userIsVisualSubject flag, or picker selection).
+// Authenticated users are NEVER resolved by name matching alone.
 function buildParticipantNameReferenceKeyBlock(participants) {
   if (!participants || participants.length === 0) return '';
   const lines = [];
   lines.push(`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`);
-  lines.push(`Every name in the scene prompt maps to exactly one sealed subject bundle below.`);
+  lines.push(`Every name in the scene prompt maps to exactly one visual identity bundle below.`);
   lines.push(`Do NOT infer any appearance, gender, outfit, or body from a name alone.`);
   lines.push(`Do NOT assign any subject's attributes to a different subject.`);
   lines.push(``);
@@ -21,11 +37,11 @@ function buildParticipantNameReferenceKeyBlock(participants) {
     const displayName = p.display_name || 'Unknown';
     const promptName = p.matched_prompt_name || displayName.split(/\s+/)[0];
     if (p.participant_type === 'user') {
-      const userIdLabel = p.user_id ? `User ID: ${p.user_id}` : 'authenticated user';
-      lines.push(`"${promptName}" / "${displayName}" → Current authenticated user / world persona (${userIdLabel}) — visual identity ONLY from user reference images and user appearance lock`);
+      const userIdValue = p.user_id || 'authenticated_user';
+      lines.push(`"${promptName}" = ${displayName} (User ID: ${userIdValue}) — use their visual identity references`);
     } else {
-      const charIdLabel = p.character_id ? `Character ID: ${p.character_id}` : 'character';
-      lines.push(`"${promptName}" / "${displayName}" → Saved character (${charIdLabel}) — visual identity ONLY from character reference images and character appearance lock`);
+      const charIdValue = p.character_id || 'character';
+      lines.push(`"${promptName}" = ${displayName} (Character ID: ${charIdValue}) — use their visual identity references`);
     }
   }
   lines.push(`[END NAME REFERENCE KEY]`);
@@ -272,13 +288,16 @@ function buildMultiSubjectRegenPrompt({
   const envCount = Math.min(envRefs.length, 4);
   const totalSubjects = subjectBundles.length;
 
-  // Build NAME REFERENCE KEY using the shared builder (same format as generateImageAsync)
+  // Build NAME REFERENCE KEY using the shared builder (same format as generateImageAsync).
+  // user_id: b.runtimeUserId is the platform entity ID (user.id from auth.me()) stored on
+  // the user bundle when it was constructed in the main handler. Falls back to b.id for
+  // legacy bundles that predate this field, but b.id='__user__' is never exposed externally.
   const nameKeyParticipantsRegen = subjectBundles.map(b => {
     const isUser = b.subjectRole === 'user';
     return {
       participant_type: isUser ? 'user' : 'character',
       character_id: isUser ? null : b.id,
-      user_id: isUser ? b.id : null, // __user__ or runtime user id/email
+      user_id: isUser ? (b.runtimeUserId || b.id) : null, // runtimeUserId = user.id (platform entity ID)
       display_name: b.displayName || (isUser ? 'User / My Persona' : 'the character'),
       matched_prompt_name: b.firstName || (b.displayName || '').split(/\s+/)[0],
     };
@@ -1820,6 +1839,7 @@ Deno.serve(async (req) => {
           subjectKey: '__user__',
           subjectRole: 'user',
           id: '__user__',
+          runtimeUserId: user?.id || requestingUser, // user.id = platform entity ID from base44.auth.me()
           displayName: userPersonaDisplayName,
           firstName: userPersonaDisplayName.split(/\s+/)[0],
           refStart: refCursor,
@@ -1881,12 +1901,13 @@ Deno.serve(async (req) => {
         });
       }
       if (needsUserRefsForRegen && USER_SLOTS > 0) {
-        // Runtime authenticated user — resolved from session (requestingUser = user.email)
+        // user.id = platform entity ID from base44.auth.me() — NOT email.
+        // requestingUser (email) is used only for owner_email ownership scoping.
         const _singleUserWorldName = _regenResolvedUserBundle?.worldName || callerUserName || 'User / My Persona';
         singleSubjectKeyParticipants.push({
           participant_type: 'user',
           character_id: null,
-          user_id: requestingUser, // runtime authenticated session email — never hardcoded
+          user_id: user?.id || requestingUser, // user.id = platform entity ID
           display_name: _singleUserWorldName,
           matched_prompt_name: _singleUserWorldName.split(/\s+/)[0],
         });
