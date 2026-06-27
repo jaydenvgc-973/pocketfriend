@@ -705,7 +705,10 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
 
   const nonUserMembers = members.filter(m => !m._is_user);
   const originalNonUser = (character.family_members || []).filter(m => !m._is_user);
-  const hasChanges = JSON.stringify(nonUserMembers) !== JSON.stringify(originalNonUser);
+  // Show Save if count differs (member added/removed) OR content differs.
+  // Count check catches newly-added blank rows that stringify might miss.
+  const hasChanges = nonUserMembers.length !== originalNonUser.length ||
+    JSON.stringify(nonUserMembers) !== JSON.stringify(originalNonUser);
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
