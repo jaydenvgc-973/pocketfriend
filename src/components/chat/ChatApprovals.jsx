@@ -23,6 +23,20 @@ export default function ChatApprovals({ pendingApproval, approveEvent, dismissAp
         />
       )}
 
+      {pendingApproval.type === 'engagement' && (
+        <ApprovalPopup
+          type="engagement"
+          title="Engagement Detected"
+          description={`It looks like ${pendingApproval.data.character?.name} may be getting engaged${pendingApproval.data.otherCharName ? ` to ${pendingApproval.data.otherCharName}` : ''}. Approve this?`}
+          details={pendingApproval.data}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+        >
+          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
+          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Fiancé(e):</span> {pendingApproval.data.otherCharName}</p>}
+        </ApprovalPopup>
+      )}
+
       {pendingApproval.type === 'marriage' && (
         <ApprovalPopup
           type="marriage"

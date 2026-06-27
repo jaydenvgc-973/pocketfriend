@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 const ICONS = {
   move_in: Home,
   marriage: Heart,
+  engagement: Heart,
   birth: Baby,
   location_match: MapPin,
   npc_create: User,
@@ -16,6 +17,7 @@ const ICONS = {
 const COLORS = {
   move_in: "text-blue-400",
   marriage: "text-pink-400",
+  engagement: "text-rose-400",
   birth: "text-amber-400",
   location_match: "text-primary",
   npc_create: "text-purple-400",
