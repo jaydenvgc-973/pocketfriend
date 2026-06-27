@@ -13,6 +13,7 @@ Deno.serve(async (req) => {
     const plot = body.plot;
     const focusIds = body.focus_character_ids || [];
     const participantIds = body.participant_character_ids || [];
+    const userParticipant = body.user_participant || null;
     const additionalNotes = body.additional_notes || '';
     const startTime = body.start_time || null;
     const endTime = body.end_time || null;
@@ -22,8 +23,9 @@ Deno.serve(async (req) => {
     const isRabbitHole = body.is_rabbit_hole || false;
     const rabbitHoleVenueName = body.rabbit_hole_venue_name || null;
 
-    if (!title || !eventDate || !plot || participantIds.length === 0) {
-      return Response.json({ error: 'title, event_date, plot, and participant_character_ids are required' }, { status: 400 });
+    const hasAnyParticipant = participantIds.length > 0 || !!userParticipant;
+    if (!title || !eventDate || !plot || !hasAnyParticipant) {
+      return Response.json({ error: 'title, event_date, plot, and at least one participant are required' }, { status: 400 });
     }
 
     // Resolve character names from IDs
@@ -41,6 +43,13 @@ Deno.serve(async (req) => {
     const focusNames = focusIds.map(id => nameById[id] || id);
     const participantNames = participantIds.map(id => nameById[id] || id);
 
+    // Build user participant metadata for the StoryEvent record
+    const userParticipantMetadata = userParticipant ? {
+      user_id: userParticipant.user_id,
+      display_name: userParticipant.display_name,
+      is_focus: userParticipant.is_focus || false,
+    } : null;
+
     const record = await base44.entities.StoryEvent.create({
       title: title.trim(),
       event_date: eventDate,
@@ -57,6 +66,7 @@ Deno.serve(async (req) => {
       focus_character_names: focusNames,
       participant_character_ids: participantIds,
       participant_character_names: participantNames,
+      user_participant: userParticipantMetadata,
       owner_email: user.email,
       status: 'generating',
     });

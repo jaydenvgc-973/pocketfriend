@@ -39,14 +39,17 @@ export default function CharacterInteractionSimulator({ characters, currentUser,
     return acc;
   }, {});
 
-  // Build the user participant object from currentUser + userSettings
+  // Build the user participant object from currentUser + userSettings — include visual identity data
   const userDisplayName = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
+  const userAvatarUrl = currentUser?.generated_avatar_urls?.[0] || null;
+  const userReferenceImages = userSettings?.user_closet?.map(outfit => outfit.image_url).filter(Boolean) || [];
   const userParticipant = currentUser ? {
     id: USER_SYNTHETIC_ID,
     name: userDisplayName,
     participant_type: 'user',
     user_id: currentUser.id,
-    avatar_url: null,
+    avatar_url: userAvatarUrl,
+    reference_images: userReferenceImages,
     _isUser: true,
   } : null;
 

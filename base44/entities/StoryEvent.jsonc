@@ -76,6 +76,26 @@
       },
       "description": "Display names of participants"
     },
+    "user_participant": {
+      "type": "object",
+      "description": "User participant metadata if the user is included in the event",
+      "properties": {
+        "user_id": {
+          "type": "string",
+          "description": "Authenticated user ID"
+        },
+        "display_name": {
+          "type": "string",
+          "description": "User's display name in the fictional world"
+        },
+        "is_focus": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the user is a focus participant"
+        }
+      },
+      "additionalProperties": false
+    },
     "owner_email": {
       "type": "string",
       "description": "Owner of this story event"
@@ -181,7 +201,6 @@
   "required": [
     "title",
     "event_date",
-    "plot",
-    "participant_character_ids"
+    "plot"
   ]
 }

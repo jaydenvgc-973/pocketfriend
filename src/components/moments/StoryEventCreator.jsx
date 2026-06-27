@@ -76,12 +76,16 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
     setSaving(true);
     setError('');
 
-    // Build user participant payload if selected
+    // Build user participant payload if selected — include visual identity data
+    const userAvatarUrl = currentUser?.generated_avatar_urls?.[0] || null;
+    const userReferenceImages = userSettings?.user_closet?.map(outfit => outfit.image_url).filter(Boolean) || [];
     const userParticipantPayload = userIsParticipant && userParticipant ? {
       user_id: currentUser?.id,
       display_name: userDisplayName,
       participant_type: 'user',
       is_focus: userIsFocus,
+      avatar_url: userAvatarUrl,
+      reference_images: userReferenceImages,
     } : null;
 
     try {

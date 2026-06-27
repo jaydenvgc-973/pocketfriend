@@ -95,13 +95,15 @@ Deno.serve(async (req) => {
   }
 
   // ── STAGE: payload ─────────────────────────────────────────────────────────
-  let character_ids, userPrompt;
+  let character_ids, userPrompt, user_participant;
   try {
     const body = await req.json();
     character_ids = body.character_ids;
     userPrompt = body.userPrompt;
-    if (!character_ids || character_ids.length < 2) {
-      return Response.json({ error: 'At least 2 character IDs required', stage: 'payload', trace }, { status: 400 });
+    user_participant = body.user_participant;
+    const totalParticipants = character_ids.length + (user_participant ? 1 : 0);
+    if (totalParticipants < 2) {
+      return Response.json({ error: 'At least 2 participants required (characters and/or user)', stage: 'payload', trace }, { status: 400 });
     }
     trace.payload_received = true;
     trace.character_ids_received = character_ids;
@@ -247,6 +249,23 @@ Deno.serve(async (req) => {
     emotional_baggage: char.emotional_baggage || '',
     emotional_triggers_deep: (char.emotional_triggers_deep || []).join(', '),
   }));
+
+  // Add user participant to profiles if present
+  if (user_participant) {
+    characterProfiles.unshift({
+      id: '__user__',
+      name: user_participant.display_name,
+      gender: 'variable',
+      sexual_orientation: 'unknown',
+      personality: 'The player (you) — your personality emerges through interaction.',
+      traits: 'player-character',
+      emotionalState: 'present',
+      currentSituation: 'Participating in this interaction',
+      archetype: 'Player',
+      emotional_baggage: '',
+      emotional_triggers_deep: '',
+    });
+  }
 
   const interactionContext = characters.length === 2
     ? `${getRelationshipContext(characters[0], characters[1])}\n${getRelationshipContext(characters[1], characters[0])}`
