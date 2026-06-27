@@ -34,7 +34,7 @@ import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
-import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
+import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { extractSceneItemLabel, isPurchaseIntent } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
@@ -1342,7 +1342,7 @@ Return JSON:
       ` (${broughtCharacters[0].name} pays)` :
       cost > 0 ? ` — $${cost}` : "";
 
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, action.action_category || null);
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, action.action_category || action.type || null);
 
       setTimeout(() => {
         const newActions = getSceneInteractions(
@@ -1693,7 +1693,8 @@ Return JSON:
       {/* Action buttons — location-scoped, validated */}
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
-          {actions.map((action) => {
+          {/* All contextual actions are shown — strip is horizontally scrollable, no artificial cap */}
+        {actions.map((action) => {
             const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             const isDisabled = action.disabled || actionCooldown;
             return (
