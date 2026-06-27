@@ -1,6 +1,74 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 
-// ── UTILITY: Add hours to a HH:MM time string ────────────────────────────
+// ── PARTICIPANT NAME REFERENCE KEY ────────────────────────────────────────────
+//
+// ARCHITECTURE NOTE — ENFORCED DUPLICATION (not abandoned scaffolding):
+// Deno backend functions are deployed as isolated sandboxes. They cannot import
+// from local lib/ files — only from npm: or jsr: URLs. This is a verified platform
+// constraint: any `import` from a relative path throws "Module not found" at runtime.
+//
+// Therefore, this function MUST be inlined in generateImageAsync.js,
+// regenerateImageWithReason.js, AND generateStoryEvent.js. The three copies
+// are the enforced strategy, not a maintenance oversight.
+//
+// ANTI-DRIFT RULE: The function body below is the canonical source.
+// Any change here MUST be applied identically to generateImageAsync.js
+// and regenerateImageWithReason.js.
+// verifyParticipantNameReferenceKeyDrift now covers all three files.
+//
+// The required format is:
+//   "PromptName" = Canonical Display Name (Character ID: ...) — use their visual identity references
+//   "PromptName" = User Display Name (User ID: <runtime_authenticated_user_id>) — use their visual identity references
+//
+// USER ID RULE: user_id = user.id from base44.auth.me() — the authenticated user's
+// platform entity ID. NOT email. email is used only for owner_email scoping.
+function buildParticipantNameReferenceKeyBlock(participants) {
+  if (!participants || participants.length === 0) return '';
+  const lines = [];
+  lines.push(`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`);
+  lines.push(`Every name in the scene prompt maps to exactly one visual identity bundle below.`);
+  lines.push(`Do NOT infer any appearance, gender, outfit, or body from a name alone.`);
+  lines.push(`Do NOT assign any subject's attributes to a different subject.`);
+  lines.push(``);
+  for (const p of participants) {
+    const displayName = p.display_name || 'Unknown';
+    const promptName = p.matched_prompt_name || displayName.split(/\s+/)[0];
+    if (p.participant_type === 'user') {
+      const userIdValue = p.user_id || 'authenticated_user';
+      lines.push(`"${promptName}" = ${displayName} (User ID: ${userIdValue}) — use their visual identity references`);
+    } else {
+      const charIdValue = p.character_id || 'character';
+      lines.push(`"${promptName}" = ${displayName} (Character ID: ${charIdValue}) — use their visual identity references`);
+    }
+  }
+  lines.push(`[END NAME REFERENCE KEY]`);
+  return `\n════════════════════════════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════════════════════════════\n`;
+}
+
+// ── URL UTILITIES ─────────────────────────────────────────────────────────────
+
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('https://media.base44.com/')) return url;
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) return `https://media.base44.com/images/public/${match[1]}`;
+  return url;
+}
+
+function isAccessible(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  if (url.includes('/files/mp/private/') || url.includes('/files/private/')) return false;
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  if (url.includes('base44.app/api/apps/')) return false;
+  return true;
+}
+
+function cdnFilter(urls) {
+  return (urls || []).map(toPublicCDN).filter(isAccessible);
+}
+
+// ── ADD HOURS TO HH:MM TIME STRING ───────────────────────────────────────────
 function addHoursToTime(timeStr, hours) {
   if (!timeStr) return null;
   const [h, m] = timeStr.split(':').map(Number);
@@ -8,6 +76,29 @@ function addHoursToTime(timeStr, hours) {
   const newH = Math.floor(totalMins / 60) % 24;
   const newM = totalMins % 60;
   return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+}
+
+// ── RESOLVE PARTICIPANT REFERENCE IMAGES ──────────────────────────────────────
+// Resolves canonical reference images for a character record.
+// Priority: reference_image_urls (no generated) → CDN avatar → empty.
+function resolveCharacterRefImages(charRecord) {
+  if (!charRecord) return [];
+  const allRefs = cdnFilter(charRecord.reference_image_urls || []);
+  const validRefs = allRefs.filter(url => !url.includes('generated_image'));
+  if (validRefs.length > 0) return validRefs.slice(0, 3);
+  // CDN avatar fallback — only if it is a canonical portrait, not a generated scene image
+  if (charRecord.avatar_url) {
+    const avatarPublic = toPublicCDN(charRecord.avatar_url);
+    const isCDN = avatarPublic.startsWith('https://media.base44.com/');
+    if (isAccessible(avatarPublic) && (isCDN || !avatarPublic.includes('generated_image'))) {
+      return [avatarPublic];
+    }
+  }
+  if (charRecord.image_avatar_url) {
+    const imgAvatar = toPublicCDN(charRecord.image_avatar_url);
+    if (isAccessible(imgAvatar)) return [imgAvatar];
+  }
+  return [];
 }
 
 Deno.serve(async (req) => {
@@ -54,46 +145,28 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── Collect character avatar/reference images for identity-aware image generation ──
-    const characterReferenceImages = [];
+    // ── CANONICAL PARTICIPANT BUNDLE RESOLUTION ───────────────────────────────
+    // Each participant is resolved into a canonical bundle with:
+    //   - character_id (DB-sourced, authoritative)
+    //   - display_name
+    //   - matched_prompt_name (first name from display_name)
+    //   - reference images (CDN-filtered, no generated images first)
+    //   - participant_type: 'character'
+    //
+    // The authenticated User is resolved separately below when included.
+    // Characters are NEVER resolved by name matching alone — always by ID.
+
+    const participantBundles = []; // { participant_type, character_id, user_id, display_name, matched_prompt_name, ref_images, appearance_notes }
+
     for (const cid of allIds) {
       const c = charById[cid];
       if (!c) continue;
-      if (c.avatar_url && typeof c.avatar_url === 'string') characterReferenceImages.push(c.avatar_url);
-      if (c.image_avatar_url && typeof c.image_avatar_url === 'string') characterReferenceImages.push(c.image_avatar_url);
-      if (c.reference_image_urls && Array.isArray(c.reference_image_urls)) {
-        c.reference_image_urls.forEach(url => {
-          if (url && typeof url === 'string') characterReferenceImages.push(url);
-        });
-      }
-    }
 
-    // Focus character reference images — prioritized for image generation
-    const focusRefImages = [];
-    for (const cid of focusIds) {
-      const c = charById[cid];
-      if (!c) continue;
-      if (c.avatar_url && typeof c.avatar_url === 'string') focusRefImages.push(c.avatar_url);
-      if (c.image_avatar_url && typeof c.image_avatar_url === 'string') focusRefImages.push(c.image_avatar_url);
-      if (c.reference_image_urls && Array.isArray(c.reference_image_urls)) {
-        c.reference_image_urls.forEach(url => {
-          if (url && typeof url === 'string') focusRefImages.push(url);
-        });
-      }
-    }
+      const displayName = c.name || c.display_name || cid;
+      const firstName = displayName.split(/\s+/)[0];
+      const refImages = resolveCharacterRefImages(c);
 
-    // Build character context for the LLM — include appearance for image identity
-    const characterContexts = allIds.map(cid => {
-      const c = charById[cid];
-      if (!c) return `- ${cid}: (character data unavailable)`;
-      const isFocus = focusIds.includes(cid);
-      const marker = isFocus ? '★ FOCUS' : '';
-      const charType = c.character_type || '';
-      const typeNote = charType === 'npc_family_member' ? ' [Family member]'
-        : charType === 'npc_fictitious' ? ' [Fictional/NPC character]'
-        : charType === 'npc_world_service' ? ' [World service character]'
-        : '';
-      // Build appearance description for image identity
+      // Build appearance notes for the narrative prompt (NOT used as ID — structural only)
       const appearanceParts = [];
       if (c.appearance_notes) appearanceParts.push(c.appearance_notes);
       if (c.avatar_description_text) appearanceParts.push(c.avatar_description_text);
@@ -111,11 +184,103 @@ Deno.serve(async (req) => {
       if (c.style_identity && !appearanceParts.some(p => p.includes(c.style_identity))) {
         appearanceParts.push(`style: ${c.style_identity}`);
       }
-      const appearanceBlock = appearanceParts.length > 0
-        ? `  APPEARANCE (USE THIS FOR IMAGE GENERATION — DO NOT INVENT GENERIC STRANGERS): ${appearanceParts.join(' | ')}`
+
+      participantBundles.push({
+        participant_type: 'character',
+        character_id: c.id,
+        user_id: null,
+        display_name: displayName,
+        matched_prompt_name: firstName,
+        ref_images: refImages,
+        appearance_notes: appearanceParts.join(' | ') || null,
+        is_focus: focusIds.includes(cid),
+        char_record: c,
+      });
+
+      console.log(`[generateStoryEvent] ✅ Bundle resolved: "${displayName}" (id=${c.id}) refs=${refImages.length} focus=${focusIds.includes(cid)}`);
+    }
+
+    // ── USER BUNDLE RESOLUTION ────────────────────────────────────────────────
+    // The authenticated user is resolved from the event's owner_email.
+    // user.id (platform entity ID from auth.me) is the canonical user identifier.
+    // We resolve from UserSettings + User entity — never by name matching.
+    //
+    // Note: This automation trigger (entity create event) runs without a live user
+    // session. The owner_email from the StoryEvent is the ownership anchor.
+    // We resolve the user entity and settings via service role using owner_email.
+    let userBundle = null;
+    try {
+      const userEntityList = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1).catch(() => []);
+      const userEntityRecord = userEntityList?.[0] || null;
+      const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
+      const settingsRecord = settingsList?.[0] || null;
+
+      if (userEntityRecord || settingsRecord) {
+        const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
+        const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
+        const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2)].filter(Boolean);
+
+        const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
+        const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity
+
+        if (worldName) {
+          userBundle = {
+            participant_type: 'user',
+            character_id: null,
+            user_id: platformUserId, // platform entity ID — NOT email
+            display_name: worldName,
+            matched_prompt_name: worldName.split(/\s+/)[0],
+            ref_images: userRefImages,
+            appearance_lock: settingsRecord?.appearance_lock || null,
+            world_name: worldName,
+          };
+          console.log(`[generateStoryEvent] ✅ User bundle resolved: worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length}`);
+        } else {
+          console.log(`[generateStoryEvent] ℹ️ User has no fictional world name — user bundle skipped (no identity to inject)`);
+        }
+      }
+    } catch (userBundleErr) {
+      console.warn(`[generateStoryEvent] User bundle resolution failed (non-blocking): ${userBundleErr?.message}`);
+    }
+
+    // Build the full participant list for the Name Reference Key
+    // User is included in the key only when they have a resolved world name (visual subject)
+    const allBundles = [...participantBundles, ...(userBundle ? [userBundle] : [])];
+
+    // Build the unified Name Reference Key using the canonical builder
+    const nameReferenceKeyBlock = buildParticipantNameReferenceKeyBlock(
+      allBundles.map(b => ({
+        participant_type: b.participant_type,
+        character_id: b.character_id,
+        user_id: b.user_id,
+        display_name: b.display_name,
+        matched_prompt_name: b.matched_prompt_name,
+      }))
+    );
+
+    console.log(`[generateStoryEvent] NAME REFERENCE KEY built: ${allBundles.length} participant(s) — ${allBundles.map(b => `${b.participant_type}:${b.display_name}`).join(', ')}`);
+    console.log(`[generateStoryEvent] Key contains header: ${nameReferenceKeyBlock.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]')}`);
+
+    // Build focus character ref images ordered list (focus first, then all)
+    const focusRefImages = participantBundles.filter(b => b.is_focus).flatMap(b => b.ref_images);
+    const allCharacterRefImages = participantBundles.flatMap(b => b.ref_images);
+    const userRefImagesForPayload = userBundle?.ref_images || [];
+
+    // Build character context for the LLM narrative prompt
+    const characterContexts = participantBundles.map(b => {
+      const c = b.char_record;
+      const marker = b.is_focus ? '★ FOCUS' : '';
+      const charType = c.character_type || '';
+      const typeNote = charType === 'npc_family_member' ? ' [Family member]'
+        : charType === 'npc_fictitious' ? ' [Fictional/NPC character]'
+        : charType === 'npc_world_service' ? ' [World service character]'
+        : '';
+      const appearanceBlock = b.appearance_notes
+        ? `  APPEARANCE (USE THIS FOR IMAGE GENERATION — DO NOT INVENT GENERIC STRANGERS): ${b.appearance_notes}`
         : '';
       return [
-        `- ${c.name || cid} ${marker}${typeNote}`,
+        `- ${b.display_name} ${marker}${typeNote}`,
+        `  Character ID: ${b.character_id}`,
         c.personality_summary ? `  Personality: ${c.personality_summary}` : '',
         c.occupation ? `  Occupation: ${c.occupation}` : '',
         c.age ? `  Age: ${c.age}` : '',
@@ -124,23 +289,22 @@ Deno.serve(async (req) => {
         c.communication_style ? `  Communication style: ${c.communication_style}` : '',
         c.current_situation ? `  Current situation: ${c.current_situation}` : '',
         c.profile_summary ? `  Summary: ${c.profile_summary}` : '',
-        (c.memories || []).slice(0, 3).map((m, i) => `  Memory: ${m.title || ''}`).filter(Boolean).join('\n'),
+        (c.memories || []).slice(0, 3).map(m => `  Memory: ${m.title || ''}`).filter(Boolean).join('\n'),
       ].filter(Boolean).join('\n');
     }).join('\n\n');
 
     // Resolve relationships between participants
     const relationshipContexts = [];
-    for (const cid of allIds) {
-      const c = charById[cid];
-      if (!c) continue;
+    for (const b of participantBundles) {
+      const c = b.char_record;
       const rels = (c.fictional_relationships || []).filter(r =>
-        r.related_character_id && allIds.includes(r.related_character_id) && r.related_character_id !== cid
+        r.related_character_id && allIds.includes(r.related_character_id) && r.related_character_id !== b.character_id
       );
       for (const r of rels) {
         const target = charById[r.related_character_id];
         if (!target) continue;
         relationshipContexts.push(
-          `${c.name} → ${target.name}: ${r.relationship_type}` +
+          `${b.display_name} → ${target.name}: ${r.relationship_type}` +
           (r.friendship_level != null ? ` (friendship ${r.friendship_level})` : '') +
           (r.trust_level != null ? ` (trust ${r.trust_level})` : '') +
           (r.description ? ` — ${r.description}` : '')
@@ -168,7 +332,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 1: GENERATE NARRATIVE ──────────────────────────────────────────
+    // ── STEP 1: GENERATE NARRATIVE ──────────────────────────────────────────────
     const narrativePrompt = [
       `You are a narrative writer creating a meaningful story for a character-driven world.`,
       ``,
@@ -311,7 +475,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: e.message }, { status: 500 });
     }
 
-    // ── STEP 2: CREATE STORY EVENT MEMORIES ──────────────────────────────────
+    // ── STEP 2: CREATE STORY EVENT MEMORIES ──────────────────────────────────────
     const memories = generated.memories || [];
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
@@ -330,9 +494,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY (read by buildFullCanonicalPrompt) ─
-    // This is the primary memory well read by the chat context builder.
-    // CRITICAL: Fetch FRESH character state — the charById snapshot is stale.
+    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY ────────────────────────────
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
@@ -353,9 +515,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 2c: WRITE TO MEMORY ENTITY (primary semantic retrieval well) ─────
-    // The Memory entity is what retrieveActiveMemory reads from for semantic search.
-    // Field names: title, description, character_id, emotional_impact, source_context, timestamp
+    // ── STEP 2c: WRITE TO MEMORY ENTITY ──────────────────────────────────────
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
@@ -371,8 +531,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (Life Journal block) ─────────
-    // CharacterMemory feeds the Life Journal block in buildCanonicalCharacterContext.
+    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS ──────────────────────────────
     for (const mem of memories) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
@@ -389,7 +548,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 3: UPDATE RELATIONSHIP SCORES ──────────────────────────────────
+    // ── STEP 3: UPDATE RELATIONSHIP SCORES ────────────────────────────────────
     const relChanges = generated.relationship_changes || [];
     for (const rc of relChanges) {
       if (!rc.source_character_id || !rc.target_character_id || !rc.dimension) continue;
@@ -426,7 +585,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 4: UPDATE EMOTIONAL STATES ─────────────────────────────────────
+    // ── STEP 4: UPDATE EMOTIONAL STATES ──────────────────────────────────────
     const emotionalOutcomes = generated.emotional_outcomes || [];
     for (const eo of emotionalOutcomes) {
       if (!eo.character_id || !eo.emotion) continue;
@@ -437,47 +596,129 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 5: GENERATE IMAGES WITH CHARACTER IDENTITY REFERENCES ───────────
+    // ── STEP 5: GENERATE IMAGES WITH UNIFIED IDENTITY GROUNDING ──────────────
+    // Every image prompt now:
+    //   1. Prepends the Name Reference Key (ID-anchored, canonical format)
+    //   2. Receives participant reference images in existing_image_urls
+    //   3. Stores resolved participant metadata in generation_context
     const imagePrompts = generated.image_prompts || [];
     const momentOrder = { opening: 0, key_moment: 1, closing: 2 };
 
     for (const img of imagePrompts) {
       if (!img.moment || !img.prompt) continue;
       try {
-        // Use all character reference images, with focus character images prioritized first
-        const refImages = [...focusRefImages, ...characterReferenceImages]
+        // Determine which character bundles are visible for this moment
+        const visibleCharIds = img.moment === 'opening'
+          ? participantIds.slice(0, 3)
+          : img.moment === 'key_moment'
+          ? (focusIds.length > 0 ? focusIds : participantIds.slice(0, 2))
+          : participantIds.slice(0, 2);
+
+        const visibleBundles = participantBundles.filter(b => visibleCharIds.includes(b.character_id));
+        const visibleCharNames = visibleBundles.map(b => b.display_name).filter(Boolean);
+        const visibleCharTypes = visibleBundles.map(b => b.char_record?.character_type || 'active_created_character');
+
+        // Build the Name Reference Key for this specific image's visible participants
+        // Include user bundle only if they have a world name (visual identity anchor)
+        const imageKeyParticipants = [
+          ...visibleBundles.map(b => ({
+            participant_type: 'character',
+            character_id: b.character_id,
+            user_id: null,
+            display_name: b.display_name,
+            matched_prompt_name: b.matched_prompt_name,
+          })),
+          ...(userBundle ? [{
+            participant_type: 'user',
+            character_id: null,
+            user_id: userBundle.user_id,
+            display_name: userBundle.display_name,
+            matched_prompt_name: userBundle.matched_prompt_name,
+          }] : []),
+        ];
+
+        const imageNameRefKey = buildParticipantNameReferenceKeyBlock(imageKeyParticipants);
+
+        // ── FINAL IMAGE PROMPT: Name Reference Key + scene description ──────────
+        const finalImagePrompt = [
+          `════════════════════════════════════════════════════════════`,
+          `⚠️ CRITICAL: FICTIONAL CHARACTER NOTICE`,
+          `════════════════════════════════════════════════════════════`,
+          `ALL subjects are 100% FICTIONAL CHARACTERS for a storytelling app. Not real people.`,
+          `Treat as characters in a novel or video game. Render from descriptions and reference photos only.`,
+          `════════════════════════════════════════════════════════════`,
+          ``,
+          imageNameRefKey,
+          ``,
+          `════════════════════════════════════════════════════════════`,
+          `STORY EVENT: "${title}"`,
+          `MOMENT: ${img.moment.replace('_', ' ')}`,
+          `VENUE: ${venueName}`,
+          `EVENT DATE: ${eventDate || 'unspecified'}`,
+          `════════════════════════════════════════════════════════════`,
+          ``,
+          img.prompt,
+          ``,
+          `Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.`,
+          ``,
+          `IDENTITY ENFORCEMENT:`,
+          `- Every person in this image must match a participant listed in the Name Reference Key above.`,
+          `- Do NOT generate generic strangers, stand-ins, or placeholder people.`,
+          `- Do NOT infer any appearance from names alone — use ONLY the visual identity references provided.`,
+          `- Character IDs in the key are the sole identity anchors. Reference images define face/hair/body.`,
+        ].join('\n');
+
+        // ── REFERENCE IMAGE PAYLOAD ────────────────────────────────────────────
+        // Focus character refs first, then visible character refs, then user refs.
+        // Deduplication and CDN-filtering applied.
+        const visibleCharRefImages = visibleBundles.flatMap(b => b.ref_images);
+        const refImages = [
+          ...focusRefImages,
+          ...visibleCharRefImages,
+          ...userRefImagesForPayload,
+        ]
           .filter((url, i, arr) => arr.indexOf(url) === i) // deduplicate
-          .slice(0, 10); // limit to avoid huge payloads
+          .filter(Boolean)
+          .slice(0, 10); // cap to avoid oversized payloads
+
+        console.log(`[generateStoryEvent] IMAGE DISPATCH: moment="${img.moment}" participants=${imageKeyParticipants.length} ref_images=${refImages.length}`);
+        console.log(`[generateStoryEvent]   key_header_present: ${finalImagePrompt.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]')}`);
+        console.log(`[generateStoryEvent]   existing_image_urls_count: ${refImages.length}`);
 
         const imageRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: img.prompt,
+          prompt: finalImagePrompt,
           existing_image_urls: refImages.length > 0 ? refImages : undefined,
         });
 
         if (imageRes?.url) {
-          // Determine visible characters for this moment
-          const visibleCharIds = img.moment === 'opening' ? participantIds.slice(0, 3)
-            : img.moment === 'key_moment' ? (focusIds.length > 0 ? focusIds : participantIds.slice(0, 2))
-            : participantIds.slice(0, 2);
+          // Metadata: resolved participant IDs, types, ref status
+          const resolvedParticipantMetadata = imageKeyParticipants.map(p => ({
+            participant_type: p.participant_type,
+            id: p.character_id || p.user_id,
+            display_name: p.display_name,
+            ref_images_attached: p.participant_type === 'user'
+              ? userRefImagesForPayload.length > 0
+              : (visibleBundles.find(b => b.character_id === p.character_id)?.ref_images.length || 0) > 0,
+          }));
 
-          const visibleCharNames = visibleCharIds.map(id => charById[id]?.name || id).filter(Boolean);
-
-          // Create StoryEventImage — the canonical event-image link
+          // Create StoryEventImage — canonical event-image link
           const storyImage = await base44.asServiceRole.entities.StoryEventImage.create({
             story_event_id: eventId,
             moment_type: img.moment,
             image_url: imageRes.url,
             description: img.description || '',
-            prompt: img.prompt,
+            prompt: finalImagePrompt,
             order: momentOrder[img.moment] ?? 0,
             visible_character_ids: visibleCharIds,
             visible_character_names: visibleCharNames,
+            visible_character_types: visibleCharTypes,
             reference_image_urls: refImages.slice(0, 5),
+            reference_lookup_status_by_character: Object.fromEntries(
+              visibleBundles.map(b => [b.character_id, b.ref_images.length > 0 ? 'resolved' : 'reference_lookup_failed'])
+            ),
           });
 
           // Create Message record for Media Gallery visibility
-          // visibleCharIds and visibleCharNames already computed above for StoryEventImage
-
           await base44.asServiceRole.entities.Message.create({
             conversation_id: `story_event_${eventId}`,
             sender_type: 'user',
@@ -486,6 +727,19 @@ Deno.serve(async (req) => {
             image_description: img.description || img.prompt,
             image_analysis_status: 'complete',
             generation_context: {
+              // Identity grounding metadata
+              generation_context_version: 2,
+              context_origin: 'story_event',
+              name_reference_key_injected: true,
+              name_reference_key_header_verified: finalImagePrompt.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]'),
+              resolved_participant_ids: imageKeyParticipants.map(p => p.character_id || p.user_id),
+              resolved_participant_metadata: resolvedParticipantMetadata,
+              user_included: !!userBundle,
+              user_id: userBundle?.user_id || null,
+              user_world_name: userBundle?.display_name || null,
+              reference_images_attached: refImages.length > 0,
+              reference_image_count: refImages.length,
+              // Standard story event fields
               source: 'story_event',
               story_event_id: eventId,
               story_event_image_id: storyImage?.id || null,
@@ -498,25 +752,30 @@ Deno.serve(async (req) => {
               visible_character_names: visibleCharNames,
               venue_id: event.venue_id || null,
               venue_name: venueName,
-              scene_prompt: img.prompt,
+              scene_prompt: finalImagePrompt,
+              original_raw_prompt: img.prompt,
               character_reference_images: refImages.slice(0, 5),
-              subjects: visibleCharIds.map(cid => ({
-                subject_type: 'character',
-                subject_id: cid,
-                subject_name: charById[cid]?.name || cid,
-              })),
+              subjects: visibleCharIds.map(cid => {
+                const bundle = participantBundles.find(b => b.character_id === cid);
+                return {
+                  subject_type: 'character',
+                  subject_id: cid,
+                  subject_name: bundle?.display_name || charById[cid]?.name || cid,
+                  reference_images: bundle?.ref_images || [],
+                  reference_image_count: bundle?.ref_images.length || 0,
+                };
+              }),
             },
             timestamp: new Date().toISOString(),
             owner_email: ownerEmail,
           });
         }
-      } catch (_) {}
+      } catch (imgErr) {
+        console.warn(`[generateStoryEvent] Image generation failed for moment="${img.moment}": ${imgErr?.message}`);
+      }
     }
 
-    // ── STEP 5b: CREATE LIFEEVENT RECORDS (DASHBOARD & LIFE JOURNAL) ────────
-    // This is the critical fix: LifeJournal and CharacterDashboard read LifeEvent,
-    // NOT StoryEventMemory/CharacterMemory. Without this, events are invisible.
-    const milestoneEventTypes = ['life_milestone_event', 'celebration_event', 'bonding_event', 'growth_event', 'supportive_event'];
+    // ── STEP 5b: CREATE LIFEEVENT RECORDS ─────────────────────────────────────
     const isMajorEvent = (generated.narrative || '').length > 600 || (focusIds.length >= 2);
     const defaultEventType = isMajorEvent ? 'life_milestone_event' : 'bonding_event';
 
@@ -549,8 +808,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 5c: CREATE COMMUNITYEVENT (CALENDAR & HOMEPAGE STRIP) ──────────
-    // Makes the story event visible on the Moments calendar and Homepage community strip
+    // ── STEP 5c: CREATE COMMUNITYEVENT ────────────────────────────────────────
     try {
       await base44.asServiceRole.entities.CommunityEvent.create({
         name: title,
@@ -569,8 +827,7 @@ Deno.serve(async (req) => {
       });
     } catch (_) {}
 
-    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS (FULL TIMELINE TRANSITION) ──
-    // A coherent event requires: departure from previous → arrival at venue → departure from venue → return home.
+    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ───────────────────────────────
     const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
     const eventDepartureTime = endTime
       ? `${eventDate}T${endTime}:00.000`
@@ -588,7 +845,6 @@ Deno.serve(async (req) => {
       const cname = c?.name || c?.display_name || cid;
       if (!c) continue;
       try {
-        // 1. Check prior location (where were they before the event?) — NOT blindly "home"
         let priorLocId = c.current_home_location_id;
         let priorLocName = c.resolved_current_location_name || 'home';
         let priorCategory = 'home';
@@ -598,7 +854,6 @@ Deno.serve(async (req) => {
         const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
         const isTraveling = presenceStatus === 'traveling';
 
-        // Confined characters cannot attend — skip timeline for them
         if (isConfined) continue;
 
         if (isAsleep && c.current_home_location_id) {
@@ -606,7 +861,6 @@ Deno.serve(async (req) => {
           priorLocName = c.resolved_current_location_name || 'home';
           priorCategory = 'home';
         } else if (isTraveling && c.traveling_to_location_id) {
-          // They were en route — use destination as prior location
           priorLocId = c.traveling_to_location_id;
           priorLocName = c.traveling_to_location_name || 'destination';
           priorCategory = 'travel';
@@ -630,10 +884,8 @@ Deno.serve(async (req) => {
             : 'home';
         }
 
-        // Safety: location_id must never be null
         if (!priorLocId) priorLocId = `unknown_prior_${cid}`;
 
-        // 2. Departure from previous location
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
           location_id: priorLocId, location_name: priorLocName,
@@ -647,7 +899,6 @@ Deno.serve(async (req) => {
           notes: `Departed from ${priorLocName} for Story Event: ${title}`,
         });
 
-        // 3. Arrival at event venue
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
           location_id: event.venue_id || null, location_name: venueName,
@@ -659,7 +910,6 @@ Deno.serve(async (req) => {
           notes: `Attended "${title}" Story Event at ${venueName}.`,
         });
 
-        // 4. Departure from event venue
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
           location_id: event.venue_id || null, location_name: venueName,
@@ -671,7 +921,6 @@ Deno.serve(async (req) => {
           notes: `Departed from Story Event: ${title}`,
         });
 
-        // 5. Return to next expected location (not blindly home)
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid, character_name: cname, owner_email: ownerEmail,
           location_id: priorLocId || null, location_name: priorLocName,
@@ -686,7 +935,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 5d: CREATE EVENTPARTICIPATION (DASHBOARD ATTENDANCE) ────────────
+    // ── STEP 5d: CREATE EVENTPARTICIPATION ────────────────────────────────────
     for (const mem of memories) {
       if (!mem.character_id) continue;
       try {
@@ -696,7 +945,7 @@ Deno.serve(async (req) => {
           character_id: mem.character_id,
           character_name: mem.character_name || '',
           owner_email: ownerEmail,
-          participation_type: focusIds.includes(mem.character_id) ? 'attended' : 'attended',
+          participation_type: 'attended',
           emotional_tone: mem.emotional_tone || 'neutral',
           participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
           memory_strength: (mem.importance_score || 5) >= 7 ? 'strong' : 'moderate',
@@ -707,8 +956,6 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 6: PARTICIPANT COVERAGE GUARANTEE ────────────────────────────────
-    // The LLM may not generate a memory for every participant despite instructions.
-    // This pass ensures NO participant is left without records.
     const memoryCoveredIds = new Set(memories.map(m => m.character_id));
     const uncoveredIds = allIds.filter(id => !memoryCoveredIds.has(id));
 
@@ -719,7 +966,6 @@ Deno.serve(async (req) => {
       const fallbackSummary = `Attended "${title}" at ${venueName} on ${eventDate}`;
       const fallbackTone = 'neutral';
 
-      // StoryEventMemory
       try {
         await base44.asServiceRole.entities.StoryEventMemory.create({
           story_event_id: eventId, character_id: cid, character_name: cname,
@@ -729,7 +975,6 @@ Deno.serve(async (req) => {
         });
       } catch (_) {}
 
-      // Character.memories
       try {
         const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
         const freshChar = freshChars[0];
@@ -744,7 +989,6 @@ Deno.serve(async (req) => {
         }
       } catch (_) {}
 
-      // Memory entity
       try {
         await base44.asServiceRole.entities.Memory.create({
           character_id: cid, title: `Attended: ${title}`,
@@ -754,7 +998,6 @@ Deno.serve(async (req) => {
         });
       } catch (_) {}
 
-      // CharacterMemory
       try {
         await base44.asServiceRole.entities.CharacterMemory.create({
           character_id: cid, memory_type: 'event',
@@ -764,7 +1007,6 @@ Deno.serve(async (req) => {
         });
       } catch (_) {}
 
-      // LifeEvent
       try {
         await base44.asServiceRole.entities.LifeEvent.create({
           character_id: cid, character_name: cname,
@@ -778,7 +1020,6 @@ Deno.serve(async (req) => {
         });
       } catch (_) {}
 
-      // EventParticipation
       try {
         await base44.asServiceRole.entities.EventParticipation.create({
           event_id: eventId, event_name: title,
@@ -791,7 +1032,6 @@ Deno.serve(async (req) => {
         });
       } catch (_) {}
 
-      // LocationHistory (timeline support for attendance)
       try {
         await base44.asServiceRole.entities.LocationHistory.create({
           character_id: cid,
@@ -812,7 +1052,7 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 7: UPDATE STORY EVENT STATUS WITH FULL DATA ────────────────────
+    // ── STEP 7: UPDATE STORY EVENT STATUS ────────────────────────────────────
     await base44.asServiceRole.entities.StoryEvent.update(eventId, {
       status: 'complete',
       generated_narrative: generated.narrative || '',
@@ -830,6 +1070,16 @@ Deno.serve(async (req) => {
       imagesGenerated: imagePrompts.length,
       relationshipChanges: relChanges.length,
       participantTypes: allIds.map(id => charById[id]?.character_type || 'unknown'),
+      // Identity grounding proof
+      identity_grounding: {
+        name_reference_key_injected: true,
+        participant_bundles_resolved: participantBundles.length,
+        user_bundle_resolved: !!userBundle,
+        user_id: userBundle?.user_id || null,
+        participant_ids: participantBundles.map(b => b.character_id),
+        participants_with_ref_images: participantBundles.filter(b => b.ref_images.length > 0).length,
+        participants_without_ref_images: participantBundles.filter(b => b.ref_images.length === 0).map(b => b.display_name),
+      },
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);

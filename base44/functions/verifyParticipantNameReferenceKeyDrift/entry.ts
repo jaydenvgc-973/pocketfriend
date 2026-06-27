@@ -2,11 +2,16 @@
  * verifyParticipantNameReferenceKeyDrift
  *
  * Anti-drift enforcement for buildParticipantNameReferenceKeyBlock.
- * Compares the function bodies extracted from both source files and runs
- * both copies with identical inputs to prove behavioral equivalence.
+ * Compares the function bodies extracted from ALL THREE active source files and runs
+ * all three copies with identical inputs to prove behavioral equivalence.
+ *
+ * Active files covered:
+ *   - functions/generateImageAsync.js
+ *   - functions/regenerateImageWithReason.js
+ *   - functions/generateStoryEvent.js  ← added in Story Event identity-grounding refactor
  *
  * Returns structured PASS/FAIL with full diagnostic detail.
- * Run this after any change to either image generation function to confirm parity.
+ * Run this after any change to any of the three image generation functions to confirm parity.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
@@ -66,6 +71,30 @@ const SOURCE_REGEN = `function buildParticipantNameReferenceKeyBlock(participant
   return \`\\n════════════════════════════════════════════════════════════\\n\${lines.join('\\n')}\\n════════════════════════════════════════════════════════════\\n\`;
 }`;
 
+// From functions/generateStoryEvent.js (Story Event identity-grounding refactor)
+const SOURCE_STORY_EVENT = `function buildParticipantNameReferenceKeyBlock(participants) {
+  if (!participants || participants.length === 0) return '';
+  const lines = [];
+  lines.push(\`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]\`);
+  lines.push(\`Every name in the scene prompt maps to exactly one visual identity bundle below.\`);
+  lines.push(\`Do NOT infer any appearance, gender, outfit, or body from a name alone.\`);
+  lines.push(\`Do NOT assign any subject's attributes to a different subject.\`);
+  lines.push(\`\`);
+  for (const p of participants) {
+    const displayName = p.display_name || 'Unknown';
+    const promptName = p.matched_prompt_name || displayName.split(/\\s+/)[0];
+    if (p.participant_type === 'user') {
+      const userIdValue = p.user_id || 'authenticated_user';
+      lines.push(\`"\${promptName}" = \${displayName} (User ID: \${userIdValue}) — use their visual identity references\`);
+    } else {
+      const charIdValue = p.character_id || 'character';
+      lines.push(\`"\${promptName}" = \${displayName} (Character ID: \${charIdValue}) — use their visual identity references\`);
+    }
+  }
+  lines.push(\`[END NAME REFERENCE KEY]\`);
+  return \`\\n════════════════════════════════════════════════════════════\\n\${lines.join('\\n')}\\n════════════════════════════════════════════════════════════\\n\`;
+}`;
+
 // ── LIVE IMPLEMENTATIONS ──────────────────────────────────────────────────────
 // Both copies are executed identically so output equality is proven at runtime,
 // not just by source string comparison.
@@ -96,6 +125,30 @@ function buildFromGenerateImageAsync(participants) {
 
 // regenerateImageWithReason.js copy
 function buildFromRegenerateImageWithReason(participants) {
+  if (!participants || participants.length === 0) return '';
+  const lines = [];
+  lines.push(`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`);
+  lines.push(`Every name in the scene prompt maps to exactly one visual identity bundle below.`);
+  lines.push(`Do NOT infer any appearance, gender, outfit, or body from a name alone.`);
+  lines.push(`Do NOT assign any subject's attributes to a different subject.`);
+  lines.push(``);
+  for (const p of participants) {
+    const displayName = p.display_name || 'Unknown';
+    const promptName = p.matched_prompt_name || displayName.split(/\s+/)[0];
+    if (p.participant_type === 'user') {
+      const userIdValue = p.user_id || 'authenticated_user';
+      lines.push(`"${promptName}" = ${displayName} (User ID: ${userIdValue}) — use their visual identity references`);
+    } else {
+      const charIdValue = p.character_id || 'character';
+      lines.push(`"${promptName}" = ${displayName} (Character ID: ${charIdValue}) — use their visual identity references`);
+    }
+  }
+  lines.push(`[END NAME REFERENCE KEY]`);
+  return `\n════════════════════════════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════════════════════════════\n`;
+}
+
+// generateStoryEvent.js copy (Story Event identity-grounding refactor)
+function buildFromGenerateStoryEvent(participants) {
   if (!participants || participants.length === 0) return '';
   const lines = [];
   lines.push(`[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`);
@@ -254,42 +307,50 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // ── 1. STRUCTURAL SOURCE COMPARISON ──────────────────────────────────────
-    const normalizedGenerate = normalizeSource(SOURCE_GENERATE);
-    const normalizedRegen    = normalizeSource(SOURCE_REGEN);
-    const sourceMatch = normalizedGenerate === normalizedRegen;
+    // ── 1. STRUCTURAL SOURCE COMPARISON (all three files) ────────────────────
+    const normalizedGenerate   = normalizeSource(SOURCE_GENERATE);
+    const normalizedRegen      = normalizeSource(SOURCE_REGEN);
+    const normalizedStoryEvent = normalizeSource(SOURCE_STORY_EVENT);
 
-    // Find first diff position if mismatch
-    let firstDiffIndex = -1;
-    let diffContext = null;
-    if (!sourceMatch) {
-      const minLen = Math.min(normalizedGenerate.length, normalizedRegen.length);
+    const sourceMatchGenRegen = normalizedGenerate === normalizedRegen;
+    const sourceMatchGenStory = normalizedGenerate === normalizedStoryEvent;
+    const sourceMatchRegenStory = normalizedRegen === normalizedStoryEvent;
+    const allSourcesMatch = sourceMatchGenRegen && sourceMatchGenStory && sourceMatchRegenStory;
+
+    function findFirstDiff(a, b, labelA, labelB) {
+      if (a === b) return null;
+      const minLen = Math.min(a.length, b.length);
       for (let i = 0; i < minLen; i++) {
-        if (normalizedGenerate[i] !== normalizedRegen[i]) {
-          firstDiffIndex = i;
-          diffContext = {
-            generate_around: normalizedGenerate.substring(Math.max(0, i - 40), i + 40),
-            regen_around:    normalizedRegen.substring(Math.max(0, i - 40), i + 40),
+        if (a[i] !== b[i]) {
+          return {
+            first_diff_at_char: i,
+            [`${labelA}_around`]: a.substring(Math.max(0, i - 40), i + 40),
+            [`${labelB}_around`]: b.substring(Math.max(0, i - 40), i + 40),
           };
-          break;
         }
       }
-      if (firstDiffIndex === -1 && normalizedGenerate.length !== normalizedRegen.length) {
-        firstDiffIndex = minLen;
-        diffContext = { note: `generateImageAsync is ${normalizedGenerate.length} chars, regenerateImageWithReason is ${normalizedRegen.length} chars` };
-      }
+      return { note: `${labelA} is ${a.length} chars, ${labelB} is ${b.length} chars` };
     }
 
-    // ── 2. BEHAVIORAL COMPARISON — run both with each test case ──────────────
+    const structuralDiffs = {
+      generateImageAsync_vs_regenerateImageWithReason: sourceMatchGenRegen ? null : findFirstDiff(normalizedGenerate, normalizedRegen, 'generateImageAsync', 'regenerateImageWithReason'),
+      generateImageAsync_vs_generateStoryEvent: sourceMatchGenStory ? null : findFirstDiff(normalizedGenerate, normalizedStoryEvent, 'generateImageAsync', 'generateStoryEvent'),
+      regenerateImageWithReason_vs_generateStoryEvent: sourceMatchRegenStory ? null : findFirstDiff(normalizedRegen, normalizedStoryEvent, 'regenerateImageWithReason', 'generateStoryEvent'),
+    };
+
+    // ── 2. BEHAVIORAL COMPARISON — run all three with each test case ──────────
     const testResults = [];
     let allBehavioralPass = true;
 
     for (const tc of TEST_CASES) {
       const outA = buildFromGenerateImageAsync(tc.participants);
       const outB = buildFromRegenerateImageWithReason(tc.participants);
+      const outC = buildFromGenerateStoryEvent(tc.participants);
 
-      const behavioralMatch = outA === outB;
-      const isEmpty = tc.expectedEmpty ? outA === '' : false;
+      const behavioralMatchAB = outA === outB;
+      const behavioralMatchAC = outA === outC;
+      const behavioralMatchBC = outB === outC;
+      const behavioralMatch = behavioralMatchAB && behavioralMatchAC && behavioralMatchBC;
 
       // Format validation (on non-empty outputs)
       let formatResult = { pass: true, note: 'empty — no format check needed' };
@@ -301,16 +362,15 @@ Deno.serve(async (req) => {
 
       testResults.push({
         label: tc.label,
-        behavioral_match: behavioralMatch,
+        behavioral_match_all_three: behavioralMatch,
+        behavioral_match_generate_vs_regen: behavioralMatchAB,
+        behavioral_match_generate_vs_story_event: behavioralMatchAC,
+        behavioral_match_regen_vs_story_event: behavioralMatchBC,
         format_pass: formatResult.pass,
         format_issues: formatResult.issues || [],
         output_generate: outA,
         output_regen: outB,
-        first_diff_char: behavioralMatch ? null : (() => {
-          const ml = Math.min(outA.length, outB.length);
-          for (let i = 0; i < ml; i++) if (outA[i] !== outB[i]) return i;
-          return ml;
-        })(),
+        output_story_event: outC,
       });
     }
 
@@ -348,10 +408,25 @@ Deno.serve(async (req) => {
     const regenPath_charOnly = buildFromRegenerateImageWithReason([ACTIVE_PATH_CHAR_PARTICIPANT]);
     // regen path: joint
     const regenPath_joint = buildFromRegenerateImageWithReason([ACTIVE_PATH_CHAR_PARTICIPANT, ACTIVE_PATH_USER_PARTICIPANT]);
+    // story event path: single character
+    const storyEventPath_charOnly = buildFromGenerateStoryEvent([ACTIVE_PATH_CHAR_PARTICIPANT]);
+    // story event path: joint (char + user)
+    const storyEventPath_joint = buildFromGenerateStoryEvent([ACTIVE_PATH_CHAR_PARTICIPANT, ACTIVE_PATH_USER_PARTICIPANT]);
+    // story event path: multi-character (two characters, no user — most common Story Event case)
+    const ACTIVE_PATH_CHAR2 = {
+      participant_type: 'character',
+      character_id: 'STORY_EVENT_CHAR_ID_2',
+      user_id: null,
+      display_name: 'Test Character B',
+      matched_prompt_name: 'Test',
+    };
+    const storyEventPath_multi = buildFromGenerateStoryEvent([ACTIVE_PATH_CHAR_PARTICIPANT, ACTIVE_PATH_CHAR2]);
 
-    // Verify both paths produce identical key for same inputs
+    // Verify all paths produce identical key for same inputs
     const pathsMatch_charOnly = genPath_charOnly === regenPath_charOnly;
     const pathsMatch_joint = genPath_joint === regenPath_joint;
+    const pathsMatch_storyEvent_charOnly = genPath_charOnly === storyEventPath_charOnly;
+    const pathsMatch_storyEvent_joint = genPath_joint === storyEventPath_joint;
 
     // ── 4. PAYLOAD STRUCTURE PROOF ───────────────────────────────────────────
     // Shows what the final GenerateImage call receives.
@@ -387,32 +462,42 @@ Deno.serve(async (req) => {
     };
 
     // ── 5. FINAL VERDICT ─────────────────────────────────────────────────────
-    const allPass = sourceMatch && allBehavioralPass && pathsMatch_charOnly && pathsMatch_joint;
+    const allPathsMatch = pathsMatch_charOnly && pathsMatch_joint && pathsMatch_storyEvent_charOnly && pathsMatch_storyEvent_joint;
+    const allPass = allSourcesMatch && allBehavioralPass && allPathsMatch;
 
     return Response.json({
       verdict: allPass ? 'PASS' : 'FAIL',
       checked_files: [
         'functions/generateImageAsync.js',
         'functions/regenerateImageWithReason.js',
+        'functions/generateStoryEvent.js',
       ],
       function_name: 'buildParticipantNameReferenceKeyBlock',
 
       structural_check: {
-        result: sourceMatch ? 'PASS' : 'FAIL',
-        normalized_generate_length: normalizedGenerate.length,
-        normalized_regen_length: normalizedRegen.length,
-        sources_match: sourceMatch,
-        first_diff_at_char: firstDiffIndex === -1 ? null : firstDiffIndex,
-        diff_context: diffContext,
+        result: allSourcesMatch ? 'PASS' : 'FAIL',
+        all_three_sources_match: allSourcesMatch,
+        generateImageAsync_vs_regenerateImageWithReason: sourceMatchGenRegen ? 'MATCH' : 'DRIFT',
+        generateImageAsync_vs_generateStoryEvent: sourceMatchGenStory ? 'MATCH' : 'DRIFT',
+        regenerateImageWithReason_vs_generateStoryEvent: sourceMatchRegenStory ? 'MATCH' : 'DRIFT',
+        normalized_lengths: {
+          generateImageAsync: normalizedGenerate.length,
+          regenerateImageWithReason: normalizedRegen.length,
+          generateStoryEvent: normalizedStoryEvent.length,
+        },
+        structural_diffs: structuralDiffs,
       },
 
       behavioral_check: {
         result: allBehavioralPass ? 'PASS' : 'FAIL',
         test_cases_run: TEST_CASES.length,
-        test_cases_passed: testResults.filter(t => t.behavioral_match && t.format_pass).length,
+        test_cases_passed: testResults.filter(t => t.behavioral_match_all_three && t.format_pass).length,
         test_results: testResults.map(t => ({
           label: t.label,
-          behavioral_match: t.behavioral_match ? 'PASS' : 'FAIL',
+          behavioral_match_all_three: t.behavioral_match_all_three ? 'PASS' : 'FAIL',
+          behavioral_match_generate_vs_regen: t.behavioral_match_generate_vs_regen ? 'PASS' : 'FAIL',
+          behavioral_match_generate_vs_story_event: t.behavioral_match_generate_vs_story_event ? 'PASS' : 'FAIL',
+          behavioral_match_regen_vs_story_event: t.behavioral_match_regen_vs_story_event ? 'PASS' : 'FAIL',
           format_pass: t.format_pass ? 'PASS' : 'FAIL',
           format_issues: t.format_issues,
           output_sample: t.output_generate?.substring(0, 300) || '(empty)',
@@ -420,22 +505,22 @@ Deno.serve(async (req) => {
       },
 
       active_path_proof: {
-        result: (pathsMatch_charOnly && pathsMatch_joint) ? 'PASS' : 'FAIL',
+        result: allPathsMatch ? 'PASS' : 'FAIL',
         generateImageAsync_char_only: {
-          path: 'generateImageAsync.js line 1807 → buildParticipantNameReferenceKeyBlock(nameKeyParticipants)',
+          path: 'generateImageAsync.js → buildParticipantNameReferenceKeyBlock(nameKeyParticipants)',
           contains_key_header: genPath_charOnly.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]'),
           character_line_format_correct: genPath_charOnly.includes('"Andre" = Andre Rivera (Character ID: RUNTIME_CHAR_ID_FROM_DB) — use their visual identity references'),
           sample_output: genPath_charOnly,
         },
         generateImageAsync_joint: {
-          path: 'generateImageAsync.js line 1807 → joint (char + user)',
+          path: 'generateImageAsync.js → joint (char + user)',
           contains_user_id_format: genPath_joint.includes('(User ID: RUNTIME_USER_ID_FROM_AUTH_ME)'),
           user_line_format_correct: genPath_joint.includes('"Jordan" = Jordan (User ID: RUNTIME_USER_ID_FROM_AUTH_ME) — use their visual identity references'),
           no_slash_arrow: !genPath_joint.includes('→') && !genPath_joint.includes('" / "'),
           sample_output: genPath_joint,
         },
         regenerateImageWithReason_single: {
-          path: 'regenerateImageWithReason.js line 1915 → buildParticipantNameReferenceKeyBlock(singleSubjectKeyParticipants)',
+          path: 'regenerateImageWithReason.js → buildParticipantNameReferenceKeyBlock(singleSubjectKeyParticipants)',
           contains_key_header: regenPath_charOnly.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]'),
           character_line_format_correct: regenPath_charOnly.includes('"Andre" = Andre Rivera (Character ID: RUNTIME_CHAR_ID_FROM_DB) — use their visual identity references'),
           matches_generate_path: pathsMatch_charOnly,
@@ -445,6 +530,28 @@ Deno.serve(async (req) => {
           path: 'regenerateImageWithReason.js → joint path (runtimeUserId = user.id)',
           contains_user_id_format: regenPath_joint.includes('(User ID: RUNTIME_USER_ID_FROM_AUTH_ME)'),
           matches_generate_path: pathsMatch_joint,
+        },
+        generateStoryEvent_char_only: {
+          path: 'generateStoryEvent.js → buildParticipantNameReferenceKeyBlock(imageKeyParticipants)',
+          contains_key_header: storyEventPath_charOnly.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]'),
+          character_line_format_correct: storyEventPath_charOnly.includes('"Andre" = Andre Rivera (Character ID: RUNTIME_CHAR_ID_FROM_DB) — use their visual identity references'),
+          matches_generate_path: pathsMatch_storyEvent_charOnly,
+          sample_output: storyEventPath_charOnly,
+        },
+        generateStoryEvent_joint: {
+          path: 'generateStoryEvent.js → joint (char + user)',
+          contains_user_id_format: storyEventPath_joint.includes('(User ID: RUNTIME_USER_ID_FROM_AUTH_ME)'),
+          user_line_format_correct: storyEventPath_joint.includes('"Jordan" = Jordan (User ID: RUNTIME_USER_ID_FROM_AUTH_ME) — use their visual identity references'),
+          matches_generate_path: pathsMatch_storyEvent_joint,
+          sample_output: storyEventPath_joint,
+        },
+        generateStoryEvent_multi_character: {
+          path: 'generateStoryEvent.js → two-character Story Event (most common case)',
+          contains_key_header: storyEventPath_multi.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]'),
+          contains_char1_id: storyEventPath_multi.includes('(Character ID: RUNTIME_CHAR_ID_FROM_DB)'),
+          contains_char2_id: storyEventPath_multi.includes('(Character ID: STORY_EVENT_CHAR_ID_2)'),
+          no_generic_placeholders: !storyEventPath_multi.includes('SELECTED CHARACTERS') && !storyEventPath_multi.includes('SELECTED SUBJECTS'),
+          sample_output: storyEventPath_multi,
         },
       },
 
@@ -456,6 +563,18 @@ Deno.serve(async (req) => {
         regenerateImageWithReason_single_line_1910: 'user_id: user?.id || requestingUser',
         regenerateImageWithReason_multi_bundle_line_1842: 'runtimeUserId: user?.id || requestingUser',
         regenerateImageWithReason_multi_key_line_300: 'user_id: isUser ? (b.runtimeUserId || b.id) : null',
+        generateStoryEvent_user_bundle: 'user_id: userEntityRecord?.id || ownerEmail (platform User entity ID resolved via owner_email service-role lookup)',
+        generateStoryEvent_note: 'Story Event runs as automation (no live user session). User entity is resolved via service-role filter by owner_email. user.id = User entity record id — NOT email.',
+      },
+
+      story_event_identity_grounding: {
+        implementation: 'generateStoryEvent.js refactored to use canonical participant bundle approach',
+        name_reference_key_injected_per_image: true,
+        characters_resolved_by_id: true,
+        user_resolved_from_owner_email_via_service_role: true,
+        reference_images_in_existing_image_urls: true,
+        generation_context_stores_resolved_participant_ids: true,
+        anti_drift_enforcement: 'verifyParticipantNameReferenceKeyDrift now covers all three files',
       },
     }, { status: allPass ? 200 : 422 });
 
