@@ -890,6 +890,7 @@ Deno.serve(async (req) => {
       manualLocationId,       // UI-selected location from Media Grid dropdown — overrides auto-resolve
       manualZoneName,         // UI-selected zone from Media Grid dropdown — overrides auto-resolve
       additionalCharacterIds, // Additional character IDs to include as secondary subjects
+      userIsVisualSubject,    // true when user's world name detected in prompt by resolveImageSubjects / imageGenerationContextBuilder
     } = await req.json();
 
     if (!messageId) {
@@ -1243,7 +1244,13 @@ Deno.serve(async (req) => {
     let userRefs = [];
     let _userSettingsRecord = null;
     let _resolvedUserBundle = null;
-    if (subjectType === 'user' || subjectType === 'joint') {
+    // USER IDENTITY RESOLUTION GATE:
+    // Runs when subjectType is 'user'/'joint' (explicit) OR when userIsVisualSubject===true
+    // (detected by resolveImageSubjects / imageGenerationContextBuilder scanning the prompt for
+    // the user's world name). This ensures the user is never silently skipped just because
+    // the subjectType wasn't explicitly set to 'user' — name-in-prompt detection is enough.
+    const effectiveUserSubject = subjectType === 'user' || subjectType === 'joint' || userIsVisualSubject === true;
+    if (effectiveUserSubject) {
       // ── BACKEND USER IDENTITY RESOLUTION ─────────────────────────────────────
       // Authority order (matches resolveUserIdentityForImageGen contract):
       //   1. User entity (reference_image_urls, generated_avatar_urls) — PRIMARY
@@ -1665,7 +1672,7 @@ Deno.serve(async (req) => {
     }
 
     let userOutfitText = null;
-    if (subjectType === 'joint' || subjectType === 'user') {
+    if (effectiveUserSubject) {
       // Use outfit from already-resolved bundle (avoids duplicate UserSettings query)
       const uco = _resolvedUserBundle?.currentOutfit || null;
       userOutfitText = uco
@@ -1681,7 +1688,7 @@ Deno.serve(async (req) => {
     // User appearance-lock fallback: use resolved bundle's appearanceLock — no second UserSettings query
     // buildUserAppearanceLockFallback name-matches against worldName; use resolved world name from bundle
     const _effectiveUserWorldName = _resolvedUserBundle?.worldName || userWorldName || '';
-    const userAppearanceLockText = (subjectType === 'user' || subjectType === 'joint') && userRefs.length === 0
+    const userAppearanceLockText = effectiveUserSubject && userRefs.length === 0
       ? buildUserAppearanceLockFallback(_userSettingsRecord, _effectiveUserWorldName)
       : null;
     if (userAppearanceLockText) console.log(`[generateImageAsync] ✅ User appearance-lock fallback: "${userAppearanceLockText}" (worldName: "${_effectiveUserWorldName}")`);
@@ -1920,7 +1927,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         outfit_injected: !!addl.outfitText,
       });
     }
-    if (subjectType === 'joint' || subjectType === 'user') {
+    if (effectiveUserSubject) {
       structuredSubjects.push({
         subject_type: 'user',
         subject_id: requestingUser,
@@ -1948,7 +1955,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
       generation_context_version: 2,
       context_origin: 'chat_image',
       schema_written_at: nowETIso(),
-      image_type: hasMultipleCharSubjects ? 'multi' : subjectType === 'joint' ? 'joint' : subjectType === 'user' ? 'user' : 'character',
+      image_type: hasMultipleCharSubjects ? 'multi' : subjectType === 'joint' ? 'joint' : (subjectType === 'user' || (userIsVisualSubject && !characterId)) ? 'user' : 'character',
       subject_count: structuredSubjectsWithFingerprints.length,
       subjects: structuredSubjectsWithFingerprints,
       scene_prompt: sanitizedPrompt,

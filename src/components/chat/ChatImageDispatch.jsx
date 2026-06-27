@@ -60,6 +60,7 @@ export async function dispatchImageGeneration({
   queryClient,
   locationMap = {},
   additionalCharacterIds = [], // Co-subject character IDs resolved from prompt
+  userIsVisualSubject = false, // true when user's world name detected in prompt — triggers user identity resolution even when subjectType isn't 'user'/'joint'
 }) {
   try {
     // CRITICAL: Resolve housing FIRST — route flag downstream
@@ -134,6 +135,10 @@ export async function dispatchImageGeneration({
       ownerEmail: currentUser.email,
       // Additional secondary character IDs resolved from prompt name scan (multi-subject images)
       additionalCharacterIds: additionalCharacterIds.length > 0 ? additionalCharacterIds : undefined,
+      // USER-PARTICIPANT FLAG: when true, generateImageAsync resolves user identity even if subjectType
+      // isn't 'user'/'joint'. Sourced from resolveImageSubjects() detecting the user's world name in the prompt.
+      // CRITICAL: backend must read from User entity + UserSettings — never from rel.photo_url or rel.avatar_url.
+      userIsVisualSubject: userIsVisualSubject || false,
     });
 
     const returnedMsgId = res?.data?.messageId;

@@ -1664,11 +1664,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       let resolvedSubjectType = 'character';
       let resolvedCharRefs = charRefs; // default: sender's refs
       const finalImageGenPrompt = imageGenPrompt;
+      let subjectResult = null; // hoisted so it's accessible after try-catch for userIsVisualSubject
 
       try {
-        const subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId);
+        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId);
         // Log all resolution steps for diagnostics
-        subjectResult.log.forEach(entry => console.log(entry));
+        (subjectResult.log || []).forEach(entry => console.log(entry));
 
         // ── BLOCK: unresolved named subject ──────────────────────────────────
         // The prompt requested a specific named person but they were not found on the roster.
@@ -1802,6 +1803,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         convoId,
         queryClient,
         additionalCharacterIds: resolvedAdditionalCharacterIds,
+        // USER-PARTICIPANT FLAG: true when resolveImageSubjects detected the user's world name
+        // in the prompt (any position). Backend uses this to trigger full user identity resolution
+        // (User entity + UserSettings) even when subjectType is not explicitly 'user'/'joint'.
+        // CRITICAL: never pass rel.photo_url or rel.avatar_url as the user's canonical avatar.
+        userIsVisualSubject: !!(subjectResult?.userIsVisualSubject),
       }), delayMs);
       return imgMsg;
     };
