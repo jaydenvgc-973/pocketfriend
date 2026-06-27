@@ -46,7 +46,7 @@ const RELATIONSHIP_TYPES = [
   "sister", "brother", "half-sister", "half-brother",
   "step-mother", "step-father", "step-sister", "step-brother",
   "cousin", "niece", "nephew", "daughter", "son", "spouse",
-  "significant other", "romantic interest", "other",
+  "engaged", "significant other", "romantic interest", "other",
 ];
 
 // Generate a stable unique ID for a family member (lightweight, no external dep)
