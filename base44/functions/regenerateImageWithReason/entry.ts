@@ -910,15 +910,56 @@ Deno.serve(async (req) => {
     const userSelectedAsSubject = !!(includeUserSubject || intendedSubjectIds?.includes('__user__'));
     const intendedCharacterIds = (intendedSubjectIds || []).filter(id => id !== '__user__');
 
-    // For no_avatar: user explicitly selected who the image was supposed to show.
-    // For all reasons: prompt-named character (including [CHARACTER] token) takes priority over originalCharId.
-    // This ensures prompt identity always wins over stale/null generation_context.character_id.
-    const effectiveCharId = (reason === 'no_avatar' && intendedCharacterIds.length > 0)
-      ? intendedCharacterIds[0]
-      : (promptNamedCharId || originalCharId);
+    // ── MANUAL OVERRIDE GATE ─────────────────────────────────────────────────
+    // When the user explicitly selects participants via the subject picker, those selections
+    // are the AUTHORITATIVE participant set for this regeneration. They completely replace:
+    //   - stale ctx.subjects / ctx.character_id from the original generation
+    //   - automatic detection results from prompt name scanning
+    //   - message.character_id from the original message record
+    //
+    // Resolution priority:
+    //   1. Manual picker selections (intendedCharacterIds / userSelectedAsSubject) — HIGHEST
+    //   2. Existing generation context (ctx.subjects / ctx.character_id)
+    //   3. Prompt-name auto-detection (promptNamedCharId)
+    //   4. Message entity fallback (originalCharId)
+    //
+    // This gate fires when intendedSubjectIds was explicitly provided by the picker.
+    const hasManualPickerCorrection = Array.isArray(intendedSubjectIds) && intendedSubjectIds.length > 0;
 
-    if (reason === 'no_avatar') {
-      console.log(`[regenerateImageWithReason] no_avatar — intended char subjects: [${intendedCharacterIds.join(', ')}] | userSelectedAsSubject: ${userSelectedAsSubject} | includeUserSubject param: ${includeUserSubject}`);
+    if (hasManualPickerCorrection) {
+      console.log(`[regenerateImageWithReason] ⚠️ MANUAL PARTICIPANT CORRECTION GATE ACTIVE`);
+      console.log(`  original_ctx_char_id:   ${originalCharId || 'null'}`);
+      console.log(`  original_ctx_subjects:  ${ctx.subjects?.map(s => s.subject_id).join(',') || 'none'}`);
+      console.log(`  manual_char_ids:        [${intendedCharacterIds.join(', ')}]`);
+      console.log(`  manual_user_selected:   ${userSelectedAsSubject}`);
+      console.log(`  prompt_named_char_id:   ${promptNamedCharId || 'none'}`);
+      console.log(`  OVERRIDE: stale ctx.subjects and ctx.character_id are IGNORED for subject decisions`);
+    }
+
+    // For no_avatar: user explicitly selected who the image was supposed to show.
+    // For all reasons: manual picker selection takes HIGHEST priority.
+    // When no manual correction, fall back to prompt-named char → original ctx char.
+    const effectiveCharId = (hasManualPickerCorrection && intendedCharacterIds.length > 0)
+      ? intendedCharacterIds[0]
+      : (reason === 'no_avatar' && intendedCharacterIds.length > 0)
+        ? intendedCharacterIds[0]
+        : (promptNamedCharId || originalCharId);
+
+    if (reason === 'no_avatar' || hasManualPickerCorrection) {
+      console.log(`[regenerateImageWithReason] participant_correction — reason=${reason} | intended_char_subjects: [${intendedCharacterIds.join(', ')}] | userSelectedAsSubject: ${userSelectedAsSubject} | hasManualPickerCorrection: ${hasManualPickerCorrection}`);
+      // Diagnostic: detect correction misses — was a character missed by auto-detection?
+      const autoDetectedIds = (ctx.subjects || []).map(s => s.subject_id).filter(id => id && id !== '__user__');
+      const manuallyAddedIds = intendedCharacterIds.filter(id => !autoDetectedIds.includes(id));
+      const manuallyRemovedIds = autoDetectedIds.filter(id => !intendedCharacterIds.includes(id));
+      if (manuallyAddedIds.length > 0) {
+        console.warn(`[regenerateImageWithReason] [PARTICIPANT_CORRECTION] MISSED by auto-detection: [${manuallyAddedIds.join(', ')}] — these were added manually by user`);
+      }
+      if (manuallyRemovedIds.length > 0) {
+        console.warn(`[regenerateImageWithReason] [PARTICIPANT_CORRECTION] REMOVED by user correction: [${manuallyRemovedIds.join(', ')}] — user de-selected these`);
+      }
+      if (manuallyAddedIds.length === 0 && manuallyRemovedIds.length === 0 && hasManualPickerCorrection) {
+        console.log(`[regenerateImageWithReason] [PARTICIPANT_CORRECTION] User confirmed the same participants as auto-detected — identity lock refresh only`);
+      }
     }
 
     if (effectiveCharId) {
@@ -1498,10 +1539,12 @@ Deno.serve(async (req) => {
     console.log(`[IdentityAudit][regen] intended_char_ids:       ${intendedCharacterIds.join(',') || 'none'}`);
     console.log(`[IdentityAudit][regen] user_selected_as_subj:  ${userSelectedAsSubject}`);
     console.log(`[IdentityAudit][regen] include_user_param:      ${!!includeUserSubject}`);
+    console.log(`[IdentityAudit][regen] has_manual_correction:   ${hasManualPickerCorrection}`);
     console.log(`[IdentityAudit][regen] outfit_in_charDesc:      ${charDesc?.includes('Currently wearing:') ?? false}`);
     console.log(`[IdentityAudit][regen] location_resolved:       ${resolvedLocationName || 'none'}`);
     console.log(`[IdentityAudit][regen] zone_resolved:           ${resolvedZoneName || 'none'}`);
     console.log(`[IdentityAudit][regen] subject_source:          ${
+      hasManualPickerCorrection ? 'manual_picker_correction_override' :
       reason === 'no_avatar' && intendedSubjectIds?.length > 0 ? 'user_picker_selection' :
       promptNamedCharId && scenePromptRaw?.match(/^\[CHARACTER\]/i) ? 'prompt_character_token' :
       promptNamedCharId ? 'prompt_name_scan' :
@@ -1566,7 +1609,14 @@ Deno.serve(async (req) => {
     //   - context has 2+ subjects from original generation
     //   - image_type='multi' was stamped at generation time
     //   - single subject + user refs needed on a joint image
+    // Multi-subject regen fires when:
+    //   - picker selected 2+ characters (manual correction)
+    //   - picker selected 1+ character AND user (manual correction — char + user persona)
+    //   - context has 2+ subjects from original generation
+    //   - image_type='multi' was stamped at generation time
     const isMultiSubjectRegen = intendedCharacterIds.length >= 2 ||
+      (hasManualPickerCorrection && intendedCharacterIds.length >= 1 && userSelectedAsSubject) ||
+      (hasManualPickerCorrection && intendedCharacterIds.length >= 2) ||
       ctxSubjects.length >= 2 ||
       ctx.image_type === 'multi' ||
       (ctxSubjects.length === 1 && needsUserRefs && (ctx.subject_type === 'multi' || ctx.image_type === 'multi'));
@@ -1575,16 +1625,20 @@ Deno.serve(async (req) => {
 
     if (isMultiSubjectRegen) {
       // ── MULTI-SUBJECT PATH: build sealed per-subject bundles ────────────────
-      // PICKER AUTHORITY: when intendedCharacterIds is non-empty, the picker selection
-      // is the SOLE authority for which characters appear — ctxSubjects from the original
-      // image is completely replaced. This is the fix for Test 5 and Test 6:
-      // previously the code looped ctxSubjects (old A+B) even when picker selected A+C or A+B+D+E.
-      const pickerOverride = intendedCharacterIds.length > 0;
+      // PICKER AUTHORITY: when intendedCharacterIds is non-empty (manual correction active),
+      // the picker selection is the SOLE authority for which characters appear.
+      // ctxSubjects from the original image is completely replaced.
+      // This enforces the Manual Override Gate at the bundle-construction level:
+      // no stale ctx.subjects entry may survive into the final prompt.
+      const pickerOverride = intendedCharacterIds.length > 0 || hasManualPickerCorrection;
       const subjectIdsToResolve = pickerOverride
         ? intendedCharacterIds  // picker wins: use exactly the selected IDs
         : ctxSubjects.filter(s => s.subject_type !== 'user' && s.subject_id !== '__user__').map(s => s.subject_id).filter(Boolean);
 
-      console.log(`[regenerateImageWithReason] MULTI-SUBJECT regen: ${pickerOverride ? 'PICKER OVERRIDE' : 'ctx.subjects'} — ${subjectIdsToResolve.length} char subjects | picker=${pickerOverride} | ids=[${subjectIdsToResolve.join(',')}]`);
+      if (hasManualPickerCorrection && pickerOverride) {
+        console.log(`[regenerateImageWithReason] [MANUAL_CORRECTION] OVERRIDE ACTIVE: stale ctx.subjects DISCARDED. Using picker-selected IDs: [${subjectIdsToResolve.join(', ')}] | userPersona=${userSelectedAsSubject}`);
+      }
+      console.log(`[regenerateImageWithReason] MULTI-SUBJECT regen: ${pickerOverride ? 'PICKER OVERRIDE (manual_correction)' : 'ctx.subjects'} — ${subjectIdsToResolve.length} char subjects | picker=${pickerOverride} | ids=[${subjectIdsToResolve.join(',')}]`);
 
       // Helper: resolve a single character ID into a full bundle object
       // Looks up DB record, refs, appearance lock, outfit fresh — picker-selected or stored subject.
