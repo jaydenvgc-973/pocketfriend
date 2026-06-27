@@ -78,24 +78,34 @@ export default function SceneProductCard({
     if (status !== "pending") return;
     setStatus("accepted");
 
-    if (msg.purchase_type === "clothing") {
-      // Clothing → ProductPurchaseModal (handles closet save + balance deduction)
+    if (msg.purchase_type === "clothing" || msg.purchase_type === "purchase") {
+      // Clothing/durable goods → ProductPurchaseModal (handles closet save + transaction authority)
       setPendingPurchase({
         price: msg.price,
         productId: msg.id,
         preview_image_url: itemImageUrl,
         item_label: msg.item_label,
         purchase_type: msg.purchase_type,
+        action_class: msg.action_class || 'purchase',
+        purchase_source: msg.purchase_source || 'menu',
       });
     } else {
-      // Consumable — deduct balance on explicit accept.
-      // RULE: Product card actions skipped immediate deduction in handleAction.
-      // This is the one and only place the charge occurs.
+      // Consumable — route through transaction authority.
+      // RULE: No direct UserSettings.update here. Balance changes must pass through executeSceneTransaction.
       const cost = msg.price;
-      const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
-      if (settings.id) {
-        base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+      if (cost > 0) {
+        base44.functions.invoke('executeSceneTransaction', {
+          action_class: 'purchase',
+          is_paid: true,
+          cost,
+          payer_type: 'user',
+          action_id: msg.id,
+          purchase_source: msg.purchase_source || 'menu',
+          action_label: msg.item_label,
+          location_name: msg.locationName,
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['userSettings'] });
+        }).catch(() => {});
       }
       setMessages(prev => prev.map(m =>
         m.id === msg.id ? { ...m, purchased: true } : m

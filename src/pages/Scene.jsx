@@ -1035,9 +1035,11 @@ export default function Scene() {
     then((r) => setSceneImage(r.url)).catch(() => {}).finally(() => setIsGeneratingImage(false));
   };
 
-  // Venue-aware purchase intent + image trigger — delegates to lib/sceneCheckImageTrigger.js
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null) => {
-    _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, location, messages, generateFocusedImage, setMessages });
+  // Image/purchase-card trigger — delegates to lib/sceneCheckImageTrigger.js
+  // PURCHASE CARDS: Only spawned when actionCategory + explicitPrice > 0 are BOTH present (paid purchase actions).
+  // Free actions always pass actionCategory=null — guaranteed no product card.
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => {
+    _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, location, messages, generateFocusedImage, setMessages });
   };
 
   const sendNarration = (text) => {
@@ -1051,17 +1053,16 @@ export default function Scene() {
     }]);
   };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
 
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
-    // Check if we should update the scene image or spawn a product card.
-    // actionCategory ('food'|'drink'|'clothing') comes from the strip action button — takes authority.
-    // explicitPrice is only set for strip-button-triggered purchases — uses action.cost, not random.
-    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice);
+    // Image trigger: product card spawns ONLY when actionCategory AND explicitPrice > 0 are both present.
+    // Free actions pass actionCategory=null → no product card, no purchase UI.
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource);
 
     setIsTyping(true);
 
@@ -1287,11 +1288,53 @@ Return JSON:
     setActionCooldown(true);
 
     try {
-      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round'];
+      // ── ACTION CLASSIFICATION ────────────────────────────────────────────────
+      // Derive action_class from action definition.
+      // Actions in the catalog use 'type' for functional grouping.
+      // Commerce actions must have cost > 0 AND payer defined.
+      // Environmental/free actions are never commerce.
+      const actionClass = action.action_class || (() => {
+        if (!action.cost || action.cost <= 0) {
+          // No cost = free. Map type to non-commercial class.
+          if (action.type === 'social') return 'social';
+          if (action.type === 'observational') return 'narrative';
+          if (action.type === 'functional') return 'free_activity';
+          if (action.type === 'spontaneous') return 'narrative';
+          if (action.type === 'risky' || action.type === 'awkward') return 'social';
+          return 'free_activity';
+        }
+        // Has cost — classify by presence of action_category (purchase) or not (service/fee)
+        if (action.action_category) return 'purchase';
+        // Salon services and similar are service class
+        if (['salon_cut','salon_color','salon_nails'].includes(action.id)) return 'service';
+        // Fee-type actions
+        if (['gov_payment'].includes(action.id)) return 'fee';
+        return 'purchase';
+      })();
+
+      const payer = action.payer || "user";
+      const cost = Number(action.cost) || 0;
+
+      // STRICT COMMERCE GATE:
+      // Only actions classified as 'purchase', 'service', or 'fee' may involve money.
+      // FREE activities (free_activity, social, navigation, environment, narrative) NEVER charge.
+      const isPaidClass = ['purchase', 'service', 'fee'].includes(actionClass);
+
+      // PRODUCT CARD RULE: Only 'purchase' class renders a product card.
+      // Service and fee actions use inline confirm (no product card).
+      // Products REQUIRE: action_class === 'purchase' AND cost > 0 AND action_category defined.
+      const isProductCardAction =
+        actionClass === 'purchase' &&
+        cost > 0 &&
+        payer === 'user' &&
+        !!action.action_category &&
+        action.purchase_source != null; // must have real inventory/menu source
+
+      // EATING EVENT RECORDING (need-system side-effect, not a commerce event)
+      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch'];
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
         const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' :
-        action.id === 'check' || action.id === 'order' ? 'meal' :
-        'meal';
+          action.id === 'check' || action.id === 'order' ? 'meal' : 'meal';
         broughtCharacters.forEach((char) => {
           base44.functions.invoke('recordEatingEvent', {
             characterId: char.id,
@@ -1303,37 +1346,27 @@ Return JSON:
         queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       }
 
-      const payer = action.payer || "user"; // "user" | "character"
-      const cost = action.cost || 0;
-
-      // PURCHASE ARCHITECTURE:
-      // isProductCardAction = this action is an explicit purchase that shows a product card.
-      // Requires: cost > 0, user pays, AND action has an explicit action_category (food/drink/clothing/grocery).
-      // Product card actions charge via SceneProductCard.handleAccept — NOT immediately here.
-      // Free actions, service actions (haircut, jukebox), and payer=character actions charge here directly.
-      const isProductCardAction = cost > 0 && payer === 'user' && !!action.action_category;
-
-      if (cost > 0) {
-        if (payer === "user") {
-          // Only charge immediately when NOT going through a product card.
-          // Product card actions charge via SceneProductCard.handleAccept using action.cost.
-          if (!isProductCardAction) {
-            const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
-            if (settings.id) {
-              base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
-              queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-            }
-          }
-        } else if (payer === "character") {
-          const payingChar = broughtCharacters[0];
-          if (payingChar) {
-            base44.functions.invoke("calculateCharacterExpenses", {
-              characterId: payingChar.id,
-              expenseAmount: cost,
-              expenseLabel: action.label
-            }).catch(() => {});
-          }
-        }
+      // TRANSACTION AUTHORITY: All balance changes go through executeSceneTransaction.
+      // Direct UserSettings.update and CharacterFinancial.update are FORBIDDEN here.
+      // Only paid classified actions with real cost may invoke the transaction authority.
+      if (isPaidClass && cost > 0 && !isProductCardAction) {
+        // Non-product-card paid actions (services, fees, payer=character) charge immediately
+        // through the transaction authority — not directly.
+        base44.functions.invoke('executeSceneTransaction', {
+          action_class: actionClass,
+          is_paid: true,
+          cost,
+          payer_type: payer,
+          action_id: action.id,
+          purchase_source: action.purchase_source || null,
+          service_source: action.service_source || (actionClass === 'service' ? location?.name : null),
+          fee_source: action.fee_source || (actionClass === 'fee' ? location?.name : null),
+          action_label: action.label,
+          location_name: location?.name,
+          character_id: payer === 'character' ? broughtCharacters[0]?.id : null
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['userSettings'] });
+        }).catch(() => {});
       }
 
       // Determine if this action should trigger a scene image update
@@ -1354,13 +1387,14 @@ Return JSON:
       ` (${broughtCharacters[0].name} pays)` :
       cost > 0 ? ` — $${cost}` : "";
 
-      // For product card actions: pass category + explicit cost so card shows correct price.
-      // For free actions and non-product-card paid actions: pass null so no purchase UI appears.
+      // PRODUCT CARD: pass category + explicit cost ONLY for purchase class with action_category.
+      // Free, social, navigation, environment, narrative, service, and fee actions pass null — no purchase UI.
       await sendMessage(
         `[${action.emoji} ${action.label}${payerNote}]`,
         true, null, null,
         isProductCardAction ? action.action_category : null,
-        isProductCardAction ? action.cost : null
+        isProductCardAction ? cost : null,
+        isProductCardAction ? (action.purchase_source || 'menu') : null
       );
 
       setTimeout(() => {
