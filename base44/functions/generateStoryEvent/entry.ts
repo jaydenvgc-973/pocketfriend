@@ -201,46 +201,49 @@ Deno.serve(async (req) => {
     }
 
     // ── USER BUNDLE RESOLUTION ────────────────────────────────────────────────
-    // The authenticated user is resolved from the event's owner_email.
-    // user.id (platform entity ID from auth.me) is the canonical user identifier.
-    // We resolve from UserSettings + User entity — never by name matching.
+    // GATE: The authenticated user is included ONLY when the Story Event payload
+    // explicitly identifies the user as a selected participant via include_user=true.
+    // World-name existence alone is NOT sufficient — the user must be intentionally
+    // selected by the Story Event creator.
     //
-    // Note: This automation trigger (entity create event) runs without a live user
-    // session. The owner_email from the StoryEvent is the ownership anchor.
-    // We resolve the user entity and settings via service role using owner_email.
+    // The StoryEventCreator UI does not currently expose a "include me" toggle,
+    // so include_user will be false/absent for all existing events. This gate
+    // ensures the user is never injected based on account state alone.
+    const includeUser = !!(body.include_user || event.include_user);
     let userBundle = null;
-    try {
-      const userEntityList = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1).catch(() => []);
-      const userEntityRecord = userEntityList?.[0] || null;
-      const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
-      const settingsRecord = settingsList?.[0] || null;
 
-      if (userEntityRecord || settingsRecord) {
-        const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
-        const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
-        const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2)].filter(Boolean);
+    if (includeUser) {
+      try {
+        const userEntityList = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1).catch(() => []);
+        const userEntityRecord = userEntityList?.[0] || null;
+        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1).catch(() => []);
+        const settingsRecord = settingsList?.[0] || null;
 
-        const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
-        const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity
+        if (userEntityRecord || settingsRecord) {
+          const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
+          const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
+          const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2)].filter(Boolean);
 
-        if (worldName) {
+          const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
+          const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity — NOT email
+
           userBundle = {
             participant_type: 'user',
             character_id: null,
-            user_id: platformUserId, // platform entity ID — NOT email
-            display_name: worldName,
-            matched_prompt_name: worldName.split(/\s+/)[0],
+            user_id: platformUserId,
+            display_name: worldName || 'User / My Persona',
+            matched_prompt_name: (worldName || 'User').split(/\s+/)[0],
             ref_images: userRefImages,
             appearance_lock: settingsRecord?.appearance_lock || null,
             world_name: worldName,
           };
-          console.log(`[generateStoryEvent] ✅ User bundle resolved: worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length}`);
-        } else {
-          console.log(`[generateStoryEvent] ℹ️ User has no fictional world name — user bundle skipped (no identity to inject)`);
+          console.log(`[generateStoryEvent] ✅ User bundle resolved (include_user=true): worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length}`);
         }
+      } catch (userBundleErr) {
+        console.warn(`[generateStoryEvent] User bundle resolution failed (non-blocking): ${userBundleErr?.message}`);
       }
-    } catch (userBundleErr) {
-      console.warn(`[generateStoryEvent] User bundle resolution failed (non-blocking): ${userBundleErr?.message}`);
+    } else {
+      console.log(`[generateStoryEvent] ℹ️ User not included — include_user not set in Story Event payload (correct default)`);
     }
 
     // Build the full participant list for the Name Reference Key
