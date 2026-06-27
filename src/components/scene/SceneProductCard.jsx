@@ -79,7 +79,7 @@ export default function SceneProductCard({
     setStatus("accepted");
 
     if (msg.purchase_type === "clothing") {
-      // Clothing → ProductPurchaseModal (handles closet save)
+      // Clothing → ProductPurchaseModal (handles closet save + balance deduction)
       setPendingPurchase({
         price: msg.price,
         productId: msg.id,
@@ -88,20 +88,15 @@ export default function SceneProductCard({
         purchase_type: msg.purchase_type,
       });
     } else {
-      // Consumable — direct deduction after explicit accept
+      // Consumable — deduct balance on explicit accept.
+      // RULE: Product card actions skipped immediate deduction in handleAction.
+      // This is the one and only place the charge occurs.
       const cost = msg.price;
       const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
       if (settings.id) {
         base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
         queryClient.invalidateQueries({ queryKey: ["userSettings"] });
       }
-      base44.functions.invoke("recordVenueSpending", {
-        locationId: location?.id,
-        locationName: location?.name,
-        amount: cost,
-        description: msg.item_label || "Scene purchase",
-        ownerEmail: currentUser?.email,
-      }).catch(() => {});
       setMessages(prev => prev.map(m =>
         m.id === msg.id ? { ...m, purchased: true } : m
       ));

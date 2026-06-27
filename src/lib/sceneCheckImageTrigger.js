@@ -3,16 +3,18 @@
  *
  * Venue-aware purchase intent detection and image trigger logic for Scene.
  *
- * Rules:
- * - actionCategory from strip buttons is the authoritative category.
- * - Item must match venue type — no drills at restaurants, no cocktails at clothing stores.
+ * PURCHASE ARCHITECTURE:
+ * - A product card ONLY appears when actionCategory is explicitly set (paid strip action) OR
+ *   when the user types a purchase intent at a purchasable venue.
+ * - Free strip actions (sit, relax, walk, watch TV, etc.) pass actionCategory=null — NO product card.
+ * - explicitPrice = action.cost from a paid strip button — used as-is, NOT randomized.
+ * - Missing price on a user-typed purchase falls back to range estimate, never random-fabricated.
  * - Government offices never spawn retail product cards.
- * - Each venue type has a realistic price range.
  */
 
 import { extractSceneItemLabel, isPurchaseIntent } from './sceneItemResolver.js';
 
-// Price ranges [min, max] by category
+// Price ranges [min, max] by category — ONLY used when no explicit price is provided
 const PRICE_RANGES = {
   food:        [8,  35],
   drink:       [6,  22],
@@ -64,10 +66,15 @@ function resolveVenuePurchaseCategory(location, actionCategory) {
  * - A product card (purchase intent at purchasable venue)
  * - A focused scene image update ("show me X")
  *
+ * CRITICAL: actionCategory is ONLY set for explicit paid strip actions.
+ * Free actions (sit, relax, watch TV, nap, walk, talk, etc.) always pass actionCategory=null.
+ * This ensures no product card ever fires for free activities.
+ *
  * @param {Object} params
  * @param {string} params.text
  * @param {string|null} params.actionImagePrompt
- * @param {string|null} params.actionCategory
+ * @param {string|null} params.actionCategory     — ONLY set for paid actions with action_category defined
+ * @param {number|null} params.explicitPrice       — action.cost from paid strip button; use as-is, don't randomize
  * @param {Object} params.location
  * @param {Array}  params.messages
  * @param {Function} params.generateFocusedImage
@@ -77,6 +84,7 @@ export function checkImageTrigger({
   text,
   actionImagePrompt = null,
   actionCategory = null,
+  explicitPrice = null,
   location,
   messages,
   generateFocusedImage,
@@ -96,45 +104,66 @@ export function checkImageTrigger({
     return;
   }
 
-  const effectiveCategory = resolveVenuePurchaseCategory(location, actionCategory);
-  const isPurchasable = effectiveCategory !== null;
+  // PAID STRIP ACTION: actionCategory is only set when a paid action button was pressed.
+  // Use the explicit action cost — never randomize. Spawn product card immediately.
+  if (actionCategory) {
+    const effectiveCategory = actionCategory;
+    const [pMin, pMax] = PRICE_RANGES[effectiveCategory] || [8, 50];
+    // explicitPrice = action.cost (set by handleAction) — authoritative, no randomization.
+    // Fall back to range midpoint only when no explicit price (should not happen for paid actions).
+    const price = (explicitPrice != null && explicitPrice > 0)
+      ? explicitPrice
+      : Math.round((pMin + pMax) / 2);
 
-  // Product cards are ONLY spawned for user-typed purchase-intent messages at purchasable venues.
-  // Strip actions must never reach here with actionCategory set — they are handled entirely in
-  // handleAction (cost already deducted there). Only user-typed text goes through this path.
-  //
-  // PRICE RULE: Only use a price explicitly stated in the message. Never invent a random price.
-  // If no price is found, spawn the card without a price (free / not orderable) OR skip the card.
-  if (isPurchasable && isPurchaseIntent(text)) {
-    const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
-    if (!ep) {
-      // No explicit price in the message — do not spawn a product card with an invented price.
-      // Fall through to the "show me X" image trigger below.
-    } else {
-      const [pMin, pMax] = PRICE_RANGES[effectiveCategory] || [8, 50];
-      const price = Math.min(Math.max(parseInt(ep[1]), pMin), pMax);
+    const resolved = extractSceneItemLabel(text, messages, effectiveCategory);
+    const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(effectiveCategory)
+      ? 'purchase'
+      : 'consumable';
 
-      const resolved = extractSceneItemLabel(text, messages, effectiveCategory);
-      const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(effectiveCategory)
-        ? 'purchase'
-        : 'consumable';
-
-      setMessages(prev => [...prev, {
-        id: `product_${Date.now()}`,
-        sender: 'product',
-        price,
-        locationName: location.name,
-        preview_image_url: null,
-        purchase_type: purchaseType,
-        item_label: resolved.label,
-        item_category: resolved.category,
-        timestamp: new Date().toISOString(),
-      }]);
-      return;
-    }
+    setMessages(prev => [...prev, {
+      id: `product_${Date.now()}`,
+      sender: 'product',
+      price,
+      locationName: location.name,
+      preview_image_url: null,
+      purchase_type: purchaseType,
+      item_label: resolved.label,
+      item_category: resolved.category,
+      timestamp: new Date().toISOString(),
+    }]);
+    return;
   }
 
-  // "show me X" — general focused image trigger
+  // USER-TYPED PURCHASE INTENT: only at purchasable venue types (not home, gym, medical, etc.)
+  const effectiveCategory = resolveVenuePurchaseCategory(location, null);
+  if (effectiveCategory && isPurchaseIntent(text)) {
+    const ep = t.match(/\$?(\d+(?:\.\d{1,2})?)/);
+    const [pMin, pMax] = PRICE_RANGES[effectiveCategory] || [8, 50];
+    // Use explicit price from message text if present; fall back to range midpoint — never random.
+    const price = ep
+      ? Math.min(Math.max(parseInt(ep[1]), pMin), pMax)
+      : Math.round((pMin + pMax) / 2);
+
+    const resolved = extractSceneItemLabel(text, messages, effectiveCategory);
+    const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(effectiveCategory)
+      ? 'purchase'
+      : 'consumable';
+
+    setMessages(prev => [...prev, {
+      id: `product_${Date.now()}`,
+      sender: 'product',
+      price,
+      locationName: location.name,
+      preview_image_url: null,
+      purchase_type: purchaseType,
+      item_label: resolved.label,
+      item_category: resolved.category,
+      timestamp: new Date().toISOString(),
+    }]);
+    return;
+  }
+
+  // "show me X" — general focused image trigger (free, no purchase)
   const showMatch = t.match(/(?:show me|look at|what does|can i see|i want to see)\s+(.+)/);
   if (showMatch) {
     generateFocusedImage(`${showMatch[1]} at ${location.name},`);

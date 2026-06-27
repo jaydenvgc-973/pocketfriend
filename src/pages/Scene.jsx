@@ -1036,8 +1036,8 @@ export default function Scene() {
   };
 
   // Venue-aware purchase intent + image trigger — delegates to lib/sceneCheckImageTrigger.js
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null) => {
-    _checkImageTrigger({ text, actionImagePrompt, actionCategory, location, messages, generateFocusedImage, setMessages });
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null) => {
+    _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, location, messages, generateFocusedImage, setMessages });
   };
 
   const sendNarration = (text) => {
@@ -1051,7 +1051,7 @@ export default function Scene() {
     }]);
   };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
 
@@ -1060,7 +1060,8 @@ export default function Scene() {
 
     // Check if we should update the scene image or spawn a product card.
     // actionCategory ('food'|'drink'|'clothing') comes from the strip action button — takes authority.
-    checkImageTrigger(text, actionImagePrompt, actionCategory);
+    // explicitPrice is only set for strip-button-triggered purchases — uses action.cost, not random.
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice);
 
     setIsTyping(true);
 
@@ -1305,12 +1306,23 @@ Return JSON:
       const payer = action.payer || "user"; // "user" | "character"
       const cost = action.cost || 0;
 
+      // PURCHASE ARCHITECTURE:
+      // isProductCardAction = this action is an explicit purchase that shows a product card.
+      // Requires: cost > 0, user pays, AND action has an explicit action_category (food/drink/clothing/grocery).
+      // Product card actions charge via SceneProductCard.handleAccept — NOT immediately here.
+      // Free actions, service actions (haircut, jukebox), and payer=character actions charge here directly.
+      const isProductCardAction = cost > 0 && payer === 'user' && !!action.action_category;
+
       if (cost > 0) {
         if (payer === "user") {
-          const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
-          if (settings.id) {
-            base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
-            queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+          // Only charge immediately when NOT going through a product card.
+          // Product card actions charge via SceneProductCard.handleAccept using action.cost.
+          if (!isProductCardAction) {
+            const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
+            if (settings.id) {
+              base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
+              queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+            }
           }
         } else if (payer === "character") {
           const payingChar = broughtCharacters[0];
@@ -1342,10 +1354,14 @@ Return JSON:
       ` (${broughtCharacters[0].name} pays)` :
       cost > 0 ? ` — $${cost}` : "";
 
-      // Strip actions are fully handled above (cost already deducted, image already triggered).
-      // Do NOT pass actionCategory — that would send the message into the product card pipeline
-      // and either double-charge (for paid actions) or charge for free activities.
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, null);
+      // For product card actions: pass category + explicit cost so card shows correct price.
+      // For free actions and non-product-card paid actions: pass null so no purchase UI appears.
+      await sendMessage(
+        `[${action.emoji} ${action.label}${payerNote}]`,
+        true, null, null,
+        isProductCardAction ? action.action_category : null,
+        isProductCardAction ? action.cost : null
+      );
 
       setTimeout(() => {
         const newActions = getSceneInteractions(
