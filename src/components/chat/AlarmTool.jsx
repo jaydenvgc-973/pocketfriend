@@ -12,7 +12,7 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlarmClock, X, Moon, BatteryLow, Bell, BellOff, Clock, CheckCircle } from "lucide-react";
+import { AlarmClock, X, Moon, BatteryLow, Bell, BellOff, Clock, CheckCircle, Coffee } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -102,6 +102,30 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
   };
 
   const handleRingNow = () => invoke('ring_now');
+
+  const handleTakeNap = async () => {
+    setIsLoading(true);
+    setResult(null);
+    try {
+      const res = await base44.functions.invoke('scheduleNap', {
+        characterId,
+        napStartTime: new Date().toISOString(),
+        napDurationMinutes: 120,
+      });
+      const data = res?.data;
+      if (data?.success) {
+        setResult({ type: "success", text: `${firstName} is now napping. They'll wake up in 2 hours.` });
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      } else {
+        setResult({ type: "error", text: data?.error || "Failed to start nap." });
+      }
+    } catch (err) {
+      setResult({ type: "error", text: `Nap failed: ${err?.message || 'unknown error'}` });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSchedule = () => {
     if (!scheduleTime) return;
@@ -264,6 +288,16 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
               >
                 <AlarmClock className="w-4 h-4" />
                 {isLoading ? "Waking up…" : `Ring ${firstName}'s Alarm Now`}
+              </button>
+
+              {/* Take 2-Hour Nap */}
+              <button
+                onClick={handleTakeNap}
+                disabled={isLoading}
+                className="w-full h-11 rounded-xl border border-border text-foreground text-sm flex items-center justify-center gap-2 hover:bg-secondary/60 transition-colors disabled:opacity-40"
+              >
+                <Moon className="w-4 h-4 text-muted-foreground" />
+                Take 2-Hour Nap
               </button>
 
               {/* Schedule */}
