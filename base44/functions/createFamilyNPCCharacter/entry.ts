@@ -21,7 +21,23 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { name, relationship_type, active_character_id, photo_url, age_at_creation } = await req.json();
+    const { name, relationship_type, active_character_id, photo_url, age_at_creation, is_authenticated_user, participant_type, user_id } = await req.json();
+
+    // ── USER-PARTICIPANT GATE ─────────────────────────────────────────────────
+    // If the participant IS the authenticated user, never create a Character proxy.
+    // Return a user participant reference instead — caller stores user_id, not npc_id.
+    if (is_authenticated_user === true || participant_type === 'user') {
+      const resolvedUserId = user_id || user.id;
+      console.log(`[createFamilyNPCCharacter] USER PARTICIPANT detected for user=${user.email} — returning user_id="${resolvedUserId}" without creating any Character record.`);
+      return Response.json({
+        success: true,
+        participant_type: 'user',
+        user_id: resolvedUserId,
+        npc_id: null,
+        already_existed: false,
+        message: 'Authenticated user stored as participant_type:user — no Character proxy created.',
+      });
+    }
 
     // ── Derive gender from relationship type ──────────────────────────────────
     const FEMALE_ROLES = new Set(['mother', 'mom', 'mommy', 'grandmother', 'grandma', 'great-grandmother',

@@ -72,23 +72,55 @@ export async function buildImageGenerationContext({
     if (m) {
       const nameInPrompt = m[1].trim();
       audit.diagnostics.prompt_character_token = nameInPrompt;
-      // Attempt name resolution — log attempt but do not fail
-      try {
-        const chars = await base44.asServiceRole.entities.Character.filter(
-          { owner_email: userRecord?.email }, null, 100
-        ).catch(() => []);
-        const match = chars.find(c =>
-          c.name?.toLowerCase() === nameInPrompt.toLowerCase() ||
-          c.name?.toLowerCase().startsWith(nameInPrompt.toLowerCase())
-        );
-        if (match) {
-          effectiveCharacterId = match.id;
-          effectiveCharacterName = match.name;
-          effectiveCharacterRecord = match;
-          audit.diagnostics.identity_source = 'prompt_character_token';
+
+      // ── USER-PARTICIPANT RESOLUTION (must run before Character lookup) ──────
+      // If the name token matches the authenticated user's world name, resolve to
+      // participant_type:"user" via User Profile + UserSettings — do NOT search Characters.
+      let resolvedAsUser = false;
+      if (userRecord?.email) {
+        try {
+          const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
+            { owner_email: userRecord.email }, null, 1
+          ).catch(() => []);
+          const settings = settingsList?.[0] || null;
+          const worldName = settings?.fictional_world_name || userRecord?.world_name || userRecord?.full_name || null;
+          if (worldName && nameInPrompt.toLowerCase() === worldName.toLowerCase()) {
+            // Name matches authenticated user's world name — store user participant context,
+            // do not assign effectiveCharacterId (user is not a Character).
+            audit.diagnostics.identity_source = 'user_participant_world_name_match';
+            audit.diagnostics.user_participant = {
+              participant_type: 'user',
+              user_id: userRecord.id,
+              world_name: worldName,
+              resolved_from: 'User_Profile_and_UserSettings',
+            };
+            resolvedAsUser = true;
+            console.log(`[imageGenerationContextBuilder] USER PARTICIPANT resolved: world_name="${worldName}" matches prompt token — no Character lookup performed.`);
+          }
+        } catch (e) {
+          audit.diagnostics.user_participant_resolution_error = e?.message;
         }
-      } catch (e) {
-        audit.diagnostics.identity_resolution_error = e?.message;
+      }
+
+      // Attempt Character name resolution only when NOT resolved as user
+      if (!resolvedAsUser) {
+        try {
+          const chars = await base44.asServiceRole.entities.Character.filter(
+            { owner_email: userRecord?.email }, null, 100
+          ).catch(() => []);
+          const match = chars.find(c =>
+            c.name?.toLowerCase() === nameInPrompt.toLowerCase() ||
+            c.name?.toLowerCase().startsWith(nameInPrompt.toLowerCase())
+          );
+          if (match) {
+            effectiveCharacterId = match.id;
+            effectiveCharacterName = match.name;
+            effectiveCharacterRecord = match;
+            audit.diagnostics.identity_source = 'prompt_character_token';
+          }
+        } catch (e) {
+          audit.diagnostics.identity_resolution_error = e?.message;
+        }
       }
     }
   }

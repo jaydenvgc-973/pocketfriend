@@ -101,6 +101,30 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
     familyMembers
       .filter(m => m.name?.trim())
       .map(async (m) => {
+        // ── USER-PARTICIPANT GATE ──────────────────────────────────────────────
+        // Entries with _is_user:true represent the authenticated user.
+        // They are stored as participant_type:"user" + user_id — never resolved to a Character.
+        if (m._is_user === true || m.participant_type === 'user') {
+          const existingOrganic = null; // user entries never have organic character cross-refs
+          return {
+            person_name: m.name,
+            related_character_id: null,
+            participant_type: 'user',
+            user_id: m.user_id || currentUser?.id || null,
+            relationship_type: m.relationship_type || 'family',
+            description: `${m.name} is ${character.name}'s ${m.relationship_type || 'family member'} — authenticated user.`,
+            current_status: 'part of the family',
+            emotional_impact: '',
+            history_summary: '',
+            last_interaction_summary: '',
+            photo_url: m.photo_url || null,
+            avatar_url: m.photo_url || null,
+            _from_family: true,
+            _is_user: true,
+            ...defaultLevels(m.relationship_type),
+          };
+        }
+
         // Every family member MUST have a stable _linked_character_id
         // This is the ONLY identity anchor — not index, not name matching
         let linkedCharId = m._linked_character_id || null;
@@ -666,6 +690,8 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       age_at_creation: age,
       age_set_date: new Date().toISOString(),
       _is_user: true,
+      participant_type: 'user',
+      user_id: currentUser?.id || null,
     }]);
   };
 

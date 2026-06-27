@@ -71,6 +71,14 @@ Deno.serve(async (req) => {
         try {
           syncLog.processed++;
 
+          // ── USER-PARTICIPANT GATE ─────────────────────────────────────────
+          // Skip entries that represent the authenticated user — they are stored as
+          // participant_type:"user" + user_id and must never be converted to a Character.
+          if (member._is_user === true || member.participant_type === 'user') {
+            console.log(`[syncFamilyMembersGlobal] Skipping user-participant entry "${member.name}" in ${parent.name}'s family — stored as user_id, not npc_family_member.`);
+            continue;
+          }
+
           // ── RESOLUTION CHAIN (matches lib/familyMemberResolver.js) ──
           let resolvedCharId = null;
 

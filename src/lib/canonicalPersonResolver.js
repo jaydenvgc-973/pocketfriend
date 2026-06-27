@@ -382,6 +382,24 @@ export async function resolveCanonicalPerson(params) {
       };
     }
 
+    // ── USER-PARTICIPANT GUARD ────────────────────────────────────────────────────
+    // If the caller signals this participant is the authenticated user, NEVER create a
+    // Character record. Return participant_type: "user" with user_id instead.
+    // This gate applies regardless of name, relationship_context, or owner credentials.
+    if (params.participant_type === 'user' || params.is_authenticated_user === true) {
+      return {
+        status: 'user_participant',
+        canonical_person_id: null,
+        participant_type: 'user',
+        user_id: params.user_id || owner_user_id || null,
+        confidence: 1.0,
+        matched_evidence: ['user_participant_gate:creation_blocked'],
+        source_record_ids: [],
+        repair_actions: [],
+        failure_reason: null,
+      };
+    }
+
     // Validate required context for creation
     const missingContext = [];
     if (!owner_user_id) missingContext.push('owner_user_id');

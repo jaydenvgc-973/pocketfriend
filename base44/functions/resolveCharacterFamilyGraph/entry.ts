@@ -113,15 +113,29 @@ Deno.serve(async (req) => {
 
     const ownAge = resolveAge(targetChar); // from character's own record (pre-step-2 value, used initially)
     const familyMembers = targetChar.family_members || [];
+    // Note: nonUserFamilyMembers is derived below after userParticipantMembers is separated out.
+
+    // ── USER-PARTICIPANT ENTRIES ──────────────────────────────────────────────
+    // Family member entries with participant_type:"user" or _is_user:true represent the
+    // authenticated user. They are resolved from User Profile + UserSettings, not from
+    // Character records. Collect them separately for the prompt block.
+    const userParticipantMembers = familyMembers.filter(m =>
+      m._is_user === true || m.participant_type === 'user'
+    );
+
+    // Non-user entries only for the normal resolution chain
+    const nonUserFamilyMembers = familyMembers.filter(m =>
+      m._is_user !== true && m.participant_type !== 'user'
+    );
 
     // ── STEP 1: Identify explicit family members by type ─────────────────────
-    const explicitParents = familyMembers.filter(m =>
+    const explicitParents = nonUserFamilyMembers.filter(m =>
       PARENT_TYPES.has((m.relationship_type || '').toLowerCase())
     );
-    const explicitSiblings = familyMembers.filter(m =>
+    const explicitSiblings = nonUserFamilyMembers.filter(m =>
       SIBLING_TYPES.has((m.relationship_type || '').toLowerCase())
     );
-    const explicitChildren = familyMembers.filter(m =>
+    const explicitChildren = nonUserFamilyMembers.filter(m =>
       CHILD_TYPES.has((m.relationship_type || '').toLowerCase())
     );
 
@@ -375,12 +389,24 @@ Deno.serve(async (req) => {
 
     let promptBlock = '';
 
-    if (hasAnyFamily || finalAge) {
+    // Include user participants in "hasAnyFamily" check
+    const hasUserParticipants = userParticipantMembers.length > 0;
+
+    if (hasAnyFamily || finalAge || hasUserParticipants) {
       const lines = [];
       lines.push('════════════════════════════════════');
       lines.push('AUTHORITATIVE FAMILY KNOWLEDGE — DERIVED FROM FAMILY GRAPH');
       lines.push('These are VERIFIED FACTS. You KNOW these people exist. You cannot contradict them.');
       lines.push('════════════════════════════════════');
+
+      // ── User participants (the authenticated user as family member) ──────────
+      if (hasUserParticipants) {
+        lines.push('\nUSER (AUTHENTICATED — not a character):');
+        for (const up of userParticipantMembers) {
+          lines.push(`- ${up.name} — your ${up.relationship_type || 'family member'}. [participant_type: user — identity resolved from User Profile + UserSettings]`);
+        }
+        lines.push('NOTE: The above person(s) are the real authenticated user, not simulated NPCs. Treat them as the person you are talking to.');
+      }
 
       // Age
       if (finalAge) {
