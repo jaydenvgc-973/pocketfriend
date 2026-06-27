@@ -761,7 +761,7 @@ export default function StoryEventViewer({ eventId }) {
 
       {/* ── SEND MODAL ────────────────────────────────────────────────────── */}
       {showSendModal && sendImage && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center p-4" onClick={() => setShowSendModal(false)}>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowSendModal(false)}>
           <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="text-sm font-semibold text-foreground">Send Image To</h3>
