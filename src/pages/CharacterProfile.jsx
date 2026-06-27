@@ -1041,9 +1041,17 @@ export default function CharacterProfile() {
               <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
 
               {(() => {
+                // Live user avatar — canonical source is User Profile + UserSettings, NOT the cached entry.
+                // rel.avatar_url / rel.photo_url on user-participant entries are display caches only.
+                const liveUserAvatarUrl =
+                  currentUser?.reference_image_urls?.[0]
+                  || currentUser?.generated_avatar_urls?.[0]
+                  || null;
                 const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const worldRels = (character.fictional_relationships || []).filter(r => {
                   if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
+                  // User-participant entries: participant_type:"user" with null related_character_id — always show
+                  if (r.participant_type === 'user' || r._is_user) return true;
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   if (!linked) return true;
@@ -1059,17 +1067,23 @@ export default function CharacterProfile() {
                 });
                 return deduped.length > 0 ? (
                   <div className="space-y-5">
-                    {deduped.map((rel, idx) => (
+                    {deduped.map((rel, idx) => {
+                      // USER-PARTICIPANT: resolve avatar from live User Profile, not the cached entry.
+                      const isUserParticipant = rel.participant_type === 'user' || rel._is_user === true;
+                      const displayAvatarUrl = isUserParticipant
+                        ? liveUserAvatarUrl
+                        : (rel.avatar_url || rel.photo_url || null);
+                      return (
                       <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <button
-                            onClick={() => (rel.avatar_url || rel.photo_url) && setLightboxSrc(rel.avatar_url || rel.photo_url)}
-                            className={(rel.avatar_url || rel.photo_url) ? "cursor-pointer" : "cursor-default"}
+                            onClick={() => displayAvatarUrl && setLightboxSrc(displayAvatarUrl)}
+                            className={displayAvatarUrl ? "cursor-pointer" : "cursor-default"}
                           >
                             <div className="flex items-center gap-3">
-                              {rel.avatar_url || rel.photo_url ? (
+                              {displayAvatarUrl ? (
                                 <div className="relative group">
-                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                  <img src={displayAvatarUrl} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
                                   <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                     <ZoomIn className="w-4 h-4 text-white" />
                                   </div>
@@ -1081,7 +1095,10 @@ export default function CharacterProfile() {
                               )}
                               <div>
                                 <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
-                                <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                                <p className="text-xs text-primary font-medium capitalize">
+                                  {rel.relationship_type}
+                                  {isUserParticipant && <span className="ml-1.5 text-pink-400 text-[10px] border border-pink-400/30 rounded px-1 py-0.5">You</span>}
+                                </p>
                               </div>
                             </div>
                           </button>
@@ -1093,7 +1110,8 @@ export default function CharacterProfile() {
                           </div>
                         )}
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 ) : null;
               })()}

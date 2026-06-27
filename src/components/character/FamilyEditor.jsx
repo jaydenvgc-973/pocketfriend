@@ -682,16 +682,24 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       || currentUser?.reference_image_urls?.[0]
       || null;
     const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "Me";
+    // CANONICAL USER_ID SOURCE:
+    // currentUser is the result of base44.auth.me() — the User entity from the platform.
+    // currentUser.id is the authoritative user_id. UserSettings.owner_user_id mirrors this
+    // but is NOT the primary source. Do NOT read user_id from UserSettings; read it from
+    // base44.auth.me() (the User entity). This is also verified in resolveAuthenticatedUser.js.
     setMembers(prev => [...prev, {
       _member_id: generateMemberId(),
       name: worldName,
       relationship_type: "other",
+      // photo_url on user-participant entries is a DISPLAY CACHE ONLY.
+      // The canonical avatar must come from User Profile + UserSettings at render/generation time.
+      // This value is never used for identity or image generation — only for local UI preview.
       photo_url: userAvatar,
       age_at_creation: age,
       age_set_date: new Date().toISOString(),
       _is_user: true,
       participant_type: 'user',
-      user_id: currentUser?.id || null,
+      user_id: currentUser?.id || null,  // canonical: base44.auth.me().id (User entity)
     }]);
   };
 

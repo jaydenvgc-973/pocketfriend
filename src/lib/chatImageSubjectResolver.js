@@ -105,6 +105,54 @@ function doesPromptRequestNamedPerson(prompt) {
 }
 
 /**
+ * Resolve the authenticated user as a visual subject from a prompt.
+ *
+ * Checks whether any of the user's known name forms (world_name, full_name, aliases)
+ * appear in the prompt text. This covers [JOINT], secondary subjects, and non-leading
+ * mentions — not just [CHARACTER] tokens.
+ *
+ * Returns the user's world_name if matched, null otherwise.
+ *
+ * @param {string} prompt
+ * @param {object|null} resolvedUser  - Output of resolveAuthenticatedUser(), or raw user+settings bundle
+ * @returns {{ matched: boolean, worldName: string|null, matchedForm: string|null }}
+ */
+export function resolveUserParticipantInPrompt(prompt, resolvedUser) {
+  if (!prompt || !resolvedUser) return { matched: false, worldName: null, matchedForm: null };
+
+  const promptLower = prompt.toLowerCase();
+
+  // Build the full set of name forms to check — order: world_name > full_name > aliases
+  const worldName = resolvedUser.world_name || resolvedUser.fictional_world_name || resolvedUser.full_name || null;
+  const fullName = resolvedUser.full_name || null;
+  // aliases from UserSettings (user_aliases array) or _source_settings
+  const aliases = resolvedUser.aliases
+    || resolvedUser._source_settings?.user_aliases
+    || [];
+
+  const nameForms = [worldName, fullName, ...aliases].filter(Boolean);
+  // Deduplicate, case-insensitive
+  const seen = new Set();
+  const uniqueForms = nameForms.filter(n => {
+    const k = n.toLowerCase();
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  for (const form of uniqueForms) {
+    const formLower = form.toLowerCase();
+    // Require at least 3 chars to avoid spurious single-letter matches
+    if (formLower.length < 3) continue;
+    if (promptLower.includes(formLower)) {
+      return { matched: true, worldName, matchedForm: form };
+    }
+  }
+
+  return { matched: false, worldName, matchedForm: null };
+}
+
+/**
  * Extract character names that appear in a visual-subject position in the prompt.
  *
  * @param {string} prompt
@@ -191,8 +239,11 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
  * @param {string} imagePrompt - The image generation prompt produced by LLM
  * @param {Array} allChars - Full roster of Character objects for the current user
  * @param {string} senderCharacterId - The ID of the character generating the image
+ * @param {object|null} resolvedUser - Optional: output of resolveAuthenticatedUser(). When provided,
+ *   the user's world name and aliases are checked against the full prompt (including [JOINT],
+ *   secondary subjects, and non-leading mentions) to detect user-as-visual-subject.
  */
-export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
+export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, resolvedUser = null) {
   const log = [];
 
   if (!imagePrompt) {
@@ -206,6 +257,21 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       ambiguousNames: [],
       log,
     };
+  }
+
+  // ── USER-PARTICIPANT SCAN (runs across ALL prompt forms, before any other check) ──
+  // The authenticated user can appear in [JOINT], [CHARACTER], secondary subjects, scene
+  // descriptions, and non-leading name mentions. We resolve them here — independently of
+  // the Character roster — so they are never lost due to null related_character_id.
+  let userIsVisualSubject = false;
+  let userWorldName = null;
+  if (resolvedUser) {
+    const userScan = resolveUserParticipantInPrompt(imagePrompt, resolvedUser);
+    if (userScan.matched) {
+      userIsVisualSubject = true;
+      userWorldName = userScan.worldName;
+      log.push(`[SubjectResolver] USER participant detected in prompt — matched name form "${userScan.matchedForm}" (world_name="${userWorldName}"). Identity resolved from User Profile + UserSettings, NOT from Character roster.`);
+    }
   }
 
   // Step 0: [JOINT] prefix detection — LLM's explicit signal that sender IS in the image.
@@ -231,6 +297,9 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: false,
       blockReason: null,
       ambiguousNames: [],
+      // User participant context — propagated even in JOINT so callers can inject user refs
+      userIsVisualSubject,
+      userWorldName,
       log,
     };
   }
@@ -247,6 +316,8 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: true,
       blockReason: null,
       ambiguousNames: [],
+      userIsVisualSubject,
+      userWorldName,
       log,
     };
   }
@@ -264,7 +335,9 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
   log.push(`[SubjectResolver] Sender present in image: ${senderIsSubject}`);
 
   // Step 4: Handle ambiguous names — BLOCK generation, never silently default
-  if (ambiguous.length > 0 && subjects.length === 0 && !senderIsSubject) {
+  // EXCEPTION: if user was detected as a visual subject (by world name match), do NOT block —
+  // the user participant is a valid, unambiguous subject resolved outside the Character roster.
+  if (ambiguous.length > 0 && subjects.length === 0 && !senderIsSubject && !userIsVisualSubject) {
     const blockReason = `Ambiguous character name(s): "${ambiguous.join('", "')}" — multiple characters share this name. Cannot determine the correct subject.`;
     log.push(`[SubjectResolver] ⛔ BLOCKED — ${blockReason}`);
     return {
@@ -275,14 +348,17 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: false,
       blockReason,
       ambiguousNames: ambiguous,
+      userIsVisualSubject,
+      userWorldName,
       log,
     };
   }
 
   // Step 5: Detect "named person requested but not found on roster"
-  // Only fires when: third-party subject pattern matched AND no subjects resolved AND no sender signal.
+  // Only fires when: third-party subject pattern matched AND no subjects resolved AND no sender signal
+  // AND the user is not the visual subject (user presence resolves from User Profile, not roster).
   const isNamedPersonRequest = doesPromptRequestNamedPerson(imagePrompt);
-  if (subjects.length === 0 && !senderIsSubject && isNamedPersonRequest) {
+  if (subjects.length === 0 && !senderIsSubject && isNamedPersonRequest && !userIsVisualSubject) {
     const blockReason = `The prompt requests a specific named person but no matching character was found on your roster.`;
     log.push(`[SubjectResolver] ⛔ BLOCKED — unresolved named subject. Named person requested but not on roster.`);
     return {
@@ -293,12 +369,14 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: false,
       blockReason,
       ambiguousNames: [],
+      userIsVisualSubject,
+      userWorldName,
       log,
     };
   }
 
   // Step 6: Sender-only image (selfie, no named request)
-  if (subjects.length === 0) {
+  if (subjects.length === 0 && !userIsVisualSubject) {
     log.push(`[SubjectResolver] Sender-only image (no named subjects, no named request signal)`);
     return {
       resolutionState: 'sender_self',
@@ -308,6 +386,25 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: false,
       blockReason: null,
       ambiguousNames: [],
+      userIsVisualSubject: false,
+      userWorldName: null,
+      log,
+    };
+  }
+
+  // Step 6b: User is the only resolved subject (no Character roster match, no sender match)
+  if (subjects.length === 0 && userIsVisualSubject) {
+    log.push(`[SubjectResolver] User-participant-only image — user world_name "${userWorldName}" is the visual subject. Identity resolved from User Profile + UserSettings.`);
+    return {
+      resolutionState: 'user_participant',
+      primarySubjectId: null,   // user is NOT a Character — do not pass a character ID
+      additionalCharacterIds: [],
+      includeSender: false,
+      isInanimateScene: false,
+      blockReason: null,
+      ambiguousNames: [],
+      userIsVisualSubject: true,
+      userWorldName,
       log,
     };
   }
@@ -326,6 +423,8 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
       isInanimateScene: false,
       blockReason: null,
       ambiguousNames: [],
+      userIsVisualSubject,
+      userWorldName,
       log,
     };
   }
@@ -340,6 +439,8 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId) {
     isInanimateScene: false,
     blockReason: null,
     ambiguousNames: [],
+    userIsVisualSubject,
+    userWorldName,
     log,
   };
 }

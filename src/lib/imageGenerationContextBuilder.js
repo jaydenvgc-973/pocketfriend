@@ -1,5 +1,6 @@
 import { resolveLocationWithSchoolGuard } from './campusResidencyResolver.js';
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
+import { resolveUserParticipantInPrompt } from './chatImageSubjectResolver.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -155,6 +156,35 @@ export async function buildImageGenerationContext({
     appearance_lock_present: !!appearanceLockText,
   };
 
+  // ── USER-PARTICIPANT SCAN across the FULL prompt ──────────────────────────
+  // Covers [JOINT], [CHARACTER], secondary subjects, scene descriptions, and
+  // non-leading name mentions. The user may appear anywhere in the prompt.
+  // avatar/photo_url on any stored entry is a display cache — canonical identity
+  // comes from User Profile + UserSettings (passed in as userRecord).
+  let userParticipantDetected = false;
+  let userParticipantWorldName = null;
+  if (prompt && userRecord) {
+    // Build a minimal resolvedUser bundle from userRecord for the scanner.
+    // We use the same field priority as resolveAuthenticatedUser.js.
+    const scanBundle = {
+      world_name: userRecord.world_name || userRecord.fictional_world_name || userRecord.full_name || null,
+      full_name: userRecord.full_name || null,
+      aliases: userRecord.user_aliases || userRecord.aliases || [],
+    };
+    const scanResult = resolveUserParticipantInPrompt(prompt, scanBundle);
+    if (scanResult.matched) {
+      userParticipantDetected = true;
+      userParticipantWorldName = scanResult.worldName;
+      audit.diagnostics.user_participant_in_prompt = {
+        detected: true,
+        world_name: userParticipantWorldName,
+        matched_form: scanResult.matchedForm,
+        note: 'avatar/photo must come from User Profile + UserSettings at generation time, not from any stored relationship entry',
+      };
+      console.log(`[imageGenerationContextBuilder] USER PARTICIPANT detected in prompt — matched form "${scanResult.matchedForm}" — avatar must be resolved from User Profile at generation time`);
+    }
+  }
+
   // ── LOCATION SANITIZATION (must run before outfit resolution) ───────────────
   // SCHOOL CONTAMINATION GUARD — uses canonical campusResidencyResolver.
   // Enrollment at a school is NOT residence. Campus housing is only valid
@@ -309,6 +339,13 @@ export async function buildImageGenerationContext({
       character_name: effectiveCharacterName,
       description: appearanceLockText,
       appearance_lock_text: appearanceLockText,
+    },
+    // User-participant fields — populated when the authenticated user appears in the prompt.
+    // Callers MUST resolve avatar/appearance from User Profile + UserSettings, not from any
+    // stored relationship entry. The stored photo_url is a display cache only.
+    user_participant: {
+      detected: userParticipantDetected,
+      world_name: userParticipantWorldName,
     },
     outfit: {
       source: outfitSource,

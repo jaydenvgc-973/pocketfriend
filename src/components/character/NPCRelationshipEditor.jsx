@@ -16,6 +16,27 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  // USER-PARTICIPANT GUARD: entries with participant_type:"user" or _is_user:true are the
+  // authenticated user — they cannot be edited as NPC entries. Avatar comes from User Profile.
+  if (relationship?.participant_type === 'user' || relationship?._is_user === true) {
+    return (
+      <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground">This is You</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          This entry represents you — the authenticated user. Your name and avatar come from your User Profile and cannot be edited here.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          To update your name or appearance, go to <span className="text-primary">My Profile → Settings</span>.
+        </p>
+      </div>
+    );
+  }
+
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
