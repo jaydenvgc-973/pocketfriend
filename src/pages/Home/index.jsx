@@ -382,7 +382,7 @@ export default function Home() {
                 ...(defaultChar ? [defaultChar] : []),
                 ...activeCustomChars,
                 ...allCharacters.filter(c =>
-                  ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type) &&
+                  ['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(c.character_type) &&
                   c.status === 'active' &&
                   !c.is_test_character &&
                   !c.diagnostic_only

@@ -45,7 +45,7 @@ export default function UserCharacterRelationshipSelector({ character, currentVa
       {
         label: "Partner",
         options: RELATIONSHIP_OPTIONS.filter(o =>
-          ["spouse", "significant_other"].includes(o.value)
+          ["spouse", "significant_other", "engaged"].includes(o.value)
         ),
       },
     ];

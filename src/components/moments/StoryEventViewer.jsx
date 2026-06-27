@@ -33,6 +33,10 @@ export default function StoryEventViewer({ eventId }) {
   const [regenError, setRegenError] = useState(null);
   const [regenerating, setRegenerating] = useState(false);
 
+  // Stuck generation cancel/reset state
+  const [isCancellingGeneration, setIsCancellingGeneration] = useState(false);
+  const [cancelError, setCancelError] = useState(null);
+
   // Impact verification state
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactResult, setImpactResult] = useState(null);
@@ -177,6 +181,31 @@ export default function StoryEventViewer({ eventId }) {
   if (!event) {
     return <p className="text-xs text-muted-foreground italic py-2">Event data unavailable.</p>;
   }
+
+  // Detect stuck generating: status is 'generating' AND created_date > 10 minutes ago
+  const isStuckGenerating = (() => {
+    if (event.status !== 'generating') return false;
+    const created = event.created_date || event.updated_date;
+    if (!created) return false;
+    const ageMs = Date.now() - new Date(created).getTime();
+    return ageMs > 10 * 60 * 1000; // 10 minutes
+  })();
+
+  const handleCancelGeneration = async () => {
+    setIsCancellingGeneration(true);
+    setCancelError(null);
+    try {
+      await base44.entities.StoryEvent.update(eventId, {
+        status: 'failed',
+        generation_error: 'Generation cancelled by user.',
+      });
+      setEvent(prev => ({ ...prev, status: 'failed', generation_error: 'Generation cancelled by user.' }));
+    } catch (err) {
+      setCancelError(err?.message || 'Failed to cancel. Try again.');
+    } finally {
+      setIsCancellingGeneration(false);
+    }
+  };
 
   const isGenerating = event.status === 'generating';
   const isComplete = event.status === 'complete';
@@ -440,12 +469,29 @@ export default function StoryEventViewer({ eventId }) {
         <div className="p-4 space-y-4">
           {/* Generating state */}
           {isGenerating && (
-            <div className="flex items-center gap-3 py-4">
-              <Loader2 className="w-5 h-5 animate-spin text-primary" />
-              <div>
-                <p className="text-sm font-medium text-foreground">Generating your story…</p>
-                <p className="text-xs text-muted-foreground">Narrative, memories, and images are being created.</p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 py-2">
+                <Loader2 className="w-5 h-5 animate-spin text-primary flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Generating your story…</p>
+                  <p className="text-xs text-muted-foreground">Narrative, memories, and images are being created.</p>
+                </div>
               </div>
+              {isStuckGenerating && (
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-2">
+                  <p className="text-xs text-amber-400 font-medium">Generation seems to be taking longer than expected.</p>
+                  <p className="text-xs text-muted-foreground">You can cancel and try recreating the event, or reset the status to failed.</p>
+                  {cancelError && <p className="text-xs text-destructive">{cancelError}</p>}
+                  <button
+                    onClick={handleCancelGeneration}
+                    disabled={isCancellingGeneration}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-50"
+                  >
+                    {isCancellingGeneration ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                    {isCancellingGeneration ? 'Cancelling…' : 'Cancel stuck generation'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

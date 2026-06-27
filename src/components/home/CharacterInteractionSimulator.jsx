@@ -7,13 +7,14 @@ import { X, Play, MessageCircle, RefreshCw, Check, AlertCircle } from 'lucide-re
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
-const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
+const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'];
 
 const TYPE_LABELS = {
   active_created_character: 'Active Characters',
   npc_fictitious: 'NPC Fictitious',
   npc_family_member: 'Family NPCs',
   npc_regular: 'Regular NPCs',
+  npc_world_service: 'World Services',
 };
 
 export default function CharacterInteractionSimulator({ characters, currentUser }) {

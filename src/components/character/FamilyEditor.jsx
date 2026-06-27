@@ -849,8 +849,14 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
             {member._is_user ? (
               <div className="flex items-center gap-3">
                 {(() => {
-                  const liveAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
-                  const displayUrl = member.photo_url || liveAvatar;
+                  // CANONICAL RULE: user-participant entries MUST resolve avatar from live
+                  // User Profile + UserSettings, NOT from the cached member.photo_url field.
+                  // member.photo_url is a stale display cache only — it must NEVER be the authority.
+                  const liveAvatar = currentUser?.generated_avatar_urls?.[0]
+                    || currentUser?.reference_image_urls?.[0]
+                    || null;
+                  // Live identity always wins over cached proxy data
+                  const displayUrl = liveAvatar || member.photo_url;
                   return displayUrl ? (
                     <button onClick={() => setLightboxSrc(displayUrl)} className="relative flex-shrink-0 group">
                       <img src={displayUrl} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
@@ -865,7 +871,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                   );
                 })()}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground font-medium">{member.name}</p>
+                  {/* CANONICAL RULE: always render live world name from UserSettings,
+                      not the cached member.name (which may be stale proxy data). */}
+                  <p className="text-sm text-foreground font-medium">
+                    {userSettings?.fictional_world_name || currentUser?.full_name || member.name}
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     {(() => {
                       const bd = userSettings?.user_birthday;

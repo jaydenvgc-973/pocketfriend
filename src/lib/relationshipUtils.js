@@ -14,6 +14,7 @@ export const RELATIONSHIP_OPTIONS = [
   { value: "cousin", label: "Cousin", gendered: false },
   { value: "spouse", label: "Spouse", gendered: false },
   { value: "significant_other", label: "Significant Other", gendered: false },
+  { value: "engaged", label: "Fiancé(e)", gendered: false },
   // Specific / gendered
   { value: "mother", label: "Mother", gendered: true },
   { value: "father", label: "Father", gendered: true },
@@ -61,6 +62,7 @@ export function getReciprocalRole(userAssignedRole, userGender) {
     case "cousin":           return "cousin";
     case "spouse":           return "spouse";
     case "significant_other":return "significant_other";
+    case "engaged":          return "engaged";
 
     // Gendered roles — user gender determines reciprocal
     case "mother":           return pick("son", "daughter", "child");
@@ -85,7 +87,7 @@ export function isFamilyRelationship(role) {
     "parent", "child", "sibling", "cousin",
     "mother", "father", "son", "daughter",
     "aunt", "uncle", "niece", "nephew",
-    "spouse", "significant_other"
+    "spouse", "significant_other", "engaged"
   ];
   return familyRoles.includes(role);
 }
@@ -107,6 +109,7 @@ export function reciprocalToFamilyType(reciprocalRole) {
     cousin: "cousin",
     spouse: "spouse",
     significant_other: "spouse",
+    engaged: "engaged",
     aunt: "aunt",
     uncle: "uncle",
     niece: "niece",
