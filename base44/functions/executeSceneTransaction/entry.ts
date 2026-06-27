@@ -99,48 +99,83 @@ Deno.serve(async (req) => {
 
       const newBalance = currentBalance - numericCost;
 
-      await base44.entities.UserSettings.update(settings.id, { user_balance: newBalance });
-
-      // ── WRITE FINANCIAL TRANSACTION LEDGER RECORD ────────────────────────────
-      // Every successful Scene charge must produce a FinancialTransaction record.
-      // This enables audit, reversal lookups, and the finance dashboard.
+      // ── BUILD AND VALIDATE LEDGER RECORD FIRST ───────────────────────────────────
+      // Build the ledger entry BEFORE any balance change — ensures we know what we're creating
       const now = new Date().toISOString();
+      const ledgerPayload = {
+        // Ownership / scope
+        character_id: target_character_id || null,
+        character_name: null,
+        sender_id: user.id,
+        sender_type: 'user',
+        sender_name: user.full_name || user.email,
+        receiver_id: null,
+        receiver_type: 'system',
+        receiver_name: location_name || 'Scene',
+        // Transaction amounts
+        amount: numericCost,
+        direction: 'expense',
+        // Classification
+        transaction_type: 'scene_purchase',
+        description: [
+          action_label || item_label || 'Scene purchase',
+          location_name ? `at ${location_name}` : null,
+          target_character_id ? `(gift)` : null,
+        ].filter(Boolean).join(' '),
+        // Location
+        location_id: null,
+        location_name: location_name || null,
+        // Balance snapshot
+        balance_after: newBalance,
+        // Timestamp
+        timestamp: now,
+      };
+
+      // ── EXECUTE TRANSACTION WITH LEDGER GUARANTEE ────────────────────────────────
+      // Deduct balance, then immediately create ledger. If ledger fails, restore balance.
+      // NO BALANCE CHANGE IS FINAL WITHOUT A LEDGER ENTRY.
+
       try {
-        await base44.entities.FinancialTransaction.create({
-          // Ownership / scope
-          character_id: target_character_id || null,
-          character_name: null,
-          sender_id: user.id,
-          sender_type: 'user',
-          sender_name: user.full_name || user.email,
-          receiver_id: null,
-          receiver_type: 'system',
-          receiver_name: location_name || 'Scene',
-          // Transaction amounts
-          amount: numericCost,
-          direction: 'expense',
-          // Classification
-          transaction_type: 'scene_purchase',
-          description: [
-            action_label || item_label || 'Scene purchase',
-            location_name ? `at ${location_name}` : null,
-            target_character_id ? `(gift)` : null,
-          ].filter(Boolean).join(' '),
-          // Location
-          location_id: null,
-          location_name: location_name || null,
-          // Balance snapshot
-          balance_after: newBalance,
-          // Timestamp
-          timestamp: now,
-        });
-      } catch (ledgerErr) {
-        // Ledger write failure must NOT roll back the balance deduction — the deduction already succeeded.
-        // Log it prominently so the gap is visible in diagnostics.
-        console.error(`[executeSceneTransaction] LEDGER WRITE FAILED after successful balance deduction. action_id=${action_id}, cost=${numericCost}, user=${user.email}. Error: ${ledgerErr.message}`);
+        // Step 1: Deduct balance
+        await base44.entities.UserSettings.update(settings.id, { user_balance: newBalance });
+
+        // Step 2: Create ledger record — REQUIRED for transaction to be valid
+        try {
+          await base44.entities.FinancialTransaction.create(ledgerPayload);
+        } catch (ledgerErr) {
+          // LEDGER CREATION FAILED — Restore the balance and reject the entire transaction
+          console.error(`[executeSceneTransaction] CRITICAL: Ledger creation failed. Restoring balance. action_id=${action_id}, user=${user.email}, cost=${numericCost}. Error: ${ledgerErr.message}`);
+          
+          try {
+            await base44.entities.UserSettings.update(settings.id, { user_balance: currentBalance });
+            console.log(`[executeSceneTransaction] Balance restored to ${currentBalance} after ledger failure`);
+          } catch (restoreErr) {
+            // CATASTROPHIC: Cannot restore balance
+            console.error(`[executeSceneTransaction] CATASTROPHIC: Failed to restore balance after ledger failure. user=${user.email}, failed_balance=${newBalance}, intended_restore=${currentBalance}. Restore error: ${restoreErr.message}`);
+            return Response.json({ 
+              error: 'Transaction rejected: ledger record could not be created, and balance restoration encountered an error. Contact support immediately.',
+              critical: true,
+              user_email: user.email,
+              action_id
+            }, { status: 500 });
+          }
+
+          return Response.json({ 
+            error: 'Transaction rejected: ledger record could not be created. Balance has been restored. Please try again.',
+            action_id,
+            payer: 'user'
+          }, { status: 500 });
+        }
+      } catch (balanceErr) {
+        // Balance update failed before we even tried the ledger
+        console.error(`[executeSceneTransaction] Balance update failed: ${balanceErr.message}`);
+        return Response.json({ 
+          error: 'Transaction rejected: balance update failed',
+          action_id 
+        }, { status: 500 });
       }
 
-      console.log(`[executeSceneTransaction] USER transaction approved: ${action_class} "${action_label}" at ${location_name} — $${numericCost} deducted. Balance: ${currentBalance} → ${newBalance}`);
+      console.log(`[executeSceneTransaction] USER transaction approved + ledger created: ${action_class} "${action_label}" at ${location_name} — $${numericCost} deducted. Balance: ${currentBalance} → ${newBalance}`);
 
       return Response.json({
         success: true,
@@ -149,7 +184,8 @@ Deno.serve(async (req) => {
         amount_charged: numericCost,
         balance_before: currentBalance,
         balance_after: newBalance,
-        payer: 'user'
+        payer: 'user',
+        ledger_verified: true
       });
 
     } else if (payer_type === 'character' && character_id) {
