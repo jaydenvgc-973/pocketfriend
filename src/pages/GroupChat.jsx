@@ -156,7 +156,8 @@ export default function GroupChat() {
       last_message_date: new Date().toISOString(),
     });
 
-    await base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id });
+    // Fire-and-forget — response arrives via real-time subscription; awaiting causes 504 timeout
+    base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id }).catch(() => {});
   };
 
   const handleDeleteImage = async (messageId) => {
