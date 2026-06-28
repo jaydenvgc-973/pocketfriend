@@ -230,8 +230,12 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
       if (matched) {
         const imgs = cdnFilterNoGenerated(matched.image_urls).slice(0, 4);
         if (imgs.length > 0) {
-          console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}"`);
-          return { images: imgs, zoneName: matched.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+          // Only inject the cue when the selected zone IS the canonical zone for that object
+          const cueKw = requiredObjectEntry && matched.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
+            ? requiredObjectEntry.existingObject : null;
+          if (requiredObjectEntry && !cueKw) console.warn(`[resolveZone] Keyword-matched zone "${matched.zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed`);
+          console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}" cue="${cueKw || 'none'}"`);
+          return { images: imgs, zoneName: matched.zone_name, existingObjectCue: cueKw };
         }
       }
     }
@@ -239,8 +243,12 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
 
   if (zones.length === 1) {
     const imgs = cdnFilterNoGenerated(zones[0].image_urls).slice(0, 4);
-    console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}"`);
-    return { images: imgs, zoneName: zones[0].zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+    // Only inject cue when this single zone canonically owns the required object
+    const cue1 = requiredObjectEntry && zones[0].zone_name.toLowerCase().includes(requiredObjectEntry.zone)
+      ? requiredObjectEntry.existingObject : null;
+    if (requiredObjectEntry && !cue1) console.warn(`[resolveZone] Single zone "${zones[0].zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed to prevent fabrication`);
+    console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}" cue="${cue1 || 'none'}"`);
+    return { images: imgs, zoneName: zones[0].zone_name, existingObjectCue: cue1 };
   }
 
   // Multiple zones, no keyword match — prefer a sensible default zone over blindly picking first.
@@ -250,16 +258,21 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
     if (match) {
       const imgs = cdnFilterNoGenerated(match.image_urls).slice(0, 4);
       if (imgs.length > 0) {
-        console.log(`[resolveZone] Multiple zones, no keyword match — using preferred default zone "${match.zone_name}" (${imgs.length} imgs)`);
-        return { images: imgs, zoneName: match.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+        const cuePref = requiredObjectEntry && match.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
+          ? requiredObjectEntry.existingObject : null;
+        console.log(`[resolveZone] Multiple zones, no keyword match — using preferred default zone "${match.zone_name}" cue="${cuePref || 'none'}"`);
+        return { images: imgs, zoneName: match.zone_name, existingObjectCue: cuePref };
       }
     }
   }
 
   const firstZoneWithImages = zones[0];
   const imgs = cdnFilterNoGenerated(firstZoneWithImages.image_urls).slice(0, 4);
-  console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" (${imgs.length} imgs)`);
-  return { images: imgs, zoneName: firstZoneWithImages.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+  const cueFirst = requiredObjectEntry && firstZoneWithImages.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
+    ? requiredObjectEntry.existingObject : null;
+  if (requiredObjectEntry && !cueFirst) console.warn(`[resolveZone] Fallback zone "${firstZoneWithImages.zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed`);
+  console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" cue="${cueFirst || 'none'}"`);
+  return { images: imgs, zoneName: firstZoneWithImages.zone_name, existingObjectCue: cueFirst };
 }
 
 // ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
