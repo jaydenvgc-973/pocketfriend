@@ -1837,7 +1837,11 @@ Deno.serve(async (req) => {
         // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
         // Uses last_nap_time ONLY. If missing, state violation — apply safe
         // correction by setting last_nap_time=now (resets timer, conservative).
-        // Naps do NOT write last_wake_time — nap end is not an actual-sleep wake.
+        // Naps are not full sleep cycles, but nap wake RESETS consecutive-awake
+        // exposure. last_wake_time is written on nap wake because the 19-hour
+        // pass-out calculation reads last_wake_time. Without this write, time
+        // before the nap would still count toward the consecutive-awake period,
+        // violating the rule that a nap is a restorative boundary.
         if (dbIsNapping) {
           if (char.last_nap_time) {
             const napStartMs = new Date(char.last_nap_time).getTime();
@@ -1846,6 +1850,7 @@ Deno.serve(async (req) => {
               const napWakePayload = {
                 resolved_presence_status: 'home',
                 current_activity: '',
+                last_wake_time: nowIso,  // RESTORATIVE BOUNDARY: resets consecutive-awake timer
                 hunger_value:  Math.round(newNeeds.hunger),
                 energy_value:  Math.round(newNeeds.energy),
                 social_value:  Math.round(newNeeds.social),
