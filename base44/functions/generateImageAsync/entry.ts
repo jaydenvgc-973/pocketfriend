@@ -129,27 +129,95 @@ function cdnFilterNoGenerated(urls) {
   return cdnFilter(urls).filter(url => !url.includes('generated_image'));
 }
 
+// ── ACTIVITY → CANONICAL OBJECT MAP ──────────────────────────────────────────
+// Maps activity keywords to (a) the canonical zone that owns the required object,
+// and (b) the object that already exists there. Used by two guards:
+//   1. Zone override guard: reject a wrong zone if the correct zone has the object.
+//   2. Existing-object grounding: inject "use existing [object]" into the prompt.
+const ACTIVITY_OBJECT_MAP = [
+  { keywords: ['desk','working from home','home office','workspace','paperwork','writing','studying','homework','computer at home','laptop at home'], zone: 'office', existingObject: 'desk' },
+  { keywords: ['dining table','dinner table','eating at table','dining room','formal meal','dinner at home','lunch at home'], zone: 'dining room', existingObject: 'dining table' },
+  { keywords: ['sleeping','asleep','in bed','lying in bed','waking up','bedroom','napping in bed','nightstand'], zone: 'bedroom', existingObject: 'bed' },
+  { keywords: ['workout','weights','treadmill','lifting','exercise at home','home gym'], zone: 'gym', existingObject: 'gym equipment' },
+  { keywords: ['gaming','playing video games','game room','console','gaming setup'], zone: 'game room', existingObject: 'gaming setup' },
+  { keywords: ['laundry','washer','dryer','folding clothes'], zone: 'laundry', existingObject: 'washer/dryer' },
+  { keywords: ['couch','sofa','watching tv','on the couch','tv show'], zone: 'living room', existingObject: 'couch/sofa' },
+];
+
 function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
-  const zones = (location.zones || []).filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
+  const allZones = location.zones || [];
+  const zones = allZones.filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
 
   if (zones.length === 0) {
-    return { images: cdnFilterNoGenerated(location.image_urls || []).slice(0, 4), zoneName: null };
+    return { images: cdnFilterNoGenerated(location.image_urls || []).slice(0, 4), zoneName: null, existingObjectCue: null };
+  }
+
+  // ── EXISTING-OBJECT GROUNDING: detect which object the activity requires ─────
+  // This runs BEFORE name/keyword matching so we can validate zone selection.
+  let requiredObjectEntry = null;
+  for (const entry of ACTIVITY_OBJECT_MAP) {
+    if (entry.keywords.some(kw => promptLower.includes(kw))) {
+      requiredObjectEntry = entry;
+      break;
+    }
+  }
+
+  // ── ZONE OVERRIDE GUARD ───────────────────────────────────────────────────────
+  // If the activity requires a specific object that lives in a canonical zone,
+  // verify that the preferred/named zone actually supports that object.
+  // If it doesn't, redirect to the correct canonical zone if one exists.
+  function findCanonicalZoneForObject(entry) {
+    if (!entry) return null;
+    const canonical = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(entry.zone));
+    return canonical || null;
   }
 
   if (preferredZoneName) {
     const preferred = zones.find(z => z.zone_name && z.zone_name.toLowerCase() === preferredZoneName.toLowerCase());
     if (preferred) {
+      // If an object-requiring activity is present, verify this zone can host it
+      if (requiredObjectEntry) {
+        const isCorrectZone = preferred.zone_name.toLowerCase().includes(requiredObjectEntry.zone);
+        if (!isCorrectZone) {
+          // Check if the canonical zone exists — if so, redirect
+          const canonicalZone = findCanonicalZoneForObject(requiredObjectEntry);
+          if (canonicalZone) {
+            const imgs = cdnFilterNoGenerated(canonicalZone.image_urls).slice(0, 4);
+            if (imgs.length > 0) {
+              console.log(`[resolveZone] ⛔ ZONE OVERRIDE: preferred="${preferred.zone_name}" lacks "${requiredObjectEntry.existingObject}" — redirecting to canonical zone "${canonicalZone.zone_name}"`);
+              return { images: imgs, zoneName: canonicalZone.zone_name, existingObjectCue: requiredObjectEntry.existingObject };
+            }
+          }
+        }
+      }
       const imgs = cdnFilterNoGenerated(preferred.image_urls).slice(0, 4);
-      if (imgs.length > 0) { console.log(`[resolveZone] Preferred zone: "${preferred.zone_name}"`); return { images: imgs, zoneName: preferred.zone_name }; }
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] Preferred zone: "${preferred.zone_name}"`);
+        return { images: imgs, zoneName: preferred.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+      }
     }
   }
 
+  // Exact zone-name match in prompt — apply same object guard
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
+      if (requiredObjectEntry) {
+        const isCorrectZone = zone.zone_name.toLowerCase().includes(requiredObjectEntry.zone);
+        if (!isCorrectZone) {
+          const canonicalZone = findCanonicalZoneForObject(requiredObjectEntry);
+          if (canonicalZone) {
+            const imgs = cdnFilterNoGenerated(canonicalZone.image_urls).slice(0, 4);
+            if (imgs.length > 0) {
+              console.log(`[resolveZone] ⛔ EXACT-NAME ZONE OVERRIDE: prompt names "${zone.zone_name}" but activity needs "${requiredObjectEntry.existingObject}" → redirecting to "${canonicalZone.zone_name}"`);
+              return { images: imgs, zoneName: canonicalZone.zone_name, existingObjectCue: requiredObjectEntry.existingObject };
+            }
+          }
+        }
+      }
       const imgs = cdnFilterNoGenerated(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
         console.log(`[resolveZone] Exact zone name match: "${zone.zone_name}"`);
-        return { images: imgs, zoneName: zone.zone_name };
+        return { images: imgs, zoneName: zone.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
       }
     }
   }
@@ -163,7 +231,7 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
         const imgs = cdnFilterNoGenerated(matched.image_urls).slice(0, 4);
         if (imgs.length > 0) {
           console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}"`);
-          return { images: imgs, zoneName: matched.zone_name };
+          return { images: imgs, zoneName: matched.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
         }
       }
     }
@@ -172,12 +240,10 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   if (zones.length === 1) {
     const imgs = cdnFilterNoGenerated(zones[0].image_urls).slice(0, 4);
     console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}"`);
-    return { images: imgs, zoneName: zones[0].zone_name };
+    return { images: imgs, zoneName: zones[0].zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
   }
 
   // Multiple zones, no keyword match — prefer a sensible default zone over blindly picking first.
-  // Priority: living room > bedroom > first zone with images.
-  // This prevents the model always getting "zone 0" which may be an exterior or unused area.
   const preferenceOrder = ['living room', 'bedroom', 'main area', 'main floor', 'lounge'];
   for (const preferred of preferenceOrder) {
     const match = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(preferred));
@@ -185,7 +251,7 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
       const imgs = cdnFilterNoGenerated(match.image_urls).slice(0, 4);
       if (imgs.length > 0) {
         console.log(`[resolveZone] Multiple zones, no keyword match — using preferred default zone "${match.zone_name}" (${imgs.length} imgs)`);
-        return { images: imgs, zoneName: match.zone_name };
+        return { images: imgs, zoneName: match.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
       }
     }
   }
@@ -193,7 +259,7 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const firstZoneWithImages = zones[0];
   const imgs = cdnFilterNoGenerated(firstZoneWithImages.image_urls).slice(0, 4);
   console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" (${imgs.length} imgs)`);
-  return { images: imgs, zoneName: firstZoneWithImages.zone_name };
+  return { images: imgs, zoneName: firstZoneWithImages.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
 }
 
 // ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
@@ -347,7 +413,7 @@ function buildAppearanceLockText(rec, n) {
 // can read structured fields directly (ethnicity, appearance_lock, etc.)
 // charDesc is the assembled text description (for reference blocks and fallback text only).
 
-function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText, userAppearanceLockText }) {
+function buildPrompt({ prompt, charName, charDesc, charRecord, locationName, zoneName, locCategory, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime, subjectType, characterId, userWorldName, userOutfitText, userAppearanceLockText, existingObjectCue }) {
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
@@ -633,11 +699,32 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
   ✅ Every visible background element — walls, floor, furniture, decor — must come from those reference images.
   ✅ If you cannot determine an exact detail from the references, omit or blur it — do NOT invent.
 
-  GENERATION INVALID IF:
+${existingObjectCue ? `  ════════════════════════════════════════════════════════════
+  ⛔ EXISTING OBJECT AUTHORITY — ABSOLUTE RULE
+  ════════════════════════════════════════════════════════════
+  This room already contains a canonical ${existingObjectCue}.
+  The reference images above show the actual ${existingObjectCue} that exists in this space.
+  YOU MUST compose the scene around THE EXISTING ${existingObjectCue.toUpperCase()}.
+
+  FORBIDDEN:
+  ⛔ Do NOT create a second ${existingObjectCue}
+  ⛔ Do NOT replace the existing ${existingObjectCue} with a different one
+  ⛔ Do NOT redesign, resize, or embellish the existing ${existingObjectCue}
+  ⛔ Do NOT describe or render any ${existingObjectCue} that is not visible in the reference images
+
+  REQUIRED:
+  ✅ The character interacts with the ${existingObjectCue} already shown in the reference images
+  ✅ If the camera angle makes framing difficult — move the camera, adjust the character pose, or change distance
+  ✅ Never alter the room to make composition easier
+  ✅ The room is not a blank stage — it is a documented canonical space. Render it as it exists.
+  ════════════════════════════════════════════════════════════
+
+` : ''}  GENERATION INVALID IF:
   🚫 The room does not match the spatial identity visible in the reference images
   🚫 Furniture appears that is not present in the reference images
   🚫 The location looks like a generic or staged home interior
-  ════════════════════════════════════════════════════════════`;
+${existingObjectCue ? `  🚫 A second or replacement ${existingObjectCue} appears when one already exists in the reference images
+` : ''}  ════════════════════════════════════════════════════════════`;
   }
 
   let refImageOverride = promptHasExplicitTime ? `
@@ -1548,10 +1635,12 @@ Deno.serve(async (req) => {
           const promptLower = (prompt || '').toLowerCase();
           // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
           const preferredZone = manualZoneName || message?.generation_context?.zone_name || null;
-          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
+          let resolvedExistingObjectCue = null;
+          const { images, zoneName, existingObjectCue } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
-          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length}`);
+          resolvedExistingObjectCue = existingObjectCue || null;
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length} existing_object_cue="${resolvedExistingObjectCue || 'none'}"`);
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — no env refs.`);
         }
@@ -1970,6 +2059,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         userWorldName,
         userOutfitText: userOutfitText || null,
         userAppearanceLockText: userAppearanceLockText || null,
+        existingObjectCue: resolvedExistingObjectCue || null,
       });
     }
 

@@ -26,15 +26,21 @@ export function getLightingDescriptor(hour) {
  * Builds the zone-lock + camera-flexibility environment block.
  * This replaces the old generic "CRITICAL ENVIRONMENT RULE" string.
  */
-export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc) {
+export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc, existingObjectCue = null) {
   if (!hasRefImages) {
     return `Apply ${lightingDesc} to the scene. Keep the environment consistent with the location type.`;
   }
 
+  const existingObjectBlock = existingObjectCue
+    ? ` EXISTING OBJECT AUTHORITY — CRITICAL: This zone already contains a canonical ${existingObjectCue}. The reference images show the actual ${existingObjectCue} that exists in this space. YOU MUST compose the scene around THE EXISTING ${existingObjectCue.toUpperCase()}. ⛔ Do NOT create a second ${existingObjectCue}. ⛔ Do NOT replace or redesign the existing ${existingObjectCue}. If framing is difficult — move the camera, adjust character pose, or change distance. Do NOT alter the room.`
+    : '';
+
   return `ZONE LOCK — STRICT: The reference images define the EXACT visual identity of the "${activeZoneName}" zone. ` +
+    `These are the canonical rooms currently available to this generation path. Do not invent additional rooms, zones, furniture, or objects unless explicitly confirmed by canonical data. ` +
     `You MUST preserve: the same room layout, same furniture style, same wall colors, same flooring, same architectural features, ` +
     `same zone-defining structures (bar counter, kitchen, bed, couch, hallway, etc.), same windows and doors, same overall atmosphere. ` +
-    `CAMERA DYNAMICS (MANDATORY VARIATION): You MUST use dynamic camera placement and angles. Do NOT reuse the same static viewpoint. ` +
+    existingObjectBlock +
+    ` CAMERA DYNAMICS (MANDATORY VARIATION): You MUST use dynamic camera placement and angles. Do NOT reuse the same static viewpoint. ` +
     `Vary significantly: from the doorway looking in, from beside furniture, from across the room, from a corner angle, over-the-shoulder close-ups, ` +
     `wider environmental shots, seated eye-level, standing eye-level, from different heights, from different distances. ` +
     `Framing must change — sometimes close on character, sometimes wide room view, sometimes partial character in frame. ` +

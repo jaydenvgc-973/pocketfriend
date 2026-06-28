@@ -582,44 +582,58 @@ Deno.serve(async (req) => {
         if (locRecord) {
           const zones = (locRecord.zones || []).filter(z => z.zone_name);
           if (zones.length > 0) {
-            // Build the activity→zone mapping so the LLM knows which room to use
+            // Activity→zone map with the object that canonically exists in each zone
             const ACTIVITY_ZONE_MAP = [
-              { activities: ['desk', 'writing', 'computer', 'homework', 'studying', 'paperwork', 'working from home', 'write', 'read', 'reading'], zone: 'office' },
-              { activities: ['sleeping', 'asleep', 'bed', 'waking', 'nap', 'lying down', 'bedroom'], zone: 'bedroom' },
-              { activities: ['cooking', 'kitchen', 'fridge', 'stove', 'oven', 'microwave', 'making food', 'eating at home'], zone: 'kitchen' },
-              { activities: ['eating', 'dinner', 'dining', 'dining table', 'breakfast', 'lunch'], zone: 'dining room' },
-              { activities: ['couch', 'sofa', 'watching tv', 'tv', 'lounge', 'living room', 'relaxing'], zone: 'living room' },
-              { activities: ['shower', 'bathroom', 'brushing teeth', 'getting ready'], zone: 'bathroom' },
-              { activities: ['workout', 'exercise', 'weights', 'treadmill', 'gym', 'training', 'lifting'], zone: 'gym' },
-              { activities: ['laundry', 'washer', 'dryer', 'clothes'], zone: 'laundry' },
-              { activities: ['backyard', 'patio', 'outside', 'grill', 'garden', 'yard', 'deck'], zone: 'patio' },
-              { activities: ['garage', 'car', 'workshop', 'tools'], zone: 'garage' },
+              { activities: ['desk', 'writing', 'computer', 'homework', 'studying', 'paperwork', 'working from home', 'write', 'reading'], zone: 'office', existingObject: 'desk' },
+              { activities: ['sleeping', 'asleep', 'bed', 'waking', 'nap', 'lying down', 'bedroom'], zone: 'bedroom', existingObject: 'bed' },
+              { activities: ['cooking', 'kitchen', 'fridge', 'stove', 'oven', 'microwave', 'making food', 'eating at home'], zone: 'kitchen', existingObject: 'kitchen counter/stove' },
+              { activities: ['eating', 'dinner', 'dining', 'dining table', 'breakfast', 'lunch'], zone: 'dining room', existingObject: 'dining table' },
+              { activities: ['couch', 'sofa', 'watching tv', 'tv', 'lounge', 'living room', 'relaxing'], zone: 'living room', existingObject: 'couch/sofa' },
+              { activities: ['shower', 'bathroom', 'brushing teeth', 'getting ready'], zone: 'bathroom', existingObject: 'bathroom fixtures' },
+              { activities: ['workout', 'exercise', 'weights', 'treadmill', 'gym', 'training', 'lifting'], zone: 'gym', existingObject: 'gym equipment' },
+              { activities: ['laundry', 'washer', 'dryer', 'clothes'], zone: 'laundry', existingObject: 'washer/dryer' },
+              { activities: ['backyard', 'patio', 'outside', 'grill', 'garden', 'yard', 'deck'], zone: 'patio', existingObject: 'patio furniture' },
+              { activities: ['garage', 'car', 'workshop', 'tools'], zone: 'garage', existingObject: 'workshop tools' },
             ];
             const zoneNames = zones.map(z => z.zone_name);
+
+            // Build zone descriptions including zone description and any known object cues
             const zoneDescriptions = zones.map(z => {
-              const desc = z.zone_description ? ` — ${z.zone_description.substring(0, 100)}` : '';
-              return `  • ${z.zone_name}${desc}`;
+              const desc = z.zone_description ? ` — ${z.zone_description.substring(0, 120)}` : '';
+              // Find if this zone has a known canonical object
+              const objectEntry = ACTIVITY_ZONE_MAP.find(m =>
+                z.zone_name.toLowerCase().includes(m.zone) || m.zone.includes(z.zone_name.toLowerCase())
+              );
+              const objectCue = objectEntry ? ` [canonical object: ${objectEntry.existingObject}]` : '';
+              return `  • ${z.zone_name}${desc}${objectCue}`;
             }).join('\n');
 
-            // Build activity→correct-room mapping for rooms that exist
+            // Location description as supplementary grounding
+            const locationDescCue = locRecord.description
+              ? `\nLOCATION DESCRIPTION: ${locRecord.description.substring(0, 200)}`
+              : '';
+
+            // Build activity→correct-room mapping with object grounding
             const activityMappings = [];
+            const objectGroundingRules = [];
             for (const mapping of ACTIVITY_ZONE_MAP) {
               const matchingZone = zoneNames.find(zn =>
                 zn.toLowerCase().includes(mapping.zone) || mapping.zone.includes(zn.toLowerCase())
               );
               if (matchingZone) {
                 activityMappings.push(`  • ${mapping.activities.slice(0, 4).join(' / ')} → use the "${matchingZone}" zone`);
+                objectGroundingRules.push(`  • "${matchingZone}" already has a canonical ${mapping.existingObject}. Do NOT create another one. Use the existing ${mapping.existingObject}.`);
               }
             }
 
             canonicalZoneBlock = `
 ════════════════════════════════════
 CANONICAL ROOM AUTHORITY — "${resolvedLocationName}"
-This location has the following rooms/zones. These are the ONLY rooms that exist here.
-The narrative MUST place activities in the correct existing room.
+These are the canonical rooms currently available to this generation path. Do not invent additional rooms, zones, furniture, or objects unless explicitly confirmed by canonical data.
 ════════════════════════════════════
 ROOMS THAT EXIST AT THIS LOCATION:
 ${zoneDescriptions}
+${locationDescCue}
 
 EXISTING ROOMS FIRST — MANDATORY:
 Before placing a character anywhere, check this list.
@@ -627,19 +641,31 @@ If the activity requires a desk → use the room that has one (Office, if it exi
 If the activity requires a bed → use the Bedroom.
 If the activity requires cooking equipment → use the Kitchen.
 If the activity requires exercise equipment → use the Home Gym, if one exists.
+If the activity requires a dining table → use the Dining Room, if one exists.
 
 ACTIVITY → ROOM ROUTING (use canonical rooms — never invent):
 ${activityMappings.length > 0 ? activityMappings.join('\n') : '  (use the zone list above to determine correct room for any activity)'}
 
+EXISTING OBJECTS FIRST — CRITICAL:
+Once the correct room is selected, the canonical objects already in that room are authoritative.
+Do NOT create, duplicate, replace, or redesign furniture that already exists in the selected room.
+${objectGroundingRules.length > 0 ? objectGroundingRules.join('\n') : ''}
+
+THE SELECTED ROOM IS NOT A BLANK STAGE:
+It is an existing canonical space. Compose the character around existing objects.
+If framing or description is difficult — adjust the camera angle, pose, or character position.
+Do NOT alter the room. Do NOT add new furniture. Do NOT redesign what is already there.
+
 FORBIDDEN:
 ✗ Placing a desk in the Living Room when an Office exists
-✗ Placing a dining table in the Kitchen when a Dining Room exists
+✗ Placing or generating a dining table in any room that already has one
 ✗ Placing gym equipment anywhere when a Home Gym or Gym zone exists
 ✗ Inventing a room not on the list above
 ✗ Describing furniture that belongs to one zone while the character is in a different zone
+✗ Fabricating furniture on a factory floor, yard, or work area when a proper sleeping/rest room exists
 ✗ Treating this location as a generic home — it is a specific, documented space
 
-CANONICAL LAW: The rooms listed above are the authoritative world data.
+CANONICAL LAW: The rooms and objects listed above are authoritative world data.
 Use them. Render them. Do not redesign them.
 ════════════════════════════════════`;
           } else if (locRecord.description) {

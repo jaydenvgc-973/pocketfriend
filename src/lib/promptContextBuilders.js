@@ -388,7 +388,21 @@ Do NOT default to "living room zone". Use the zone that logically contains the a
 The zone name you write is used DIRECTLY to select which reference photos of that room are loaded.
 Writing the wrong zone name means the WRONG room's photos are used.
 A desk-based activity labeled "living room zone" will load LIVING ROOM photos — not the office photos.
-The character's home has multiple zones. Use the correct one for the activity."`;
+The character's home has multiple zones. Use the correct one for the activity.
+
+EXISTING OBJECTS FIRST — MANDATORY:
+Once the correct zone is selected, that zone already contains canonical furniture and objects.
+DO NOT invent, duplicate, replace, or redesign furniture that already exists in that zone.
+  • Office zone → already has a desk. Do NOT create another desk or move the activity to another room.
+  • Dining Room zone → already has a dining table. Do NOT generate another table.
+  • Bedroom zone → already has a bed. Do NOT fabricate a bed in another room.
+  • Gym/Home Gym zone → already has gym equipment. Do NOT add duplicate equipment.
+
+THE SELECTED ZONE IS NOT A BLANK STAGE:
+It is a documented canonical space. Compose the character around objects already defined for that zone.
+If framing or description is difficult — adjust camera angle, pose, or character placement. Do NOT alter the room.
+
+These are the canonical rooms currently available to this generation path. Do not invent additional rooms, zones, furniture, or objects unless explicitly confirmed by canonical data."`;
 }
 
 // ── SOAP OPERA LIFE CONTEXT BUILDER ──────────────────────────────────────────
