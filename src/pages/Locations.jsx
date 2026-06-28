@@ -347,7 +347,21 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
     setUploading(true);
     const uploaded = [];
     for (const file of toUpload) {
-      const res = await base44.integrations.Core.UploadFile({ file });
+      let res = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          res = await base44.integrations.Core.UploadFile({ file });
+          break;
+        } catch (err) {
+          const status = err?.response?.status || err?.status;
+          if ((status === 502 || status === 503 || status === 504) && attempt < 2) {
+            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+          } else {
+            console.error('[ZoneEditor] Upload failed:', err?.message);
+            break;
+          }
+        }
+      }
       if (res?.file_url) uploaded.push(res.file_url);
     }
     onUpdateImages([...(zone.image_urls || []), ...uploaded]);
