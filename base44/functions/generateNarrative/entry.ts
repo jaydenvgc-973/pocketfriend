@@ -563,6 +563,95 @@ Deno.serve(async (req) => {
     // ── Step 4: Resolve current location (from canonical character record) ────
     const resolvedLocationName = char.resolved_current_location_name || null;
     const resolvedPresenceStatus = char.resolved_presence_status || null;
+    const resolvedLocationId = char.resolved_current_location_id || char.current_home_location_id || null;
+
+    // ── CANONICAL ROOM/ZONE AUTHORITY — fetch the actual LocationReference record ──
+    // This is the fix for room fabrication: the narrative LLM previously received only
+    // the location NAME (a string), which gives it no information about what rooms
+    // canonically exist inside that location. Without this, the LLM invents rooms
+    // from generic assumptions (e.g. placing a desk in the living room when an Office
+    // zone already exists). We now load the canonical zone list and inject it as an
+    // authoritative constraint — the narrative must use existing rooms, not invent them.
+    let canonicalZoneBlock = '';
+    if (resolvedLocationId) {
+      try {
+        const locList = await base44.asServiceRole.entities.LocationReference.filter(
+          { id: resolvedLocationId }, null, 1
+        ).catch(() => []);
+        const locRecord = locList?.[0] || null;
+        if (locRecord) {
+          const zones = (locRecord.zones || []).filter(z => z.zone_name);
+          if (zones.length > 0) {
+            // Build the activity→zone mapping so the LLM knows which room to use
+            const ACTIVITY_ZONE_MAP = [
+              { activities: ['desk', 'writing', 'computer', 'homework', 'studying', 'paperwork', 'working from home', 'write', 'read', 'reading'], zone: 'office' },
+              { activities: ['sleeping', 'asleep', 'bed', 'waking', 'nap', 'lying down', 'bedroom'], zone: 'bedroom' },
+              { activities: ['cooking', 'kitchen', 'fridge', 'stove', 'oven', 'microwave', 'making food', 'eating at home'], zone: 'kitchen' },
+              { activities: ['eating', 'dinner', 'dining', 'dining table', 'breakfast', 'lunch'], zone: 'dining room' },
+              { activities: ['couch', 'sofa', 'watching tv', 'tv', 'lounge', 'living room', 'relaxing'], zone: 'living room' },
+              { activities: ['shower', 'bathroom', 'brushing teeth', 'getting ready'], zone: 'bathroom' },
+              { activities: ['workout', 'exercise', 'weights', 'treadmill', 'gym', 'training', 'lifting'], zone: 'gym' },
+              { activities: ['laundry', 'washer', 'dryer', 'clothes'], zone: 'laundry' },
+              { activities: ['backyard', 'patio', 'outside', 'grill', 'garden', 'yard', 'deck'], zone: 'patio' },
+              { activities: ['garage', 'car', 'workshop', 'tools'], zone: 'garage' },
+            ];
+            const zoneNames = zones.map(z => z.zone_name);
+            const zoneDescriptions = zones.map(z => {
+              const desc = z.zone_description ? ` — ${z.zone_description.substring(0, 100)}` : '';
+              return `  • ${z.zone_name}${desc}`;
+            }).join('\n');
+
+            // Build activity→correct-room mapping for rooms that exist
+            const activityMappings = [];
+            for (const mapping of ACTIVITY_ZONE_MAP) {
+              const matchingZone = zoneNames.find(zn =>
+                zn.toLowerCase().includes(mapping.zone) || mapping.zone.includes(zn.toLowerCase())
+              );
+              if (matchingZone) {
+                activityMappings.push(`  • ${mapping.activities.slice(0, 4).join(' / ')} → use the "${matchingZone}" zone`);
+              }
+            }
+
+            canonicalZoneBlock = `
+════════════════════════════════════
+CANONICAL ROOM AUTHORITY — "${resolvedLocationName}"
+This location has the following rooms/zones. These are the ONLY rooms that exist here.
+The narrative MUST place activities in the correct existing room.
+════════════════════════════════════
+ROOMS THAT EXIST AT THIS LOCATION:
+${zoneDescriptions}
+
+EXISTING ROOMS FIRST — MANDATORY:
+Before placing a character anywhere, check this list.
+If the activity requires a desk → use the room that has one (Office, if it exists).
+If the activity requires a bed → use the Bedroom.
+If the activity requires cooking equipment → use the Kitchen.
+If the activity requires exercise equipment → use the Home Gym, if one exists.
+
+ACTIVITY → ROOM ROUTING (use canonical rooms — never invent):
+${activityMappings.length > 0 ? activityMappings.join('\n') : '  (use the zone list above to determine correct room for any activity)'}
+
+FORBIDDEN:
+✗ Placing a desk in the Living Room when an Office exists
+✗ Placing a dining table in the Kitchen when a Dining Room exists
+✗ Placing gym equipment anywhere when a Home Gym or Gym zone exists
+✗ Inventing a room not on the list above
+✗ Describing furniture that belongs to one zone while the character is in a different zone
+✗ Treating this location as a generic home — it is a specific, documented space
+
+CANONICAL LAW: The rooms listed above are the authoritative world data.
+Use them. Render them. Do not redesign them.
+════════════════════════════════════`;
+          } else if (locRecord.description) {
+            // No zones defined — inject location description as grounding context
+            canonicalZoneBlock = `\nLOCATION DESCRIPTION (use as environment grounding):\n${locRecord.description.substring(0, 300)}\n`;
+          }
+        }
+      } catch (locErr) {
+        // Non-blocking — narrative still generates, just without zone enforcement
+        console.warn(`[generateNarrative] Zone lookup failed (non-blocking): ${locErr.message}`);
+      }
+    }
 
     const locationContext = resolvedLocationName
       ? `Current location: ${resolvedLocationName}`
@@ -690,6 +779,7 @@ ${ageBlock}${locationContext}
 ${sleepContext}
 ${presenceContext ? presenceContext + '\n' : ''}${activityContext ? activityContext + '\n' : ''}Current time: ${timeStr} (${timeOfDayDesc})
 ════════════════════════════════════
+${canonicalZoneBlock}
 ${temporal.block}
 ${needsBlock}
 ${sceneReactionBlock}
