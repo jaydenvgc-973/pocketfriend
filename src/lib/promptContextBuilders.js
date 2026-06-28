@@ -369,7 +369,26 @@ The image system has REFERENCE PHOTOS of the character's actual room. It will us
 Your job is to describe: (1) the character, (2) the action/pose, (3) the camera position, (4) the zone name only.
 The reference system handles all room details. You must NOT preempt it with invented descriptions.
 
-FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [zone name only — e.g. "living room zone" or "bedroom zone" — NO furniture descriptions]."`;
+FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [zone name only — NO furniture descriptions].
+
+ZONE NAME SELECTION — CRITICAL:
+Choose the zone name that matches WHERE THE ACTION IS HAPPENING in the character's current location.
+Do NOT default to "living room zone". Use the zone that logically contains the activity:
+  • desk / writing / computer / studying / working at home / homework / paperwork → "office zone"
+  • sleeping / waking up / in bed / lying down / napping → "bedroom zone"
+  • cooking / fridge / stove / oven / making food / kitchen → "kitchen zone"
+  • eating at table / dinner / dining → "dining room zone"
+  • watching TV / couch / sofa / relaxing → "living room zone"
+  • shower / brushing teeth / getting ready / bathroom → "bathroom zone"
+  • workout / weights / treadmill / exercise → "gym zone" or "home gym zone"
+  • laundry / washer / dryer → "laundry zone"
+  • outside at home / grill / garden / yard → "backyard zone" or "patio zone"
+  • hallway / entryway / front door / foyer → "hallway zone"
+
+The zone name you write is used DIRECTLY to select which reference photos of that room are loaded.
+Writing the wrong zone name means the WRONG room's photos are used.
+A desk-based activity labeled "living room zone" will load LIVING ROOM photos — not the office photos.
+The character's home has multiple zones. Use the correct one for the activity."`;
 }
 
 // ── SOAP OPERA LIFE CONTEXT BUILDER ──────────────────────────────────────────
