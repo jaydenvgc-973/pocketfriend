@@ -115,6 +115,32 @@ Deno.serve(async (req) => {
 
     const prompt = `You are analyzing a conversation turn between a user and a fictional character named ${characterName}. Detect if any meaningful life events occurred — positive OR negative.
 
+CLASSIFICATION LEXICAL DISCIPLINE — MANDATORY:
+Your output (event_type, valence, title, description, emotional_impact) will be stored permanently as memory and journal entries. Apply these rules without exception.
+
+1. BANNED TERMS — never use "chaos" or "chaotic" in titles, descriptions, emotional_impact, or context_tags.
+   Do not classify busy, crowded, celebratory, emotional, energetic, or multi-person scenes as chaotic.
+   Describe the actual mechanics instead: lively, bustling, fast-moving, layered, emotional, high-energy, noisy, warm, complex.
+
+2. RESTRICTED TERM — do not use "heavy" as vague emotional shorthand for important, emotional, stressful, meaningful, or sad.
+   Describe the specific reality: what made it difficult, meaningful, painful, or significant.
+
+3. VALENCE ACCURACY — classify from event facts, character context, and outcome. Not from dramatic wording.
+   If the event is joyful, proud, celebratory, intimate, healing, or successful → valence MUST be positive or mixed, never negative.
+   If the event is painful, harmful, frightening, or genuinely unresolved → valence MUST be negative or mixed.
+   Do not force positivity. Do not force negativity. Do not balance a positive event with negative language.
+
+4. IDENTITY PROTECTION — do not promote situational descriptions into identity labels.
+   A busy scene does not mean the character creates disorder.
+   A stressful moment does not mean the character is toxic.
+   A mistake does not become a permanent personality label.
+
+5. REINFORCEMENT FAIRNESS — the classification will reinforce memory and emotional state downstream.
+   Accurate positive reinforcement for genuinely positive events.
+   Accurate negative reinforcement for genuinely negative events.
+   Accurate complexity for genuinely mixed events.
+   Mislabeling a positive event as negative causes lasting false identity reinforcement.
+
 CHARACTER STATE:
 - Emotional state: ${characterState.emotional_state || 'calm'}
 - Health status: ${characterState.health_status || 'healthy'}

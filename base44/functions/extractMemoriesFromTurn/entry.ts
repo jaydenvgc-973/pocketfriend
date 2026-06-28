@@ -161,6 +161,30 @@ Return JSON only.`,
       const extraction = await base44.integrations.Core.InvokeLLM({
         prompt: `You are analyzing a real interaction that ${playingAsChar.name} just had with ${targetChar.name}.
 
+EXTRACTION LEXICAL DISCIPLINE — MANDATORY:
+Your output will be stored permanently as memory, journal entries, and emotional state. Apply these rules without exception.
+
+1. BANNED TERMS — never use "chaos" or "chaotic" in life_journal_entry, emotional_takeaway, relational_takeaway, factual_takeaway, or unresolved_thread.
+   Do not describe busy, emotional, celebratory, complex, or multi-person exchanges as chaotic.
+   Describe the actual mechanics instead: lively, layered, emotional, fast-moving, warm, complex, intense.
+
+2. RESTRICTED TERM — do not use "heavy" as vague emotional shorthand for important, emotional, stressful, or meaningful.
+   Describe what specifically made it difficult, meaningful, or significant.
+
+3. VALENCE ACCURACY — extract from what actually happened, not from dramatic wording.
+   If the interaction was joyful, affectionate, supportive, or celebratory → relationship_shift must be positive or neutral, not negative.
+   If the interaction was harmful, conflicted, or genuinely unresolved → relationship_shift may be negative.
+   Do not balance a positive interaction with negative framing. Do not inject negativity into a warm exchange.
+
+4. IDENTITY PROTECTION — do not promote a single interaction into a character identity claim.
+   One difficult conversation does not make someone toxic.
+   One busy or emotionally layered exchange does not mean the relationship is troubled.
+
+5. EMOTIONAL STATE ACCURACY — new_emotional_state must reflect what the character actually experienced in this exchange.
+   A supportive, loving, or celebratory interaction should not produce anxious, sad, or stressed states unless the character's specific response clearly supports it.
+
+
+
 ${playingAsChar.name}'s personality: ${playingAsChar.personality_summary || 'unknown'}
 ${playingAsChar.name}'s emotional state going in: ${playingAsChar.emotional_state || 'calm'}
 
