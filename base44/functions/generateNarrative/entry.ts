@@ -694,6 +694,97 @@ ${temporal.block}
 ${needsBlock}
 ${sceneReactionBlock}
 ${interactionLibraries}
+
+════════════════════════════════════
+LEXICAL DISCIPLINE AND MEANING PRESERVATION — MANDATORY
+════════════════════════════════════
+
+The objective is to faithfully represent the character's lived experience using precise, downstream-safe language.
+
+Generated narrative text may become memory, journal history, emotional context, activity context, image-prompt context, or future character grounding. Therefore, recurring abstract labels must not distort the event or become false identity reinforcement.
+
+1. BANNED TERMS
+Do not use: "chaos" or "chaotic."
+
+These terms are banned in generated narrative, memory-facing summaries, emotional notes, scene summaries, journal text, chat descriptions, and image-prompt descriptions.
+
+Do not describe positive, busy, crowded, celebratory, emotional, complex, energetic, or multi-person scenes with these terms.
+
+Instead, describe the actual mechanics of the scene in concrete language:
+- who was present
+- what was happening
+- what was overlapping
+- what changed
+- what the character noticed
+- how the character responded
+
+Use specific descriptors only when accurate, such as lively, bustling, crowded, fast-moving, high-energy, layered, noisy, warm, emotional, tense, disorganized, or unstable.
+
+Do not replace one banned crutch with another repeated crutch.
+
+2. RESTRICTED CRUTCH
+"Heavy" is restricted as emotional shorthand.
+
+Do not use "heavy" to vaguely mean important, emotional, stressful, meaningful, complicated, sad, or serious.
+
+Literal physical use is allowed only when it means actual weight or mass.
+
+For emotional or narrative significance, describe the specific reality instead:
+- what made it meaningful
+- what made it difficult
+- what made it serious
+- what made it joyful
+- what made it painful
+- what made it worth remembering
+
+3. MEANING PRESERVATION
+Do not overwrite the accurate meaning of an event with vague negative language.
+
+If an event is joyful, proud, loving, intimate, successful, healing, funny, exciting, or growth-producing, preserve that meaning unless the grounded character context clearly changes it.
+
+If an event is painful, disappointing, frightening, harmful, exhausting, tense, or unresolved, preserve that meaning when the grounded context supports it.
+
+Do not force positivity.
+Do not force negativity.
+Do not "balance" a positive event by injecting destabilizing language.
+Do not let unrelated past negativity bleed into a new positive event unless canonically relevant.
+
+4. IDENTITY PROTECTION
+Do not promote situational descriptors into identity labels.
+
+A busy event does not mean the character creates disorder.
+A difficult moment does not mean the character is toxic.
+A painful experience does not mean the memory is negative.
+A mistake does not become a permanent personality trait unless canon and repeated demonstrated behavior support it.
+
+Do not write recurring identity claims such as "he creates chaos," "she is chaotic," or equivalent labels unless explicitly supported by canonical character data.
+
+5. GROUNDED EMOTIONAL COLORING
+Emotional tone must emerge from the full grounded context:
+- character type
+- traits
+- quirks
+- goals
+- motivations
+- relationships
+- current circumstances
+- prior memory
+- event facts
+- outcome
+
+Narrative must describe what happened and how the character experienced it. It must not prescribe a false emotional meaning through vague labels.
+
+6. REINFORCEMENT FAIRNESS
+Characters are designed to learn from repeated narrative and memory context.
+
+Do not over-reinforce negative interpretations by mislabeling positive or meaningful experiences with destabilizing language.
+
+Positive experiences should preserve positive reinforcement.
+Negative experiences should preserve negative reinforcement when accurate.
+Complex experiences should preserve their actual complexity.
+
+The goal is accurate learning, not forced optimism or forced negativity.
+════════════════════════════════════
 ${homeGuardBlock}
 ${repetitionGuardBlock}
 
