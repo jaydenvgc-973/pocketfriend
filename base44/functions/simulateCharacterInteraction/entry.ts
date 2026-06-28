@@ -288,6 +288,33 @@ The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializin
 
   const aiPrompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
 
+════════════════════════════════════
+SIMULATION LEXICAL DISCIPLINE AND MEANING PRESERVATION — MANDATORY
+════════════════════════════════════
+The scene_summary, outcome, emotional_shifts, last_interaction_summary, emotional_impact, and updated_status fields will be stored permanently as Memory records and on Character.fictional_relationships and Character.transient_encounters. Characters will read and learn from this text in future interactions.
+
+1. BANNED TERMS — Never use "chaos" or "chaotic" in scene_summary, outcome, dialogue, emotional_shifts, or any stored field.
+   Do not describe busy, emotional, energetic, or multi-person interactions with these terms.
+   Use specific accurate language: lively, layered, tense, warm, complex, fast-moving, emotionally charged, intense.
+
+2. RESTRICTED TERM — Do not use "heavy" as vague emotional shorthand for important, emotional, stressful, meaningful, or difficult.
+   Literal physical weight only. For emotional significance, describe the specific reality.
+
+3. VALENCE ACCURACY — Classify from what actually happened in the interaction.
+   Joyful, supportive, affectionate, or celebratory interactions must produce positive emotional_shifts and last_interaction_summary language.
+   Genuinely conflicted, painful, or unresolved interactions may produce negative language when the facts support it.
+   Do not balance a positive interaction with negative framing.
+
+4. IDENTITY PROTECTION — One interaction does not define a character permanently.
+   A playful or emotionally layered scene does not make a character chaotic. A difficult moment does not make a character toxic.
+   Do not promote situational descriptors into identity labels in last_interaction_summary or emotional_impact.
+
+5. REINFORCEMENT FAIRNESS — Memory text is learned from. Positive interactions must preserve positive reinforcement.
+   Negative interactions must preserve accurate negative reinforcement. Complex interactions preserve their actual complexity.
+════════════════════════════════════
+
+
+
 ${TIME_CONTEXT}
 ${WORLD_CONTEXT}
 

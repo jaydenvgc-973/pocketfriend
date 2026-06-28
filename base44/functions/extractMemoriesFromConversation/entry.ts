@@ -59,7 +59,31 @@ Deno.serve(async (req) => {
     // Build conversation summary for LLM
     const messageSummary = messages.map(m => `${m.sender_type === 'user' ? 'User' : character.name}: ${m.content}`).join('\n');
 
-    const extractionPrompt = `You are analyzing a conversation for ${character.name}, a character with the following traits:
+    const extractionPrompt = `You are analyzing a conversation for ${character.name}, a character with the following traits.
+
+MEMORY EXTRACTION LEXICAL DISCIPLINE — MANDATORY:
+The title, description, emotional_impact, and lesson_learned fields you produce will be stored permanently as Memory records. Characters will read and learn from this text in future interactions.
+
+1. BANNED TERMS — Never use "chaos" or "chaotic" in any output field.
+   Do not describe busy, complex, emotional, or multi-person exchanges as chaotic.
+   Describe the actual mechanics instead: lively, layered, emotional, fast-moving, warm, complex, intense.
+
+2. RESTRICTED TERM — Do not use "heavy" as vague emotional shorthand for important, emotional, stressful, or meaningful.
+   Literal physical weight only. For emotional significance, describe the specific reality.
+
+3. VALENCE ACCURACY — Derive meaning from what actually happened, not from dramatic language.
+   Joyful, affectionate, supportive, celebratory exchanges must produce positive or neutral emotional_impact.
+   Genuinely painful, conflicted, or unresolved exchanges may produce negative emotional_impact when the facts support it.
+   Do not inject negativity into positive interactions.
+
+4. IDENTITY PROTECTION — A single difficult conversation does not make a character toxic.
+   A busy or emotionally layered exchange does not mean the relationship is troubled.
+   Do not promote situational descriptors into identity labels.
+
+5. REINFORCEMENT FAIRNESS — Memories are learned from. Positive experiences should preserve positive reinforcement.
+   Negative experiences should preserve accurate negative reinforcement. Complex experiences preserve their complexity.
+
+You are analyzing a conversation for ${character.name}, a character with the following traits:
 - Personality: ${character.personality_summary}
 - Traits: ${character.personality_traits?.join(', ') || 'N/A'}
 - Emotional state: ${character.emotional_state}

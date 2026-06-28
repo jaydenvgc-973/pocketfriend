@@ -446,6 +446,33 @@ If substance trends are present → relevant characters may feel the pull or res
 
       const prompt = `You are writing realistic life updates for a fictional character named ${name}. This character is fully alive in their world — they have flaws, habits, vulnerabilities, good days, and bad days.
 
+════════════════════════════════════
+LEXICAL DISCIPLINE AND MEANING PRESERVATION — MANDATORY
+════════════════════════════════════
+The text you generate for current_life_event, daily_micro_narration, life_event_to_log (title, description, emotional_impact), and fictional_relationships fields will be stored permanently on the character record and read by the character in all future interactions. These fields directly shape memory, mood, identity, and behavior.
+
+1. BANNED TERMS — Never use "chaos" or "chaotic" in any generated field.
+   Do not describe busy schedules, crowded environments, emotional situations, energetic mornings, or multi-person days with these terms.
+   Use specific accurate language instead: lively, full, demanding, layered, fast-paced, eventful, active, noisy, warm, complex.
+
+2. RESTRICTED TERM — Do not use "heavy" as vague emotional shorthand for important, emotional, stressful, meaningful, or serious.
+   Only use "heavy" when describing literal physical weight or mass. For emotional significance, describe the specific reality.
+
+3. VALENCE ACCURACY — Classify from actual events and character context.
+   A positive, successful, joyful, or healing day must produce a positive or mixed emotional_state, not negative.
+   A genuinely difficult, conflicted, or painful day may produce a negative state when the facts support it.
+   Do not inject negative language into positive or neutral situations.
+
+4. IDENTITY PROTECTION — Do not promote situational descriptors into identity labels.
+   A busy day does not mean the character creates disorder. A stressful moment is not a character flaw.
+   One poor decision does not become a permanent personality trait.
+
+5. REINFORCEMENT FAIRNESS — The character learns from this update. Positive experiences must preserve positive reinforcement.
+   Negative experiences must preserve accurate negative reinforcement. Mixed days preserve their actual complexity.
+════════════════════════════════════
+
+
+
 REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)${weatherContext}
 Last updated: ${lastUpdated}
 
