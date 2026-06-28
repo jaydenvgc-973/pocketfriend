@@ -40,7 +40,7 @@ import { extractSceneItemLabel } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
-import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
+import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
@@ -898,7 +898,8 @@ export default function Scene() {
     const activeZoneName = currentZoneForAction?.zone_name || "this area";
     // isGlobal must NEVER be true for residential locations — home scenes always use the strict resident path
     const isGlobal = !isHomeLocation && location.location_type === "global";
-    const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc);
+    const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
+    const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
 
     let prompt;
     if (isHomeLocation) {

@@ -62,6 +62,27 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc,
 }
 
 /**
+ * Derives the canonical existing-object cue for a given zone name.
+ * Returns a short noun phrase (e.g. "desk", "dining table") or null.
+ * Used to inject the EXISTING OBJECT AUTHORITY block into zone-lock prompts.
+ *
+ * @param {string} zoneName - Active zone name (e.g. "Office Zone", "Dining Room")
+ * @returns {string|null}
+ */
+export function resolveExistingObjectCueForZone(zoneName) {
+  if (!zoneName) return null;
+  const lower = zoneName.toLowerCase();
+  if (lower.includes('office') || lower.includes('study') || lower.includes('den')) return 'desk';
+  if (lower.includes('dining')) return 'dining table';
+  if (lower.includes('bedroom') || lower.includes('bed room') || lower.includes('master')) return 'bed';
+  if (lower.includes('kitchen')) return 'kitchen counter and stove';
+  if (lower.includes('gym') || lower.includes('fitness') || lower.includes('workout')) return 'gym equipment';
+  if (lower.includes('laundry')) return 'washer and dryer';
+  if (lower.includes('living') || lower.includes('lounge')) return 'couch/sofa';
+  return null;
+}
+
+/**
  * Builds the action-override environment note (shorter, used when an action triggers regen).
  */
 export function buildActionEnvNote(activeZoneName, hasRefImages, lightingDesc) {
