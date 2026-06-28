@@ -90,20 +90,24 @@ Deno.serve(async (req) => {
         event_type: 'recovery_event',
         valence: 'positive',
         severity: 'minor',
-        title: 'Woke from nap',
-        description: `${charName} woke from a user-directed nap. Consecutive-awake timer reset to now.${hadRecentPassOut ? ' Nap reduced post-pass-out embarrassment and exhaustion.' : ''}`,
-        emotional_impact: 'rested, refreshed',
+        title: hadRecentPassOut ? 'Woke from nap feeling more in control' : 'Woke from a nap',
+        description: hadRecentPassOut
+          ? `${charName} woke from a nap feeling calmer and less exhausted. The rest helped ease some of the physical and emotional weight from earlier.`
+          : `${charName} woke from a nap feeling more rested.`,
+        emotional_impact: hadRecentPassOut ? 'calmer, less exhausted, more in control' : 'rested, refreshed',
         triggered_by: 'user_message',
         timestamp: wakeTime,
-        context_tags: ['nap_wake', 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],
+        context_tags: ['nap_wake', 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],  // backend metadata
       }).catch(() => {});
 
       // ── RULE 10: Record nap wake in CharacterMemory (Life Journal) ────
       await base44.entities.CharacterMemory.create({
         character_id: characterId,
         memory_type: 'event',
-        memory_text: `${charName} took a 2-hour nap and woke up feeling more rested. The nap reset their consecutive-awake exposure.${hadRecentPassOut ? ' The rest helped ease some of the embarrassment and exhaustion from passing out earlier.' : ''}`,
-        memory_summary: `Woke from 2-hour nap — awake timer reset.`,
+        memory_text: hadRecentPassOut
+          ? `${charName} took a nap and woke up feeling calmer and less exhausted. The rest helped ease some of the physical weight from earlier. Felt more in control after getting some sleep.`
+          : `${charName} took a two-hour nap and woke up feeling more rested.`,
+        memory_summary: hadRecentPassOut ? `Napped and woke feeling calmer, less exhausted.` : `Took a two-hour nap, woke feeling rested.`,
         importance_score: hadRecentPassOut ? 6 : 3,
         permanence: 'short_term',
         related_character_id: characterId,
@@ -133,7 +137,7 @@ Deno.serve(async (req) => {
     // the 2-hour auto-wake (rule 7/8). A user-set alarm earlier will override this.
     await base44.entities.Character.update(characterId, {
       resolved_presence_status: 'napping',
-      current_activity:         `napping — user-directed (${napDurationMinutes}min)`,
+      current_activity:         `napping (${napDurationMinutes}min)`,
       last_nap_time:            napStart.toISOString(),  // authoritative nap-start timer
       last_need_simulated_at:   napStart.toISOString(),
       // Stay lock: prevent other automations from overriding this user-directed nap
@@ -157,20 +161,20 @@ Deno.serve(async (req) => {
       event_type: 'recovery_event',
       valence: 'positive',
       severity: 'minor',
-      title: 'Started a nap',
-      description: `${charName} started a user-directed 2-hour nap. They are in a true napping state and will not be awake until the nap completes or an alarm fires.`,
+      title: 'Decided to get some rest',
+      description: `${charName} decided to take a nap and get some rest. They will wake up in about two hours.`,
       emotional_impact: 'resting, recovering',
       triggered_by: 'user_message',
       timestamp: napStart.toISOString(),
-      context_tags: ['nap_start', 'user_directed_nap'],
+      context_tags: ['nap_start', 'user_directed_nap'],  // backend metadata — not character-facing
     }).catch(() => {});
 
     // ── RULE 6: Write nap start to CharacterMemory (Life Journal) ─────────
     await base44.entities.CharacterMemory.create({
       character_id: characterId,
       memory_type: 'event',
-      memory_text: `${charName} took a 2-hour nap (user-directed). They rested and will wake up refreshed.`,
-      memory_summary: `Started a 2-hour user-directed nap.`,
+      memory_text: `${charName} decided to take a nap and get some rest. They slept for a couple of hours and woke up feeling more refreshed.`,
+      memory_summary: `Took a two-hour nap to rest.`,
       importance_score: 3,
       permanence: 'short_term',
       related_character_id: characterId,
