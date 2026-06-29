@@ -101,7 +101,11 @@ export function getCharactersForSettingsList(allCharacters, currentUserId, curre
     'unknown': 5,
   };
   
-  const userCharacters = scoped.filter(c => (c._resolvedType === 'active_created_character' || c._resolvedType === 'npc_fictitious' || c._resolvedType === 'npc_family_member') && !c.exclude_from_roster);
+  const userCharacters = scoped.filter(c => 
+    c._resolvedType === 'active_created_character' || 
+    (c._resolvedType === 'npc_fictitious' && !c.exclude_from_roster) || 
+    (c._resolvedType === 'npc_family_member' && !c.exclude_from_roster)
+  );
   
   // Sort by type order, then by name
   return userCharacters.sort((a, b) => {
