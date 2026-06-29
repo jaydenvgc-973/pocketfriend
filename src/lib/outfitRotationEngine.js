@@ -260,7 +260,7 @@ export function resolveTargetCategory(character, activityText = '', locationCate
  * @param {string|null} locationCategory - Location category string (e.g. 'gym', 'home')
  * @returns {object|null} outfit object
  */
-export function resolveCurrentOutfit(character, activityText = '', locationCategory = null) {
+export function resolveCurrentOutfit(character, activityText = '', locationCategory = null, forcedCategory = null) {
   if (!character) return null;
 
   const closet = character.character_closet || [];
@@ -268,7 +268,7 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
   if (outfits.length === 0) return character.current_outfit || null;
 
   const rotationEnabled = character.outfit_rotation_enabled !== false;
-  const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
+  const targetCategory = forcedCategory || resolveTargetCategory(character, activityText, locationCategory);
   const fallbackChain = buildFallbackChain(targetCategory);
 
   // ── ROTATION ON: check today_category_outfit_overrides ──────────────────────

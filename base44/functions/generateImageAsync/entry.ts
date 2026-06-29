@@ -1821,16 +1821,30 @@ Deno.serve(async (req) => {
 
     let userOutfitText = null;
     if (effectiveUserSubject) {
-      // Use outfit from already-resolved bundle (avoids duplicate UserSettings query)
-      const uco = _resolvedUserBundle?.currentOutfit || null;
-      userOutfitText = uco
-        ? ([uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(v => {
-            if (!v) return false;
-            const t = v.trim();
-            return !(/^(n\/?a|none|-)$/i.test(t));
-          }).join(', ') || uco.full_description?.trim() || null)
-        : null;
-      if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit (from resolved bundle): "${userOutfitText.substring(0, 80)}"`);
+      // ── SINGLE AUTHORITY: resolveUserOutfitContext ──────────────────────────
+      // Rotation ON → computed (special occasion > home > daily wear).
+      // Rotation OFF → manual user_current_outfit. Mirrors the closet display resolver.
+      try {
+        const userOutfitRes = await base44.asServiceRole.functions.invoke('resolveUserOutfitContext', {
+          ownerEmail: requestingUser,
+          locationCategory: null,
+          locationId: null,
+        });
+        userOutfitText = userOutfitRes?.text || null;
+        if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit (rotation-aware): source="${userOutfitRes?.source}" cat="${userOutfitRes?.category}" text="${userOutfitText.substring(0, 80)}"`);
+      } catch (uoErr) {
+        // Fallback to resolved bundle current_outfit (legacy)
+        const uco = _resolvedUserBundle?.currentOutfit || null;
+        userOutfitText = uco
+          ? ([uco.top, uco.bottom, uco.shoes, uco.outerwear, uco.accessories].filter(v => {
+              if (!v) return false;
+              const t = v.trim();
+              return !(/^(n\/?a|none|-)$/i.test(t));
+            }).join(', ') || uco.full_description?.trim() || null)
+          : null;
+        if (userOutfitText) console.log(`[generateImageAsync] ✅ User outfit (legacy fallback): "${userOutfitText.substring(0, 80)}"`);
+        console.warn(`[generateImageAsync] resolveUserOutfitContext failed (fallback used): ${uoErr?.message}`);
+      }
     }
 
     // User appearance-lock fallback: use resolved bundle's appearanceLock — no second UserSettings query

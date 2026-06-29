@@ -8,6 +8,7 @@ import {
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import RotationSchedulePreview from "@/components/character/RotationSchedulePreview";
+import { useCharacterActiveOutfit, applyManualCategoryOverride } from "@/lib/activeOutfitResolver";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -90,7 +91,7 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const [fillingFromImage, setFillingFromImage] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
@@ -190,7 +191,7 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           onClick={() => onSetActive(outfit)}
           className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
         >
-          Set as Current Outfit
+          {rotationEnabled ? "Wear Today" : "Set as Current Outfit"}
         </button>
       )}
     </div>
@@ -644,6 +645,12 @@ export default function CharacterClosetPanel({ character }) {
 
   const closet = character?.character_closet || [];
   const currentOutfit = character?.current_outfit || null;
+  // ── DISPLAY AUTHORITY ─────────────────────────────────────────────────────
+  // When rotation is ON, "Currently Wearing" is COMPUTED from the active outfit rules
+  // (uniform > special occasion > home > daily wear). The manual current_outfit is NOT
+  // the authority while rotation is enabled. When OFF, the manual selection is shown.
+  const activeResult = useCharacterActiveOutfit(character);
+  const activeOutfit = activeResult?.outfit || null;
 
   // Separate outfits from pieces — prefer explicit type field, fallback to ID-based heuristic for legacy items
   const outfits = closet.filter(item => item.type === "outfit" || (!item.type && item.outfit_id && !item.piece_id?.startsWith("piece_")));
@@ -697,11 +704,19 @@ export default function CharacterClosetPanel({ character }) {
   };
 
   const handleSetActive = async (outfit) => {
-    await saveCloset(closet, {
-      ...outfit,
-      last_changed_at: new Date().toISOString(),
-      change_reason: "manual_selection",
-    });
+    if (rotationEnabled) {
+      // Rotation ON: manual selection writes a date-scoped per-category override.
+      // It never persists as current_outfit, so it cannot compete with rotation tomorrow.
+      const patch = applyManualCategoryOverride(character, outfit.category, outfit.outfit_id);
+      await base44.entities.Character.update(character.id, patch);
+      queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...patch } : prev);
+    } else {
+      await saveCloset(closet, {
+        ...outfit,
+        last_changed_at: new Date().toISOString(),
+        change_reason: "manual_selection",
+      });
+    }
   };
 
   const handleToggleFavoriteOutfit = async (outfit_id) => {
@@ -837,25 +852,30 @@ export default function CharacterClosetPanel({ character }) {
       {/* Tomorrow's Rotation Preview */}
       <RotationSchedulePreview character={character} />
 
-      {/* Currently Wearing */}
-      {currentOutfit && currentOutfit.label && (
+      {/* Currently Wearing — single authority: computed when rotation ON, manual when OFF */}
+      {activeOutfit && activeOutfit.label && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
-          <p className="text-[10px] text-primary font-semibold uppercase tracking-wider mb-1">Currently Wearing</p>
-          <p className="text-sm font-medium text-foreground">{currentOutfit.label}</p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
+            <span className="text-[9px] text-primary/70 font-medium capitalize">
+              {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
+            </span>
+          </div>
+          <p className="text-sm font-medium text-foreground">{activeOutfit.label}</p>
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-            {currentOutfit.top && <p>👕 {currentOutfit.top}</p>}
-            {currentOutfit.bottom && <p>👖 {currentOutfit.bottom}</p>}
-            {currentOutfit.shoes && <p>👟 {currentOutfit.shoes}</p>}
-            {currentOutfit.outerwear && <p>🧥 {currentOutfit.outerwear}</p>}
-            {currentOutfit.accessories && <p>💍 {currentOutfit.accessories}</p>}
-            {!currentOutfit.top && currentOutfit.full_description && (
-              <p className="leading-relaxed">{currentOutfit.full_description}</p>
+            {activeOutfit.top && <p>👕 {activeOutfit.top}</p>}
+            {activeOutfit.bottom && <p>👖 {activeOutfit.bottom}</p>}
+            {activeOutfit.shoes && <p>👟 {activeOutfit.shoes}</p>}
+            {activeOutfit.outerwear && <p>🧥 {activeOutfit.outerwear}</p>}
+            {activeOutfit.accessories && <p>💍 {activeOutfit.accessories}</p>}
+            {!activeOutfit.top && activeOutfit.full_description && (
+              <p className="leading-relaxed">{activeOutfit.full_description}</p>
             )}
           </div>
-          {currentOutfit.last_changed_at && (
+          {!rotationEnabled && activeOutfit.last_changed_at && (
             <p className="text-[10px] text-muted-foreground/60 mt-1">
-              Changed {new Date(currentOutfit.last_changed_at).toLocaleDateString()}
-              {currentOutfit.change_reason ? ` · ${currentOutfit.change_reason.replace(/_/g, ' ')}` : ''}
+              Changed {new Date(activeOutfit.last_changed_at).toLocaleDateString()}
+              {activeOutfit.change_reason ? ` · ${activeOutfit.change_reason.replace(/_/g, ' ')}` : ''}
             </p>
           )}
         </div>
@@ -902,13 +922,14 @@ export default function CharacterClosetPanel({ character }) {
                       <OutfitCard
                         key={outfit.outfit_id}
                         outfit={outfit}
-                        isActive={currentOutfit?.outfit_id === outfit.outfit_id}
+                        isActive={activeOutfit?.outfit_id === outfit.outfit_id}
                         onSetActive={handleSetActive}
                         onDelete={handleDeleteOutfit}
                         onToggleFavorite={handleToggleFavoriteOutfit}
                         onEdit={setEditingOutfit}
                         onFillFromImage={handleFillFromImage}
                         hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
+                        rotationEnabled={rotationEnabled}
                       />
                     ))}
                   </div>

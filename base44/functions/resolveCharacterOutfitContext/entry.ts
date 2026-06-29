@@ -264,8 +264,34 @@ Deno.serve(async (req) => {
       return Response.json({ text: t, source: t ? 'current_outfit_no_closet_fallback' : 'no_closet', category: null });
     }
 
+    // ── PRIORITY 1.5: SPECIAL OCCASION (StoryEvent today) ─────────────────────
+    // Calendar events (weddings, funerals, date nights, etc.) activate "Today's Special
+    // Occasion" above Home/Daily Wear but below required uniforms. Keyword-matched only —
+    // generic meet-ups do NOT force a special outfit.
+    let specialOccasionCategory = null;
+    try {
+      const etDateForEvents = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const todayStrForEvents = `${etDateForEvents.getFullYear()}-${String(etDateForEvents.getMonth()+1).padStart(2,'0')}-${String(etDateForEvents.getDate()).padStart(2,'0')}`;
+      const events = await base44.asServiceRole.entities.StoryEvent.filter({ owner_email: requestingEmail }, '-event_date', 100).catch(() => []);
+      const occasionKws: Array<[RegExp, string]> = [
+        [/\b(wedding|bridesmaid|groomsman|wedding guest|rehearsal dinner|funeral|memorial|viewing|wake|burial|celebration of life|gala|black tie|fundraiser|charity ball|red carpet|awards?|premiere|graduation|commencement|ceremony|prom)\b/i, 'formal'],
+        [/\b(date night|romantic|anniversary|candlelit|valentine)\b/i, 'date_night'],
+        [/\b(club|nightclub|party|birthday party|bar hop|night out)\b/i, 'nightlife'],
+        [/\b(church|worship|mass|baptism|communion|service|bible study)\b/i, 'church'],
+      ];
+      for (const ev of (events || [])) {
+        if (!ev?.event_date || ev.event_date !== todayStrForEvents) continue;
+        const participates = (ev.participant_character_ids || []).includes(characterId) || (ev.focus_character_ids || []).includes(characterId);
+        if (!participates) continue;
+        const text = `${ev.title || ''} ${ev.plot || ''} ${ev.additional_notes || ''}`;
+        for (const [pat, cat] of occasionKws) { if (pat.test(text)) { specialOccasionCategory = cat; break; } }
+        if (specialOccasionCategory) break;
+      }
+      if (specialOccasionCategory) console.log(`[resolveCharacterOutfitContext] ✅ SPECIAL OCCASION for "${character.name}": ${specialOccasionCategory}`);
+    } catch (e) { /* non-blocking */ }
+
     // ── RESOLVE TARGET CATEGORY ───────────────────────────────────────────────
-    const targetCategory = resolveTargetCategory(character, locationCategory || null);
+    const targetCategory = specialOccasionCategory || resolveTargetCategory(character, locationCategory || null);
     const chain = FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
 
     // ── DAY-STABLE INDEX ──────────────────────────────────────────────────────

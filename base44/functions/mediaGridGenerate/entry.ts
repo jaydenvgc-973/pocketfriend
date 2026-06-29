@@ -373,10 +373,23 @@ Deno.serve(async (req) => {
               { owner_email: requestingUserEmail }, null, 1
             ).catch(() => []);
             const sett = settingsList?.[0] || null;
-            const uco = sett?.user_current_outfit;
-            userOutfitText = uco ? buildMGOutfitText(uco) || uco.full_description?.trim() || null : null;
             userPersonaName = sett?.fictional_world_name || 'User / My Persona';
-            userOutfitSource = uco ? 'user_current_outfit' : 'no_outfit';
+            // ── SINGLE AUTHORITY: resolveUserOutfitContext ──────────────────────
+            // Rotation ON → computed (special occasion > home > daily wear).
+            // Rotation OFF → manual user_current_outfit. Mirrors the closet display resolver.
+            try {
+              const userOutfitRes = await base44.asServiceRole.functions.invoke('resolveUserOutfitContext', {
+                ownerEmail: requestingUserEmail, locationCategory: null, locationId: locationId || null,
+              });
+              userOutfitText = userOutfitRes?.text || null;
+              userOutfitSource = userOutfitRes?.source || 'no_outfit';
+              if (userOutfitText) console.log(`[mediaGridGenerate] ✅ User outfit (rotation-aware): source="${userOutfitSource}" cat="${userOutfitRes?.category}"`);
+            } catch (uoErr) {
+              const uco = sett?.user_current_outfit;
+              userOutfitText = uco ? buildMGOutfitText(uco) || uco.full_description?.trim() || null : null;
+              userOutfitSource = uco ? 'user_current_outfit' : 'no_outfit';
+              console.warn(`[mediaGridGenerate] resolveUserOutfitContext failed (fallback): ${uoErr?.message}`);
+            }
             const ual = sett?.appearance_lock || {};
             userAppearanceLock = {
               gender: sett?.user_gender || null,

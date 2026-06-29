@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn, Hash, AlertTriangle } from "lucide-react";
+import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn, Hash, AlertTriangle, RefreshCw, Lock } from "lucide-react";
+import { useUserActiveOutfit, applyUserManualCategoryOverride } from "@/lib/activeOutfitResolver";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ function generateId() {
   return `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
 
@@ -95,7 +96,7 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
           onClick={() => onSetActive(outfit)}
           className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
         >
-          Set as Current Outfit
+          {rotationEnabled ? "Wear Today" : "Set as Current Outfit"}
         </button>
       )}
 
@@ -365,6 +366,16 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
 
   const closet = settings?.user_closet || [];
   const currentOutfit = settings?.user_current_outfit || null;
+  const rotationEnabled = settings?.user_outfit_rotation_enabled === true;
+  // ── DISPLAY AUTHORITY ─────────────────────────────────────────────────────
+  // When rotation ON, "Currently Wearing" is COMPUTED (special occasion > home > daily wear).
+  // When OFF, the manual user_current_outfit is the authority.
+  const activeResult = useUserActiveOutfit(settings);
+  const activeOutfit = activeResult?.outfit || null;
+
+  const saveRotationSetting = async (enabled) => {
+    await onUpdate({ user_outfit_rotation_enabled: enabled });
+  };
 
   const saveCloset = async (newCloset, currentOutfitUpdate = null) => {
     setSaving(true);
@@ -409,7 +420,14 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
   };
 
   const handleSetActive = async (outfit) => {
-    await saveCloset(closet, { ...outfit, last_changed_at: new Date().toISOString() });
+    if (rotationEnabled) {
+      // Rotation ON: manual selection writes a date-scoped per-category override.
+      // It never persists as user_current_outfit, so it cannot compete with rotation.
+      const patch = applyUserManualCategoryOverride(settings, outfit.category, outfit.outfit_id);
+      await onUpdate(patch);
+    } else {
+      await saveCloset(closet, { ...outfit, last_changed_at: new Date().toISOString() });
+    }
   };
 
   const handleToggleFavorite = async (outfit_id) => {
@@ -455,15 +473,46 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
         </div>
       </div>
 
-      {currentOutfit?.label && (
+      {/* Rotation toggle — mirrors Character Closet behavior */}
+      <div className="flex items-center justify-between bg-secondary/40 rounded-xl px-3 py-2">
+        <div className="flex items-center gap-2">
+          {rotationEnabled
+            ? <RefreshCw className="w-3.5 h-3.5 text-primary" />
+            : <Lock className="w-3.5 h-3.5 text-amber-400" />}
+          <div>
+            <p className="text-xs font-medium text-foreground">
+              {rotationEnabled ? "Outfit Rotation: On" : "Outfit Rotation: Off"}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              {rotationEnabled
+                ? "Computes the right outfit for the occasion"
+                : "Always wears the currently selected outfit"}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => saveRotationSetting(!rotationEnabled)}
+          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${rotationEnabled ? 'bg-primary' : 'bg-muted'}`}
+        >
+          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${rotationEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+        </button>
+      </div>
+
+      {/* Currently Wearing — single authority: computed when rotation ON, manual when OFF */}
+      {activeOutfit?.label && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
-          <p className="text-[10px] text-primary font-semibold uppercase tracking-wider mb-1">Currently Wearing</p>
-          <p className="text-sm font-medium text-foreground">{currentOutfit.label}</p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
+            <span className="text-[9px] text-primary/70 font-medium capitalize">
+              {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
+            </span>
+          </div>
+          <p className="text-sm font-medium text-foreground">{activeOutfit.label}</p>
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-            {currentOutfit.top && <p>👕 {currentOutfit.top}</p>}
-            {currentOutfit.bottom && <p>👖 {currentOutfit.bottom}</p>}
-            {currentOutfit.shoes && <p>👟 {currentOutfit.shoes}</p>}
-            {!currentOutfit.top && currentOutfit.full_description && <p>{currentOutfit.full_description}</p>}
+            {activeOutfit.top && <p>👕 {activeOutfit.top}</p>}
+            {activeOutfit.bottom && <p>👖 {activeOutfit.bottom}</p>}
+            {activeOutfit.shoes && <p>👟 {activeOutfit.shoes}</p>}
+            {!activeOutfit.top && activeOutfit.full_description && <p>{activeOutfit.full_description}</p>}
           </div>
         </div>
       )}
@@ -492,12 +541,13 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
                   <OutfitCard
                     key={outfit.outfit_id}
                     outfit={outfit}
-                    isActive={currentOutfit?.outfit_id === outfit.outfit_id}
+                    isActive={activeOutfit?.outfit_id === outfit.outfit_id}
                     onSetActive={handleSetActive}
                     onDelete={handleDelete}
                     onToggleFavorite={handleToggleFavorite}
                     onEdit={setEditingOutfit}
                     hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
+                    rotationEnabled={rotationEnabled}
                   />
                 ))}
               </div>
