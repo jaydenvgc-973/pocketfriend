@@ -16,6 +16,23 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
+    // ── SLEEP AUTHORITY GUARD ──────────────────────────────────────────────
+    // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
+    // activities. When a character enters a sleep or nap state, character-driven
+    // activities STOP." Chat dialogue is not a valid source of current_activity
+    // for a sleeping character. Activities resume after waking naturally.
+    const SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
+    if (SLEEP_STATES.has(character.resolved_presence_status)) {
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'sleep_authority_guard',
+        characterId,
+        presence_status: character.resolved_presence_status,
+        message: `${character.name} is ${character.resolved_presence_status} — chat activity update blocked. Activities are suspended during sleep.`,
+      });
+    }
+
     const text = messageContent.toLowerCase().trim();
 
     // ── SLEEP/FATIGUE DIALOGUE GUARD — PERMANENT RULE ────────────────────────────

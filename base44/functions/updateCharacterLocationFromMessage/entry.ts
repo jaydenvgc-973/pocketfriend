@@ -108,6 +108,29 @@ Deno.serve(async (req) => {
     const character = charArr?.[0];
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
 
+    // ── SLEEP AUTHORITY GUARD ──────────────────────────────────────────────
+    // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
+    // activities. When a character enters a sleep or nap state, character-driven
+    // activities STOP. Social, travel, entertainment, and activity systems do
+    // NOT fire." and "Social needs MUST NOT wake a sleeping character."
+    //
+    // Chat activity is NOT a valid wake authority. A chat-mentioned location
+    // must NOT overwrite a sleeping/napping/passed_out character's presence.
+    // Normal sleep requires 6–8 hours; chat cannot cut it short. The character
+    // addresses location/activity needs after waking naturally.
+    const SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
+    if (SLEEP_STATES.has(character.resolved_presence_status)) {
+      return Response.json({
+        success: false,
+        updated: false,
+        blocked: true,
+        reason: 'sleep_authority_guard',
+        character_id: characterId,
+        presence_status: character.resolved_presence_status,
+        message: `${character.name} is ${character.resolved_presence_status} — chat location update blocked. Sleep is the suspension of activities; chat is not a valid wake authority.`,
+      });
+    }
+
     const allLocations = locRes?.data?.locations || [];
     const aliases = aliasArr || [];
 
