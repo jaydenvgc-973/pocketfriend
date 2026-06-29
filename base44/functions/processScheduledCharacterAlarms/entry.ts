@@ -179,6 +179,28 @@ Deno.serve(async (req) => {
         updatePayload.sleep_debt_hours = Math.round(sleepDebtHours * 10) / 10;
         // Alarm wake from actual sleep — write last_wake_time for 19h awake enforcement
         updatePayload.last_wake_time = nowIso;
+
+        // ── ENERGY RECOVERY DURING NAP/SLEEP ──────────────────────────────
+        // A completed nap or sleep restores energy proportional to duration.
+        // Canonical rule: ~12 energy/hour for naps, ~15/hour for full sleep.
+        // Respect sleep_lock (Vick Servicio freeze) — if locked, do not change energy.
+        // Respect needs_locks.energy — if locked, do not change energy.
+        if (!character.sleep_lock && !character.needs_locks?.energy) {
+          const isNap = presenceStatus === 'napping';
+          const stateStartRef = isNap ? character.last_nap_time : character.last_sleep_start;
+          if (stateStartRef) {
+            const elapsedH = (nowUtc.getTime() - new Date(stateStartRef).getTime()) / 3600000;
+            const ratePerHour = isNap ? 12 : 15; // naps recover slightly less per hour
+            const recovery = Math.round(elapsedH * ratePerHour);
+            if (recovery > 0) {
+              const currentEnergy = character.energy_value ?? 50;
+              const newEnergy = Math.min(100, currentEnergy + recovery);
+              if (newEnergy !== currentEnergy) {
+                updatePayload.energy_value = newEnergy;
+              }
+            }
+          }
+        }
         // ── CLEAR STAY LOCK on wake ──────────────────────────────────────
         // The stay lock was set by scheduleNap (reason: 'nap_state') or by the
         // sleep/pass-out system. Once the character wakes, the lock has no

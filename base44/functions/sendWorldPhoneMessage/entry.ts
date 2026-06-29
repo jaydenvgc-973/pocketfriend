@@ -331,6 +331,95 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
+    // ── SLEEP AUTHORITY GUARD — RECIPIENT ──────────────────────────────────────
+    // Canonical rule: a sleeping/napping/passed_out character cannot generate an
+    // immediate World Phone reply. The outbound message IS saved so the sender's
+    // text reaches the conversation, but instead of an LLM reply, a sleep notice
+    // with the expected wake time is written as the recipient's "response".
+    // The recipient's resolved_presence_status is NOT changed.
+    const RECIPIENT_SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
+    if (RECIPIENT_SLEEP_STATES.has(recipient.resolved_presence_status)) {
+      const wakeRef = recipient.pending_alarm_time || recipient.presence_stay_lock_expires_at || null;
+      const wakeNote = wakeRef
+        ? `${recipient.name} is ${recipient.resolved_presence_status} and should wake around ${new Date(wakeRef).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })} Eastern.`
+        : `${recipient.name} is currently ${recipient.resolved_presence_status} and can't reply right now.`;
+
+      // Save the outbound message so the sender's text is recorded
+      const sharedKey = `world_phone::${[sender_character_id, recipient.id].sort().join('::')}`;
+      let outboundConvId = null;
+      try {
+        const convList = await base44.asServiceRole.entities.Conversation.filter({
+          shared_conversation_key: sharedKey, owner_email: ownerEmail,
+        }, null, 1).catch(() => []);
+        let conv = convList?.[0];
+        if (!conv) {
+          conv = await base44.asServiceRole.entities.Conversation.create({
+            title: `${sender.name} & ${recipient.name}`,
+            type: 'direct',
+            character_ids: [sender_character_id, recipient.id],
+            participant_character_ids: [sender_character_id, recipient.id].sort(),
+            shared_conversation_key: sharedKey,
+            owner_email: ownerEmail,
+            channel: 'world_phone',
+            world_contact_mode: 'active_created_to_active_created',
+          });
+        }
+        outboundConvId = conv.id;
+
+        const outboundContent = requested_message || user_instruction_context || '(message)';
+        await base44.asServiceRole.entities.Message.create({
+          conversation_id: conv.id,
+          sender_type: 'character',
+          character_id: sender_character_id,
+          character_name: sender.name,
+          sender_character_id: sender_character_id,
+          receiver_character_id: recipient.id,
+          participant_character_ids: [sender_character_id, recipient.id].sort(),
+          shared_conversation_key: sharedKey,
+          content: outboundContent,
+          image_url: image_url || null,
+          image_description: image_description || null,
+          channel: 'world_phone',
+          owner_email: ownerEmail,
+          timestamp: new Date().toISOString(),
+          user_operated: true,
+        });
+
+        // Write the sleep notice as the recipient's "response"
+        await base44.asServiceRole.entities.Message.create({
+          conversation_id: conv.id,
+          sender_type: 'character',
+          character_id: recipient.id,
+          character_name: recipient.name,
+          sender_character_id: recipient.id,
+          receiver_character_id: sender_character_id,
+          participant_character_ids: [sender_character_id, recipient.id].sort(),
+          shared_conversation_key: sharedKey,
+          content: wakeNote,
+          channel: 'world_phone',
+          owner_email: ownerEmail,
+          timestamp: new Date().toISOString(),
+          recovery_signal: true,
+          memory_eligible: false,
+          relationship_eligible: false,
+        });
+      } catch (msgErr) {
+        console.warn(`[sendWorldPhoneMessage] Recipient sleep-guard message save failed: ${msgErr.message}`);
+      }
+
+      return Response.json({
+        success: true,
+        blocked: true,
+        reason: 'recipient_sleep_state',
+        sleep_notice: wakeNote,
+        recipient_presence_status: recipient.resolved_presence_status,
+        message: wakeNote,
+        conversation_id: outboundConvId,
+        recipient_response: wakeNote,
+        recipient_response_type: 'sleep_notice',
+      });
+    }
+
     // ── STEP 3: INVOKE CANONICAL CHARACTER CONTEXT ──────────────────────────────
     // The message must be anchored to canonical character data — not cache, not defaults.
     // buildCanonicalCharacterContext is the single source of identity, memory, presence, and location.
