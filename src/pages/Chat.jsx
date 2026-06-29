@@ -527,6 +527,99 @@ export default function Chat({ chatTypeOverride } = {}) {
     }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
+    // ── CHARACTER AUTONOMOUS REACTION TO USER MESSAGE ─────────────────────────
+    // Characters react to incoming user messages based on personality + content.
+    // Fires immediately after userMsg is saved — non-blocking fire-and-forget.
+    // Schema mirrors useChatReactionActions.js: { emoji, reactor_type, reactor_id }
+    // Probability: ~35% chance per message, filtered by personality match.
+    // NEVER overwrites existing reactions — always appends to existing array.
+    (() => {
+      try {
+        if (!character || !userMsg?.id || !text?.trim()) return;
+
+        // Probability gate — characters don't react to every single message
+        if (Math.random() > 0.35) return;
+
+        const content = text.toLowerCase();
+        const traits = character.personality_traits || [];
+        const traitsStr = traits.join(' ').toLowerCase();
+        const personality = (character.personality_summary || '').toLowerCase();
+        const emotionalState = (character.emotional_state || 'calm').toLowerCase();
+
+        // Trait helpers
+        const hasTrait = (...keys) => keys.some(k => traitsStr.includes(k) || personality.includes(k));
+
+        // Content signal detection
+        const isFunny = /\b(lol|lmao|haha|ha ha|funny|hilarious|😂|😭|joke|jokes|jk|kidding|cracked|wild|dead|dying)\b/i.test(text);
+        const isSad = /\b(sad|miss|hurt|pain|cry|crying|depressed|upset|heartbr|grief|loss|lost|alone|lonely|devastated)\b/i.test(text);
+        const isAffectionate = /\b(love you|love u|miss you|miss u|care about|means a lot|thank you|thanks|appreciate|sweet|beautiful|gorgeous|amazing|wonderful)\b/i.test(text);
+        const isSurprising = /\b(omg|oh my|what|wait|no way|seriously|really|wtf|wow|shocked|surprised|unbelievable|can't believe)\b/i.test(text);
+        const isAngry = /\b(angry|pissed|furious|hate|disgusted|offensive|disrespect|rude|enough|done with|fed up)\b/i.test(text);
+        const isFlirty = /\b(cute|hot|sexy|attractive|fine|gorgeous|beautiful|handsome|crush|feelings for)\b/i.test(text);
+        const isAgreement = /\b(exactly|agree|right|true|facts|same|for real|absolutely|definitely|yes|yeah|yep|totally)\b/i.test(text);
+
+        // Build weighted emoji candidates based on content + personality
+        const candidates = [];
+
+        if (isFunny) {
+          if (hasTrait('playful', 'humor', 'dry_humor', 'funny', 'sarcastic')) candidates.push(...['😂', '😂', '😭']);
+          else candidates.push('😂');
+        }
+        if (isSad && hasTrait('compassionate', 'empathetic', 'sensitive', 'caring')) {
+          candidates.push('😢', '❤️');
+        }
+        if (isAffectionate) {
+          if (hasTrait('romantic', 'flirty', 'affectionate')) candidates.push('😍', '❤️', '❤️');
+          else candidates.push('❤️');
+        }
+        if (isSurprising) {
+          if (hasTrait('dramatic', 'expressive')) candidates.push('😮', '😮');
+          else candidates.push('😮');
+        }
+        if (isAngry && hasTrait('volatile', 'hot_tempered', 'blunt')) {
+          candidates.push('😡');
+        }
+        if (isFlirty && hasTrait('romantic', 'flirty', 'attracted', 'uninhibited')) {
+          candidates.push('🔥', '😍');
+        }
+        if (isAgreement) {
+          candidates.push('👍');
+        }
+        // Emotional state boosts
+        if (emotionalState === 'joyful' || emotionalState === 'excited') candidates.push('😂', '❤️');
+        if (emotionalState === 'sad') candidates.push('😢');
+        if (emotionalState === 'irritated' || emotionalState === 'frustrated') candidates.push('😡', '😒');
+
+        if (candidates.length === 0) return; // no contextual signal strong enough
+
+        // Pick randomly from candidates (weighted by how many times each appears)
+        const emoji = candidates[Math.floor(Math.random() * candidates.length)];
+        if (!emoji) return;
+
+        // Write reaction to the user message — fire-and-forget, non-blocking
+        const existingReactions = userMsg.reactions || [];
+        // Only add if character hasn't already reacted (dedup guard)
+        const alreadyReacted = existingReactions.some(r => r.reactor_type === 'character' && r.reactor_id === characterId);
+        if (alreadyReacted) return;
+
+        const updatedReactions = [...existingReactions, { emoji, reactor_type: 'character', reactor_id: characterId }];
+
+        base44.entities.Message.update(userMsg.id, { reactions: updatedReactions })
+          .then(() => {
+            // Patch local state so ReactionBadges renders immediately without a DB round-trip
+            setMessages(prev => prev.map(m =>
+              m.id === userMsg.id ? { ...m, reactions: updatedReactions } : m
+            ));
+            console.log(`[CharacterReaction] ${character.name} reacted to user msg with ${emoji}`);
+          })
+          .catch(err => console.warn('[CharacterReaction] reaction write failed (non-blocking):', err?.message));
+      } catch (reactionErr) {
+        // Never interrupt message flow
+        console.warn('[CharacterReaction] reaction evaluation failed (non-blocking):', reactionErr?.message);
+      }
+    })();
+    // ── END CHARACTER AUTONOMOUS REACTION ─────────────────────────────────────
+
     // ── IMAGE + LINK ANALYSIS — started immediately, non-blocking ────────────
     // Both analyses are kicked off right after userMsg is created (we have the ID).
     // They run concurrently and are awaited later inside the LLM prep block,
