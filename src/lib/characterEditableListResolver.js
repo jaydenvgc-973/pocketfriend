@@ -84,6 +84,8 @@ export function getCharactersForHomepage(allCharacters, currentUserId, currentUs
  * Get settings character list with strict type ordering.
  * Order: user, active_created_character, npc_fictitious, npc_family_member
  * 
+ * Excludes records with exclude_from_roster === true
+ * 
  * @returns {Array} ordered list suitable for Settings → Manage Characters
  */
 export function getCharactersForSettingsList(allCharacters, currentUserId, currentUserEmail, currentUserObject) {
@@ -99,7 +101,7 @@ export function getCharactersForSettingsList(allCharacters, currentUserId, curre
     'unknown': 5,
   };
   
-  const userCharacters = scoped.filter(c => c._resolvedType === 'active_created_character' || c._resolvedType === 'npc_fictitious' || c._resolvedType === 'npc_family_member');
+  const userCharacters = scoped.filter(c => (c._resolvedType === 'active_created_character' || c._resolvedType === 'npc_fictitious' || c._resolvedType === 'npc_family_member') && !c.exclude_from_roster);
   
   // Sort by type order, then by name
   return userCharacters.sort((a, b) => {

@@ -409,7 +409,7 @@ export default function Settings() {
 
           {/* NPC Family (Read-only display only) */}
           {(() => {
-            const familyChars = characters.filter(c => c.character_type === "npc_family_member" && c.status === "active").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const familyChars = characters.filter(c => c.character_type === "npc_family_member" && c.status === "active" && !c.exclude_from_roster).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             return familyChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Family ({familyChars.length})</p>

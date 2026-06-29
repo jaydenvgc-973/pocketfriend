@@ -386,7 +386,8 @@ export default function Home() {
                   ['npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(c.character_type) &&
                   c.status === 'active' &&
                   !c.is_test_character &&
-                  !c.diagnostic_only
+                  !c.diagnostic_only &&
+                  !c.exclude_from_roster
                 ),
               ]}
             />
