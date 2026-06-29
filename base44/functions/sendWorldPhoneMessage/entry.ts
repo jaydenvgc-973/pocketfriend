@@ -125,6 +125,27 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, error: `Sender character not found: ${sender_character_id}` });
     }
 
+    // ── SLEEP AUTHORITY GUARD — SENDER ──────────────────────────────────────
+    // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
+    // activities. Social, travel, and activity systems do NOT fire." A sleeping,
+    // napping, or passed_out character cannot send a World Phone message.
+    // Return a sleep notice with the expected wake time instead.
+    const SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
+    if (SLEEP_STATES.has(sender.resolved_presence_status)) {
+      const wakeRef = sender.pending_alarm_time || sender.presence_stay_lock_expires_at || null;
+      const wakeNote = wakeRef
+        ? `${sender.name} is ${sender.resolved_presence_status} and should wake around ${new Date(wakeRef).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })} Eastern.`
+        : `${sender.name} is currently ${sender.resolved_presence_status} and can't send messages right now.`;
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'sender_sleep_state',
+        sleep_notice: wakeNote,
+        sender_presence_status: sender.resolved_presence_status,
+        message: wakeNote,
+      });
+    }
+
     // ── RESOLVE RECIPIENT FROM PRONOUN CONTEXT ────────────────────────────────
     // When recipient_identifier is null but pronoun_context is provided,
     // use the LLM to extract the most likely recipient from recent conversation text.
@@ -877,6 +898,48 @@ Return ONLY the description text, nothing else.`,
     // ── GENERATE CHARACTER B's REAL RESPONSE ───────────────────────────────────
     // CRITICAL: Character B responds using their own LLM pipeline with FULL grounding.
     // recipientGrounding (buildWorldPhoneLifeGrounding) was loaded before generation above.
+
+    // ── SLEEP AUTHORITY GUARD — RECIPIENT ───────────────────────────────────
+    // If the recipient is sleeping/napping/passed_out, do NOT generate an
+    // immediate reply. Return a sleep notice instead. The outbound message
+    // from the sender is already saved — it will be seen when the recipient wakes.
+    // Canonical rule: "Sleeping or napping character should NOT send an immediate
+    // normal reply. System should return/send a sleep notice."
+    if (SLEEP_STATES.has(recipient.resolved_presence_status)) {
+      const recipientWakeRef = recipient.pending_alarm_time || recipient.presence_stay_lock_expires_at || null;
+      const recipientWakeNote = recipientWakeRef
+        ? `${recipient.name} is ${recipient.resolved_presence_status} and should wake around ${new Date(recipientWakeRef).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' })} Eastern.`
+        : `${recipient.name} is currently ${recipient.resolved_presence_status} and can't reply right now.`;
+      console.log(`[sendWorldPhoneMessage] RECIPIENT_SLEEP_GUARD | recipient=${recipient.name} | status=${recipient.resolved_presence_status} — no immediate reply, sleep notice returned`);
+      return Response.json({
+        success: true,
+        message_id: savedMessage.id,
+        conversation_id: conversationId,
+        shared_conversation_key: canonicalKey,
+        sender_character_id,
+        receiver_character_id: recipient.id,
+        channel: 'world_phone',
+        recipient_sleeping: true,
+        sleep_notice: recipientWakeNote,
+        proof: {
+          message_id: savedMessage.id,
+          recipient_response_message_id: null,
+          recipient_response_generated: false,
+          recipient_sleep_notice: recipientWakeNote,
+          conversation_id: conversationId,
+          shared_conversation_key: canonicalKey,
+          participant_character_ids: participantIds,
+          recipient_resolution_path: recipientResolutionPath,
+          message_type: message_type || 'text',
+          image_url_saved: isImageSend ? (savedImageUrl === image_url) : false,
+          image_url_readback: savedImageUrl || null,
+          message_type_readback: savedMessageType || null,
+          source,
+          warnings: warnings.length > 0 ? warnings : null,
+        },
+      });
+    }
+
     let recipientResponse = null;
     let recipientResponseMessageId = null;
 

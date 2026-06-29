@@ -65,22 +65,36 @@ Deno.serve(async (req) => {
           });
 
           if (!dry_run) {
-            const wasActualSleep = char.resolved_presence_status === 'sleeping';
             const napWakePayload = {
               resolved_presence_status: 'home',
               location_status: 'home',
               current_activity: 'just woke up (nap time exceeded)',
               emotional_state: 'neutral',
               resolved_last_updated_at: nowEtIso,
+              // A completed nap IS a restorative boundary — it MUST reset the
+              // continuous-awake timer. The old "nap wake does NOT write last_wake_time"
+              // rule was a bug that caused false 19h pass-out calculations.
+              last_wake_time: nowEtIso,
+              presence_stay_lock: false,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_release_condition: null,
+              presence_stay_lock_authority: null,
+              presence_stay_lock_set_at: null,
+              presence_stay_lock_expires_at: null,
             };
-            // Nap wake does NOT write last_wake_time
-            if (wasActualSleep) {
-              napWakePayload.last_wake_time = nowEtIso;
-            }
             await base44.asServiceRole.entities.Character.update(char.id, napWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
+            base44.asServiceRole.entities.SleepTransition.create({
+              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+              transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+              authority: 'nap_cap_3h',
+              reason: `Napping exceeded 3-hour max. last_wake_time reset (restorative boundary).`,
+              timestamp: nowEtIso, state_start_ref: char.last_nap_time,
+              elapsed_hours: char.last_nap_time ? Math.round(((nowUtc.getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
+              verified_higher_priority_interrupt: false,
+            }).catch(() => {});
 
             woken.push(char.id);
-            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — nap exceeded 3 hours`);
+            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — nap exceeded 3 hours (last_wake_time written)`);
           }
           continue;
         }
@@ -96,20 +110,30 @@ Deno.serve(async (req) => {
         });
 
         if (!dry_run) {
-          const wasActualSleepStale = char.resolved_presence_status === 'sleeping';
             const staleWakePayload = {
               resolved_presence_status: 'home',
               location_status: 'home',
               resolved_last_updated_at: nowEtIso,
+              last_wake_time: nowEtIso,
+              presence_stay_lock: false,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_release_condition: null,
+              presence_stay_lock_authority: null,
+              presence_stay_lock_set_at: null,
+              presence_stay_lock_expires_at: null,
             };
-            // Nap wake does NOT write last_wake_time
-            if (wasActualSleepStale) {
-              staleWakePayload.last_wake_time = nowEtIso;
-            }
             await base44.asServiceRole.entities.Character.update(char.id, staleWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
+            base44.asServiceRole.entities.SleepTransition.create({
+              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+              transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+              authority: 'nap_cap_3h',
+              reason: `Stale nap (no start time). last_wake_time reset.`,
+              timestamp: nowEtIso,
+              verified_higher_priority_interrupt: false,
+            }).catch(() => {});
 
             woken.push(char.id);
-            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — stale nap state`);
+            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — stale nap state (last_wake_time written)`);
         }
         continue;
       }
@@ -142,21 +166,32 @@ Deno.serve(async (req) => {
           });
 
           if (!dry_run) {
-            const wasActualSleepLate = char.resolved_presence_status === 'sleeping';
             const lateWakePayload = {
               resolved_presence_status: 'home',
               location_status: 'home',
               current_activity: 'woke up late',
               resolved_last_updated_at: nowEtIso,
+              last_wake_time: nowEtIso,
+              presence_stay_lock: false,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_release_condition: null,
+              presence_stay_lock_authority: null,
+              presence_stay_lock_set_at: null,
+              presence_stay_lock_expires_at: null,
             };
-            // Nap wake does NOT write last_wake_time
-            if (wasActualSleepLate) {
-              lateWakePayload.last_wake_time = nowEtIso;
-            }
             await base44.asServiceRole.entities.Character.update(char.id, lateWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
+            base44.asServiceRole.entities.SleepTransition.create({
+              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+              transition_type: char.resolved_presence_status === 'napping' ? 'nap_end' : 'sleep_end',
+              from_status: char.resolved_presence_status, to_status: 'home',
+              authority: 'wake_time_boundary',
+              reason: `Past wake time + grace. last_wake_time reset.`,
+              timestamp: nowEtIso,
+              verified_higher_priority_interrupt: false,
+            }).catch(() => {});
 
             woken.push(char.id);
-            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — past wake time, no valid reason`);
+            console.log(`[enforceStaleNapLimit] WOKE ${char.name} — past wake time, no valid reason (last_wake_time written)`);
           }
           continue;
         }

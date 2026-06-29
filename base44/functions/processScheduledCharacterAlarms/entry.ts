@@ -54,20 +54,25 @@ Deno.serve(async (req) => {
       return [];
     });
 
-    // Filter to only those with a pending_alarm_time that has passed
+    // Filter to characters with a due alarm OR a napping character with an
+    // expired stay lock (guaranteed nap completion recovery — catches missed
+    // alarms where pending_alarm_time was cleared but the nap lock persists).
     const due = candidates.filter(c => {
-      if (!c.pending_alarm_time) return false;
       if (!c.owner_email) {
-        // Legacy character without owner_email — skip, do not modify
         console.warn(`[processScheduledCharacterAlarms] SKIP ${c.id} (${c.name}) — missing owner_email, cannot verify ownership`);
         return false;
       }
-      const alarmTime = new Date(c.pending_alarm_time);
-      if (isNaN(alarmTime.getTime())) {
-        console.warn(`[processScheduledCharacterAlarms] SKIP ${c.id} (${c.name}) — invalid pending_alarm_time: ${c.pending_alarm_time}`);
-        return false;
+      // Path 1: pending alarm that has passed
+      if (c.pending_alarm_time) {
+        const alarmTime = new Date(c.pending_alarm_time);
+        if (!isNaN(alarmTime.getTime()) && alarmTime <= nowUtc) return true;
       }
-      return alarmTime <= nowUtc;
+      // Path 2: Napping character with expired stay lock (missed alarm recovery)
+      if (c.resolved_presence_status === 'napping' && c.presence_stay_lock_expires_at) {
+        const expiresAt = new Date(c.presence_stay_lock_expires_at);
+        if (!isNaN(expiresAt.getTime()) && expiresAt <= nowUtc) return true;
+      }
+      return false;
     });
 
     console.log(`[processScheduledCharacterAlarms] Candidates with pending alarm: ${candidates.filter(c => c.pending_alarm_time).length}`);
@@ -174,6 +179,16 @@ Deno.serve(async (req) => {
         updatePayload.sleep_debt_hours = Math.round(sleepDebtHours * 10) / 10;
         // Alarm wake from actual sleep — write last_wake_time for 19h awake enforcement
         updatePayload.last_wake_time = nowIso;
+        // ── CLEAR STAY LOCK on wake ──────────────────────────────────────
+        // The stay lock was set by scheduleNap (reason: 'nap_state') or by the
+        // sleep/pass-out system. Once the character wakes, the lock has no
+        // purpose. Failure to clear it leaves the character permanently locked.
+        updatePayload.presence_stay_lock = false;
+        updatePayload.presence_stay_lock_reason = null;
+        updatePayload.presence_stay_lock_release_condition = null;
+        updatePayload.presence_stay_lock_authority = null;
+        updatePayload.presence_stay_lock_set_at = null;
+        updatePayload.presence_stay_lock_expires_at = null;
         // Record the authoritative wake transition in the audit entity
         base44.asServiceRole.entities.SleepTransition.create({
           character_id: character.id, character_name: character.name, owner_email: character.owner_email,
