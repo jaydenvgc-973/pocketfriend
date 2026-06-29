@@ -497,12 +497,18 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   //   - Only injects for characters who appear in the prompt by any name form
   //   - If a name has ambiguous matches (two selected chars share a first name), uses full names
   //   - Does NOT rewrite the prompt — only prepends the key block
-  const injectNameReferenceKey = (rawPrompt, selectedIdentityMap, selectedCharRecords) => {
-    if (!selectedIdentityMap || selectedIdentityMap.size === 0) return rawPrompt;
+  // userParticipant = { name, id } for the selected user world-self, or null.
+  // `id` MUST be the canonical authenticated user ID (user.id) — never the '__user__'
+  // placeholder, never hardcoded. The selected user is a visual participant exactly like
+  // any selected character and must appear in the Name Reference Key with their user ID.
+  const injectNameReferenceKey = (rawPrompt, selectedIdentityMap, selectedCharRecords, userParticipant = null) => {
+    // Gate: only inject when there are selected characters OR a selected user participant.
+    if ((!selectedIdentityMap || selectedIdentityMap.size === 0) && !userParticipant) return rawPrompt;
 
     const promptLower = rawPrompt.toLowerCase();
     const referenced = new Set(); // char IDs that appear in the prompt
     const keyLines = [];
+    let userInjected = false;
 
     // Check first-name ambiguity: if two selected chars have the same first name, skip first-name
     // resolution for those and rely on full name or explicit user selection
@@ -535,6 +541,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
     }
 
+    // ── SELECTED USER (world persona) ──────────────────────────────────────
+    // The selected user is a visual participant just like any selected character.
+    // Inject them into the Name Reference Key with their CANONICAL USER ID so the
+    // model grounds the user's identity references.
+    if (userParticipant && userParticipant.name && userParticipant.id) {
+      const userName = userParticipant.name;
+      const userNameForms = [userName, ...(userParticipant.aliases || [])].filter(Boolean);
+      const userAppearsInPrompt = userNameForms.some(n => n && n.length >= 3 && promptLower.includes(n.toLowerCase()));
+      if (userAppearsInPrompt) {
+        keyLines.push(`"${userName}" = ${userName} (USER ID: ${userParticipant.id}) — use their visual identity references`);
+        userInjected = true;
+      }
+    }
+
     // If none of the selected characters appear by name in the prompt, still inject all of them
     // so the model knows the full cast. This handles prompts like "at the gym smiling" where
     // no name is mentioned but a character is explicitly selected.
@@ -546,9 +566,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
     }
 
+    // If the user is selected but their name did not appear in the prompt, still inject them.
+    // The user is an explicit selection — they must always be in the key when selected.
+    if (userParticipant && userParticipant.name && userParticipant.id && !userInjected) {
+      keyLines.push(`"${userParticipant.name}" = ${userParticipant.name} (USER ID: ${userParticipant.id}) — use their visual identity references`);
+    }
+
     if (keyLines.length === 0) return rawPrompt;
 
-    const keyBlock = `[NAME REFERENCE KEY — SELECTED CHARACTERS]\n${keyLines.join('\n')}\n[END NAME REFERENCE KEY]\n`;
+    // When the user is a selected participant, the key covers BOTH characters and the user.
+    // Use "SELECTED PARTICIPANTS" so the wording never implies characters-only.
+    const header = userParticipant
+      ? `[NAME REFERENCE KEY — SELECTED PARTICIPANTS]`
+      : `[NAME REFERENCE KEY — SELECTED CHARACTERS]`;
+    const keyBlock = `${header}\n${keyLines.join('\n')}\n[END NAME REFERENCE KEY]\n`;
     return keyBlock + rawPrompt;
   };
 
@@ -752,20 +783,35 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     const selectedCharRecords = selectedCharacterIds
       .map(id => allCharacters.find(c => c.id === id))
       .filter(Boolean)
-      .filter(c => !c.is_user); // exclude user world-self — handled via user identity path
+      .filter(c => !c.is_user); // characters only — user world-self handled via userParticipant below
 
     const selectedIdentityMap = buildSelectedIdentityMap(selectedCharRecords);
 
-    // Enrich the prompt with the Name Reference Key if any characters are selected
+    // ── SELECTED USER (world persona) for the Name Reference Key ─────────────
+    // When the user world-self is in the selection, build a userParticipant carrying the
+    // canonical authenticated user ID (user.id) and the world persona name. This ensures the
+    // generated prompt's Name Reference Key includes the user exactly like selected characters.
+    const userIsSelectedForGrid = selectedCharacterIds.some(id => allCharacters.find(c => c.id === id)?.is_user);
+    const userWorldNameForGrid = userSettings?.fictional_world_name
+      || allCharacters.find(c => c.is_user)?.name
+      || user?.full_name
+      || null;
+    const userParticipant = (userIsSelectedForGrid && user?.id && userWorldNameForGrid)
+      ? { name: userWorldNameForGrid, id: user.id }
+      : null;
+
+    // Enrich the prompt with the Name Reference Key if any characters OR the user is selected.
     // IMPORTANT: This only adds a header block — never rewrites the user's prompt text.
     // The original promptText is preserved as-is for generation_context.prompt (source of truth).
-    const enrichedPrompt = selectedCharRecords.length > 0
-      ? injectNameReferenceKey(promptText, selectedIdentityMap, selectedCharRecords)
+    const enrichedPrompt = (selectedCharRecords.length > 0 || userParticipant)
+      ? injectNameReferenceKey(promptText, selectedIdentityMap, selectedCharRecords, userParticipant)
       : promptText;
 
     if (enrichedPrompt !== promptText) {
-      console.log(`[MediaGallery] Name Reference Key injected for ${selectedCharRecords.length} selected character(s)`);
-      selectedCharRecords.forEach(c => console.log(`  → ${c.name} (${c.id})`));
+      const participantCount = selectedCharRecords.length + (userParticipant ? 1 : 0);
+      console.log(`[MediaGallery] Name Reference Key injected for ${participantCount} selected participant(s)`);
+      selectedCharRecords.forEach(c => console.log(`  → ${c.name} (ID: ${c.id})`));
+      if (userParticipant) console.log(`  → ${userParticipant.name} (USER ID: ${userParticipant.id})`);
     }
 
     // For multi-person path: enrich the multiPersonSelection with character display names
