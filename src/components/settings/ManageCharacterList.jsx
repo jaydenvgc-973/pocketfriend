@@ -45,7 +45,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
       return base44.entities.Character.delete(id);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['all-characters', currentUser?.email] });
     },
   });
 
