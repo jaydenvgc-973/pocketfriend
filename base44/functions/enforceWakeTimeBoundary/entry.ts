@@ -78,6 +78,39 @@ Deno.serve(async (req) => {
       // Only wake if at least 15 minutes past wake time (avoid premature wake from clock skew)
       if (currentMinutes < wakeMinutes + 15) continue;
 
+      // ── 6-HOUR MINIMUM SLEEP GUARD ─────────────────────────────────────────
+      // Canonical rule: normal sleep cannot end before 6 hours unless a verified
+      // higher-priority interrupt exists. The wake_up_time clock boundary alone is
+      // NOT a valid wake authority if the character has not yet slept 6 hours.
+      // Verified higher-priority interrupts: medical emergency (health ≤ 15).
+      // Energy 100%, chat activity, presence refresh, background recovery are NOT valid.
+      if (char.last_sleep_start) {
+        const elapsedSleepHours = (nowET.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000;
+        const isMedicalEmergency = (char.health_value ?? 80) <= 15;
+        if (elapsedSleepHours < 6 && !isMedicalEmergency) {
+          results.push({
+            character_id: char.id,
+            character_name: char.name,
+            was_status: char.resolved_presence_status,
+            woken: false,
+            reason: `6h_sleep_minimum_guard_active (${elapsedSleepHours.toFixed(2)}h elapsed)`,
+          });
+          console.log(`[enforceWakeTimeBoundary] 6H_GUARD: ${char.name} slept ${elapsedSleepHours.toFixed(2)}h < 6h — not waking despite past wake_up_time`);
+          try {
+            base44.asServiceRole.entities.SleepTransition.create({
+              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+              transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
+              authority: 'enforceWakeTimeBoundary',
+              reason: `Wake-time boundary reached after ${elapsedSleepHours.toFixed(2)}h sleep — wake blocked by 6h minimum guard. No verified higher-priority interrupt.`,
+              timestamp: nowETIso, state_start_ref: char.last_sleep_start,
+              elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
+              verified_higher_priority_interrupt: false,
+            }).catch(() => {});
+          } catch {}
+          continue;
+        }
+      }
+
       // WAKE THEM
       const wasActualSleep = char.resolved_presence_status === 'sleeping';
       const wakePayload = {

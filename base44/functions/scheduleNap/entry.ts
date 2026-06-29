@@ -83,6 +83,17 @@ Deno.serve(async (req) => {
 
       await base44.entities.Character.update(characterId, wakePayload);
 
+      // ── AUDIT: Record the authoritative nap-end transition ────────────
+      base44.entities.SleepTransition.create({
+        character_id: characterId, character_name: charName, owner_email: char.owner_email,
+        transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+        authority: 'user_directed',
+        reason: 'User-authorized nap completed (scheduled wake). last_wake_time reset.',
+        timestamp: wakeTime, state_start_ref: char.last_nap_time,
+        elapsed_hours: char.last_nap_time ? Math.round(((new Date(wakeTime).getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
+        verified_higher_priority_interrupt: false,
+      }).catch(() => {});
+
       // ── RULE 10: Record nap wake in LifeEvent (Recent Activity) ──────
       await base44.entities.LifeEvent.create({
         character_id: characterId,
@@ -153,6 +164,16 @@ Deno.serve(async (req) => {
       // A user-scheduled alarm at an earlier time will override this.
       pending_alarm_time: napEndIso,
     });
+
+    // ── AUDIT: Record the authoritative nap-start transition ─────────────
+    base44.entities.SleepTransition.create({
+      character_id: characterId, character_name: charName, owner_email: char.owner_email,
+      transition_type: 'nap_start', from_status: char.resolved_presence_status || 'home', to_status: 'napping',
+      authority: 'user_directed',
+      reason: `User-authorized ${napDurationMinutes}-minute nap.`,
+      timestamp: napStart.toISOString(),
+      verified_higher_priority_interrupt: false,
+    }).catch(() => {});
 
     // ── RULE 5: Write nap start to LifeEvent (Recent Activity) ───────────
     await base44.entities.LifeEvent.create({

@@ -1900,9 +1900,20 @@ Deno.serve(async (req) => {
         // last_wake_time=now (assumes they just woke, giving a full 19h window).
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
-          if (char.last_wake_time) {
-            const lastWakeMs = new Date(char.last_wake_time).getTime();
-            const awakeHours = (nowET.getTime() - lastWakeMs) / 3_600_000;
+          // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
+          // A completed nap is a RESTORATIVE BOUNDARY that resets the consecutive-
+          // awake timer, even if the nap wake did not explicitly write last_wake_time.
+          // Use the MOST RECENT of last_wake_time and last_nap_time (the !dbIsNapping
+          // guard above guarantees the character is not mid-nap, so last_nap_time
+          // refers to a COMPLETED nap and is a valid reset boundary).
+          // This prevents the 19h pass-out narrative from fabricating elapsed time
+          // by crossing a completed nap whose wake wasn't explicitly recorded.
+          const awakeTimerCandidates = [];
+          if (char.last_wake_time) awakeTimerCandidates.push(new Date(char.last_wake_time).getTime());
+          if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
+          if (awakeTimerCandidates.length > 0) {
+            const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
+            const awakeHours = (nowET.getTime() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.

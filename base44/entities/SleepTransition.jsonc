@@ -1,0 +1,122 @@
+{
+  "name": "SleepTransition",
+  "type": "object",
+  "description": "Authoritative audit log for every sleep, nap, wake, and pass-out state transition. Single source of truth for sleep timeline reconstruction. Every active_created_character transition must be recorded here so the timeline can be reconstructed from backend records alone without inference.",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Character this transition belongs to"
+    },
+    "character_name": {
+      "type": "string"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for RLS scoping. Required."
+    },
+    "transition_type": {
+      "type": "string",
+      "enum": [
+        "sleep_start",
+        "sleep_end",
+        "nap_start",
+        "nap_end",
+        "pass_out_start",
+        "pass_out_end",
+        "hospitalized_start",
+        "hospitalized_end"
+      ],
+      "description": "Type of sleep state transition. sleep_* = voluntary overnight sleep. nap_* = short rest. pass_out_* = involuntary collapse. hospitalized_* = medical."
+    },
+    "from_status": {
+      "type": "string",
+      "description": "Previous resolved_presence_status before this transition"
+    },
+    "to_status": {
+      "type": "string",
+      "description": "New resolved_presence_status after this transition"
+    },
+    "authority": {
+      "type": "string",
+      "enum": [
+        "user_directed",
+        "scheduled_alarm",
+        "sleep_cap_8h",
+        "nap_cap_3h",
+        "pass_out_cap_12h",
+        "energy_passout",
+        "energy_medical",
+        "awake_limit_19h",
+        "compound_crisis",
+        "wake_time_boundary",
+        "manual",
+        "safe_correction",
+        "alarm_reschedule_6h_guard",
+        "enforceWakeTimeBoundary"
+      ],
+      "description": "What authorized this transition. alarm_reschedule_6h_guard = a premature alarm was blocked and rescheduled by the 6-hour minimum sleep guard."
+    },
+    "reason": {
+      "type": "string",
+      "description": "Human-readable reason for the transition, including timestamp math proof"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this transition occurred (ISO UTC). Authoritative."
+    },
+    "state_start_ref": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Authoritative start timestamp of the state being ended (e.g. last_sleep_start for a sleep_end, last_nap_time for a nap_end). Null for start transitions."
+    },
+    "elapsed_hours": {
+      "type": "number",
+      "description": "Duration of the completed state in hours, for end transitions. Derived from verified timestamps, never fabricated."
+    },
+    "verified_higher_priority_interrupt": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the transition was authorized by a verified higher-priority interrupt (medical emergency health <= 15, user explicit override). Energy 100%, chat activity, presence refresh, background recovery are NOT valid and must be false."
+    },
+    "interrupt_reason": {
+      "type": "string",
+      "description": "Reason code for the higher-priority interrupt if applicable (e.g. 'health_critical_15', 'user_override')"
+    },
+    "awake_hours_at_pass_out": {
+      "type": "number",
+      "description": "For pass_out_start via awake_limit_19h: the proven continuous-awake hours at the moment of collapse, derived from max(last_wake_time, last_nap_time). Narrative text must match this value."
+    }
+  },
+  "required": [
+    "character_id",
+    "transition_type",
+    "authority",
+    "timestamp"
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "read": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  }
+}

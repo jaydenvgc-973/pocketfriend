@@ -114,6 +114,44 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ── 6-HOUR MINIMUM SLEEP GUARD ─────────────────────────────────────────
+      // Canonical rule: normal sleep cannot end before 6 hours unless a verified
+      // higher-priority interrupt exists. Energy reaching 100%, chat activity,
+      // presence refresh, and background recovery are NOT valid wake authorities.
+      // Verified higher-priority interrupts: medical emergency (health ≤ 15).
+      // Naps are exempt — naps are short by definition and their scheduled wake
+      // at the requested end time is always valid.
+      const isNormalSleep = presenceStatus === 'sleeping';
+      const isMedicalEmergency = (character.health_value ?? 80) <= 15;
+      if (isNormalSleep && sleepStart && !isMedicalEmergency) {
+        const elapsedSleepHours = (nowUtc.getTime() - sleepStart) / 3600000;
+        if (elapsedSleepHours < 6) {
+          // Reschedule the alarm to 6 hours after sleep start. Keep sleeping.
+          const rescheduledAlarm = new Date(sleepStart + 6 * 3600000).toISOString();
+          try {
+            await base44.asServiceRole.entities.Character.update(character.id, {
+              pending_alarm_time: rescheduledAlarm,
+              resolved_last_updated_at: nowIso,
+            });
+            console.log(`[processScheduledCharacterAlarms]   6H_GUARD: sleep elapsed ${elapsedSleepHours.toFixed(2)}h < 6h — alarm rescheduled to ${rescheduledAlarm}, character remains sleeping`);
+            base44.asServiceRole.entities.SleepTransition.create({
+              character_id: character.id, character_name: character.name, owner_email: character.owner_email,
+              transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
+              authority: 'alarm_reschedule_6h_guard',
+              reason: `Alarm fired after ${elapsedSleepHours.toFixed(2)}h sleep — rescheduled to 6h boundary. No verified higher-priority interrupt.`,
+              timestamp: nowIso, state_start_ref: character.last_sleep_start,
+              elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
+              verified_higher_priority_interrupt: false,
+            }).catch(() => {});
+            skipped.push({ character_id: character.id, reason: '6h_sleep_minimum_guard_active', rescheduled_alarm: rescheduledAlarm });
+          } catch (guardErr) {
+            console.error(`[processScheduledCharacterAlarms]   6H_GUARD update FAILED: ${guardErr.message}`);
+            skipped.push({ character_id: character.id, reason: `6h_guard_failed: ${guardErr.message}` });
+          }
+          continue;
+        }
+      }
+
       const newEmotionalState = (isEarlyWake || sleepDebtHours > 2) ? 'tired' : 'calm';
       const activityNote = isEarlyWake
         ? 'just woke up (scheduled alarm, earlier than usual)'
@@ -136,6 +174,21 @@ Deno.serve(async (req) => {
         updatePayload.sleep_debt_hours = Math.round(sleepDebtHours * 10) / 10;
         // Alarm wake from actual sleep — write last_wake_time for 19h awake enforcement
         updatePayload.last_wake_time = nowIso;
+        // Record the authoritative wake transition in the audit entity
+        base44.asServiceRole.entities.SleepTransition.create({
+          character_id: character.id, character_name: character.name, owner_email: character.owner_email,
+          transition_type: presenceStatus === 'napping' ? 'nap_end' : 'sleep_end',
+          from_status: presenceStatus, to_status: 'home',
+          authority: 'scheduled_alarm',
+          reason: isMedicalEmergency ? 'Medical emergency wake (health ≤ 15)' : (isEarlyWake ? 'Scheduled alarm (earlier than usual)' : 'Scheduled alarm'),
+          timestamp: nowIso,
+          state_start_ref: presenceStatus === 'napping' ? character.last_nap_time : character.last_sleep_start,
+          elapsed_hours: presenceStatus === 'napping' && character.last_nap_time
+            ? Math.round(((nowUtc.getTime() - new Date(character.last_nap_time).getTime()) / 3600000) * 100) / 100
+            : (sleepStart ? Math.round(((nowUtc.getTime() - sleepStart) / 3600000) * 100) / 100 : null),
+          verified_higher_priority_interrupt: isMedicalEmergency,
+          interrupt_reason: isMedicalEmergency ? 'health_critical_15' : null,
+        }).catch(() => {});
       }
 
       try {
