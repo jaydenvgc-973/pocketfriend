@@ -344,9 +344,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setIsAutoPrompting(true);
     try {
       const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender, character.city].filter(Boolean).join(', ');
-      const generated = await base44.integrations.Core.InvokeLLM({
-        prompt: `Write a short, vivid image generation prompt (1-2 sentences) for a candid, realistic photo of a character named ${character.name} (${charDesc || 'a person'}). Make it a natural everyday moment — something authentic and interesting. Return ONLY the prompt text, nothing else.`,
-      });
+      const userIdea = prompt.trim();
+      const instruction = userIdea
+        ? `Take the following image prompt idea and expand it into a short, vivid image generation prompt (1-2 sentences) for a candid, realistic photo of ${character.name} (${charDesc || 'a person'}). Keep the SAME core scenario the user described — just enrich the imagery, mood, and detail. Do NOT invent a different scenario. User's idea: "${userIdea}". Return ONLY the expanded prompt text, nothing else.`
+        : `Write a short, vivid image generation prompt (1-2 sentences) for a candid, realistic photo of a character named ${character.name} (${charDesc || 'a person'}). Make it a natural everyday moment — something authentic and interesting. Return ONLY the prompt text, nothing else.`;
+      const generated = await base44.integrations.Core.InvokeLLM({ prompt: instruction });
       setPrompt(generated?.trim() || "");
     } finally {
       setIsAutoPrompting(false);
