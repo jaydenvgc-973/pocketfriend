@@ -973,7 +973,9 @@ export default function CharacterClosetPanel({ character }) {
                       <OutfitCard
                         key={outfit.outfit_id}
                         outfit={outfit}
-                        isActive={activeOutfit?.outfit_id === outfit.outfit_id}
+                        isActive={rotationEnabled
+                          ? activeOutfit?.outfit_id === outfit.outfit_id
+                          : currentOutfit?.outfit_id === outfit.outfit_id}
                         onSetActive={handleSetActive}
                         onClearActive={handleClearActive}
                         onDelete={handleDeleteOutfit}
