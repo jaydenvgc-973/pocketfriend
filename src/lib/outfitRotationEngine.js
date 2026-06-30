@@ -299,12 +299,14 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
         }
       }
     }
-    // No valid today override for this context — use normal rotation
+    // No valid today override for this context — use normal rotation by category chain.
+    // NEVER fall back to the whole closet — that picks outfits from the wrong category.
     for (const cat of fallbackChain) {
       const pool = outfits.filter(o => o.category === cat);
       if (pool.length > 0) return pickFromPool(pool, null, character.id, true);
     }
-    return pickFromPool(outfits, null, character.id, true);
+    // No outfits in any chain category — return null. Do not pick from unrelated categories.
+    return null;
   }
 
   // ── ROTATION OFF: check manual_category_selections ───────────────────────────
@@ -332,7 +334,8 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
       if (locked) return locked;
     }
   }
-  // current_outfit ID set but not found in closet (deleted outfit) — treat as null
+  // current_outfit ID set but not found in closet (deleted outfit) — treat as null.
+  // NEVER fall back to whole-closet pick here — that would surface wrong-category outfits.
   return null;
 }
 
@@ -531,5 +534,6 @@ export function resolveOutfitForDate(character, date, activityText = '', locatio
     if (pool.length > 0) return pickForDate(pool);
   }
 
-  return pickForDate(outfits);
+  // No outfits in any chain category — return null rather than picking from wrong category.
+  return null;
 }
