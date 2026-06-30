@@ -909,7 +909,10 @@ function computeCorrectiveState(needs, character, locationMap) {
   if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
     return {
       resolved_presence_status: 'passed_out',
-      current_activity: 'passed out from exhaustion — forced recovery',
+      // TRUTHFUL: energy reached critical threshold (≤10%) — NOT "19 hours awake".
+      // The 19-hour rule is a separate enforcement path with its own current_activity string.
+      // These two must never be mixed. If energy caused the pass-out, say so.
+      current_activity: 'passed out from exhaustion — critical energy depletion',
     };
   }
 
@@ -1359,6 +1362,12 @@ function resolveNextActivity(needs, character) {
 // ── STALE CORRECTIVE CLEANUP ──────────────────────────────────────────────
 // Clears stale corrective activities so character doesn't appear permanently
 // "eating" or "sleeping" when they're actually awake.
+//
+// 6-HOUR MINIMUM SLEEP PROTECTION:
+// "forced sleep" and "forced rest" corrective states are sleep states.
+// They must not be cleared before 6 hours have elapsed from last_sleep_start
+// regardless of energy recovery. Energy reaching 100% during sleep is NOT a
+// valid wake reason. Sleep must complete the 6-hour minimum.
 
 function resolveStaleCorrectiveActivities(character, needs) {
   const activity = (character.current_activity || '').toLowerCase();
@@ -1379,8 +1388,34 @@ function resolveStaleCorrectiveActivities(character, needs) {
   if (activity.includes('eat') && needs.hunger > 40) {
     return { current_activity: '', resolved_presence_status: presence === 'sleeping' ? 'home' : presence };
   }
-  if ((activity.includes('forced sleep') || activity.includes('forced rest')) && needs.energy > 50) {
-    return { current_activity: '', resolved_presence_status: 'home' };
+
+  // ── SLEEP CORRECTIVE: 6-HOUR MINIMUM GUARD ──────────────────────────────
+  // A character in a forced-sleep corrective state (sleeping or passed_out) must
+  // NOT be cleared by energy recovery alone. Energy reaching 50% or 100% during
+  // sleep is the intended recovery outcome — not a signal to wake the character.
+  // The 6-hour minimum must be verified before any sleep corrective is cleared.
+  if (activity.includes('forced sleep') || activity.includes('forced rest')) {
+    // Only applies if character is still in a sleep/rest state
+    if (presence !== 'sleeping' && presence !== 'napping' && presence !== 'passed_out') {
+      // Already awake somehow — allow the corrective to clear
+      if (needs.energy > 50) {
+        return { current_activity: '', resolved_presence_status: 'home' };
+      }
+    }
+    // Character is still asleep — enforce 6h minimum before clearing
+    if (character.last_sleep_start) {
+      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const elapsedSleepHours = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3600000;
+      if (elapsedSleepHours < 6) {
+        // Not enough sleep — do NOT clear the corrective state. Keep sleeping.
+        return null;
+      }
+    }
+    // 6h has elapsed (or no timestamp to verify) — allow clearing
+    if (needs.energy > 50) {
+      return { current_activity: '', resolved_presence_status: 'home' };
+    }
+    return null;
   }
 
   // Social corrective cleared once social has recovered enough
@@ -1603,7 +1638,9 @@ Deno.serve(async (req) => {
           const passOutCount = (char.pass_out_count ?? 0) + 1;
           await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'passed_out',
-            current_activity: 'passed out from exhaustion — forced recovery',
+            // TRUTHFUL: energy hit ≤10 threshold — critical energy depletion caused this.
+            // NOT "19 hours awake" — that is a separate path with its own string.
+            current_activity: 'passed out from exhaustion — critical energy depletion',
             last_pass_out_at: nowIso,
             last_need_simulated_at: nowIso,
             pass_out_count: passOutCount,
@@ -2080,7 +2117,9 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'passed_out') {
           Object.assign(updatePayload, {
             resolved_presence_status: 'passed_out',
-            current_activity: 'passed out from exhaustion — forced recovery',
+            // TRUTHFUL: energy hit zero — complete energy depletion caused the collapse.
+            // NOT "19 hours awake" — that is a separate enforcement path.
+            current_activity: 'passed out from exhaustion — critical energy depletion',
             last_pass_out_at: nowIso,
           });
         }

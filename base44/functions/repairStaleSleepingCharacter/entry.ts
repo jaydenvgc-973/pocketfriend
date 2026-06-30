@@ -109,11 +109,31 @@ Deno.serve(async (req) => {
     let wakeReason = '';
     const fixes = [];
 
+    // ── 6-HOUR MINIMUM SLEEP GUARD ─────────────────────────────────────────
+    // NO wake reason is valid for a sleeping active_created_character before
+    // 6 hours have elapsed from last_sleep_start, EXCEPT medical emergency
+    // (health ≤ 15). Energy recovery, stale simulation timestamps, and
+    // scheduled wake_up_time are all invalid early-wake reasons.
+    const isMedicalEmergency = (energy <= 15) || ((char.health_value ?? 80) <= 15);
+    const sleepUnder6h = sleepDurationHours !== null && sleepDurationHours < 6;
+    if (sleepUnder6h && !isMedicalEmergency) {
+      return Response.json({
+        success: true,
+        action: 'none',
+        reason: `${char.name} is within protected sleep window (${(sleepDurationHours || 0).toFixed(2)}h elapsed < 6h minimum). No valid early-wake override. Character must sleep at least 6 hours.`,
+        sleep_duration_hours: sleepDurationHours,
+        before,
+      });
+    }
+
     // Reason 1: Missing last_sleep_start — can't track duration, wake now
+    // EXCEPTION: if we cannot determine duration, apply safe correction by setting
+    // last_sleep_start = now (resets timer), rather than forcibly waking. This is
+    // conservative — only wake if another valid reason also applies.
     if (!char.last_sleep_start && isSleeping && !isPassedOut) {
-      shouldWake = true;
-      wakeReason = 'missing_last_sleep_start_cannot_track_duration';
-      fixes.push('last_sleep_start was null — 8h cap cannot fire without it');
+      // Do not wake immediately — set the timestamp so the cap can fire naturally.
+      // Flag for wake only if energy is also critically high AND other reasons agree.
+      fixes.push('last_sleep_start was null — safe correction will be applied');
     }
 
     // Reason 2: Sleeping > 8 hours — hard cap should have fired
@@ -123,24 +143,48 @@ Deno.serve(async (req) => {
       fixes.push(`Sleep duration ${Math.round(sleepDurationHours * 10) / 10}h exceeds 8h hard cap`);
     }
 
-    // Reason 3: Energy > 70 — no reason to still be sleeping
+    // Reason 3: Energy > 70 is NOT a standalone wake reason.
+    // Energy recovering during sleep is expected behavior (rate: +12.5/hr).
+    // Energy reaching 100% does NOT mean the character should wake early.
+    // This reason is only valid if sleep duration is ALSO ≥ 6 hours.
     if (energy > 70 && isSleeping && !isPassedOut) {
-      shouldWake = true;
-      wakeReason = wakeReason || 'energy_recovered_above_wake_threshold';
-      fixes.push(`Energy is ${Math.round(energy)} — above natural wake threshold of 70`);
+      if (sleepDurationHours !== null && sleepDurationHours >= 6) {
+        shouldWake = true;
+        wakeReason = wakeReason || 'energy_recovered_above_70_after_6h_sleep';
+        fixes.push(`Energy is ${Math.round(energy)} — above natural wake threshold after ${sleepDurationHours.toFixed(1)}h sleep`);
+      }
+      // If < 6h elapsed, energy > 70 is IGNORED — this is normal sleep recovery.
     }
 
-    // Reason 4: Stale presence — last simulated > 4 hours ago
-    if (char.last_need_simulated_at) {
-      const hoursSinceSim = (nowET.getTime() - new Date(char.last_need_simulated_at).getTime()) / 3_600_000;
-      if (hoursSinceSim > 4) {
-        shouldWake = true;
-        wakeReason = wakeReason || 'stale_presence_over_4h';
-        fixes.push(`Last simulated ${Math.round(hoursSinceSim)}h ago — stale presence`);
-      }
+    // Reason 4: Stale presence (last simulated > 4 hours ago) is NOT a valid wake
+    // reason for a sleeping character. Sleeping characters are intentionally not
+    // being simulated during their sleep window. Absence of simulation is correct.
+    // This check is REMOVED — it incorrectly treated normal sleep as a stale state.
+
+    // Reason 5: Missing last_sleep_start AND no other valid wake reason — apply
+    // safe correction (set timestamp) rather than waking.
+    if (!char.last_sleep_start && isSleeping && !isPassedOut && !shouldWake) {
+      // Safe correction: set last_sleep_start. Character remains asleep.
+      shouldWake = false;
+      fixes.push('last_sleep_start missing — will be written as safe correction; character remains asleep');
     }
 
     if (!shouldWake) {
+      // Apply safe correction if last_sleep_start is missing — set it without waking
+      if (!char.last_sleep_start && isSleeping && !isPassedOut) {
+        try {
+          await base44.entities.Character.update(char.id, { last_sleep_start: nowIso });
+        } catch {
+          await base44.asServiceRole.entities.Character.update(char.id, { last_sleep_start: nowIso });
+        }
+        return Response.json({
+          success: true,
+          action: 'safe_correction_last_sleep_start',
+          reason: `${char.name} is sleeping — last_sleep_start was missing. Set to now as safe correction. Character remains asleep. Energy=${Math.round(energy)}, duration=unknown (timer reset).`,
+          before,
+          fixes,
+        });
+      }
       return Response.json({
         success: true,
         action: 'none',
