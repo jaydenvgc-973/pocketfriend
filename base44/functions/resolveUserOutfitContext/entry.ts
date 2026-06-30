@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
     }
 
     // ── ROTATION OFF ─────────────────────────────────────────────────────────
-    // P1: manual_category_selections (persistent per-category selection)
+    // Rotation OFF — P1: manual_category_selections (persistent per-category selection)
     const manualSelections = settings.user_manual_category_selections;
     if (manualSelections) {
       for (const cat of chain) {
@@ -179,29 +179,22 @@ Deno.serve(async (req) => {
         }
       }
     }
-    // P2: user_current_outfit (legacy manual field)
+    // P2: user_current_outfit is the authority. null = nothing selected.
+    // Do NOT auto-pick from closet — null is a valid "no outfit selected" state.
     const co = settings.user_current_outfit;
-    if (co) {
-      const t = buildOutfitText(co) || co.label?.trim() || null;
-      if (t) {
-        console.log(`[resolveUserOutfitContext] ✅ ROTATION_OFF user_current_outfit → "${t.substring(0, 80)}"`);
-        return Response.json({ text: t, source: 'user_current_outfit', category: co.category || targetCategory });
-      }
+    if (!co || (!co.outfit_id && !buildOutfitText(co))) {
+      console.log(`[resolveUserOutfitContext] ROTATION_OFF no selection (user_current_outfit=null) — returning null`);
+      return Response.json({ text: null, source: 'rotation_off_no_selection', category: null });
     }
-    // P3: Day-stable rotation fallback
-    for (const cat of chain) {
-      const pool = outfits.filter((o: any) => o.category === cat);
-      if (!pool.length) continue;
-      const picked = pool[stableIndex % pool.length];
-      const t = buildOutfitText(picked) || picked.label?.trim() || null;
-      if (t) {
-        console.log(`[resolveUserOutfitContext] ✅ ROTATION_OFF fallback cat="${cat}" → "${t.substring(0, 80)}"`);
-        return Response.json({ text: t, source: 'rotation_off_fallback', category: cat });
-      }
+    // user_current_outfit is set — use it directly (it IS the outfit object, not just an id reference)
+    const t = buildOutfitText(co) || co.label?.trim() || null;
+    if (t) {
+      console.log(`[resolveUserOutfitContext] ✅ ROTATION_OFF user_current_outfit → "${t.substring(0, 80)}"`);
+      return Response.json({ text: t, source: 'user_current_outfit', category: co.category || targetCategory });
     }
-
-    console.warn(`[resolveUserOutfitContext] ROTATION_OFF chain miss for "${targetCategory}"`);
-    return Response.json({ text: null, source: 'closet_chain_miss', category: targetCategory });
+    // user_current_outfit exists but has no usable text — treat as null
+    console.warn(`[resolveUserOutfitContext] ROTATION_OFF user_current_outfit has no usable text — returning null`);
+    return Response.json({ text: null, source: 'rotation_off_no_selection', category: null });
   } catch (error) {
     console.error('[resolveUserOutfitContext] Fatal:', error.message);
     return Response.json({ error: error.message }, { status: 500 });

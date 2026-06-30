@@ -319,13 +319,21 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
     }
   }
 
-  // Rotation OFF fallback: use current_outfit if it exists, else first in chain
+  // Rotation OFF: current_outfit is the authority.
+  // null = no outfit selected. Do NOT fall through to auto-pick from closet.
+  // Only return an outfit if current_outfit explicitly points to one.
   const currentOutfitId = character.current_outfit?.outfit_id || null;
+  if (!currentOutfitId) return null; // null is a valid "nothing selected" state
+
   for (const cat of fallbackChain) {
     const pool = outfits.filter(o => o.category === cat);
-    if (pool.length > 0) return pickFromPool(pool, currentOutfitId, character.id, false);
+    if (pool.length > 0) {
+      const locked = pool.find(o => o.outfit_id === currentOutfitId);
+      if (locked) return locked;
+    }
   }
-  return pickFromPool(outfits, currentOutfitId, character.id, false);
+  // current_outfit ID set but not found in closet (deleted outfit) — treat as null
+  return null;
 }
 
 /**

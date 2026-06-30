@@ -345,7 +345,7 @@ Deno.serve(async (req) => {
     }
 
     // ── ROTATION OFF ──────────────────────────────────────────────────────────
-    // P1: manual_category_selections (persistent per-category selection)
+    // Rotation OFF — P1: manual_category_selections (persistent per-category selection)
     const manualSelections = character.manual_category_selections;
     if (manualSelections) {
       for (const cat of chain) {
@@ -361,20 +361,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // P2: Day-stable rotation fallback
-    for (const cat of chain) {
-      const pool = outfits.filter(o => o.category === cat);
-      if (!pool.length) continue;
-      const picked = pool[stableIndex % pool.length];
-      const t = buildOutfitText(picked) || picked.label?.trim() || null;
-      if (t) {
-        console.log(`[resolveCharacterOutfitContext] ✅ ROTATION_OFF fallback cat="${cat}" → "${t.substring(0,80)}"`);
-        return Response.json({ text: t, source: 'rotation_off_fallback', category: cat });
-      }
+    // ROTATION OFF: current_outfit is the authority. null = nothing selected.
+    // Do NOT auto-pick from the closet — that would override the user's explicit "no selection" state.
+    const currentOutfitId = character.current_outfit?.outfit_id || null;
+    if (!currentOutfitId) {
+      console.log(`[resolveCharacterOutfitContext] ROTATION_OFF no selection (current_outfit=null) — returning null`);
+      return Response.json({ text: null, source: 'rotation_off_no_selection', category: null });
     }
 
-    console.warn(`[resolveCharacterOutfitContext] ROTATION_OFF chain miss for "${targetCategory}"`);
-    return Response.json({ text: null, source: 'closet_chain_miss', category: targetCategory });
+    // current_outfit is set — find it in closet and use it
+    const selectedOutfit = outfits.find(o => o.outfit_id === currentOutfitId);
+    const t = selectedOutfit ? buildOutfitText(selectedOutfit) || selectedOutfit.label?.trim() || null : null;
+    if (t) {
+      console.log(`[resolveCharacterOutfitContext] ✅ ROTATION_OFF current_outfit → "${t.substring(0,80)}"`);
+      return Response.json({ text: t, source: 'rotation_off_current_outfit', category: selectedOutfit?.category || targetCategory });
+    }
+
+    // current_outfit ID found but outfit deleted from closet — treat as null
+    console.warn(`[resolveCharacterOutfitContext] ROTATION_OFF current_outfit id="${currentOutfitId}" not in closet — returning null`);
+    return Response.json({ text: null, source: 'rotation_off_outfit_deleted', category: null });
 
   } catch (error) {
     console.error('[resolveCharacterOutfitContext] Fatal:', error.message);
