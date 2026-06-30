@@ -68,18 +68,38 @@ function idHash(characterId = '') {
   return characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
 }
 
+/** Eastern Time today date string YYYY-MM-DD */
+function getETTodayStr() {
+  const n = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+
 /**
- * Compute the "next scheduled" outfit for a group.
+ * Compute the scheduled outfit for a group.
  * Returns: { state, outfit? }
  * States: 'scheduled' | 'no_outfits' | 'no_numbered' | 'conflict' | 'rotation_off'
+ *
+ * When isToday=true, respects today_category_outfit_overrides so the "Today" display
+ * agrees with the Currently Wearing card. Tomorrow always uses pure rotation numbers.
  */
-function getGroupPreview(groupKey, outfits, rotationEnabled, characterId, dayOfYear) {
+function getGroupPreview(groupKey, outfits, rotationEnabled, characterId, dayOfYear, todayOverrides = null, isToday = false) {
   const catValues = GROUP_CATEGORIES[groupKey] || [];
   const pool = outfits.filter(o => catValues.includes(o.category));
 
   if (pool.length === 0) return null; // group has no outfits at all — skip
 
   if (!rotationEnabled) return { state: 'rotation_off' };
+
+  // Today: check for a manual override before falling through to rotation numbers
+  if (isToday && todayOverrides) {
+    for (const cat of catValues) {
+      const overrideId = todayOverrides[cat];
+      if (overrideId) {
+        const overrideOutfit = pool.find(o => o.outfit_id === overrideId);
+        if (overrideOutfit) return { state: 'scheduled', outfit: overrideOutfit, isOverride: true };
+      }
+    }
+  }
 
   const numbered = pool
     .filter(o => o.rotation_number != null && o.rotation_number !== "")
@@ -115,16 +135,22 @@ export default function RotationSchedulePreview({ character }) {
   const todayDayOfYear = getTodayDayOfYear();
   const tomorrowDayOfYear = getTomorrowDayOfYear();
 
-  // Build today's group previews
+  // Extract today's category overrides (from "Wear Today" selections) — ET date-scoped
+  const overrideState = character.today_category_outfit_overrides;
+  const todayOverrides = (overrideState?.date === getETTodayStr() && overrideState?.overrides)
+    ? overrideState.overrides
+    : null;
+
+  // Build today's group previews — respects today_category_outfit_overrides so display agrees with Currently Wearing
   const todayPreviews = GROUPS.map(g => ({
     ...g,
-    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, todayDayOfYear),
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, todayDayOfYear, todayOverrides, true),
   })).filter(g => g.preview !== null);
 
-  // Build tomorrow's group previews
+  // Build tomorrow's group previews — pure rotation only, overrides do not affect tomorrow
   const tomorrowPreviews = GROUPS.map(g => ({
     ...g,
-    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, tomorrowDayOfYear),
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, tomorrowDayOfYear, null, false),
   })).filter(g => g.preview !== null);
 
   if (todayPreviews.length === 0 && tomorrowPreviews.length === 0) return null;
@@ -192,11 +218,15 @@ function GroupPreviewRow({ groupName, emoji, preview, variant = "tomorrow" }) {
               {isToday ? 'Today' : 'Next'} {groupName}:
             </p>
             <p className="text-xs font-semibold text-foreground truncate">{o?.label || '—'}</p>
-            {o?.rotation_number != null && o.rotation_number !== "" && (
+            {preview.isOverride ? (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 bg-amber-500/20 text-amber-400">
+                Wear Today
+              </span>
+            ) : o?.rotation_number != null && o.rotation_number !== "" ? (
               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${isToday ? 'bg-emerald-500/20 text-emerald-400' : 'bg-primary/15 text-primary'}`}>
                 #{o.rotation_number}
               </span>
-            )}
+            ) : null}
           </div>
           {(o?.top || o?.full_description) && (
             <p className="text-[9px] text-muted-foreground/70 truncate mt-0.5">

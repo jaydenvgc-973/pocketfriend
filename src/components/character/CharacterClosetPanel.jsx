@@ -877,8 +877,8 @@ export default function CharacterClosetPanel({ character }) {
             {activeOutfit.shoes && <p>👟 {activeOutfit.shoes}</p>}
             {activeOutfit.outerwear && <p>🧥 {activeOutfit.outerwear}</p>}
             {activeOutfit.accessories && <p>💍 {activeOutfit.accessories}</p>}
-            {!activeOutfit.top && !activeOutfit.bottom && !activeOutfit.shoes && activeOutfit.label && (
-              <p className="text-muted-foreground/60 italic text-[11px]">No outfit details — edit this outfit to add pieces.</p>
+            {!activeOutfit.top && activeOutfit.full_description && (
+              <p className="leading-relaxed">{activeOutfit.full_description}</p>
             )}
           </div>
           {!rotationEnabled && character.current_outfit?.last_changed_at && (
