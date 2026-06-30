@@ -102,177 +102,242 @@ function buildOutfitText(outfit) {
 }
 
 // ── ZONE RESOLUTION ──────────────────────────────────────────────────────────
+
+// ── NAMED ZONE ALIAS MAP ──────────────────────────────────────────────────────
+// Authority: aliases only resolve zones INSIDE the current location.
+// Aliases are full multi-word identifiers — never generic single-word tokens.
+// Order: most-specific alias first so "employee lounge" matches before "lounge" alone.
+const ZONE_ALIAS_MAP = [
+  { aliases: ['vip section', 'vip lounge', 'vip area', 'bottle service area', 'private lounge', 'vip room'], zone: 'vip section' },
+  { aliases: ['employee lounge', 'staff lounge', 'break room', 'employee break room', 'staff break room', 'breakroom'], zone: 'employee lounge' },
+  { aliases: ['den', 'family room', 'sitting room', 'tv room', 'media room'], zone: 'den' },
+  // nursery/kids bedroom — zone may be named either way; both aliases and canonical labels cover both names
+  { aliases: ['nursery', 'kids bedroom', 'kid bedroom', 'kids room', 'child room', "children's room", 'baby room', "baby's room", 'toddler room'], zone: 'nursery' },
+  { aliases: ['nursery', 'baby room', "baby's room", 'toddler room', 'child room', "children's room"], zone: 'kids bedroom' },
+  { aliases: ['event hall', 'banquet hall', 'function hall', 'event space', 'ballroom', 'reception hall', 'great hall', 'event room', 'banquet room'], zone: 'event hall' },
+  { aliases: ['man cave', 'game room', 'recreation room', 'rec room', 'game den', 'gaming room', 'hangout room'], zone: 'man cave' },
+  { aliases: ['balcony', 'terrace', 'outdoor balcony', 'private terrace', 'rooftop terrace', 'patio terrace'], zone: 'balcony' },
+  { aliases: ['master bedroom', 'primary bedroom', 'main bedroom', "owner's bedroom", 'master suite'], zone: 'master bedroom' },
+  { aliases: ['guest bedroom', 'guest room', 'spare bedroom', 'spare room', 'visitor room', 'second bedroom'], zone: 'guest bedroom' },
+  { aliases: ['home office', 'office', 'study', 'workspace', 'work room'], zone: 'office' },
+  { aliases: ['living room', 'main room', 'front room'], zone: 'living room' },
+  { aliases: ['dining room', 'dining area', 'eating area', 'dinner room'], zone: 'dining room' },
+  { aliases: ['kitchen', 'cooking area'], zone: 'kitchen' },
+  { aliases: ['backyard', 'back yard', 'patio', 'deck', 'yard', 'garden'], zone: 'backyard' },
+  { aliases: ['rooftop', 'roof deck', 'rooftop bar', 'roof terrace'], zone: 'rooftop' },
+  { aliases: ['dance floor', 'main floor', 'dancefloor', 'floor'], zone: 'dance floor' },
+  { aliases: ['bar area', 'bar counter', 'behind the bar', 'bartending area'], zone: 'bar area' },
+  { aliases: ['laundry room', 'laundry', 'laundry area', 'washer room'], zone: 'laundry' },
+];
+
+// OBJECT-ONLY KEYWORDS — only used AFTER named-zone resolution fails.
+// These are generic furniture/object words that must NEVER outrank a named zone.
+// CRITICAL: "couch" does NOT mean living room. "bed" does NOT mean adult bedroom.
+// Object terms are secondary context INSIDE an already-resolved named zone.
 const ZONE_KEYWORD_MAP = [
-  {keywords:['bedroom','in bed','on the bed','sleeping','woke up','waking up','nightstand','duvet','pillow','mattress','my room','her room','his room'],zone:'bedroom'},
-  {keywords:['kitchen','cooking','stove','fridge','oven','microwave','counter','pancake','breakfast','making food','grabbing food'],zone:'kitchen'},
+  // Named-room keywords — these are room names, not objects, and must match whole-word zone names
+  {keywords:['bedroom','in bed','on the bed','woke up','waking up','nightstand','duvet','pillow','mattress','my room','her room','his room'],zone:'bedroom'},
+  {keywords:['kitchen','cooking','stove','fridge','oven','microwave','pancake','breakfast','making food','grabbing food'],zone:'kitchen'},
   {keywords:['bathroom','shower','bathtub','toilet','vanity','brushing teeth','getting ready'],zone:'bathroom'},
-  {keywords:['living room','couch','sofa','tv ','on the couch','lounge','sectional','watching tv','watching a movie'],zone:'living room'},
+  // CRITICAL: "couch", "sofa", "tv" alone must NOT map to living room — too ambiguous.
+  // Only map when "living room" is explicitly mentioned.
+  {keywords:['living room'],zone:'living room'},
   {keywords:['backyard','patio','deck','yard','garden','grill','fire pit','outside at home'],zone:'backyard'},
-  {keywords:['dining room','dining table','dinner table','eating at the table'],zone:'dining room'},
-  {keywords:['office','desk','home office','workspace','working from home'],zone:'office'},
+  {keywords:['dining room','dining table','dinner table'],zone:'dining room'},
+  {keywords:['home office','office','desk','workspace','working from home'],zone:'office'},
   {keywords:['gym','workout','weights','treadmill','lifting','training','exercise'],zone:'gym'},
-  {keywords:['vip','vip section','vip lounge','vip area'],zone:'vip'},
-  {keywords:['bar area','behind the bar','bartending','bar counter'],zone:'bar area'},
-  {keywords:['dance floor','main floor','dancefloor','on the floor'],zone:'main floor'},
   {keywords:['rooftop','roof deck','rooftop bar','on the roof'],zone:'rooftop'},
+  // hallway: ONLY explicit hallway terms. "hall" alone is BLOCKED — it would match "event hall".
   {keywords:['hallway','corridor','entryway','front door','foyer'],zone:'hallway'},
   {keywords:['balcony','on the balcony','balcony view'],zone:'balcony'},
-  {keywords:['laundry','laundry room','washer','dryer'],zone:'laundry'},
-  {keywords:['lake','by the lake','on the lake','water','shoreline','reflecting off the water','city lights reflecting'],zone:'main area'},
-  {keywords:['trail','hiking','path','forest','woods','trees','outdoors','outside','park'],zone:'trail'},
-  {keywords:['picnic','picnic area','picnic table','relaxing outdoors'],zone:'picnic area'},
+  {keywords:['laundry room','laundry','washer','dryer'],zone:'laundry'},
+  {keywords:['lake','by the lake','on the lake','shoreline','reflecting off the water','city lights reflecting'],zone:'main area'},
+  {keywords:['trail','hiking','path','forest','woods','trees'],zone:'trail'},
+  {keywords:['picnic','picnic area','picnic table'],zone:'picnic area'},
   {keywords:['shelter','pavilion','under shelter','covered area'],zone:'shelter / pavilion'},
   {keywords:['entrance','at the entrance','front entrance','entry'],zone:'entrance'},
+  {keywords:['dance floor','dancefloor','main floor'],zone:'main floor'},
+  {keywords:['bar area','behind the bar','bartending','bar counter'],zone:'bar area'},
+  {keywords:['vip section','vip lounge','vip area'],zone:'vip'},
 ];
 
 function cdnFilterNoGenerated(urls) {
   return cdnFilter(urls).filter(url => !url.includes('generated_image'));
 }
 
-// ── ACTIVITY → CANONICAL OBJECT MAP ──────────────────────────────────────────
-// Maps activity keywords to (a) the canonical zone that owns the required object,
-// and (b) the object that already exists there. Used by two guards:
-//   1. Zone override guard: reject a wrong zone if the correct zone has the object.
-//   2. Existing-object grounding: inject "use existing [object]" into the prompt.
-const ACTIVITY_OBJECT_MAP = [
-  { keywords: ['desk','working from home','home office','workspace','paperwork','writing','studying','homework','computer at home','laptop at home'], zone: 'office', existingObject: 'desk' },
-  { keywords: ['dining table','dinner table','eating at table','dining room','formal meal','dinner at home','lunch at home'], zone: 'dining room', existingObject: 'dining table' },
-  { keywords: ['sleeping','asleep','in bed','lying in bed','waking up','bedroom','napping in bed','nightstand'], zone: 'bedroom', existingObject: 'bed' },
-  { keywords: ['workout','weights','treadmill','lifting','exercise at home','home gym'], zone: 'gym', existingObject: 'gym equipment' },
-  { keywords: ['gaming','playing video games','game room','console','gaming setup'], zone: 'game room', existingObject: 'gaming setup' },
-  { keywords: ['laundry','washer','dryer','folding clothes'], zone: 'laundry', existingObject: 'washer/dryer' },
-  { keywords: ['couch','sofa','watching tv','on the couch','tv show'], zone: 'living room', existingObject: 'couch/sofa' },
-];
+// ACTIVITY_OBJECT_MAP removed — object-first matching was the root cause of named zones
+// being overridden by generic object keywords (e.g. "couch" → living room ignoring "den",
+// "bed" → adult bedroom ignoring "nursery"). Named zone authority (TIER 1–4) now runs first.
+// existingObjectCue is no longer injected — zone reference images are the authoritative
+// visual container. Objects appear in the prompt as natural scene description only.
 
 function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const allZones = location.zones || [];
   const zones = allZones.filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
 
   if (zones.length === 0) {
+    console.log(`[resolveZone] No zones with images for "${location.name}" — using location default refs`);
     return { images: cdnFilterNoGenerated(location.image_urls || []).slice(0, 4), zoneName: null, existingObjectCue: null };
   }
 
-  // ── EXISTING-OBJECT GROUNDING: detect which object the activity requires ─────
-  // This runs BEFORE name/keyword matching so we can validate zone selection.
-  let requiredObjectEntry = null;
-  for (const entry of ACTIVITY_OBJECT_MAP) {
-    if (entry.keywords.some(kw => promptLower.includes(kw))) {
-      requiredObjectEntry = entry;
-      break;
-    }
+  // ── HELPER: find a zone by exact or fuzzy full-name match ────────────────────
+  // Uses word-boundary protection so "hall" does NOT match "event hall" or "hallway"
+  // when the candidate zone name is the full multi-word "Event Hall".
+  // Scoring: exact full-name match > partial contains (whole zone name in prompt).
+  function findZoneByName(targetName) {
+    if (!targetName) return null;
+    const target = targetName.toLowerCase().trim();
+    // Pass 1: exact match (zone name === target)
+    const exact = zones.find(z => z.zone_name && z.zone_name.toLowerCase().trim() === target);
+    if (exact) return exact;
+    // Pass 2: zone name fully contained in prompt AND prompt fully contained in zone name
+    // (handles "the employee lounge" matching zone "Employee Lounge")
+    const contained = zones.find(z => {
+      if (!z.zone_name) return false;
+      const zn = z.zone_name.toLowerCase().trim();
+      return promptLower.includes(zn) && zn.length > 3;
+    });
+    return contained || null;
   }
 
-  // ── ZONE OVERRIDE GUARD ───────────────────────────────────────────────────────
-  // If the activity requires a specific object that lives in a canonical zone,
-  // verify that the preferred/named zone actually supports that object.
-  // If it doesn't, redirect to the correct canonical zone if one exists.
-  function findCanonicalZoneForObject(entry) {
-    if (!entry) return null;
-    const canonical = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(entry.zone));
-    return canonical || null;
-  }
-
+  // ── AUTHORITY TIER 1: UI-selected preferred zone (explicit override) ──────────
   if (preferredZoneName) {
-    const preferred = zones.find(z => z.zone_name && z.zone_name.toLowerCase() === preferredZoneName.toLowerCase());
+    const preferred = zones.find(z => z.zone_name && z.zone_name.toLowerCase().trim() === preferredZoneName.toLowerCase().trim());
     if (preferred) {
-      // If an object-requiring activity is present, verify this zone can host it
-      if (requiredObjectEntry) {
-        const isCorrectZone = preferred.zone_name.toLowerCase().includes(requiredObjectEntry.zone);
-        if (!isCorrectZone) {
-          // Check if the canonical zone exists — if so, redirect
-          const canonicalZone = findCanonicalZoneForObject(requiredObjectEntry);
-          if (canonicalZone) {
-            const imgs = cdnFilterNoGenerated(canonicalZone.image_urls).slice(0, 4);
-            if (imgs.length > 0) {
-              console.log(`[resolveZone] ⛔ ZONE OVERRIDE: preferred="${preferred.zone_name}" lacks "${requiredObjectEntry.existingObject}" — redirecting to canonical zone "${canonicalZone.zone_name}"`);
-              return { images: imgs, zoneName: canonicalZone.zone_name, existingObjectCue: requiredObjectEntry.existingObject };
-            }
-          }
-        }
-      }
       const imgs = cdnFilterNoGenerated(preferred.image_urls).slice(0, 4);
       if (imgs.length > 0) {
-        console.log(`[resolveZone] Preferred zone: "${preferred.zone_name}"`);
-        return { images: imgs, zoneName: preferred.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+        console.log(`[resolveZone] ✅ TIER-1 preferred zone (UI-selected): "${preferred.zone_name}"`);
+        return { images: imgs, zoneName: preferred.zone_name, existingObjectCue: null };
       }
     }
   }
 
-  // Exact zone-name match in prompt — apply same object guard
-  for (const zone of zones) {
-    if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
-      if (requiredObjectEntry) {
-        const isCorrectZone = zone.zone_name.toLowerCase().includes(requiredObjectEntry.zone);
-        if (!isCorrectZone) {
-          const canonicalZone = findCanonicalZoneForObject(requiredObjectEntry);
-          if (canonicalZone) {
-            const imgs = cdnFilterNoGenerated(canonicalZone.image_urls).slice(0, 4);
-            if (imgs.length > 0) {
-              console.log(`[resolveZone] ⛔ EXACT-NAME ZONE OVERRIDE: prompt names "${zone.zone_name}" but activity needs "${requiredObjectEntry.existingObject}" → redirecting to "${canonicalZone.zone_name}"`);
-              return { images: imgs, zoneName: canonicalZone.zone_name, existingObjectCue: requiredObjectEntry.existingObject };
-            }
-          }
-        }
+  // ── AUTHORITY TIER 2: Exact full zone-name match in prompt ───────────────────
+  // ATOMIC RULE: multi-word zone names treated as full identifiers.
+  // Sorted by zone name length (longest first) so "Employee Lounge" wins over "Lounge".
+  const zonesByLength = [...zones].sort((a, b) => (b.zone_name || '').length - (a.zone_name || '').length);
+  for (const zone of zonesByLength) {
+    if (!zone.zone_name) continue;
+    const zn = zone.zone_name.toLowerCase().trim();
+    if (zn.length < 3) continue; // skip trivially short names
+    if (promptLower.includes(zn)) {
+      // ANTI-PARTIAL-MATCH GUARD: ensure we matched the FULL name, not a substring fragment.
+      // "hall" must not match "Event Hall" when the prompt says "hallway".
+      // Check that the match position is at a word boundary (preceded/followed by non-word char or string edge).
+      const idx = promptLower.indexOf(zn);
+      const before = idx === 0 ? true : !/\w/.test(promptLower[idx - 1]);
+      const after = (idx + zn.length) >= promptLower.length ? true : !/\w/.test(promptLower[idx + zn.length]);
+      if (!before || !after) {
+        console.log(`[resolveZone] TIER-2 skip "${zone.zone_name}" — matched as substring fragment (no word boundary)`);
+        continue;
       }
       const imgs = cdnFilterNoGenerated(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
-        console.log(`[resolveZone] Exact zone name match: "${zone.zone_name}"`);
-        return { images: imgs, zoneName: zone.zone_name, existingObjectCue: requiredObjectEntry?.existingObject || null };
+        console.log(`[resolveZone] ✅ TIER-2 exact zone name match: "${zone.zone_name}"`);
+        return { images: imgs, zoneName: zone.zone_name, existingObjectCue: null };
       }
     }
   }
 
+  // ── AUTHORITY TIER 3: Alias-based named zone match ───────────────────────────
+  // Alias map entries are full multi-word identifiers. Only resolves zones
+  // inside the current location — no cross-location search.
+  for (const aliasEntry of ZONE_ALIAS_MAP) {
+    // Check if any alias matches the prompt text (whole-phrase, not substring)
+    const matchedAlias = aliasEntry.aliases.find(alias => {
+      const al = alias.toLowerCase();
+      const idx = promptLower.indexOf(al);
+      if (idx === -1) return false;
+      const before = idx === 0 ? true : !/\w/.test(promptLower[idx - 1]);
+      const after = (idx + al.length) >= promptLower.length ? true : !/\w/.test(promptLower[idx + al.length]);
+      return before && after;
+    });
+    if (!matchedAlias) continue;
+
+    // Find a zone whose name matches the alias entry's canonical zone name (also full match)
+    // Sorted by best name similarity: prefer exact match, then longest containing match
+    const targetZoneLabel = aliasEntry.zone.toLowerCase();
+    const candidateZone = zonesByLength.find(z => {
+      if (!z.zone_name) return false;
+      const zn = z.zone_name.toLowerCase().trim();
+      // Exact zone name equals alias canonical name
+      if (zn === targetZoneLabel) return true;
+      // Zone name contains the canonical label as a whole word
+      const idx = zn.indexOf(targetZoneLabel);
+      if (idx === -1) return false;
+      const b = idx === 0 ? true : !/\w/.test(zn[idx - 1]);
+      const a = (idx + targetZoneLabel.length) >= zn.length ? true : !/\w/.test(zn[idx + targetZoneLabel.length]);
+      return b && a;
+    });
+    if (candidateZone) {
+      const imgs = cdnFilterNoGenerated(candidateZone.image_urls).slice(0, 4);
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] ✅ TIER-3 alias match: prompt="${matchedAlias}" → canonical="${aliasEntry.zone}" → zone="${candidateZone.zone_name}"`);
+        return { images: imgs, zoneName: candidateZone.zone_name, existingObjectCue: null };
+      }
+    }
+  }
+
+  // ── AUTHORITY TIER 4: Named-room keyword match ───────────────────────────────
+  // Keywords are still multi-word or room-name terms (never bare objects like "couch" or "bed").
+  // Zone name match uses exact inclusion of the entry.zone label inside the zone name (full word).
   for (const entry of ZONE_KEYWORD_MAP) {
-    if (entry.keywords.some(kw => promptLower.includes(kw))) {
-      const matched = zones.find(z =>
-        z.zone_name && z.zone_name.toLowerCase().includes(entry.zone)
-      );
-      if (matched) {
-        const imgs = cdnFilterNoGenerated(matched.image_urls).slice(0, 4);
-        if (imgs.length > 0) {
-          // Only inject the cue when the selected zone IS the canonical zone for that object
-          const cueKw = requiredObjectEntry && matched.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
-            ? requiredObjectEntry.existingObject : null;
-          if (requiredObjectEntry && !cueKw) console.warn(`[resolveZone] Keyword-matched zone "${matched.zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed`);
-          console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}" cue="${cueKw || 'none'}"`);
-          return { images: imgs, zoneName: matched.zone_name, existingObjectCue: cueKw };
-        }
+    const kw = entry.keywords.find(k => promptLower.includes(k));
+    if (!kw) continue;
+    const matched = zones.find(z => {
+      if (!z.zone_name) return false;
+      const zn = z.zone_name.toLowerCase();
+      const target = entry.zone.toLowerCase();
+      const idx = zn.indexOf(target);
+      if (idx === -1) return false;
+      const b = idx === 0 ? true : !/\w/.test(zn[idx - 1]);
+      const a = (idx + target.length) >= zn.length ? true : !/\w/.test(zn[idx + target.length]);
+      return b && a;
+    });
+    if (matched) {
+      const imgs = cdnFilterNoGenerated(matched.image_urls).slice(0, 4);
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] ✅ TIER-4 keyword match: kw="${kw}" entry.zone="${entry.zone}" → zone="${matched.zone_name}"`);
+        return { images: imgs, zoneName: matched.zone_name, existingObjectCue: null };
       }
     }
   }
 
+  // ── AUTHORITY TIER 5: Only one zone exists — use it ─────────────────────────
   if (zones.length === 1) {
     const imgs = cdnFilterNoGenerated(zones[0].image_urls).slice(0, 4);
-    // Only inject cue when this single zone canonically owns the required object
-    const cue1 = requiredObjectEntry && zones[0].zone_name.toLowerCase().includes(requiredObjectEntry.zone)
-      ? requiredObjectEntry.existingObject : null;
-    if (requiredObjectEntry && !cue1) console.warn(`[resolveZone] Single zone "${zones[0].zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed to prevent fabrication`);
-    console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}" cue="${cue1 || 'none'}"`);
-    return { images: imgs, zoneName: zones[0].zone_name, existingObjectCue: cue1 };
+    console.log(`[resolveZone] TIER-5 single zone — using "${zones[0].zone_name}"`);
+    return { images: imgs, zoneName: zones[0].zone_name, existingObjectCue: null };
   }
 
-  // Multiple zones, no keyword match — prefer a sensible default zone over blindly picking first.
-  const preferenceOrder = ['living room', 'bedroom', 'main area', 'main floor', 'lounge'];
-  for (const preferred of preferenceOrder) {
-    const match = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(preferred));
+  // ── AUTHORITY TIER 6: Sensible default zone when multiple exist ─────────────
+  // Only applies when NO named zone was inferable from the conversation.
+  // Object words (couch, bed, desk) are NOT used here — they never outrank named zones.
+  const defaultOrder = ['living room', 'main area', 'main floor', 'lounge', 'bedroom'];
+  for (const defZone of defaultOrder) {
+    const match = zones.find(z => {
+      if (!z.zone_name) return false;
+      const zn = z.zone_name.toLowerCase();
+      const idx = zn.indexOf(defZone);
+      if (idx === -1) return false;
+      const b = idx === 0 ? true : !/\w/.test(zn[idx - 1]);
+      const a = (idx + defZone.length) >= zn.length ? true : !/\w/.test(zn[idx + defZone.length]);
+      return b && a;
+    });
     if (match) {
       const imgs = cdnFilterNoGenerated(match.image_urls).slice(0, 4);
       if (imgs.length > 0) {
-        const cuePref = requiredObjectEntry && match.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
-          ? requiredObjectEntry.existingObject : null;
-        console.log(`[resolveZone] Multiple zones, no keyword match — using preferred default zone "${match.zone_name}" cue="${cuePref || 'none'}"`);
-        return { images: imgs, zoneName: match.zone_name, existingObjectCue: cuePref };
+        console.log(`[resolveZone] TIER-6 default zone (no match found): "${match.zone_name}"`);
+        return { images: imgs, zoneName: match.zone_name, existingObjectCue: null };
       }
     }
   }
 
-  const firstZoneWithImages = zones[0];
-  const imgs = cdnFilterNoGenerated(firstZoneWithImages.image_urls).slice(0, 4);
-  const cueFirst = requiredObjectEntry && firstZoneWithImages.zone_name.toLowerCase().includes(requiredObjectEntry.zone)
-    ? requiredObjectEntry.existingObject : null;
-  if (requiredObjectEntry && !cueFirst) console.warn(`[resolveZone] Fallback zone "${firstZoneWithImages.zone_name}" does not canonically contain "${requiredObjectEntry.existingObject}" — cue suppressed`);
-  console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" cue="${cueFirst || 'none'}"`);
-  return { images: imgs, zoneName: firstZoneWithImages.zone_name, existingObjectCue: cueFirst };
+  // ── AUTHORITY TIER 7: Absolute fallback — first zone with images ─────────────
+  const first = zones[0];
+  const imgs = cdnFilterNoGenerated(first.image_urls).slice(0, 4);
+  console.log(`[resolveZone] TIER-7 fallback — first zone "${first.zone_name}"`);
+  return { images: imgs, zoneName: first.zone_name, existingObjectCue: null };
 }
 
 // ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
@@ -1646,14 +1711,14 @@ Deno.serve(async (req) => {
           resolvedLocationName = locRecord.name; resolvedLocationId = locRecord.id;
           resolvedLocCategory = locRecord.category || null;
           const promptLower = (prompt || '').toLowerCase();
-          // Zone priority: UI-selected zone > stored generation_context zone > keyword auto-resolve
+          // Zone priority: UI-selected zone > stored generation_context zone > named-zone auto-resolve
           const preferredZone = manualZoneName || message?.generation_context?.zone_name || null;
-          let resolvedExistingObjectCue = null;
-          const { images, zoneName, existingObjectCue } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
+          const resolvedExistingObjectCue = null; // object cue removed — see ACTIVITY_OBJECT_MAP removal comment
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
-          resolvedExistingObjectCue = existingObjectCue || null;
-          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length} existing_object_cue="${resolvedExistingObjectCue || 'none'}"`);
+          resolvedExistingObjectCue = null; // object cue removed — named-zone refs are the visual authority
+          console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length}`);
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — no env refs.`);
         }
