@@ -8,7 +8,7 @@ import {
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import RotationSchedulePreview from "@/components/character/RotationSchedulePreview";
-import { useCharacterActiveOutfit, applyManualCategoryOverride } from "@/lib/activeOutfitResolver";
+import { useCharacterActiveOutfit, applyManualCategoryOverride, clearCharacterCategoryOverride, getTodayCharacterOverrides } from "@/lib/activeOutfitResolver";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -91,7 +91,10 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict, rotationEnabled }) {
+// isActive       = currently being worn (used for the "Wearing" badge + border highlight)
+// isSlotSelected = this outfit is the manually selected item for its today-slot (rotation ON)
+// onClearSlot    = clears just this outfit's today-slot override (rotation ON deselect)
+function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActive, onClearSlot, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const [fillingFromImage, setFillingFromImage] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
@@ -111,11 +114,18 @@ function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, on
     }
   };
 
+  // highlighted if actively worn OR if it's the manually selected slot for today
+  const highlighted = isActive || isSlotSelected;
   return (
-    <div className={`relative rounded-xl border p-3 space-y-2 transition-colors ${isActive ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
+    <div className={`relative rounded-xl border p-3 space-y-2 transition-colors ${highlighted ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
       {isActive && (
         <div className="absolute top-2 right-8 text-[9px] text-primary font-bold uppercase tracking-wider bg-primary/10 px-1.5 py-0.5 rounded-full">
           Wearing
+        </div>
+      )}
+      {!isActive && isSlotSelected && (
+        <div className="absolute top-2 right-8 text-[9px] text-primary/70 font-bold uppercase tracking-wider bg-primary/10 px-1.5 py-0.5 rounded-full">
+          Today
         </div>
       )}
       <div className="flex items-start justify-between gap-2">
@@ -186,8 +196,17 @@ function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, on
         </button>
       )}
 
-      {/* Rotation OFF: show Deselect on the active card — independent of Currently Wearing card */}
-      {isActive && !rotationEnabled && (
+      {/* Rotation ON: slot-aware deselect clears only this category's today override */}
+      {rotationEnabled && isSlotSelected && (
+        <button
+          onClick={() => onClearSlot(outfit.category)}
+          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+        >
+          Deselect Today
+        </button>
+      )}
+      {/* Rotation OFF: deselect clears the global manual current_outfit */}
+      {!rotationEnabled && isActive && (
         <button
           onClick={() => onClearActive()}
           className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
@@ -195,7 +214,8 @@ function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, on
           Deselect
         </button>
       )}
-      {!isActive && (
+      {/* Show "Wear Today" / "Set as Current Outfit" when not already selected for its slot */}
+      {!highlighted && (
         <button
           onClick={() => onSetActive(outfit)}
           className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
@@ -758,6 +778,19 @@ export default function CharacterClosetPanel({ character }) {
     queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, current_outfit: null } : prev);
   };
 
+  // Rotation ON only: clear the today-slot override for a specific category.
+  // This allows the rotation engine to pick again for that slot — does NOT clear other slots.
+  const handleClearSlot = async (category) => {
+    if (!rotationEnabled) return;
+    const patch = clearCharacterCategoryOverride(character, category);
+    await base44.entities.Character.update(character.id, patch);
+    queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...patch } : prev);
+  };
+
+  // Today's per-category override map: { [category]: outfit_id }
+  // Used to determine which outfit is "slot-selected" for its category when rotation is ON.
+  const todayOverrides = rotationEnabled ? getTodayCharacterOverrides(character) : {};
+
   const handleToggleFavoriteOutfit = async (outfit_id) => {
     await saveCloset(outfits.map(o => o.outfit_id === outfit_id ? { ...o, is_favorite: !o.is_favorite } : o).concat(pieces));
   };
@@ -976,8 +1009,12 @@ export default function CharacterClosetPanel({ character }) {
                         isActive={rotationEnabled
                           ? activeOutfit?.outfit_id === outfit.outfit_id
                           : currentOutfit?.outfit_id === outfit.outfit_id}
+                        isSlotSelected={rotationEnabled
+                          ? todayOverrides[outfit.category] === outfit.outfit_id
+                          : false}
                         onSetActive={handleSetActive}
                         onClearActive={handleClearActive}
+                        onClearSlot={handleClearSlot}
                         onDelete={handleDeleteOutfit}
                         onToggleFavorite={handleToggleFavoriteOutfit}
                         onEdit={setEditingOutfit}

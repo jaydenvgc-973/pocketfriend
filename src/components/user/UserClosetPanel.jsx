@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil, ZoomIn, Hash, AlertTriangle, RefreshCw, Lock } from "lucide-react";
-import { useUserActiveOutfit, applyUserManualCategoryOverride } from "@/lib/activeOutfitResolver";
+import { useUserActiveOutfit, applyUserManualCategoryOverride, clearUserCategoryOverride, getTodayUserOverrides } from "@/lib/activeOutfitResolver";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { Button } from "@/components/ui/button";
@@ -30,15 +30,21 @@ function generateId() {
   return `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict, rotationEnabled }) {
+function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActive, onClearSlot, onDelete, onToggleFavorite, onEdit, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
+  const highlighted = isActive || isSlotSelected;
 
   return (
-    <div className={`relative rounded-xl border p-3 space-y-2 transition-colors ${isActive ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
+    <div className={`relative rounded-xl border p-3 space-y-2 transition-colors ${highlighted ? 'border-primary bg-primary/5' : 'border-border bg-card'}`}>
       {isActive && (
         <div className="absolute top-2 right-8 text-[9px] text-primary font-bold uppercase tracking-wider bg-primary/10 px-1.5 py-0.5 rounded-full">
           Wearing
+        </div>
+      )}
+      {!isActive && isSlotSelected && (
+        <div className="absolute top-2 right-8 text-[9px] text-primary/70 font-bold uppercase tracking-wider bg-primary/10 px-1.5 py-0.5 rounded-full">
+          Today
         </div>
       )}
       <div className="flex items-start justify-between gap-2">
@@ -91,8 +97,17 @@ function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, on
         </div>
       )}
 
-      {/* Rotation OFF: show Deselect on the active card — independent of Currently Wearing card */}
-      {isActive && !rotationEnabled && (
+      {/* Rotation ON: slot-aware deselect clears only this category's today override */}
+      {rotationEnabled && isSlotSelected && (
+        <button
+          onClick={() => onClearSlot(outfit.category)}
+          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+        >
+          Deselect Today
+        </button>
+      )}
+      {/* Rotation OFF: deselect clears the global manual current_outfit */}
+      {!rotationEnabled && isActive && (
         <button
           onClick={() => onClearActive()}
           className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
@@ -100,7 +115,7 @@ function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, on
           Deselect
         </button>
       )}
-      {!isActive && (
+      {!highlighted && (
         <button
           onClick={() => onSetActive(outfit)}
           className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
@@ -463,6 +478,17 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     await onUpdate({ user_current_outfit: null });
   };
 
+  // Rotation ON only: clear today's override for a specific category slot.
+  // Does NOT clear other slots — only the one whose category matches.
+  const handleClearSlot = async (category) => {
+    if (!rotationEnabled) return;
+    const patch = clearUserCategoryOverride(settings, category);
+    await onUpdate(patch);
+  };
+
+  // Today's per-category override map: { [category]: outfit_id }
+  const todayOverrides = rotationEnabled ? getTodayUserOverrides(settings) : {};
+
   const groupedOutfits = OUTFIT_CATEGORIES.reduce((acc, cat) => {
     const items = closet.filter(o => o.category === cat.value);
     if (items.length > 0) acc[cat.value] = items;
@@ -584,8 +610,12 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
                    isActive={rotationEnabled
                      ? activeOutfit?.outfit_id === outfit.outfit_id
                      : currentOutfit?.outfit_id === outfit.outfit_id}
+                   isSlotSelected={rotationEnabled
+                     ? todayOverrides[outfit.category] === outfit.outfit_id
+                     : false}
                    onSetActive={handleSetActive}
                    onClearActive={handleClearActive}
+                   onClearSlot={handleClearSlot}
                    onDelete={handleDelete}
                    onToggleFavorite={handleToggleFavorite}
                    onEdit={setEditingOutfit}

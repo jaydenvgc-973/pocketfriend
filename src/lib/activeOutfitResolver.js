@@ -247,6 +247,52 @@ export function applyUserManualCategoryOverride(settings, targetCategory, newOut
   return { user_manual_category_selections: { ...existing, [targetCategory]: newOutfitId } };
 }
 
+// ── CLEAR MANUAL OVERRIDE FOR A SPECIFIC SLOT (user) ─────────────────────────
+/**
+ * Returns a patch that removes the today-override for a specific category slot.
+ * Used by Deselect when rotation is ON — clears only that slot, not the whole day.
+ */
+export function clearUserCategoryOverride(settings, targetCategory) {
+  const overrideState = settings?.user_today_category_outfit_overrides;
+  const today = getETTodayStr();
+  const existing = (overrideState?.date === today && overrideState?.overrides) ? { ...overrideState.overrides } : {};
+  delete existing[targetCategory];
+  return { user_today_category_outfit_overrides: { date: today, overrides: existing } };
+}
+
+/**
+ * Returns the today's category→outfitId override map for the closet panel.
+ * Only valid for today's date. Empty object if no overrides or stale date.
+ */
+export function getTodayUserOverrides(settings) {
+  const overrideState = settings?.user_today_category_outfit_overrides;
+  if (!overrideState?.date || overrideState.date !== getETTodayStr()) return {};
+  return overrideState.overrides || {};
+}
+
+// ── CLEAR MANUAL OVERRIDE FOR A SPECIFIC SLOT (character) ────────────────────
+/**
+ * Returns a patch that removes the today-override for a specific category slot on a character.
+ * Used by Deselect when rotation is ON — clears only that slot, not the whole day.
+ */
+export function clearCharacterCategoryOverride(character, targetCategory) {
+  const existing = character?.today_category_outfit_overrides;
+  const today = getETTodayStr();
+  const overrides = (existing?.date === today && existing?.overrides) ? { ...existing.overrides } : {};
+  delete overrides[targetCategory];
+  return { today_category_outfit_overrides: { date: today, overrides } };
+}
+
+/**
+ * Returns today's category→outfitId override map for the character closet panel.
+ * Only valid for today's date. Empty object if no overrides or stale date.
+ */
+export function getTodayCharacterOverrides(character) {
+  const existing = character?.today_category_outfit_overrides;
+  if (!existing?.date || existing.date !== getETTodayStr()) return {};
+  return existing.overrides || {};
+}
+
 // Re-export the character override writer for convenience.
 export { applyManualCategoryOverride };
 
