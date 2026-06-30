@@ -130,17 +130,41 @@ const ZONE_ALIAS_MAP = [
   { aliases: ['laundry room', 'laundry', 'laundry area', 'washer room'], zone: 'laundry' },
 ];
 
-// OBJECT-ONLY KEYWORDS — only used AFTER named-zone resolution fails.
-// These are generic furniture/object words that must NEVER outrank a named zone.
-// CRITICAL: "couch" does NOT mean living room. "bed" does NOT mean adult bedroom.
-// Object terms are secondary context INSIDE an already-resolved named zone.
+// ZONE_KEYWORD_MAP — TIER 4 fallback only. Runs after named-zone and alias resolution fail.
+//
+// NATURAL LANGUAGE INTENT RULES:
+//
+// BED / SLEEP EXCEPTION:
+//   "I'm going to bed", "heading to bed", "in bed", "getting in bed", "going to sleep" are
+//   natural human intent phrases that imply a bedroom or sleeping zone when no named zone
+//   is present. These ARE allowed to resolve a bedroom zone at TIER 4.
+//   HOWEVER: they must NEVER override a named zone. If the prompt says "nursery", "kids
+//   bedroom", "guest room", or "master bedroom", TIER 2/3 wins first and TIER 4 never fires.
+//
+// COUCH RULE — ABSOLUTE PROHIBITION:
+//   "couch", "sofa", "sectional", "sitting on the couch", "on the couch" etc. must NEVER
+//   resolve a zone. A couch may exist in a living room, den, man cave, VIP section, employee
+//   lounge, bedroom, office, basement, balcony, or waiting room. "Couch" is furniture context,
+//   not room authority. Do NOT add couch/sofa/sectional to ANY keyword entry.
+//   FORBIDDEN entries (never add): {keywords:['couch','sofa','sectional',...], zone:'living room'}
+//
+// OBJECT WORDS THAT ARE NOT ROOM AUTHORITY:
+//   couch, sofa, sectional, loveseat, armchair, ottoman → NEVER a zone signal
+//   TV, television, remote → NEVER a zone signal (TV exists everywhere)
+//   desk, bookshelf, lamp → NEVER a zone signal (generic furniture)
+//   bed → allowed ONLY in sleep-intent phrases (see BED/SLEEP EXCEPTION above)
+//         "on the bed", "lying on the bed" alone are NOT sleep-intent phrases — they are
+//         scene description. Only directional intent ("going to bed", "heading to bed",
+//         "getting in bed", "time for bed") may imply a bedroom zone.
 const ZONE_KEYWORD_MAP = [
-  // Named-room keywords — these are room names, not objects, and must match whole-word zone names
-  {keywords:['bedroom','in bed','on the bed','woke up','waking up','nightstand','duvet','pillow','mattress','my room','her room','his room'],zone:'bedroom'},
+  // BEDROOM — sleep intent phrases only. "going to bed" = room intent. "on the bed" = furniture detail.
+  // Named-room matches ("bedroom", "my room") also included — these are room names, not objects.
+  // ⛔ "couch" and "sofa" are NOT in this list and must NEVER be added.
+  {keywords:['bedroom','in bed','going to bed','heading to bed','getting in bed','time for bed','going to sleep','woke up','waking up','nightstand','duvet','my room','her room','his room'],zone:'bedroom'},
   {keywords:['kitchen','cooking','stove','fridge','oven','microwave','pancake','breakfast','making food','grabbing food'],zone:'kitchen'},
   {keywords:['bathroom','shower','bathtub','toilet','vanity','brushing teeth','getting ready'],zone:'bathroom'},
-  // CRITICAL: "couch", "sofa", "tv" alone must NOT map to living room — too ambiguous.
-  // Only map when "living room" is explicitly mentioned.
+  // LIVING ROOM — only when explicitly named. "couch" alone must NOT resolve living room.
+  // ⛔ Do NOT add couch/sofa/TV/sectional to this entry.
   {keywords:['living room'],zone:'living room'},
   {keywords:['backyard','patio','deck','yard','garden','grill','fire pit','outside at home'],zone:'backyard'},
   {keywords:['dining room','dining table','dinner table'],zone:'dining room'},
@@ -1717,7 +1741,6 @@ Deno.serve(async (req) => {
           const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
-          resolvedExistingObjectCue = null; // object cue removed — named-zone refs are the visual authority
           console.log(`[generateImageAsync] ✓ Location "${locRecord.name}" zone="${zoneName || 'none'}" env_refs=${envRefs.length}`);
         } else {
           console.warn(`[generateImageAsync] ⚠️ Location ${locationId} not found or access denied — no env refs.`);
