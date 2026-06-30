@@ -133,15 +133,17 @@ export function resolveCharacterActiveOutfit(character, options = {}) {
   // P3/P4: CLOSET via rotation engine
   const outfit = resolveCurrentOutfit(character, '', null, forcedCategory);
   if (!outfit) {
-    // When rotation is ON, current_outfit is NOT authoritative — do not surface it.
-    // Only use it when rotation is OFF (manual mode) and no closet outfits exist.
-    const co = rotationEnabled ? null : character.current_outfit;
+    // Rotation ON: current_outfit is NEVER authoritative — return null, show nothing.
+    // Rotation OFF: current_outfit is the authority only when closet is completely empty.
+    const co = (!rotationEnabled && !(character.character_closet || []).filter(i => i.outfit_id).length)
+      ? character.current_outfit
+      : null;
     return {
       outfit: co,
       category: forcedCategory || 'daily_casual',
-      reason: rotationEnabled ? 'rotation_no_closet' : 'no_closet',
+      reason: rotationEnabled ? 'rotation_no_match' : 'no_closet',
       description: co ? buildOutfitPromptText(co) : null,
-      source: rotationEnabled ? 'none' : 'fallback',
+      source: co ? 'fallback' : 'none',
     };
   }
   return {
