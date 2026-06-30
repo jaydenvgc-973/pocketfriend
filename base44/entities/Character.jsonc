@@ -443,6 +443,11 @@
       },
       "default": []
     },
+    "outfit_rotation_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true, outfit is resolved from closet rotation rules. When false, current_outfit is the manual authority."
+    },
     "current_home_location_id": {
       "type": "string"
     },
@@ -549,6 +554,9 @@
     "travel_destination_location_id": {
       "type": "string"
     },
+    "travel_destination_location_name": {
+      "type": "string"
+    },
     "last_location_update_time": {
       "type": "string",
       "format": "date-time"
@@ -595,6 +603,40 @@
     },
     "return_to_schedule_after_outing": {
       "type": "string"
+    },
+    "next_location_id": {
+      "type": "string",
+      "description": "Target location ID for a pending user-confirmed scheduled relocation. Set by confirmMovementCommitment. Cleared by processScheduledRelocations on arrival."
+    },
+    "next_location_name": {
+      "type": "string",
+      "description": "Target location name for the pending scheduled relocation."
+    },
+    "pending_scheduled_relocation_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime when the character should be moved to next_location_id. Set by confirmMovementCommitment. processScheduledRelocations executes the move when now >= this time."
+    },
+    "pending_relocation_from": {
+      "type": "string",
+      "description": "Location ID where the character was when the commitment was confirmed."
+    },
+    "pending_relocation_from_name": {
+      "type": "string",
+      "description": "Location name where the character was when the commitment was confirmed."
+    },
+    "pending_relocation_source": {
+      "type": "string",
+      "description": "What created the pending relocation (e.g. user_confirmed_commitment)."
+    },
+    "pending_relocation_message_id": {
+      "type": "string",
+      "description": "Message ID that triggered the movement commitment."
+    },
+    "pending_relocation_confirmed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the user confirmed the pending relocation in the chat UI."
     },
     "last_sleep_start": {
       "type": "string",
