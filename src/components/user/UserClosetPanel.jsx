@@ -221,14 +221,25 @@ Return JSON:
     if (!form.label.trim()) return;
     setSaving(true);
     try {
-      const rotNum = form.rotation_number === "" || form.rotation_number == null
+      const rawRot = form.rotation_number;
+      // Parse to integer; treat empty/null/non-numeric as null. Never NaN.
+      const rotNum = (rawRot === "" || rawRot == null)
         ? null
-        : parseInt(String(form.rotation_number), 10) || null;
+        : (Number.isFinite(parseInt(String(rawRot), 10)) ? parseInt(String(rawRot), 10) : null);
       await onSave({
         outfit_id: generateId(),
         created_at: new Date().toISOString(),
-        ...form,
-        rotation_number: rotNum,
+        label: form.label,
+        category: form.category,
+        top: form.top,
+        bottom: form.bottom,
+        shoes: form.shoes,
+        outerwear: form.outerwear,
+        accessories: form.accessories,
+        hair_state: form.hair_state,
+        full_description: form.full_description,
+        is_favorite: form.is_favorite,
+        rotation_number: rotNum,   // explicit integer or null — never a string
         image_url: uploadedImageUrl || generatedImageUrl || "",
       });
     } finally {
@@ -381,7 +392,10 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     setSaving(true);
     try {
       const updates = { user_closet: newCloset };
-      if (currentOutfitUpdate !== null) updates.user_current_outfit = currentOutfitUpdate;
+      // Only write user_current_outfit when rotation is OFF.
+      // When rotation is ON, the resolver computes the active outfit dynamically —
+      // user_current_outfit is not the authority and must not be mutated.
+      if (currentOutfitUpdate !== null && !rotationEnabled) updates.user_current_outfit = currentOutfitUpdate;
       await onUpdate(updates);
     } finally {
       setSaving(false);
@@ -432,6 +446,12 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
 
   const handleToggleFavorite = async (outfit_id) => {
     await saveCloset(closet.map(o => o.outfit_id === outfit_id ? { ...o, is_favorite: !o.is_favorite } : o));
+  };
+
+  // Rotation OFF only: clear the manually selected outfit.
+  const handleClearActive = async () => {
+    if (rotationEnabled) return;
+    await onUpdate({ user_current_outfit: null });
   };
 
   const groupedOutfits = OUTFIT_CATEGORIES.reduce((acc, cat) => {
@@ -503,9 +523,20 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
           <div className="flex items-center justify-between mb-1">
             <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
-            <span className="text-[9px] text-primary/70 font-medium capitalize">
-              {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-primary/70 font-medium capitalize">
+                {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
+              </span>
+              {!rotationEnabled && (
+                <button
+                  onClick={handleClearActive}
+                  className="text-[9px] text-muted-foreground hover:text-destructive font-medium transition-colors"
+                  title="Clear manual outfit selection"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <p className="text-sm font-medium text-foreground">{activeOutfit.label}</p>
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">

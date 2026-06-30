@@ -185,8 +185,11 @@ export function resolveUserActiveOutfit(settings, user, options = {}) {
     const overrideState = settings.user_today_category_outfit_overrides;
     if (overrideState?.date && overrideState?.overrides) {
       if (overrideState.date === getETTodayStr()) {
+        // Only honour overrides for the primary slot (first 2 of chain) — same rule as
+        // character closet. Prevents a lounge "Wear Today" from bleeding into daily_casual.
         const chain = buildUserFallbackChain(targetCat);
-        for (const cat of chain) {
+        const primaryCategories = chain.slice(0, 2);
+        for (const cat of primaryCategories) {
           const overrideId = overrideState.overrides[cat];
           if (overrideId) {
             const o = outfits.find(x => x.outfit_id === overrideId);
@@ -195,11 +198,19 @@ export function resolveUserActiveOutfit(settings, user, options = {}) {
         }
       }
     }
+    // Rotation engine: mirrors character closet pickFromPool with rotation_number ordering.
+    // Outfits with rotation_number are sorted and cycled by day-index.
+    // Outfits without rotation_number fall back to day-index over the full pool.
     const chain = buildUserFallbackChain(targetCat);
     for (const cat of chain) {
       const pool = outfits.filter(o => o.category === cat);
       if (!pool.length) continue;
-      const picked = pool[getETDayIndex(seed) % pool.length];
+      const numbered = pool
+        .filter(o => o.rotation_number != null && o.rotation_number !== "")
+        .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+      const picked = numbered.length > 0
+        ? numbered[getETDayIndex(seed) % numbered.length]
+        : pool[getETDayIndex(seed) % pool.length];
       return { outfit: picked, category: cat, reason: specialOccasionCategory ? 'special_occasion' : (cat === 'lounge' ? 'home' : 'rotation'), description: buildOutfitTextFromOutfit(picked), source: 'rotation' };
     }
     const picked = outfits[getETDayIndex(seed) % outfits.length];
