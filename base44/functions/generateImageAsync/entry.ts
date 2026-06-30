@@ -1596,6 +1596,12 @@ Deno.serve(async (req) => {
 
     let envRefs = [];
     let resolvedLocationName=null,resolvedZoneName=null,resolvedLocCategory=null,resolvedLocationId=null;
+    // ROOT CAUSE FIX: this was previously declared with `const` ONLY inside the
+    // `if (locRecord)` block below, but referenced later outside that scope (in the
+    // single-subject buildPrompt call). Whenever no location resolved — a common case —
+    // this threw "resolvedExistingObjectCue is not defined" and crashed generation outright.
+    // regenerateImageWithReason never had this variable at all, so it never hit this bug.
+    let resolvedExistingObjectCue = null;
 
     // ── LOCATION RESOLUTION PRIORITY ─────────────────────────────────────────
     // 1. manualLocationId (from Media Grid dropdown) — HIGHEST PRIORITY, UI is the authority
@@ -1737,7 +1743,7 @@ Deno.serve(async (req) => {
           const promptLower = (prompt || '').toLowerCase();
           // Zone priority: UI-selected zone > stored generation_context zone > named-zone auto-resolve
           const preferredZone = manualZoneName || message?.generation_context?.zone_name || null;
-          const resolvedExistingObjectCue = null; // object cue removed — see ACTIVITY_OBJECT_MAP removal comment
+          // resolvedExistingObjectCue stays null — object cue removed, see ACTIVITY_OBJECT_MAP removal comment
           const { images, zoneName } = resolveZoneFromLocation(locRecord, promptLower, preferredZone);
           envRefs = images;
           resolvedZoneName = zoneName;
@@ -1754,7 +1760,11 @@ Deno.serve(async (req) => {
       const validChecks = await Promise.all(
         envRefs.map(async url => {
           try {
-            const r = await fetch(url, { method: 'GET' });
+            // TIMEOUT GUARD: regenerateImageWithReason makes no live fetch calls at all —
+            // this validation step is unique to the automated path. Without a timeout, a
+            // slow/dead reference URL can hang here and burn the function's execution
+            // budget before GenerateImage is ever called, surfacing as a generic failure.
+            const r = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(5000) });
             if (!r.ok) { console.warn(`[validateEnv] ❌ HTTP ${r.status}: ${url}`); return null; }
             const ct = r.headers.get('content-type') || '';
             if (!ct.startsWith('image/')) { console.warn(`[validateEnv] ❌ Not an image (${ct}): ${url}`); return null; }
@@ -1879,13 +1889,26 @@ Deno.serve(async (req) => {
     // For multi-subject: additional character refs are appended after primary refs
     const additionalRefsFlat = additionalCharRecords.flatMap(a => a.refs.slice(0, 2));
 
-    const referenceImages = [
+    // ── PAYLOAD SIZE GUARD ────────────────────────────────────────────────────
+    // ROOT CAUSE FIX: unlike regenerateImageWithReason (which caps total refs at ~9),
+    // this path had NO overall cap — env(4) + char(4) + user(3) + additional(up to 8) +
+    // uploaded(1) could submit ~20 images to GenerateImage in one call, which the manual
+    // regen path never does. Identity-critical refs (env/char/user) are prioritized;
+    // lower-priority refs (additional characters, uploaded ref) are trimmed first.
+    const MAX_TOTAL_REFERENCE_IMAGES = 10;
+    const priorityRefs = [
       ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
+    ].filter(Boolean);
+    const secondaryRefs = [
       ...additionalRefsFlat,
       ...(userUploadedReferenceUrl && cdnFilter([userUploadedReferenceUrl]).length > 0 ? [cdnFilter([userUploadedReferenceUrl])[0]] : []),
     ].filter(Boolean);
+    const referenceImages = [...priorityRefs, ...secondaryRefs].slice(0, MAX_TOTAL_REFERENCE_IMAGES);
+    if (priorityRefs.length + secondaryRefs.length > MAX_TOTAL_REFERENCE_IMAGES) {
+      console.warn(`[generateImageAsync] ⚠️ Reference count ${priorityRefs.length + secondaryRefs.length} exceeded provider-safe limit ${MAX_TOTAL_REFERENCE_IMAGES} — trimmed (env/char/user prioritized)`);
+    }
 
     console.log(`[generateImageAsync] FINAL REF URLS:`);
     referenceImages.forEach((url, i) => console.log(`  [${i+1}] ${url}`));
