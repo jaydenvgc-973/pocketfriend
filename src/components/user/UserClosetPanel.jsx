@@ -489,11 +489,20 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
 
   const handleDelete = async (outfit_id) => {
     const newCloset = closet.filter(o => o.outfit_id !== outfit_id);
-    const isCurrentSelected = currentOutfit?.outfit_id === outfit_id;
-    if (isCurrentSelected && !rotationEnabled) {
-      setLocalCurrentOutfit(null);
+    const isCurrentSelected = !rotationEnabled && currentOutfit?.outfit_id === outfit_id;
+    if (isCurrentSelected) {
+      setLocalCurrentOutfit(null); // optimistic immediate clear
     }
-    await saveCloset(newCloset, isCurrentSelected ? {} : null);
+    // Pass null for currentOutfitUpdate when rotation is ON (no current_outfit authority)
+    // Pass null (not {}) to persist a proper null to DB when rotation is OFF
+    const updates = { user_closet: newCloset };
+    if (isCurrentSelected) updates.user_current_outfit = null;
+    setSaving(true);
+    try {
+      await onUpdate(updates);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSetActive = async (outfit) => {

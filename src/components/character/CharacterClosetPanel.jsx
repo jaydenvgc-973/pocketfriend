@@ -763,9 +763,20 @@ export default function CharacterClosetPanel({ character }) {
 
   const handleDeleteOutfit = async (outfit_id) => {
     const newCloset = closet.filter(o => o.outfit_id !== outfit_id);
-    // Only clear current_outfit when rotation is OFF — rotation-ON derives dynamically
-    const clearCurrent = (!rotationEnabled && currentOutfit?.outfit_id === outfit_id) ? {} : null;
-    await saveCloset(newCloset, clearCurrent);
+    const isCurrentSelected = !rotationEnabled && currentOutfit?.outfit_id === outfit_id;
+    if (isCurrentSelected) {
+      setLocalCurrentOutfit(null); // optimistic immediate clear
+    }
+    // Write null (not {}) to DB so current_outfit is truly cleared, not set to empty object
+    const updates = { character_closet: newCloset };
+    if (isCurrentSelected) updates.current_outfit = null;
+    setSaving(true);
+    try {
+      await base44.entities.Character.update(character.id, updates);
+      queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...updates } : prev);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeletePiece = async (piece_id) => {
