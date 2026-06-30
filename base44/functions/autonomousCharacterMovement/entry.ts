@@ -1478,80 +1478,135 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 3: SLEEPING/NAPPING STATUS HANDLER ─────────────────────────
-        // No clock windows. No sleep_start_time authority. No wake_up_time authority.
-        // If the character IS sleeping (as a current status fact), handle their state.
-        // Sleep onset is driven entirely by energy levels (below, in energy-based onset block).
-        // Wake is driven by energy recovery and real active obligations.
+        // Wake rules:
+        //   1. Work shift CURRENTLY ACTIVE (started, not ended) AND slept ≥ 6h → obligation wake
+        //   2. School session CURRENTLY ACTIVE per actual hours AND slept ≥ 6h → obligation wake
+        //   3. Energy ≥ 70 AND slept ≥ 6h AND not health-recovering → natural wake
+        //   4. All other cases → remain sleeping; alarm system handles pre-obligation wake
+        //
+        // FORBIDDEN: waking because work/school exists today but has not yet started.
+        // FORBIDDEN: waking because obligation is hours away.
+        // The existing alarm system (processScheduledCharacterAlarms) is the canonical
+        // authority for pre-obligation wakes. This tier only wakes when a shift is
+        // genuinely underway and the character is actively missing it.
         if (status === 'sleeping' || status === 'napping') {
-          // Check if a real obligation is currently active (work shift or school in session).
           const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
           const dowNow3 = nowET.getDay();
           const todayET3 = nowET.toISOString().slice(0, 10);
-
-          const hasActiveWorkObligation = (() => {
-            if (!Array.isArray(char.work_days) || char.work_days.length === 0) return false;
-            if (!char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
-            if (!char.work_days.includes(dowNow3)) return false;
-            const hasCallout3 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET3;
-            if (hasCallout3) return false;
-            const s3 = toMin(char.work_start_time);
-            const e3 = toMin(char.work_end_time);
-            if (s3 === null || e3 === null) return false;
-            const isOvernight3 = e3 < s3;
-            return isOvernight3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
-          })();
-
-          const hasActiveSchoolObligation = (() => {
-            if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
-            return nowMin3 >= 8 * 60 && nowMin3 < 15 * 60;
-          })();
-
-          const energyNow = char.energy_value ?? 0;
           const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
           const sleepDurationHours = sleepStartedAt
-            ? (Date.now() - sleepStartedAt.getTime()) / 3600000
+            ? (nowET.getTime() - sleepStartedAt.getTime()) / 3600000
             : 0;
+          const isMedEmergency3 = (char.health_value ?? 80) <= 15;
+
+          // WORK: shift must be currently active AND 6h minimum met (or medical emergency)
+          const hasActiveWorkObligation = (() => {
+            if (!Array.isArray(char.work_days) || !char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
+            if (!char.work_days.includes(dowNow3)) return false;
+            if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET3) return false;
+            const s3 = toMin(char.work_start_time), e3 = toMin(char.work_end_time);
+            if (s3 === null || e3 === null) return false;
+            const shiftActive = e3 < s3 ? (nowMin3 >= s3 || nowMin3 < e3) : (nowMin3 >= s3 && nowMin3 < e3);
+            if (!shiftActive) return false; // shift hasn't started or already ended — do NOT wake
+            if (sleepDurationHours < 6 && !isMedEmergency3) { console.log(`[autonomousMovement] ${char.name}: work shift active but 6h minimum not met (${sleepDurationHours.toFixed(2)}h) — staying asleep`); return false; }
+            return true;
+          })();
+
+          // SCHOOL: session must be currently active per actual school hours (not hardcoded 8–15)
+          const hasActiveSchoolObligation = (() => {
+            if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+            const edLoc3 = userLocations.find(l => l.id === char.education_location_id);
+            let sessionActive = false;
+            if (edLoc3 && edLoc3.operating_hours && edLoc3.operating_hours.length > 0) {
+              const dayH = edLoc3.operating_hours.filter(h => h.day_of_week === dowNow3);
+              const agH  = edLoc3.operating_hours.filter(h => h.day_of_week == null);
+              sessionActive = (dayH.length > 0 ? dayH : agH).some(h => {
+                const s = toMinutes(h.open_time), e = toMinutes(h.close_time);
+                if (s === null || e === null) return false;
+                return e < s ? (nowMin3 >= s || nowMin3 < e) : (nowMin3 >= s && nowMin3 < e);
+              });
+            } else {
+              const edD = char.education_details || {};
+              const eS = toMinutes(edD.start_time || edD.school_start_time || '');
+              const eE = toMinutes(edD.end_time   || edD.school_end_time   || '');
+              if (eS !== null && eE !== null) sessionActive = eE < eS ? (nowMin3 >= eS || nowMin3 < eE) : (nowMin3 >= eS && nowMin3 < eE);
+            }
+            if (!sessionActive) return false; // school not in session — do NOT wake
+            if (sleepDurationHours < 6 && !isMedEmergency3) { console.log(`[autonomousMovement] ${char.name}: school in session but 6h minimum not met (${sleepDurationHours.toFixed(2)}h) — staying asleep`); return false; }
+            return true;
+          })();
+
+          // AUTO-SET ALARM for upcoming obligation so processScheduledCharacterAlarms handles the wake
+          // Only set if no alarm already scheduled. Alarm fires PREP_MINUTES before shift start.
+          // Alarm time is floored to at least 6h after sleep start (canonical minimum).
+          const PREP_MINUTES = 60;
+          if (!char.pending_alarm_time && sleepStartedAt) {
+            let alarmTargetMs = null;
+            // Check upcoming work shift today
+            if (Array.isArray(char.work_days) && char.work_days.includes(dowNow3) &&
+                char.work_start_time && char.occupation_location_id &&
+                !(char.work_exception_status === 'called_out' && char.work_exception_date === todayET3)) {
+              const wsMin = toMin(char.work_start_time);
+              if (wsMin !== null && wsMin > nowMin3) {
+                const alarmMin = wsMin - PREP_MINUTES;
+                if (alarmMin > nowMin3) {
+                  const alarmEt = new Date(nowET); alarmEt.setHours(Math.floor(alarmMin / 60), alarmMin % 60, 0, 0);
+                  const minAlarmMs = sleepStartedAt.getTime() + 6 * 3600000;
+                  alarmTargetMs = Math.max(alarmEt.getTime(), minAlarmMs);
+                }
+              }
+            }
+            // Check upcoming school today (if no work alarm)
+            if (!alarmTargetMs && char.student_status === 'enrolled' && char.education_location_id) {
+              const edLoc3b = userLocations.find(l => l.id === char.education_location_id);
+              let schStartMin = null;
+              if (edLoc3b && edLoc3b.operating_hours && edLoc3b.operating_hours.length > 0) {
+                const dH = edLoc3b.operating_hours.filter(h => h.day_of_week === dowNow3);
+                const aH = edLoc3b.operating_hours.filter(h => h.day_of_week == null);
+                const h0 = (dH.length > 0 ? dH : aH)[0];
+                if (h0) schStartMin = toMinutes(h0.open_time);
+              }
+              if (schStartMin === null) { const edD2 = char.education_details || {}; schStartMin = toMinutes(edD2.start_time || edD2.school_start_time || ''); }
+              if (schStartMin !== null && schStartMin > nowMin3) {
+                const alarmMin = schStartMin - PREP_MINUTES;
+                if (alarmMin > nowMin3) {
+                  const alarmEt = new Date(nowET); alarmEt.setHours(Math.floor(alarmMin / 60), alarmMin % 60, 0, 0);
+                  const minAlarmMs = sleepStartedAt.getTime() + 6 * 3600000;
+                  alarmTargetMs = Math.max(alarmEt.getTime(), minAlarmMs);
+                }
+              }
+            }
+            if (alarmTargetMs) {
+              const alarmIso = new Date(alarmTargetMs).toISOString();
+              base44.asServiceRole.entities.Character.update(char.id, { pending_alarm_time: alarmIso }).catch(() => {});
+              console.log(`[autonomousMovement] ${char.name}: AUTO-SET obligation alarm → ET ${new Date(alarmTargetMs).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })}`);
+            }
+          }
+
+          const energyNow = char.energy_value ?? 0;
           const isHealthRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
 
-          // Wake conditions (in priority order):
-          // 1. Active work obligation right now → wake for work
-          // 2. Active school obligation right now → wake for school
-          // 3. Energy recovered (>= 70) AND slept >= 6 hours AND not health-recovering → natural wake
-          //    CANONICAL: 6h is the minimum sleep floor for active_created_characters.
-          //    At +12.5/hr from energy=20, reaching 70 takes ~4h — but 4h is NOT the minimum.
-          //    The character may have recovered energy but has not yet had sufficient rest.
-          //    6h is non-negotiable. Only obligation override (work/school) is a valid early exception.
-          //    Characters who are sick/recovering stay asleep until health improves.
-          // Otherwise → keep sleeping, no action
+          // Wake decision: obligation (shift/session active AND 6h met) OR natural rest complete
           const shouldWake = hasActiveWorkObligation || hasActiveSchoolObligation ||
             (energyNow >= 70 && sleepDurationHours >= 6 && !isHealthRecovering);
 
           if (!shouldWake) {
-            console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, obligation=${hasActiveWorkObligation || hasActiveSchoolObligation})`);
+            console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h, work=${hasActiveWorkObligation}, school=${hasActiveSchoolObligation})`);
             continue;
           }
 
-          // Wake the character — write presence back to home, then fall through to obligation dispatch
           const wakeReason = hasActiveWorkObligation ? 'obligation_wake_work'
             : hasActiveSchoolObligation ? 'obligation_wake_school'
             : 'natural_wake_rested';
-          try {
-            await base44.entities.Character.update(char.id, {
-              resolved_presence_status:   'home',
-              resolved_source_reason:     wakeReason,
-              resolved_last_updated_at:   nowET.toISOString(),
-            });
-          } catch {
-            await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_presence_status:   'home',
-              resolved_source_reason:     wakeReason,
-              resolved_last_updated_at:   nowET.toISOString(),
-            });
-          }
+          // Obligation wakes preserve sleep consequences — no energy boost applied here.
+          // Energy reflects actual hours recovered via simulateActiveCharacterNeeds rates.
+          const wakePayload = { resolved_presence_status: 'home', resolved_source_reason: wakeReason, resolved_last_updated_at: nowET.toISOString(), last_wake_time: nowET.toISOString() };
+          try { await base44.entities.Character.update(char.id, wakePayload); }
+          catch { await base44.asServiceRole.entities.Character.update(char.id, wakePayload); }
           char.resolved_presence_status = 'home';
           char.resolved_source_reason = wakeReason;
-          console.log(`[autonomousMovement] ✓ ${char.name}: woke — reason=${wakeReason}, energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h`);
-          // Do NOT continue — fall through to work/school dispatch (Tier 3.5+)
+          console.log(`[autonomousMovement] ✓ ${char.name}: woke — reason=${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h`);
+          // Do NOT continue — fall through to obligation dispatch (Tier 3.5+)
         }
 
         // ── ENERGY-BASED HOME ROUTING (travel only — no direct sleep writes) ───
