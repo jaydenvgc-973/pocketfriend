@@ -2274,61 +2274,87 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
     console.log(`[generateImageAsync] ── PROVIDER DISPATCH ── env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} hour=${serverTime.getHours()} ET`);
     console.log(`  prompt: ${sanitizedPrompt.substring(0, 200)}${sanitizedPrompt.length > 200 ? '…' : ''}`);
 
-    // ── SINGLE ATTEMPT — no internal retries ─────────────────────────────────
-    // On any failure, classify the error and return it for the frontend to route
-    // through the "Why Regenerate" flow via regenerateImageWithReason.
+    // ── BOUNDED RETRY — up to MAX_ATTEMPTS attempts before permanent failure ──
+    // Content-policy blocks are NOT retried (provider will reject identically every time).
+    // All other failures (timeouts, transient provider errors, empty URL) get retried
+    // with a short backoff. Only after all attempts are exhausted is "[IMAGE_FAILED]" written.
+    const MAX_ATTEMPTS = 3;
     let genRes = null;
     let failureReason = null;
     let failureError = null;
+    let attemptCount = 0;
+    const failedAttempts = [];
 
-    try {
-      console.log(`[generateImageAsync] Dispatching — prompt (first 400): ${finalPrompt.substring(0, 400)}…`);
-      genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-        prompt: finalPrompt,
-        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-      });
-    } catch (genErr) {
-      const msg = (genErr?.message || '').toLowerCase();
-      const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      attemptCount = attempt;
+      failureReason = null;
+      failureError = null;
 
-      const isRealContentPolicyBlock = (
-        msg.includes('content policy') || msg.includes('safety system') ||
-        msg.includes('violates our content') || msg.includes('violates our usage') ||
-        msg.includes('against our usage policies') || msg.includes('policy violation') ||
-        msg.includes('moderation') || msg.includes('safety filter') ||
-        msg.includes('flagged by our safety') ||
-        (msg.includes('cannot generate') && msg.includes('explicit')) ||
-        msg.includes('violated vertex') || msg.includes('violated google') ||
-        msg.includes('vertex ai') || msg.includes('unable to show') ||
-        msg.includes('filtered out') || msg.includes('imagen') ||
-        msg.includes('responsible ai') ||
-        (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') ||
-          msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
-      );
+      try {
+        console.log(`[generateImageAsync] Attempt ${attempt}/${MAX_ATTEMPTS} — prompt (first 400): ${finalPrompt.substring(0, 400)}…`);
+        genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+          prompt: finalPrompt,
+          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+        });
+      } catch (genErr) {
+        const msg = (genErr?.message || '').toLowerCase();
+        const statusCode = genErr?.status || genErr?.statusCode || genErr?.code || null;
 
-      if (isRealContentPolicyBlock) {
-        failureReason = 'content_policy';
-        failureError = 'Content policy block — the provider rejected this image. Try a different scene description.';
-        console.warn(`[generateImageAsync] ⛔ Content policy block for ${messageId}: ${msg.substring(0, 200)}`);
-      } else {
-        failureReason = 'provider_error';
-        failureError = `Image generation failed — provider error: ${genErr?.message || 'unknown'}`;
-        console.error(`[generateImageAsync] ❌ Provider error for ${messageId}: ${genErr?.message || genErr}`);
+        const isRealContentPolicyBlock = (
+          msg.includes('content policy') || msg.includes('safety system') ||
+          msg.includes('violates our content') || msg.includes('violates our usage') ||
+          msg.includes('against our usage policies') || msg.includes('policy violation') ||
+          msg.includes('moderation') || msg.includes('safety filter') ||
+          msg.includes('flagged by our safety') ||
+          (msg.includes('cannot generate') && msg.includes('explicit')) ||
+          msg.includes('violated vertex') || msg.includes('violated google') ||
+          msg.includes('vertex ai') || msg.includes('unable to show') ||
+          msg.includes('filtered out') || msg.includes('imagen') ||
+          msg.includes('responsible ai') ||
+          (statusCode === 400 && (msg.includes('safety') || msg.includes('policy') ||
+            msg.includes('blocked_by_safety') || msg.includes('blocked') || msg.includes('filter')))
+        );
+
+        if (isRealContentPolicyBlock) {
+          failureReason = 'content_policy';
+          failureError = 'Content policy block — the provider rejected this image. Try a different scene description.';
+          console.warn(`[generateImageAsync] ⛔ Content policy block (attempt ${attempt}) for ${messageId}: ${msg.substring(0, 200)}`);
+          failedAttempts.push({ attempt_index: attempt, status: 'failed', rejection_reason: failureError, created_at: new Date().toISOString() });
+          break; // content policy will not change on retry — stop immediately
+        } else {
+          failureReason = 'provider_error';
+          failureError = `Image generation failed — provider error: ${genErr?.message || 'unknown'}`;
+          console.error(`[generateImageAsync] ❌ Provider error (attempt ${attempt}/${MAX_ATTEMPTS}) for ${messageId}: ${genErr?.message || genErr}`);
+        }
+      }
+
+      if (genRes?.url) {
+        console.log(`[generateImageAsync] ✅ Attempt ${attempt} succeeded for ${messageId}`);
+        break;
+      }
+
+      if (!failureReason) {
+        failureReason = 'no_image_url';
+        failureError = 'Image generation failed — no URL returned from provider.';
+        console.warn(`[generateImageAsync] ⚠️ No URL returned (attempt ${attempt}/${MAX_ATTEMPTS}) for ${messageId}`);
+      }
+
+      failedAttempts.push({ attempt_index: attempt, status: 'failed', rejection_reason: failureError, created_at: new Date().toISOString() });
+
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, 1000 * attempt)); // short backoff before next attempt
       }
     }
 
     if (!genRes?.url) {
-      if (!failureReason) {
-        failureReason = 'no_image_url';
-        failureError = 'Image generation failed — no URL returned from provider.';
-        console.warn(`[generateImageAsync] ⚠️ No URL returned for ${messageId}`);
-      }
       await base44.asServiceRole.entities.Message.update(messageId, {
         content: '[IMAGE_FAILED]',
         generation_context: {
           ...baseGenerationContext,
           failure_reason: failureReason,
           failure_error: failureError,
+          attempts: failedAttempts,
+          attempt_count: attemptCount,
         },
       }).catch(() => {});
       return Response.json({
@@ -2336,6 +2362,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         reason: failureReason,
         filtered: failureReason === 'content_policy',
         error: failureError,
+        attempts: attemptCount,
       }, { status: 500 });
     }
 
@@ -2343,19 +2370,24 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
     const cameraVars = extractCameraVarsFromPrompt(finalPrompt);
     const generatedImageDescription = sanitizedPrompt ? sanitizedPrompt.substring(0, 500) : null;
 
+    const successfulAttempts = [
+      ...failedAttempts,
+      { attempt_index: attemptCount, prompt: finalPrompt.slice(0, 500), generated_image_url: genRes.url, camera: cameraVars, status: 'accepted', created_at: nowETIso() },
+    ];
+
     await base44.asServiceRole.entities.Message.update(messageId, {
       image_url: genRes.url,
       ...(generatedImageDescription ? { image_description: generatedImageDescription, image_analysis_status: 'complete' } : {}),
       generation_context: {
         ...baseGenerationContext,
         camera_variables: cameraVars,
-        attempts: [{ attempt_index: 1, prompt: finalPrompt.slice(0, 500), generated_image_url: genRes.url, camera: cameraVars, status: 'accepted', created_at: nowETIso() }],
-        accepted_attempt_index: 1,
+        attempts: successfulAttempts,
+        accepted_attempt_index: attemptCount,
       },
       content: '',
     });
 
-    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${cameraVars?.distance} ${cameraVars?.angle} ${cameraVars?.framing}`);
+    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} on attempt ${attemptCount}/${MAX_ATTEMPTS} | camera: ${cameraVars?.distance} ${cameraVars?.angle} ${cameraVars?.framing}`);
 
     return Response.json({
       success: true,
@@ -2364,6 +2396,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
       cameraVariables: cameraVars,
+      attempts: attemptCount,
     });
 
   } catch (error) {
