@@ -91,7 +91,7 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict, rotationEnabled }) {
+function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, onToggleFavorite, onEdit, onFillFromImage, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const [fillingFromImage, setFillingFromImage] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
@@ -186,6 +186,15 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
         </button>
       )}
 
+      {/* Rotation OFF: show Deselect on the active card — independent of Currently Wearing card */}
+      {isActive && !rotationEnabled && (
+        <button
+          onClick={() => onClearActive()}
+          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+        >
+          Deselect
+        </button>
+      )}
       {!isActive && (
         <button
           onClick={() => onSetActive(outfit)}
@@ -475,11 +484,25 @@ Return JSON:
     if (!form.label.trim()) return;
     setSaving(true);
     try {
+      const rawRot = form.rotation_number;
+      const rotNum = (rawRot === "" || rawRot == null)
+        ? null
+        : (Number.isFinite(parseInt(String(rawRot), 10)) ? parseInt(String(rawRot), 10) : null);
       await onSave({
         outfit_id: generateId("outfit"),
         type: "outfit",
         created_at: new Date().toISOString(),
-        ...form,
+        label: form.label,
+        category: form.category,
+        top: form.top,
+        bottom: form.bottom,
+        shoes: form.shoes,
+        outerwear: form.outerwear,
+        accessories: form.accessories,
+        hair_state: form.hair_state,
+        full_description: form.full_description,
+        is_favorite: form.is_favorite,
+        rotation_number: rotNum,  // explicit integer or null — never a string
         image_url: uploadedImageUrl || generatedImageUrl || "",
       });
     } finally {
@@ -952,6 +975,7 @@ export default function CharacterClosetPanel({ character }) {
                         outfit={outfit}
                         isActive={activeOutfit?.outfit_id === outfit.outfit_id}
                         onSetActive={handleSetActive}
+                        onClearActive={handleClearActive}
                         onDelete={handleDeleteOutfit}
                         onToggleFavorite={handleToggleFavoriteOutfit}
                         onEdit={setEditingOutfit}

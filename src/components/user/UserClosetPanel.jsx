@@ -30,7 +30,7 @@ function generateId() {
   return `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict, rotationEnabled }) {
+function OutfitCard({ outfit, isActive, onSetActive, onClearActive, onDelete, onToggleFavorite, onEdit, hasRotationConflict, rotationEnabled }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
 
@@ -91,6 +91,15 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite,
         </div>
       )}
 
+      {/* Rotation OFF: show Deselect on the active card — independent of Currently Wearing card */}
+      {isActive && !rotationEnabled && (
+        <button
+          onClick={() => onClearActive()}
+          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+        >
+          Deselect
+        </button>
+      )}
       {!isActive && (
         <button
           onClick={() => onSetActive(outfit)}
@@ -569,17 +578,18 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
               </p>
               <div className="grid gap-2">
                 {items.map(outfit => (
-                  <OutfitCard
-                    key={outfit.outfit_id}
-                    outfit={outfit}
-                    isActive={activeOutfit?.outfit_id === outfit.outfit_id}
-                    onSetActive={handleSetActive}
-                    onDelete={handleDelete}
-                    onToggleFavorite={handleToggleFavorite}
-                    onEdit={setEditingOutfit}
-                    hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
-                    rotationEnabled={rotationEnabled}
-                  />
+                 <OutfitCard
+                   key={outfit.outfit_id}
+                   outfit={outfit}
+                   isActive={activeOutfit?.outfit_id === outfit.outfit_id}
+                   onSetActive={handleSetActive}
+                   onClearActive={handleClearActive}
+                   onDelete={handleDelete}
+                   onToggleFavorite={handleToggleFavorite}
+                   onEdit={setEditingOutfit}
+                   hasRotationConflict={rotationConflictIds.has(outfit.outfit_id)}
+                   rotationEnabled={rotationEnabled}
+                 />
                 ))}
               </div>
             </div>
