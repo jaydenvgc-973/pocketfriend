@@ -407,13 +407,45 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
   const [editingOutfit, setEditingOutfit] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // Local optimistic state — mirrors the persisted fields so UI updates immediately
+  // without waiting for the parent to re-render with updated settings prop.
+  const [localCurrentOutfit, setLocalCurrentOutfit] = useState(undefined); // undefined = use settings
+  const [localTodayOverrides, setLocalTodayOverrides] = useState(undefined); // undefined = use settings
+
   const closet = settings?.user_closet || [];
-  const currentOutfit = settings?.user_current_outfit || null;
+  // Use local state when set (after a mutation), fall back to settings prop
+  const currentOutfit = localCurrentOutfit !== undefined ? localCurrentOutfit : (settings?.user_current_outfit || null);
   const rotationEnabled = settings?.user_outfit_rotation_enabled === true;
-  // ── DISPLAY AUTHORITY ─────────────────────────────────────────────────────
-  // When rotation ON, "Currently Wearing" is COMPUTED (special occasion > home > daily wear).
-  // When OFF, the manual user_current_outfit is the authority.
-  const activeResult = useUserActiveOutfit(settings);
+
+  // Sync local state back to settings when settings prop changes (parent re-rendered)
+  // This prevents permanent local override after parent refreshes
+  const [prevSettings, setPrevSettings] = useState(settings);
+  if (settings !== prevSettings) {
+    setPrevSettings(settings);
+    setLocalCurrentOutfit(undefined);
+    setLocalTodayOverrides(undefined);
+  }
+
+  // Compute todayOverrides from local state first, then settings
+  const todayOverridesFromSettings = rotationEnabled ? getTodayUserOverrides(settings) : {};
+  const todayOverrides = rotationEnabled
+    ? (localTodayOverrides !== undefined ? localTodayOverrides : todayOverridesFromSettings)
+    : {};
+
+  // Build an effective settings object that merges local overrides for the active outfit resolver
+  const etNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const etTodayStr = `${etNow.getFullYear()}-${String(etNow.getMonth() + 1).padStart(2, '0')}-${String(etNow.getDate()).padStart(2, '0')}`;
+  const effectiveSettings = localCurrentOutfit !== undefined || localTodayOverrides !== undefined
+    ? {
+        ...settings,
+        user_current_outfit: localCurrentOutfit !== undefined ? localCurrentOutfit : settings?.user_current_outfit,
+        user_today_category_outfit_overrides: localTodayOverrides !== undefined
+          ? (Object.keys(localTodayOverrides).length > 0 ? { date: etTodayStr, overrides: localTodayOverrides } : null)
+          : settings?.user_today_category_outfit_overrides,
+      }
+    : settings;
+
+  const activeResult = useUserActiveOutfit(effectiveSettings);
   const activeOutfit = activeResult?.outfit || null;
 
   const saveRotationSetting = async (enabled) => {
@@ -424,10 +456,11 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     setSaving(true);
     try {
       const updates = { user_closet: newCloset };
-      // Only write user_current_outfit when rotation is OFF.
-      // When rotation is ON, the resolver computes the active outfit dynamically —
-      // user_current_outfit is not the authority and must not be mutated.
       if (currentOutfitUpdate !== null && !rotationEnabled) updates.user_current_outfit = currentOutfitUpdate;
+      // Optimistic local update immediately
+      if (currentOutfitUpdate !== null && !rotationEnabled) {
+        setLocalCurrentOutfit(currentOutfitUpdate && Object.keys(currentOutfitUpdate).length > 0 ? currentOutfitUpdate : null);
+      }
       await onUpdate(updates);
     } finally {
       setSaving(false);
@@ -439,17 +472,12 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     setShowAddForm(false);
   };
 
-  // Edit existing outfit in-place — preserves rotation_number and all fields
   const handleEditOutfit = async (updatedOutfit) => {
-    // Normalize rotation_number to integer or null — never string, never NaN
     const rawRot = updatedOutfit.rotation_number;
     const parsedRot = (rawRot === "" || rawRot == null)
       ? null
       : (parseInt(String(rawRot), 10) || null);
-    const normalized = {
-      ...updatedOutfit,
-      rotation_number: parsedRot,
-    };
+    const normalized = { ...updatedOutfit, rotation_number: parsedRot };
     const newCloset = closet.map(o => o.outfit_id === normalized.outfit_id ? normalized : o);
     const isCurrentlyWorn = currentOutfit?.outfit_id === normalized.outfit_id;
     const currentOutfitUpdate = isCurrentlyWorn
@@ -461,18 +489,24 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
 
   const handleDelete = async (outfit_id) => {
     const newCloset = closet.filter(o => o.outfit_id !== outfit_id);
-    const clearCurrent = currentOutfit?.outfit_id === outfit_id ? {} : null;
-    await saveCloset(newCloset, clearCurrent);
+    const isCurrentSelected = currentOutfit?.outfit_id === outfit_id;
+    if (isCurrentSelected && !rotationEnabled) {
+      setLocalCurrentOutfit(null);
+    }
+    await saveCloset(newCloset, isCurrentSelected ? {} : null);
   };
 
   const handleSetActive = async (outfit) => {
     if (rotationEnabled) {
-      // Rotation ON: manual selection writes a date-scoped per-category override.
-      // It never persists as user_current_outfit, so it cannot compete with rotation.
+      // Optimistically update local today overrides immediately
+      const newOverrides = { ...todayOverrides, [outfit.category]: outfit.outfit_id };
+      setLocalTodayOverrides(newOverrides);
       const patch = applyUserManualCategoryOverride(settings, outfit.category, outfit.outfit_id);
       await onUpdate(patch);
     } else {
-      await saveCloset(closet, { ...outfit, last_changed_at: new Date().toISOString() });
+      const newOutfit = { ...outfit, last_changed_at: new Date().toISOString() };
+      setLocalCurrentOutfit(newOutfit);
+      await saveCloset(closet, newOutfit);
     }
   };
 
@@ -480,22 +514,23 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
     await saveCloset(closet.map(o => o.outfit_id === outfit_id ? { ...o, is_favorite: !o.is_favorite } : o));
   };
 
-  // Rotation OFF only: clear the manually selected outfit.
+  // Rotation OFF: clear the manually selected outfit — optimistic + persisted
   const handleClearActive = async () => {
     if (rotationEnabled) return;
+    setLocalCurrentOutfit(null); // optimistic — immediate UI update
     await onUpdate({ user_current_outfit: null });
   };
 
-  // Rotation ON only: clear today's override for a specific category slot.
-  // Does NOT clear other slots — only the one whose category matches.
+  // Rotation ON: clear today's override for one category slot — optimistic + persisted
   const handleClearSlot = async (category) => {
     if (!rotationEnabled) return;
+    // Optimistically remove just this category key
+    const newOverrides = { ...todayOverrides };
+    delete newOverrides[category];
+    setLocalTodayOverrides(newOverrides);
     const patch = clearUserCategoryOverride(settings, category);
     await onUpdate(patch);
   };
-
-  // Today's per-category override map: { [category]: outfit_id }
-  const todayOverrides = rotationEnabled ? getTodayUserOverrides(settings) : {};
 
   const groupedOutfits = OUTFIT_CATEGORIES.reduce((acc, cat) => {
     const items = closet.filter(o => o.category === cat.value);
@@ -561,8 +596,8 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
         </button>
       </div>
 
-      {/* Currently Wearing — single authority: computed when rotation ON, manual when OFF */}
-      {activeOutfit?.label && (
+      {/* Currently Wearing — hide when rotation OFF and no manual selection */}
+      {activeOutfit?.label && (rotationEnabled || currentOutfit) && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
           <div className="flex items-center justify-between mb-1">
             <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
@@ -570,7 +605,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
               <span className="text-[9px] text-primary/70 font-medium capitalize">
                 {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
               </span>
-              {!rotationEnabled && (
+              {!rotationEnabled && currentOutfit && (
                 <button
                   onClick={handleClearActive}
                   className="text-[9px] text-muted-foreground hover:text-destructive font-medium transition-colors"
@@ -615,9 +650,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
                  <OutfitCard
                    key={outfit.outfit_id}
                    outfit={outfit}
-                   isActive={rotationEnabled
-                     ? activeOutfit?.outfit_id === outfit.outfit_id
-                     : currentOutfit?.outfit_id === outfit.outfit_id}
+                   isActive={!rotationEnabled && currentOutfit?.outfit_id === outfit.outfit_id}
                    isSlotSelected={rotationEnabled
                      ? todayOverrides[outfit.category] === outfit.outfit_id
                      : false}

@@ -693,12 +693,26 @@ export default function CharacterClosetPanel({ character }) {
     );
   };
 
+  // Local optimistic state — mirrors persisted fields so UI updates immediately
+  const [localCurrentOutfit, setLocalCurrentOutfit] = useState(undefined);
+  const [localTodayOverrides, setLocalTodayOverrides] = useState(undefined);
+  const [prevCharId, setPrevCharId] = useState(character?.id);
+  if (character?.id !== prevCharId) {
+    setPrevCharId(character?.id);
+    setLocalCurrentOutfit(undefined);
+    setLocalTodayOverrides(undefined);
+  }
+
   const closet = character?.character_closet || [];
-  const currentOutfit = character?.current_outfit || null;
-  // ── DISPLAY AUTHORITY ─────────────────────────────────────────────────────
-  // When rotation is ON, "Currently Wearing" is COMPUTED from the active outfit rules
-  // (uniform > special occasion > home > daily wear). The manual current_outfit is NOT
-  // the authority while rotation is enabled. When OFF, the manual selection is shown.
+  // Use local state when set (after mutation), fall back to character prop
+  const currentOutfit = localCurrentOutfit !== undefined ? localCurrentOutfit : (character?.current_outfit || null);
+
+  // Compute todayOverrides: local optimistic state takes priority over character prop
+  const todayOverridesFromChar = rotationEnabled ? getTodayCharacterOverrides(character) : {};
+  const todayOverrides = rotationEnabled
+    ? (localTodayOverrides !== undefined ? localTodayOverrides : todayOverridesFromChar)
+    : {};
+
   const activeResult = useCharacterActiveOutfit(character);
   const activeOutfit = activeResult?.outfit || null;
 
@@ -710,12 +724,12 @@ export default function CharacterClosetPanel({ character }) {
     setSaving(true);
     try {
       const updates = { character_closet: newCloset };
-      // Only write current_outfit when rotation is OFF. When rotation is ON,
-      // current_outfit is not the authority and must not be updated here —
-      // manual selections go through today_category_outfit_overrides instead.
-      if (currentOutfitUpdate !== null && !rotationEnabled) updates.current_outfit = currentOutfitUpdate;
+      if (currentOutfitUpdate !== null && !rotationEnabled) {
+        updates.current_outfit = currentOutfitUpdate;
+        // Optimistic local update so isActive re-evaluates immediately
+        setLocalCurrentOutfit(currentOutfitUpdate && Object.keys(currentOutfitUpdate).length > 0 ? currentOutfitUpdate : null);
+      }
       await base44.entities.Character.update(character.id, updates);
-      // Surgical patch — closet/outfit changes don't need a full re-fetch
       queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...updates } : prev);
     } catch (error) {
       console.error("Failed to save closet:", error);
@@ -760,43 +774,38 @@ export default function CharacterClosetPanel({ character }) {
 
   const handleSetActive = async (outfit) => {
     if (rotationEnabled) {
-      // Rotation ON: route manual selection through date-scoped category override ONLY.
-      // NEVER write to current_outfit when rotation is ON — it is not the authority.
-      // applyManualCategoryOverride writes to today_category_outfit_overrides which
-      // the rotation engine consumes before its own rotation algorithm (primary slot only).
+      // Optimistically update local today overrides immediately
+      const newOverrides = { ...todayOverrides, [outfit.category]: outfit.outfit_id };
+      setLocalTodayOverrides(newOverrides);
       const patch = applyManualCategoryOverride(character, outfit.category, outfit.outfit_id);
       await base44.entities.Character.update(character.id, patch);
-      // Patch the query cache so the resolver immediately sees the new override
       queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...patch } : prev);
     } else {
-      // Rotation OFF: manual current_outfit write is the authority. Preserve this behavior.
-      await saveCloset(closet, {
-        ...outfit,
-        last_changed_at: new Date().toISOString(),
-        change_reason: "manual_selection",
-      });
+      const newOutfit = { ...outfit, last_changed_at: new Date().toISOString(), change_reason: "manual_selection" };
+      setLocalCurrentOutfit(newOutfit);
+      await saveCloset(closet, newOutfit);
     }
   };
 
-  // Rotation OFF only: clear the manually selected outfit so Currently Wearing is empty.
+  // Rotation OFF: clear the manually selected outfit — optimistic + persisted
   const handleClearActive = async () => {
-    if (rotationEnabled) return; // no-op when rotation is ON — rotation manages itself
+    if (rotationEnabled) return;
+    setLocalCurrentOutfit(null); // optimistic — immediate UI update
     await base44.entities.Character.update(character.id, { current_outfit: null });
     queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, current_outfit: null } : prev);
   };
 
-  // Rotation ON only: clear the today-slot override for a specific category.
-  // This allows the rotation engine to pick again for that slot — does NOT clear other slots.
+  // Rotation ON: clear the today-slot override for one category — optimistic + persisted
   const handleClearSlot = async (category) => {
     if (!rotationEnabled) return;
+    // Optimistically remove just this category key immediately
+    const newOverrides = { ...todayOverrides };
+    delete newOverrides[category];
+    setLocalTodayOverrides(newOverrides);
     const patch = clearCharacterCategoryOverride(character, category);
     await base44.entities.Character.update(character.id, patch);
     queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...patch } : prev);
   };
-
-  // Today's per-category override map: { [category]: outfit_id }
-  // Used to determine which outfit is "slot-selected" for its category when rotation is ON.
-  const todayOverrides = rotationEnabled ? getTodayCharacterOverrides(character) : {};
 
   const handleToggleFavoriteOutfit = async (outfit_id) => {
     await saveCloset(outfits.map(o => o.outfit_id === outfit_id ? { ...o, is_favorite: !o.is_favorite } : o).concat(pieces));
@@ -931,8 +940,8 @@ export default function CharacterClosetPanel({ character }) {
       {/* Tomorrow's Rotation Preview */}
       <RotationSchedulePreview character={character} />
 
-      {/* Currently Wearing — single authority: computed when rotation ON, manual when OFF */}
-      {activeOutfit && activeOutfit.label && (
+      {/* Currently Wearing — hide when rotation OFF and no manual selection */}
+      {activeOutfit && activeOutfit.label && (rotationEnabled || currentOutfit) && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
           <div className="flex items-center justify-between mb-1">
             <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
@@ -940,8 +949,8 @@ export default function CharacterClosetPanel({ character }) {
               <span className="text-[9px] text-primary/70 font-medium capitalize">
                 {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
               </span>
-              {/* Rotation OFF only: allow clearing the manual selection */}
-              {!rotationEnabled && (
+              {/* Rotation OFF only: allow clearing the manual selection from the summary panel */}
+              {!rotationEnabled && currentOutfit && (
                 <button
                   onClick={handleClearActive}
                   className="text-[9px] text-muted-foreground hover:text-destructive font-medium transition-colors"
@@ -963,10 +972,10 @@ export default function CharacterClosetPanel({ character }) {
               <p className="leading-relaxed">{activeOutfit.full_description}</p>
             )}
           </div>
-          {!rotationEnabled && character.current_outfit?.last_changed_at && (
+          {!rotationEnabled && currentOutfit?.last_changed_at && (
             <p className="text-[10px] text-muted-foreground/60 mt-1">
-              Changed {new Date(character.current_outfit.last_changed_at).toLocaleDateString()}
-              {character.current_outfit.change_reason ? ` · ${character.current_outfit.change_reason.replace(/_/g, ' ')}` : ''}
+              Changed {new Date(currentOutfit.last_changed_at).toLocaleDateString()}
+              {currentOutfit.change_reason ? ` · ${currentOutfit.change_reason.replace(/_/g, ' ')}` : ''}
             </p>
           )}
         </div>
@@ -1013,9 +1022,7 @@ export default function CharacterClosetPanel({ character }) {
                       <OutfitCard
                         key={outfit.outfit_id}
                         outfit={outfit}
-                        isActive={rotationEnabled
-                          ? activeOutfit?.outfit_id === outfit.outfit_id
-                          : currentOutfit?.outfit_id === outfit.outfit_id}
+                        isActive={!rotationEnabled && currentOutfit?.outfit_id === outfit.outfit_id}
                         isSlotSelected={rotationEnabled
                           ? todayOverrides[outfit.category] === outfit.outfit_id
                           : false}
