@@ -104,6 +104,25 @@ function classifySleepEntry(character, nowET) {
     }
   }
 
+  // ── 6-HOUR MINIMUM SLEEP GUARD (CRITICAL) ────────────────────────────────
+  // Even when a character's presence appears stale by clock-window logic, they MUST
+  // have slept at least 6 hours before any repair tool is allowed to wake them.
+  // Clock-window staleness is NOT sufficient evidence — the character may have fallen
+  // asleep outside their normal window due to exhaustion, illness, or late activity.
+  // Elapsed duration is the authoritative gate; clock window is merely context.
+  if (dbStatus === 'sleeping' && character.last_sleep_start) {
+    const elapsedSleepHours = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3_600_000;
+    const isMedicalEmergency = (character.health_value ?? 80) <= 15;
+    if (elapsedSleepHours < 6 && !isMedicalEmergency) {
+      return {
+        isStale: false, isValid: true,
+        classification: 'protected_by_6h_minimum',
+        blockReason: `${elapsedSleepHours.toFixed(2)}h elapsed < 6h minimum sleep floor. Clock-window staleness does not override the 6h guard. Only medical emergency (health ≤ 15) allows early wake.`,
+        consequence_tags: [],
+      };
+    }
+  }
+
   // Confirmed stale — build consequence tags
   const dayOfWeek = nowET.getDay();
   const consequenceTags = [];

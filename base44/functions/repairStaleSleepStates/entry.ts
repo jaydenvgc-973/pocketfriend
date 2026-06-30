@@ -84,6 +84,22 @@ function classifySleep(character, nowET) {
     }
   }
 
+  // ── 6-HOUR MINIMUM SLEEP GUARD (CRITICAL) ────────────────────────────────
+  // Even when a character's presence appears stale by clock-window logic, they MUST
+  // have slept at least 6 hours before repair is allowed. Clock-window staleness alone
+  // is not sufficient evidence — elapsed duration is the authoritative gate.
+  if (character.resolved_presence_status === 'sleeping' && character.last_sleep_start) {
+    const elapsedSleepHours = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3_600_000;
+    const isMedicalEmergency = (character.health_value ?? 80) <= 15;
+    if (elapsedSleepHours < 6 && !isMedicalEmergency) {
+      return {
+        isStale: false, isValid: true,
+        classification: 'protected_by_6h_minimum',
+        consequence_tags: [],
+      };
+    }
+  }
+
   // Stale — build consequence tags
   const dayOfWeek = nowET.getDay();
   const consequenceTags = [];

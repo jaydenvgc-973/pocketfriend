@@ -2217,18 +2217,37 @@ Deno.serve(async (req) => {
         // Pass-out locks the character in 'passed_out' state for recovery.
         // When energy recovers above 35, release the lock AND transition to 'home'.
         // CRITICAL: Do NOT transition passed_out → sleeping. They wake up, not go back to sleep.
+        //
+        // ── 6-HOUR MINIMUM PASS-OUT GUARD (CANONICAL) ────────────────────────
+        // pass_out during a valid sleep window MUST protect the character for at least 6 hours.
+        // Energy reaching 35 at ~3.1h is the intended recovery rate — it does NOT mean the
+        // character has had sufficient rest. They must stay in passed_out state until:
+        //   a) 6 hours have elapsed from last_pass_out_at, OR
+        //   b) A verified medical emergency exists (health ≤ 15)
+        // Energy alone is NEVER a valid early-release reason before 6 hours.
         if (char.presence_stay_lock &&
             char.presence_stay_lock_reason === 'pass_out_recovery' &&
             char.resolved_presence_status === 'passed_out' &&
             newNeeds.energy > 35) {
-          Object.assign(updatePayload, {
-            resolved_presence_status: 'home',
-            current_activity: '',
-            last_wake_time: nowIso,
-            presence_stay_lock: false,
-            presence_stay_lock_reason: null,
-            presence_stay_lock_release_condition: null,
-          });
+          const passOutStart = char.last_pass_out_at;
+          const isMedicalEmergency6h = (newNeeds.health ?? 80) <= 15;
+          let elapsedPassOutHours = 0;
+          if (passOutStart) {
+            elapsedPassOutHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
+          }
+          // Only release if 6h elapsed OR medical emergency — energy alone is insufficient
+          const safeToRelease = (!passOutStart || elapsedPassOutHours >= 6) || isMedicalEmergency6h;
+          if (safeToRelease) {
+            Object.assign(updatePayload, {
+              resolved_presence_status: 'home',
+              current_activity: '',
+              last_wake_time: nowIso,
+              presence_stay_lock: false,
+              presence_stay_lock_reason: null,
+              presence_stay_lock_release_condition: null,
+            });
+          }
+          // Under 6h without medical emergency: keep passed_out — 12h hard cap will eventually fire
         }
 
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────

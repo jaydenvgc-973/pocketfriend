@@ -1420,17 +1420,36 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 2: ALREADY PASSED OUT — RECOVERY ────────────────────────────
-        // Character is passed out but energy > 10 (has recovered enough to move).
-        // Route to home. Write presence as 'home' — NOT 'sleeping'.
-        // passed_out and sleeping are separate states. Once home, the energy-based
-        // sleep onset block below will write 'sleeping' if energy still warrants it.
+        // ── TIER 2: ALREADY PASSED OUT — 6-HOUR MINIMUM GUARD ───────────────
+        // Character is passed out. autonomousCharacterMovement must NOT route them to home
+        // or change their presence until the 6-hour minimum has elapsed from last_pass_out_at.
+        // Energy recovery reaching > 10 is the intended physiological response — it does NOT
+        // mean the character is ready to get up. They are still unconscious/recovering.
         //
-        // IMPORTANT: Write last_sleep_start now so the subsequent sleep onset (Case A)
-        // starts the sleep duration timer correctly. Without it, sleepDurationHours is always 0
-        // and the natural wake condition (sleepDurationHours >= 4) can never be satisfied,
-        // causing the character to sleep indefinitely after pass-out recovery.
+        // CANONICAL RULE: passed_out → home transition requires:
+        //   a) 6h elapsed from last_pass_out_at, OR
+        //   b) Medical emergency (health ≤ 15 — hospitalization overrides everything)
+        //
+        // The 12h hard cap in simulateActiveCharacterNeeds is the MAXIMUM.
+        // The energy > 35 stay_lock_release is governed by the same 6h guard (fixed there too).
+        // autonomousCharacterMovement must NOT circumvent both guards by routing to home directly.
         if (status === 'passed_out') {
+          const passOutAt = char.last_pass_out_at;
+          const isMedicalEmergencyPassOut = (char.health_value ?? 80) <= 15;
+          let passOutElapsedHours = 0;
+          if (passOutAt) {
+            passOutElapsedHours = (nowET.getTime() - new Date(passOutAt).getTime()) / 3_600_000;
+          }
+          const passOutProtected = passOutAt && passOutElapsedHours < 6 && !isMedicalEmergencyPassOut;
+
+          if (passOutProtected) {
+            // Passed out but protected — do not move, do not change state.
+            // simulateActiveCharacterNeeds will handle the release at 6h or 12h hard cap.
+            console.log(`[autonomousMovement] ${char.name}: PASS_OUT_PROTECTED — ${passOutElapsedHours.toFixed(2)}h elapsed < 6h minimum — no action`);
+            continue;
+          }
+
+          // Past 6h (or no timestamp, or medical emergency) — allow home routing.
           if (energyUrgency < 4 && char.current_home_location_id) {
             const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
             if (ownHome) {
@@ -1440,18 +1459,19 @@ Deno.serve(async (req) => {
                 resolved_presence_status:       'home',
                 resolved_location_type:         'home',
                 resolved_source_reason:         'pass_out_recovery',
-                last_arrived_time:              new Date().toISOString(),
-                // Stamp last_sleep_start so the sleep onset timer starts on next run.
-                // This is the pass-out recovery sleep — not a new independent sleep cycle.
-                last_sleep_start:               new Date().toISOString(),
+                last_arrived_time:              nowET.toISOString(),
+                last_wake_time:                 nowET.toISOString(),
+                presence_stay_lock:             false,
+                presence_stay_lock_reason:      null,
+                presence_stay_lock_release_condition: null,
               };
               try {
                 await base44.entities.Character.update(char.id, recoveryPayload);
               } catch {
                 await base44.asServiceRole.entities.Character.update(char.id, recoveryPayload);
               }
-              moveLog.push(`${char.name} → ${ownHome.name} [PASS_OUT_RECOVERY]`);
-              console.log(`[autonomousMovement] ✓ ${char.name}: recovering → ${ownHome.name}`);
+              moveLog.push(`${char.name} → ${ownHome.name} [PASS_OUT_RECOVERY after ${passOutElapsedHours.toFixed(1)}h]`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: pass-out recovery → ${ownHome.name} (${passOutElapsedHours.toFixed(1)}h elapsed)`);
             }
           }
           continue;
@@ -1496,13 +1516,15 @@ Deno.serve(async (req) => {
           // Wake conditions (in priority order):
           // 1. Active work obligation right now → wake for work
           // 2. Active school obligation right now → wake for school
-          // 3. Energy recovered (>= 70) AND slept >= 4 hours AND not health-recovering → natural wake
-          //    (at +12/hr from energy=20, reaching 70 takes ~4.2 hours — minimum realistic sleep)
-          //    Characters who slept more will have higher energy and wake more easily.
+          // 3. Energy recovered (>= 70) AND slept >= 6 hours AND not health-recovering → natural wake
+          //    CANONICAL: 6h is the minimum sleep floor for active_created_characters.
+          //    At +12.5/hr from energy=20, reaching 70 takes ~4h — but 4h is NOT the minimum.
+          //    The character may have recovered energy but has not yet had sufficient rest.
+          //    6h is non-negotiable. Only obligation override (work/school) is a valid early exception.
           //    Characters who are sick/recovering stay asleep until health improves.
           // Otherwise → keep sleeping, no action
           const shouldWake = hasActiveWorkObligation || hasActiveSchoolObligation ||
-            (energyNow >= 70 && sleepDurationHours >= 4 && !isHealthRecovering);
+            (energyNow >= 70 && sleepDurationHours >= 6 && !isHealthRecovering);
 
           if (!shouldWake) {
             console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${Math.round(sleepDurationHours * 10) / 10}h, obligation=${hasActiveWorkObligation || hasActiveSchoolObligation})`);
