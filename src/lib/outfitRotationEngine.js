@@ -86,10 +86,21 @@ const LOCATION_CATEGORY_TO_OUTFIT = {
  * Uses the day-of-year so it changes daily but is deterministic for the same day.
  * Avoids always returning index 0 when multiple options exist.
  */
+// ── ET-AUTHORITATIVE DATE HELPERS ────────────────────────────────────────────
+// All date comparisons use America/New_York (Eastern Time). UTC is forbidden as
+// an application time reference.
+function getETNow() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+function getETTodayStr() {
+  const n = getETNow();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+
 function getDailyRotationIndex(outfitPool, characterId = '') {
   if (outfitPool.length <= 1) return 0;
-  const now = new Date();
-  const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+  const etNow = getETNow();
+  const dayOfYear = Math.floor((etNow - new Date(etNow.getFullYear(), 0, 0)) / 86400000);
   // Mix in characterId hash so different characters rotate differently
   const idHash = characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
   return (dayOfYear + idHash) % outfitPool.length;
@@ -116,11 +127,10 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEn
     if (locked) return locked;
   }
 
-  // ROTATION ON: if current outfit is in the pool and context matches, prefer it
-  if (rotationEnabled && currentOutfitId) {
-    const currentInPool = pool.find(o => o.outfit_id === currentOutfitId);
-    if (currentInPool) return currentInPool;
-  }
+  // ROTATION ON: DO NOT prefer current outfit — rotation must always select from the
+  // daily algorithm. Preferring currentOutfitId would lock in stale manual selections
+  // and cause the "Currently Wearing disagrees with rotation" failure.
+  // (Rotation OFF already handled above via the locked-outfit early return.)
 
   // Sort candidates: numbered outfits first (by rotation_number ascending),
   // then unnumbered. Favorites are prioritized within each tier.
@@ -131,16 +141,11 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEn
 
   // If any outfits have explicit rotation numbers, use them as the ordered sequence
   if (numbered.length > 0) {
-    const now = new Date();
-    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    const etNow = getETNow();
+    const dayOfYear = Math.floor((etNow - new Date(etNow.getFullYear(), 0, 0)) / 86400000);
     const idHash = characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
     const idx = (dayOfYear + idHash) % numbered.length;
-    const picked = numbered[idx];
-    // Skip currently worn if alternatives exist
-    if (rotationEnabled && picked?.outfit_id === currentOutfitId && numbered.length > 1) {
-      return numbered[(idx + 1) % numbered.length];
-    }
-    return picked;
+    return numbered[idx];
   }
 
   // Fallback: no rotation numbers — use daily rotation among favorites or all
@@ -148,12 +153,7 @@ function pickFromPool(pool, currentOutfitId = null, characterId = '', rotationEn
   const candidates = favorites.length > 0 ? favorites : unnumbered;
   if (candidates.length === 1) return candidates[0];
 
-  const idx = getDailyRotationIndex(candidates, characterId);
-  const picked = candidates[idx];
-  if (rotationEnabled && picked?.outfit_id === currentOutfitId && candidates.length > 1) {
-    return candidates[(idx + 1) % candidates.length];
-  }
-  return picked;
+  return candidates[getDailyRotationIndex(candidates, characterId)];
 }
 
 /**
@@ -265,17 +265,20 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
 
   const closet = character.character_closet || [];
   const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
-  if (outfits.length === 0) return character.current_outfit || null;
-
+  // When closet is empty and rotation is ON, return null — do not fall back to
+  // current_outfit as it is stale UI state and not authoritative for rotation.
   const rotationEnabled = character.outfit_rotation_enabled !== false;
+  if (outfits.length === 0) return rotationEnabled ? null : (character.current_outfit || null);
+
   const targetCategory = forcedCategory || resolveTargetCategory(character, activityText, locationCategory);
   const fallbackChain = buildFallbackChain(targetCategory);
 
   // ── ROTATION ON: check today_category_outfit_overrides ──────────────────────
+  // Date comparison uses Eastern Time (America/New_York). UTC is forbidden.
   if (rotationEnabled) {
     const overrideState = character.today_category_outfit_overrides;
     if (overrideState && overrideState.date) {
-      const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+      const todayStr = getETTodayStr(); // ET-authoritative, never UTC
       if (overrideState.date === todayStr && overrideState.overrides) {
         // Walk the fallback chain — apply override to first matching category that has one
         for (const cat of fallbackChain) {
@@ -433,7 +436,7 @@ export function applyManualCategoryOverride(character, targetCategory, newOutfit
 
   if (rotationEnabled) {
     // ── ROTATION ON: today-only override, never persists to tomorrow ──────────
-    const todayStr = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const todayStr = getETTodayStr(); // ET-authoritative — never UTC
     const existing = character.today_category_outfit_overrides || {};
     // If the stored date is not today, start fresh (stale overrides from yesterday are dropped)
     const existingOverrides = (existing.date === todayStr && existing.overrides) ? { ...existing.overrides } : {};
@@ -475,14 +478,15 @@ export function resolveOutfitForDate(character, date, activityText = '', locatio
 
   const closet = character.character_closet || [];
   const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
-  if (outfits.length === 0) return character.current_outfit || null;
+  const rotationEnabledForDate = character.outfit_rotation_enabled !== false;
+  if (outfits.length === 0) return rotationEnabledForDate ? null : (character.current_outfit || null);
 
-  const rotationEnabled = character.outfit_rotation_enabled !== false;
   const targetCategory = resolveTargetCategory(character, activityText, locationCategory);
   const fallbackChain = buildFallbackChain(targetCategory);
 
-  // Date-specific rotation index: same algorithm as getDailyRotationIndex but uses the supplied date
-  const dayOfYear = Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+  // Date-specific rotation index using ET day-of-year (not UTC)
+  const etDate = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfYear = Math.floor((etDate - new Date(etDate.getFullYear(), 0, 0)) / 86400000);
   const idHash = (character.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
 
   function pickForDate(pool) {

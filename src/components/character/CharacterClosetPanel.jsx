@@ -660,7 +660,10 @@ export default function CharacterClosetPanel({ character }) {
     setSaving(true);
     try {
       const updates = { character_closet: newCloset };
-      if (currentOutfitUpdate !== null) updates.current_outfit = currentOutfitUpdate;
+      // Only write current_outfit when rotation is OFF. When rotation is ON,
+      // current_outfit is not the authority and must not be updated here —
+      // manual selections go through today_category_outfit_overrides instead.
+      if (currentOutfitUpdate !== null && !rotationEnabled) updates.current_outfit = currentOutfitUpdate;
       await base44.entities.Character.update(character.id, updates);
       // Surgical patch — closet/outfit changes don't need a full re-fetch
       queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...updates } : prev);
@@ -679,8 +682,9 @@ export default function CharacterClosetPanel({ character }) {
   // Edit existing outfit in-place — never creates a duplicate
   const handleEditOutfit = async (updatedOutfit) => {
     const newCloset = closet.map(o => o.outfit_id === updatedOutfit.outfit_id ? updatedOutfit : o);
-    // If this is the current outfit, keep current_outfit in sync
-    const isCurrentlyWorn = currentOutfit?.outfit_id === updatedOutfit.outfit_id;
+    // Only sync current_outfit when rotation is OFF — when rotation is ON, the resolver
+    // derives the active outfit dynamically and current_outfit is not the authority.
+    const isCurrentlyWorn = !rotationEnabled && currentOutfit?.outfit_id === updatedOutfit.outfit_id;
     const currentOutfitUpdate = isCurrentlyWorn
       ? { ...updatedOutfit, last_changed_at: currentOutfit?.last_changed_at, change_reason: currentOutfit?.change_reason }
       : null;
@@ -695,7 +699,8 @@ export default function CharacterClosetPanel({ character }) {
 
   const handleDeleteOutfit = async (outfit_id) => {
     const newCloset = closet.filter(o => o.outfit_id !== outfit_id);
-    const clearCurrent = currentOutfit?.outfit_id === outfit_id ? {} : null;
+    // Only clear current_outfit when rotation is OFF — rotation-ON derives dynamically
+    const clearCurrent = (!rotationEnabled && currentOutfit?.outfit_id === outfit_id) ? {} : null;
     await saveCloset(newCloset, clearCurrent);
   };
 
@@ -705,12 +710,16 @@ export default function CharacterClosetPanel({ character }) {
 
   const handleSetActive = async (outfit) => {
     if (rotationEnabled) {
-      // Rotation ON: manual selection writes a date-scoped per-category override.
-      // It never persists as current_outfit, so it cannot compete with rotation tomorrow.
+      // Rotation ON: route manual selection through date-scoped category override ONLY.
+      // NEVER write to current_outfit when rotation is ON — it is not the authority.
+      // applyManualCategoryOverride writes to today_category_outfit_overrides which
+      // the rotation engine consumes before its own rotation algorithm.
       const patch = applyManualCategoryOverride(character, outfit.category, outfit.outfit_id);
       await base44.entities.Character.update(character.id, patch);
+      // Patch the query cache so the resolver immediately sees the new override
       queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, ...patch } : prev);
     } else {
+      // Rotation OFF: manual current_outfit write is the authority. Preserve this behavior.
       await saveCloset(closet, {
         ...outfit,
         last_changed_at: new Date().toISOString(),
@@ -872,10 +881,10 @@ export default function CharacterClosetPanel({ character }) {
               <p className="leading-relaxed">{activeOutfit.full_description}</p>
             )}
           </div>
-          {!rotationEnabled && activeOutfit.last_changed_at && (
+          {!rotationEnabled && character.current_outfit?.last_changed_at && (
             <p className="text-[10px] text-muted-foreground/60 mt-1">
-              Changed {new Date(activeOutfit.last_changed_at).toLocaleDateString()}
-              {activeOutfit.change_reason ? ` · ${activeOutfit.change_reason.replace(/_/g, ' ')}` : ''}
+              Changed {new Date(character.current_outfit.last_changed_at).toLocaleDateString()}
+              {character.current_outfit.change_reason ? ` · ${character.current_outfit.change_reason.replace(/_/g, ' ')}` : ''}
             </p>
           )}
         </div>

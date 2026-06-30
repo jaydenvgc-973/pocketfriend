@@ -30,7 +30,7 @@ function getETTodayStr() {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
 }
 function getETDayIndex(seed = '') {
-  const n = getETNow();
+  const n = getETNow(); // ET-authoritative — UTC is forbidden
   const dayOfYear = Math.floor((n - new Date(n.getFullYear(), 0, 0)) / 86400000);
   const idHash = (seed || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return dayOfYear + idHash;
@@ -133,13 +133,15 @@ export function resolveCharacterActiveOutfit(character, options = {}) {
   // P3/P4: CLOSET via rotation engine
   const outfit = resolveCurrentOutfit(character, '', null, forcedCategory);
   if (!outfit) {
-    const co = character.current_outfit;
+    // When rotation is ON, current_outfit is NOT authoritative — do not surface it.
+    // Only use it when rotation is OFF (manual mode) and no closet outfits exist.
+    const co = rotationEnabled ? null : character.current_outfit;
     return {
       outfit: co,
       category: forcedCategory || 'daily_casual',
-      reason: 'no_closet',
+      reason: rotationEnabled ? 'rotation_no_closet' : 'no_closet',
       description: co ? buildOutfitPromptText(co) : null,
-      source: 'fallback',
+      source: rotationEnabled ? 'none' : 'fallback',
     };
   }
   return {
