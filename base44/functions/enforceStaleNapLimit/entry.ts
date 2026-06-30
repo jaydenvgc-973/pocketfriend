@@ -139,6 +139,12 @@ Deno.serve(async (req) => {
       }
 
       // ── PAST SCHEDULED WAKE TIME ──────────────────────────────────────
+      // This section applies to sleeping characters ONLY.
+      // Napping characters with a stale start time are handled above (stale nap path).
+      // A napping character must NEVER be woken by wake_up_time boundary logic —
+      // nap end is governed by the 3h cap above, not by sleep schedule metadata.
+      if (isNap) continue; // napping is fully handled above — skip sleep boundary entirely
+
       const wakeMin = toMinutes(char.wake_up_time);
       const graceMin = 30; // 30 min after wake time before forced wake
 

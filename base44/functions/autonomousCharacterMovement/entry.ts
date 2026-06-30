@@ -1477,26 +1477,40 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 3: SLEEPING/NAPPING STATUS HANDLER ─────────────────────────
-        // Wake rules:
-        //   1. Work shift CURRENTLY ACTIVE (started, not ended) AND slept ≥ 6h → obligation wake
-        //   2. School session CURRENTLY ACTIVE per actual hours AND slept ≥ 6h → obligation wake
-        //   3. Energy ≥ 70 AND slept ≥ 6h AND not health-recovering → natural wake
-        //   4. All other cases → remain sleeping; alarm system handles pre-obligation wake
-        //
-        // FORBIDDEN: waking because work/school exists today but has not yet started.
-        // FORBIDDEN: waking because obligation is hours away.
-        // The existing alarm system (processScheduledCharacterAlarms) is the canonical
-        // authority for pre-obligation wakes. This tier only wakes when a shift is
-        // genuinely underway and the character is actively missing it.
-        if (status === 'sleeping' || status === 'napping') {
+        // ── TIER 3: SLEEP + NAP HANDLERS ─────────────────────────────────────
+        // Two completely separate branches below: one for 'sleeping', one for 'napping'.
+        // They use different timestamps, different duration rules, and different wake logic.
+        // sleep uses last_sleep_start + 6–8h rules. nap uses last_nap_time + 3h cap.
+        // The 3h nap cap is enforceStaleNapLimit's responsibility — not this handler.
+        // ── NAPPING: separate handler, separate rules, separate timestamp ───────
+        // Uses last_nap_time NOT last_sleep_start. 6–8h sleep rules NEVER apply here.
+        // The 3h nap cap is enforceStaleNapLimit's job. This only handles early wake.
+        if (status === 'napping') {
+          const napStartedAt = char.last_nap_time ? new Date(char.last_nap_time) : null;
+          const napDurationHours = napStartedAt ? (nowET.getTime() - napStartedAt.getTime()) / 3600000 : 0;
+          const energyNow = char.energy_value ?? 0;
+          // Nap ends when energy recovered (≥70) AND nap ≥ 30min. No 6h rule. No 8h rule.
+          if (energyNow < 70 || napDurationHours < 0.5) {
+            console.log(`[autoMove] ${char.name}: NAPPING — remain (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) — 3h cap via enforceStaleNapLimit only`);
+            continue;
+          }
+          const napWakePayload = { resolved_presence_status: 'home', resolved_source_reason: 'nap_complete_energy_recovered', resolved_last_updated_at: nowET.toISOString(), last_wake_time: nowET.toISOString() };
+          try { await base44.entities.Character.update(char.id, napWakePayload); } catch { await base44.asServiceRole.entities.Character.update(char.id, napWakePayload); }
+          char.resolved_presence_status = 'home';
+          console.log(`[autoMove] ✓ ${char.name}: NAPPING → woke naturally (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) — sleep 6h/8h rules never applied`);
+        }
+
+        // ── SLEEPING: separate handler, separate rules, uses last_sleep_start ──
+        // SLEEPING ONLY. The napping handler above is fully separate and already ran.
+        // last_sleep_start is the authoritative sleep timer. 6–8h rules apply.
+        // Employment/enrollment alone NEVER wakes. Obligation must be currently active.
+        if (status === 'sleeping') {
           const nowMin3 = nowET.getHours() * 60 + nowET.getMinutes();
           const dowNow3 = nowET.getDay();
           const todayET3 = nowET.toISOString().slice(0, 10);
+          // Use last_sleep_start — NEVER last_nap_time for sleeping status
           const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
-          const sleepDurationHours = sleepStartedAt
-            ? (nowET.getTime() - sleepStartedAt.getTime()) / 3600000
-            : 0;
+          const sleepDurationHours = sleepStartedAt ? (nowET.getTime() - sleepStartedAt.getTime()) / 3600000 : 0;
           const isMedEmergency3 = (char.health_value ?? 80) <= 15;
 
           // WORK: shift must be currently active AND 6h minimum met (or medical emergency)
