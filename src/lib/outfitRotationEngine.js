@@ -275,13 +275,22 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
 
   // ── ROTATION ON: check today_category_outfit_overrides ──────────────────────
   // Date comparison uses Eastern Time (America/New_York). UTC is forbidden.
+  //
+  // AUTHORITY RULE: An override is only honoured when the overridden category is the
+  // PRIMARY (first) category in the active fallback chain, OR equals the resolved
+  // targetCategory exactly. Cross-category overrides (e.g. a 'lounge' override
+  // bleeding into a 'daily_casual' context via cascade) are ignored — otherwise a
+  // "Wear Today" selection in one slot contaminates a completely different slot.
   if (rotationEnabled) {
     const overrideState = character.today_category_outfit_overrides;
     if (overrideState && overrideState.date) {
       const todayStr = getETTodayStr(); // ET-authoritative, never UTC
       if (overrideState.date === todayStr && overrideState.overrides) {
-        // Walk the fallback chain — apply override to first matching category that has one
-        for (const cat of fallbackChain) {
+        // Only honour overrides whose key matches the resolved target category or the
+        // first two entries of the chain (primary + first immediate fallback).
+        // This prevents a lounge override from activating when context is daily_casual.
+        const primaryCategories = fallbackChain.slice(0, 2);
+        for (const cat of primaryCategories) {
           const overrideId = overrideState.overrides[cat];
           if (overrideId) {
             const overrideOutfit = outfits.find(o => o.outfit_id === overrideId);
@@ -290,7 +299,7 @@ export function resolveCurrentOutfit(character, activityText = '', locationCateg
         }
       }
     }
-    // No valid today override — use normal rotation
+    // No valid today override for this context — use normal rotation
     for (const cat of fallbackChain) {
       const pool = outfits.filter(o => o.category === cat);
       if (pool.length > 0) return pickFromPool(pool, null, character.id, true);

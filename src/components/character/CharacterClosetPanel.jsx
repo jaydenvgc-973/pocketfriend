@@ -713,7 +713,7 @@ export default function CharacterClosetPanel({ character }) {
       // Rotation ON: route manual selection through date-scoped category override ONLY.
       // NEVER write to current_outfit when rotation is ON — it is not the authority.
       // applyManualCategoryOverride writes to today_category_outfit_overrides which
-      // the rotation engine consumes before its own rotation algorithm.
+      // the rotation engine consumes before its own rotation algorithm (primary slot only).
       const patch = applyManualCategoryOverride(character, outfit.category, outfit.outfit_id);
       await base44.entities.Character.update(character.id, patch);
       // Patch the query cache so the resolver immediately sees the new override
@@ -726,6 +726,13 @@ export default function CharacterClosetPanel({ character }) {
         change_reason: "manual_selection",
       });
     }
+  };
+
+  // Rotation OFF only: clear the manually selected outfit so Currently Wearing is empty.
+  const handleClearActive = async () => {
+    if (rotationEnabled) return; // no-op when rotation is ON — rotation manages itself
+    await base44.entities.Character.update(character.id, { current_outfit: null });
+    queryClient.setQueryData(["character", character.id], (prev) => prev ? { ...prev, current_outfit: null } : prev);
   };
 
   const handleToggleFavoriteOutfit = async (outfit_id) => {
@@ -866,9 +873,21 @@ export default function CharacterClosetPanel({ character }) {
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3">
           <div className="flex items-center justify-between mb-1">
             <p className="text-[10px] text-primary font-semibold uppercase tracking-wider">Currently Wearing</p>
-            <span className="text-[9px] text-primary/70 font-medium capitalize">
-              {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] text-primary/70 font-medium capitalize">
+                {rotationEnabled ? `Rotation · ${activeResult?.category || ''}` : 'Manual'}
+              </span>
+              {/* Rotation OFF only: allow clearing the manual selection */}
+              {!rotationEnabled && (
+                <button
+                  onClick={handleClearActive}
+                  className="text-[9px] text-muted-foreground hover:text-destructive font-medium transition-colors"
+                  title="Clear manual outfit selection"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <p className="text-sm font-medium text-foreground">{activeOutfit.label}</p>
           <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
