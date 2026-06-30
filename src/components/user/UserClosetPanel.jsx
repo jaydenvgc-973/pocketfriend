@@ -97,31 +97,39 @@ function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActi
         </div>
       )}
 
-      {/* Rotation ON: slot-aware deselect clears only this category's today override */}
-      {rotationEnabled && isSlotSelected && (
-        <button
-          onClick={() => onClearSlot(outfit.category)}
-          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
-        >
-          Deselect Today
-        </button>
-      )}
-      {/* Rotation OFF: deselect clears the global manual current_outfit */}
-      {!rotationEnabled && isActive && (
-        <button
-          onClick={() => onClearActive()}
-          className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
-        >
-          Deselect
-        </button>
-      )}
-      {!highlighted && (
-        <button
-          onClick={() => onSetActive(outfit)}
-          className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
-        >
-          {rotationEnabled ? "Wear Today" : "Set as Current Outfit"}
-        </button>
+      {/* Single action area — adapts to mode and state */}
+      {rotationEnabled ? (
+        isSlotSelected ? (
+          <button
+            onClick={() => onClearSlot(outfit.category)}
+            className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+          >
+            Deselect Today
+          </button>
+        ) : (
+          <button
+            onClick={() => onSetActive(outfit)}
+            className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
+          >
+            Wear Today
+          </button>
+        )
+      ) : (
+        isActive ? (
+          <button
+            onClick={() => onClearActive()}
+            className="w-full text-xs text-muted-foreground border border-border hover:border-destructive/50 hover:text-destructive rounded-lg py-1.5 transition-colors font-medium"
+          >
+            Deselect
+          </button>
+        ) : (
+          <button
+            onClick={() => onSetActive(outfit)}
+            className="w-full text-xs text-primary border border-primary/30 hover:bg-primary/10 rounded-lg py-1.5 transition-colors font-medium"
+          >
+            Set as Current Outfit
+          </button>
+        )
       )}
 
     </div>
