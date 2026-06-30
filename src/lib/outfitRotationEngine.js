@@ -221,7 +221,7 @@ export function resolveTargetCategory(character, activityText = '', locationCate
   if (ACTIVITY_CATEGORY_MAP[4].activities.some(a => combined.includes(a))) return 'church';
   if (ACTIVITY_CATEGORY_MAP[6].activities.some(a => combined.includes(a))) return 'nightlife';
   if (ACTIVITY_CATEGORY_MAP[8].activities.some(a => combined.includes(a))) return 'school';
-  if (ACTIVITY_CATEGORY_MAP[11].activities.some(a => combined.includes(a))) return 'date_night';
+  if (ACTIVITY_CATEGORY_MAP[10].activities.some(a => combined.includes(a))) return 'date_night';
 
   // ── PRIORITY 8: LOUNGE / HOME ────────────────────────────────────────────────
   if (presenceStatus === 'home') {
