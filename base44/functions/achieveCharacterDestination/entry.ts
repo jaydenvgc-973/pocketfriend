@@ -147,44 +147,49 @@ Deno.serve(async (req) => {
     }
 
     // ─── AUTHORITATIVE LOCATION TRANSITION PROOF — hard gate, atomic ──────
-    // Read-back above verifies the Character state; this LocationHistory record
-    // is the persisted, queryable proof of that verified transition. If it fails
-    // to write, the just-verified Character state is reverted so no state change
-    // can outlive its proof record.
+    // Read-back above verifies the Character state; writeVerifiedLocationHistory
+    // is the single authoritative writer for the persisted, queryable proof of
+    // that verified transition (closes prior open records, prevents duplicate
+    // current records, verifies owner + character state itself). If it fails,
+    // the just-verified Character state is reverted so no state change can
+    // outlive its proof record — UNLESS a concurrent writer has already moved
+    // the character again, in which case reverting would destroy newer truth.
     try {
-      const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
-        { character_id: character_id, owner_email: owner_email, is_current: true }, null, 10
-      );
-      for (const open of openHistory) {
-        if (open.location_id === destLoc.id) continue;
-        const arrivalMs = new Date(open.arrival_time).getTime();
-        const durationMinutes = Math.round((now.getTime() - arrivalMs) / 60000);
-        await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-          is_current: false,
-          departure_time: now.toISOString(),
-          duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-        });
-      }
-      await base44.asServiceRole.entities.LocationHistory.create({
+      const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
         character_id: character_id,
-        character_name: char.name,
         owner_email: owner_email,
         location_id: destLoc.id,
-        location_name: destLoc.name,
-        location_category: destLoc.category || 'other',
         event_type: finalPresenceStatus === 'home' ? 'return_home' : 'arrival',
-        arrival_time: now.toISOString(),
         travel_source: 'system',
         travel_reason: source_reason || null,
-        is_current: true,
       });
+      if (!locResult?.data?.success) {
+        throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+      }
     } catch (proofError) {
+      // Before reverting, re-read the Character. If a concurrent writer already
+      // changed the state we're about to overwrite, a stale revert would destroy
+      // newer legitimate truth — skip the revert and report it explicitly.
+      let revertOutcome = 'reverted';
       let revertError = null;
-      try { await base44.asServiceRole.entities.Character.update(character_id, preMoveSnapshot); } catch (e) { revertError = e.message; }
+      try {
+        const [currentChar] = await base44.asServiceRole.entities.Character.filter({ id: character_id }, null, 1);
+        const stillMatchesOurWrite = currentChar &&
+          currentChar.resolved_current_location_id === destLoc.id &&
+          currentChar.resolved_presence_status === finalPresenceStatus &&
+          currentChar.resolved_location_type === finalLocationType &&
+          currentChar.travel_status === 'not_traveling';
+        if (stillMatchesOurWrite) {
+          await base44.asServiceRole.entities.Character.update(character_id, preMoveSnapshot);
+        } else {
+          revertOutcome = 'revert_skipped_due_to_concurrent_update';
+        }
+      } catch (e) { revertError = e.message; }
       return Response.json({
         error: 'unverified_state_write',
-        reason: 'LocationHistory transition proof failed — Character state reverted, event is UNVERIFIED',
+        reason: 'LocationHistory transition proof failed',
         proof_error: proofError.message,
+        revert_outcome: revertOutcome,
         revert_error: revertError,
       }, { status: 500 });
     }

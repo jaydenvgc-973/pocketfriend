@@ -1,26 +1,28 @@
 /**
  * recordLocationHistoryEvent
  *
- * Writes a LocationHistory record whenever a character moves to/from a location.
- * Called from travel completion, school/work schedule enforcement, scene entry,
- * and any place that changes a character's resolved location.
+ * REPAIRED: this used to be a caller-trusted historical writer with no auth,
+ * no ownership check, no state verification, an arrivalTime a caller could
+ * backdate/fabricate, and a confirmed comparison bug (`open.id === locationId`
+ * instead of `open.location_id === locationId`, which meant "same location,
+ * skip" never actually matched).
  *
- * Also closes the previous open entry (sets departure_time, duration_minutes, is_current=false)
- * when the character leaves.
+ * It is now a thin, authenticated wrapper around writeVerifiedLocationHistory —
+ * the single authoritative LocationHistory writer. All verification (owner
+ * match, character-state match, correct record-closing, no fabricated
+ * timestamps) happens there. This function no longer contains its own
+ * LocationHistory logic.
  *
  * Payload:
- *   characterId           string  — Character ID
- *   characterName         string  — Character display name
- *   ownerEmail            string  — Owner email for RLS
- *   locationId            string  — Destination location ID
- *   locationName          string  — Destination location name
- *   locationCategory      string  — e.g. "home", "work", "school", "gym", etc.
- *   eventType             string  — arrival|departure|return_home|work_start|work_end|school_start|school_end|religious_service|food_need|social_visit|gym_visit|transit|other
- *   travelSource          string  — schedule|autonomous|promise|commitment|need_fulfillment|manual|system|other
- *   travelReason          string  — human-readable reason
- *   arrivalTime           string  — ISO datetime (optional, defaults to now)
- *   previousLocationId    string  — previous location ID (to close open record)
- *   notes                 string  — optional context notes
+ *   characterId      string  — Character ID
+ *   ownerEmail       string  — Owner email (cross-checked against the actual Character record)
+ *   locationId       string  — Destination location ID (must already equal Character.resolved_current_location_id)
+ *   eventType        string  — arrival|departure|return_home|work_start|work_end|school_start|...
+ *   travelSource     string  — schedule|autonomous|promise|commitment|need_fulfillment|manual|system|other
+ *   travelReason     string  — human-readable reason
+ *
+ * NOTE: arrivalTime is intentionally NOT accepted — arrival time is always
+ * server "now" so a caller cannot fabricate or backdate a canonical arrival.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -29,70 +31,49 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
+    // Authenticate: if a session exists, it must match ownerEmail. Scheduled/
+    // service callers with no session rely on the character-state verification
+    // performed by writeVerifiedLocationHistory as the real authority gate.
+    let user = null;
+    try { user = await base44.auth.me(); } catch { /* scheduled/service context */ }
+
     const {
       characterId,
-      characterName,
       ownerEmail,
       locationId,
-      locationName,
-      locationCategory = 'other',
       eventType = 'arrival',
       travelSource = 'system',
       travelReason,
-      arrivalTime,
-      previousLocationId,
-      notes,
     } = await req.json();
 
-    if (!characterId || !ownerEmail || !locationId || !locationName) {
-      return Response.json({ error: 'characterId, ownerEmail, locationId, locationName are required' }, { status: 400 });
+    if (!characterId || !ownerEmail || !locationId) {
+      return Response.json({ error: 'characterId, ownerEmail, and locationId are required' }, { status: 400 });
     }
 
-    const now = new Date().toISOString();
-    const effectiveArrivalTime = arrivalTime || now;
-
-    // Step 1: Close any open LocationHistory record for this character
-    // (i.e., records where is_current=true and character_id matches)
-    const openRecords = await base44.asServiceRole.entities.LocationHistory.filter(
-      { character_id: characterId, owner_email: ownerEmail, is_current: true },
-      null, 10
-    ).catch(() => []);
-
-    for (const open of openRecords) {
-      if (open.id === locationId) continue; // same location, skip
-      const arrivalMs = new Date(open.arrival_time).getTime();
-      const departureMs = new Date(effectiveArrivalTime).getTime();
-      const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
-      try {
-        await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-          is_current: false,
-          departure_time: effectiveArrivalTime,
-          duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-        });
-      } catch (closeError) {
-        console.error(`[recordLocationHistoryEvent] Failed to close prior open record ${open.id}: ${closeError.message}`);
-      }
+    if (user && user.email !== ownerEmail) {
+      return Response.json({ error: 'Forbidden — ownerEmail does not match authenticated session' }, { status: 403 });
     }
 
-    // Step 2: Write the new arrival record
-    const record = await base44.asServiceRole.entities.LocationHistory.create({
+    const result = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
       character_id: characterId,
-      character_name: characterName || 'Unknown',
       owner_email: ownerEmail,
       location_id: locationId,
-      location_name: locationName,
-      location_category: locationCategory,
       event_type: eventType,
-      arrival_time: effectiveArrivalTime,
       travel_source: travelSource,
       travel_reason: travelReason || null,
-      is_current: true,
-      notes: notes || null,
     });
 
-    console.log(`[recordLocationHistoryEvent] Written | char=${characterName}(${characterId}) | loc=${locationName} | event=${eventType} | source=${travelSource}`);
+    if (!result?.data?.success) {
+      // Refuse to write — no fallback, no silent success. Report exactly why.
+      return Response.json({
+        success: false,
+        error: result?.data?.error || 'writeVerifiedLocationHistory failed',
+      }, { status: 409 });
+    }
 
-    return Response.json({ success: true, record_id: record.id });
+    console.log(`[recordLocationHistoryEvent] Verified write | char=${characterId} | loc=${locationId} | event=${eventType}`);
+
+    return Response.json({ success: true, record_id: result.data.record_id });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

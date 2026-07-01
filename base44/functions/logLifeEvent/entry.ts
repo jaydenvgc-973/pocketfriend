@@ -126,20 +126,78 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing required: characterId, eventType, title, description' }, { status: 400 });
     }
 
-    // ── EVIDENCE GATE ──────────────────────────────────────────────────────
-    // LifeEvent is documentation, not proof. Automated callers (life_simulation,
-    // scheduled_event) claiming a physical state collapse (sleep deprivation,
-    // medical, accident) must cite the authoritative transition proof record
-    // that already verified the state change — this hub does not verify it itself.
-    // Conversation-driven events (user_message, character_decision) are exempt:
-    // the conversation itself is the evidence.
-    const STATE_TRANSITION_EVENT_TYPES = ['sleep_deprivation_event', 'medical_event', 'accident_event'];
-    const isAutomatedTrigger = triggeredBy === 'life_simulation' || triggeredBy === 'scheduled_event';
-    if (STATE_TRANSITION_EVENT_TYPES.includes(eventType) && isAutomatedTrigger && !verifiedTransitionId) {
-      return Response.json({
-        error: 'verifiedTransitionId required',
-        reason: `eventType "${eventType}" triggered by "${triggeredBy}" claims a physical state transition. This hub does not verify state transitions itself — pass the SleepTransition (or equivalent) record id that already proved the state change.`,
-      }, { status: 400 });
+    // ── EVIDENCE GATE — REAL VERIFICATION, NOT A REQUIRED STRING ────────────
+    // LifeEvent is documentation, not proof. Any non-conversational caller
+    // claiming a physical state transition (sleep deprivation, medical,
+    // accident, location change) must cite an authoritative proof record —
+    // and that record is actually looked up and validated here:
+    //   - the record must exist (fake IDs are rejected)
+    //   - it must belong to the same character_id
+    //   - it must belong to the same owner (via the Character's owner_email)
+    //   - its transition_type must be compatible with the claimed event_type
+    // Conversation-driven events (user_message, character_decision) are exempt —
+    // the conversation itself is the evidence. Every OTHER triggeredBy value
+    // (life_simulation, scheduled_event, npc_action, manual, or anything else)
+    // is gated — a caller cannot bypass this by simply choosing a different
+    // triggeredBy string.
+    const STATE_HISTORY_EVENT_TYPES = ['sleep_deprivation_event', 'medical_event', 'accident_event', 'location_change_event'];
+    const CONVERSATION_TRIGGERS = ['user_message', 'character_decision'];
+    const requiresProof = STATE_HISTORY_EVENT_TYPES.includes(eventType) && !CONVERSATION_TRIGGERS.includes(triggeredBy);
+
+    // Compatibility map: which SleepTransition.transition_type values may back
+    // which event_type. Cross-validated below — not just "any transition will do."
+    const TRANSITION_TYPE_COMPATIBILITY = {
+      sleep_deprivation_event: ['pass_out_start', 'pass_out_end', 'sleep_end'],
+      medical_event: ['hospitalized_start', 'hospitalized_end'],
+      accident_event: ['pass_out_start'],
+    };
+
+    if (requiresProof) {
+      if (!verifiedTransitionId) {
+        return Response.json({
+          error: 'verifiedTransitionId required',
+          reason: `eventType "${eventType}" triggered by "${triggeredBy}" claims a physical state transition. Pass the id of the authoritative proof record (SleepTransition or LocationHistory) that already proved the state change.`,
+        }, { status: 400 });
+      }
+
+      // Ownership is derived from the actual Character record — never trusted
+      // from the request body.
+      const [charRec] = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+      if (!charRec) {
+        return Response.json({ error: 'character_not_found', reason: 'Cannot verify proof ownership without the character record.' }, { status: 404 });
+      }
+
+      if (eventType === 'location_change_event') {
+        // Location changes are proven by LocationHistory, not SleepTransition.
+        const [proof] = await base44.asServiceRole.entities.LocationHistory.filter({ id: verifiedTransitionId }, null, 1);
+        if (!proof) {
+          return Response.json({ error: 'invalid_verifiedTransitionId', reason: 'No LocationHistory record matches this id. Fake or unknown proof ids are rejected.' }, { status: 400 });
+        }
+        if (proof.character_id !== characterId) {
+          return Response.json({ error: 'proof_character_mismatch', reason: `Proof record belongs to character ${proof.character_id}, not ${characterId}.` }, { status: 400 });
+        }
+        if (proof.owner_email !== charRec.owner_email) {
+          return Response.json({ error: 'proof_owner_mismatch', reason: 'Proof record owner does not match the character\'s owner_email.' }, { status: 400 });
+        }
+      } else {
+        const [proof] = await base44.asServiceRole.entities.SleepTransition.filter({ id: verifiedTransitionId }, null, 1);
+        if (!proof) {
+          return Response.json({ error: 'invalid_verifiedTransitionId', reason: 'No SleepTransition record matches this id. Fake or unknown proof ids are rejected.' }, { status: 400 });
+        }
+        if (proof.character_id !== characterId) {
+          return Response.json({ error: 'proof_character_mismatch', reason: `Proof record belongs to character ${proof.character_id}, not ${characterId}.` }, { status: 400 });
+        }
+        if (proof.owner_email !== charRec.owner_email) {
+          return Response.json({ error: 'proof_owner_mismatch', reason: 'Proof record owner does not match the character\'s owner_email.' }, { status: 400 });
+        }
+        const allowedTypes = TRANSITION_TYPE_COMPATIBILITY[eventType] || [];
+        if (!allowedTypes.includes(proof.transition_type)) {
+          return Response.json({
+            error: 'proof_type_incompatible',
+            reason: `Proof record transition_type "${proof.transition_type}" is not compatible with eventType "${eventType}". Allowed: ${allowedTypes.join(', ')}.`,
+          }, { status: 400 });
+        }
+      }
     }
 
     const audit = {

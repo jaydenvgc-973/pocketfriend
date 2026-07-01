@@ -806,38 +806,39 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
       // ── LOCATION STATE TRANSITION — requires authoritative proof, atomic ──
       // postShiftUpdate moves the character home. This IS a canonical state
       // transition and must not be committed without a persisted proof record.
+      // Snapshot covers every field this block can mutate: postShiftUpdate is
+      // built above to only ever contain resolved_current_location_id,
+      // resolved_presence_status ('home' only — this inline logic never sets
+      // 'sleeping'), and resolved_last_updated_at. All three are captured here.
       if (postShiftUpdate.resolved_current_location_id) {
         const preMoveSnapshot = {
           resolved_current_location_id: character.resolved_current_location_id,
           resolved_presence_status: character.resolved_presence_status,
+          resolved_last_updated_at: character.resolved_last_updated_at,
         };
         await base44.asServiceRole.entities.Character.update(character.id, postShiftUpdate);
         try {
-          const homeLocList = await base44.asServiceRole.entities.LocationReference.filter(
-            { id: postShiftUpdate.resolved_current_location_id }, null, 1
-          );
-          const homeLoc = homeLocList?.[0];
-          const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
-            { character_id: character.id, owner_email: ownerEmail, is_current: true }, null, 10
-          );
-          for (const open of openHistory) {
-            if (open.location_id === postShiftUpdate.resolved_current_location_id) continue;
-            const durationMinutes = Math.round((Date.now() - new Date(open.arrival_time).getTime()) / 60000);
-            await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-              is_current: false, departure_time: new Date().toISOString(),
-              duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-            });
-          }
-          await base44.asServiceRole.entities.LocationHistory.create({
-            character_id: character.id, character_name: character.name, owner_email: ownerEmail,
-            location_id: postShiftUpdate.resolved_current_location_id, location_name: homeLoc?.name || '',
-            location_category: 'home', event_type: 'return_home', arrival_time: new Date().toISOString(),
-            travel_source: 'schedule', travel_reason: 'post_shift_exit_high_drain_job', is_current: true,
+          const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+            character_id: character.id, owner_email: ownerEmail, location_id: postShiftUpdate.resolved_current_location_id,
+            event_type: 'return_home', travel_source: 'schedule', travel_reason: 'post_shift_exit_high_drain_job',
           });
+          if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
         } catch (proofError) {
+          // Before reverting, re-read to avoid destroying a concurrent writer's newer truth.
+          let revertOutcome = 'reverted';
           let revertError = null;
-          try { await base44.asServiceRole.entities.Character.update(character.id, preMoveSnapshot); } catch (e) { revertError = e.message; }
-          console.error(`[evolveCharacterLife] post-shift location proof failed for ${character.name} — reverted. proof_error=${proofError.message} revert_error=${revertError}`);
+          try {
+            const [currentChar] = await base44.asServiceRole.entities.Character.filter({ id: character.id }, null, 1);
+            const stillMatchesOurWrite = currentChar &&
+              currentChar.resolved_current_location_id === postShiftUpdate.resolved_current_location_id &&
+              currentChar.resolved_presence_status === postShiftUpdate.resolved_presence_status;
+            if (stillMatchesOurWrite) {
+              await base44.asServiceRole.entities.Character.update(character.id, preMoveSnapshot);
+            } else {
+              revertOutcome = 'revert_skipped_due_to_concurrent_update';
+            }
+          } catch (e) { revertError = e.message; }
+          console.error(`[evolveCharacterLife] post-shift location proof failed for ${character.name} — outcome=${revertOutcome}. proof_error=${proofError.message} revert_error=${revertError}`);
         }
       }
 

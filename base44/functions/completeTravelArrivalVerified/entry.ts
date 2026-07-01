@@ -135,13 +135,16 @@ Deno.serve(async (req) => {
       // ── GUARD: already at destination? ────────────────────────────────────
       if (char && char.resolved_current_location_id === session.destination_location_id && char.travel_status === 'not_traveling') {
         // Character is already at destination and travel is cleared — just stamp session
-        await base44.asServiceRole.entities.TravelSession.update(session.id, {
-          route_status:               'arrived',
-          actual_arrival_time:        session.actual_arrival_time || nowISO,
-          arrival_due:                false,
-          arrival_pending_character_write: false,
-          arrival_write_attempts:     attemptCount,
-        }).catch(() => {});
+        let sessionStampFailed = null;
+        try {
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:               'arrived',
+            actual_arrival_time:        session.actual_arrival_time || nowISO,
+            arrival_due:                false,
+            arrival_pending_character_write: false,
+            arrival_write_attempts:     attemptCount,
+          });
+        } catch (e) { sessionStampFailed = e.message; }
         results.push({
           session_id:         session.id,
           character_name:     session.character_name,
@@ -149,6 +152,7 @@ Deno.serve(async (req) => {
           outcome:            'already_at_destination',
           arrived_set:        true,
           readback_verified:  true,
+          session_stamp_failed: sessionStampFailed,
         });
         console.log(`[completeTravelArrivalVerified] ✅ ${session.character_name} already at ${session.destination_location_name} — stamped arrived`);
         continue;
@@ -162,7 +166,7 @@ Deno.serve(async (req) => {
 
       if (!destLoc) {
         // VIOLATION: INVALID_DESTINATION_REFERENCE
-        await _logViolation(base44, {
+        const violationLogResult = await _logViolation(base44, {
           session,
           char,
           ownerEmail,
@@ -177,16 +181,21 @@ Deno.serve(async (req) => {
           nowISO,
         });
 
-        await base44.asServiceRole.entities.TravelSession.update(session.id, {
-          route_status:   'arrival_failed',
-          blocker_reason: `INVALID_DESTINATION_REFERENCE: dest_id=${session.destination_location_id} not found`,
-          arrival_due:    false,
-          arrival_write_attempts: attemptCount,
-        }).catch(() => {});
+        let sessionUpdateFailed = null;
+        try {
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:   'arrival_failed',
+            blocker_reason: `INVALID_DESTINATION_REFERENCE: dest_id=${session.destination_location_id} not found`,
+            arrival_due:    false,
+            arrival_write_attempts: attemptCount,
+          });
+        } catch (e) { sessionUpdateFailed = e.message; }
 
         results.push({
           session_id: session.id, character_name: session.character_name,
           outcome: 'INVALID_DESTINATION_REFERENCE', arrived_set: false, readback_verified: false,
+          session_update_failed: sessionUpdateFailed,
+          violation_log_failed: violationLogResult.logged ? null : violationLogResult.error,
         });
         continue;
       }
@@ -252,20 +261,28 @@ Deno.serve(async (req) => {
           arrival_write_attempts:     attemptCount,
         });
 
-        // Mark linked commitment complete
+        // Mark linked commitment complete — failure is surfaced, never swallowed.
+        let commitmentUpdateFailed = null;
         if (session.source_commitment_id) {
-          await base44.asServiceRole.entities.CharacterCommitment.update(session.source_commitment_id, {
-            status: 'arrived',
-            completed_at: nowISO,
-          }).catch(() => {});
+          try {
+            await base44.asServiceRole.entities.CharacterCommitment.update(session.source_commitment_id, {
+              status: 'arrived',
+              completed_at: nowISO,
+            });
+          } catch (e) {
+            commitmentUpdateFailed = e.message;
+            console.error(`[completeTravelArrivalVerified] CharacterCommitment completion FAILED for ${session.source_commitment_id}: ${e.message}`);
+          }
         }
 
         console.log(`[completeTravelArrivalVerified] ✅ VERIFIED ARRIVAL | char=${char.name} | dest=${destLoc.name} | session=${session.id} | readback=PASS | travel_cleared=${travelCleared}`);
 
-        // ── CONSEQUENCE: record durable location history (inline — no inter-function call) ──
-        // Previous approach used base44.functions.invoke('recordLocationHistoryEvent')
-        // which returns 403 in automation/scheduled context (no user session).
-        // Inlining eliminates the inter-function auth dependency. All ops use asServiceRole.
+        // ── CONSEQUENCE: record durable location history via the single authoritative
+        // writer (writeVerifiedLocationHistory) — no more copy-pasted LocationHistory
+        // logic in this file. The Character write is already read-back verified above;
+        // a failure here is a consequence-write failure, reported explicitly (never
+        // silently swallowed), but does NOT revert the already-verified arrival.
+        let locationHistoryWriteFailed = null;
         if (char.owner_email) {
           let eventType = 'arrival';
           if (finalPresenceStatus === 'at_work') eventType = 'work_start';
@@ -284,46 +301,14 @@ Deno.serve(async (req) => {
             else travelSrc = session.travel_source;
           }
 
-          // Step 1: Close any open LocationHistory records for this character
-          let locationHistoryWriteFailed = null;
           try {
-            const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
-              { character_id: char.id, owner_email: char.owner_email, is_current: true },
-              null, 10
-            );
-
-            for (const open of openHistory) {
-              if (open.location_id === destLoc.id) continue;
-              const arrivalMs = new Date(open.arrival_time).getTime();
-              const departureMs = new Date(nowISO).getTime();
-              const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
-              await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-                is_current: false,
-                departure_time: nowISO,
-                duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-              });
-            }
-
-            // Step 2: Write new arrival record — the persisted transition proof for this arrival.
-            await base44.asServiceRole.entities.LocationHistory.create({
-              character_id:     char.id,
-              character_name:   char.name,
-              owner_email:      char.owner_email,
-              location_id:      destLoc.id,
-              location_name:    destLoc.name,
-              location_category: destLoc.category || 'other',
-              event_type:       eventType,
-              arrival_time:     nowISO,
-              travel_source:    travelSrc,
-              travel_reason:    session.travel_reason || null,
-              is_current:       true,
+            const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+              character_id: char.id, owner_email: char.owner_email, location_id: destLoc.id,
+              event_type: eventType, travel_source: travelSrc, travel_reason: session.travel_reason || null,
             });
+            if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
             console.log(`[completeTravelArrivalVerified] ✓ LocationHistory written | char=${char.name} | loc=${destLoc.name} | event=${eventType}`);
           } catch (historyError) {
-            // The Character write is already read-back verified — that is the primary proof.
-            // A failure to write the LocationHistory record is a consequence-write failure,
-            // reported explicitly (never silently swallowed), but does NOT revert the
-            // already-verified arrival — it is surfaced in results below instead.
             locationHistoryWriteFailed = historyError.message;
             console.error(`[completeTravelArrivalVerified] LocationHistory write FAILED (non-reverting, reported): ${historyError.message}`);
           }
@@ -387,6 +372,7 @@ Deno.serve(async (req) => {
           travel_cleared:    travelCleared,
           after_location:    charAfter?.resolved_current_location_name,
           location_history_write_failed: char.owner_email ? locationHistoryWriteFailed : 'skipped_no_owner_email',
+          commitment_update_failed: commitmentUpdateFailed,
         });
 
       } else {
@@ -420,8 +406,9 @@ Deno.serve(async (req) => {
 
         console.error(violationMsg);
 
-        // Log TravelViolation record
-        await _logViolation(base44, {
+        // Log TravelViolation record — this is the accountability mechanism; its
+        // own result is checked and surfaced, never assumed to have succeeded.
+        const violationLogResult2 = await _logViolation(base44, {
           session,
           char,
           ownerEmail,
@@ -435,34 +422,49 @@ Deno.serve(async (req) => {
           resolved: false,
           nowISO,
         });
+        if (!violationLogResult2.logged) {
+          console.error(`[completeTravelArrivalVerified] CRITICAL: travel failure occurred for ${char.name} AND the violation record failed to persist: ${violationLogResult2.error}`);
+        }
 
         // DO NOT set "arrived" — keep as arrival_due so next cycle retries
         // After MAX_ATTEMPTS, escalate to arrival_failed
         const MAX_ATTEMPTS = 3;
         const nextStatus = attemptCount >= MAX_ATTEMPTS ? 'arrival_failed' : 'arrival_due';
 
-        await base44.asServiceRole.entities.TravelSession.update(session.id, {
-          route_status:               nextStatus,
-          blocker_reason:             `${failureType}: read-back failed. Attempt #${attemptCount}`,
-          arrival_due:                nextStatus === 'arrival_due',
-          arrival_pending_character_write: nextStatus === 'arrival_due',
-          arrival_write_attempts:     attemptCount,
-        }).catch(() => {});
+        let sessionUpdateFailed = null;
+        try {
+          await base44.asServiceRole.entities.TravelSession.update(session.id, {
+            route_status:               nextStatus,
+            blocker_reason:             `${failureType}: read-back failed. Attempt #${attemptCount}`,
+            arrival_due:                nextStatus === 'arrival_due',
+            arrival_pending_character_write: nextStatus === 'arrival_due',
+            arrival_write_attempts:     attemptCount,
+          });
+        } catch (e) {
+          sessionUpdateFailed = e.message;
+          console.error(`[completeTravelArrivalVerified] TravelSession update FAILED for ${session.id}: ${e.message}`);
+        }
 
         // When retries exhausted → arrival_failed: clear Character travel fields.
         // For active_created_character: resolved_presence_status was never set to 'traveling'
         // so the character already has valid actual presence. We only need to clear the
         // temporary action metadata (travel_status, traveling_to_*, destination).
         // This prevents the UI from showing stale "Traveling to X" indefinitely.
+        let travelFieldClearFailed = null;
         if (nextStatus === 'arrival_failed' && char) {
           const failWriter = isScheduledContext ? base44.asServiceRole.entities.Character : base44.entities.Character;
-          await failWriter.update(char.id, {
-            travel_status:                  'not_traveling',
-            travel_destination_location_id: null,
-            traveling_to_location_id:       null,
-            traveling_to_location_name:     null,
-          }).catch(() => {});
-          console.warn(`[completeTravelArrivalVerified] ⚠️ ${char.name}: arrival_failed after ${attemptCount} attempts — travel fields cleared`);
+          try {
+            await failWriter.update(char.id, {
+              travel_status:                  'not_traveling',
+              travel_destination_location_id: null,
+              traveling_to_location_id:       null,
+              traveling_to_location_name:     null,
+            });
+            console.warn(`[completeTravelArrivalVerified] ⚠️ ${char.name}: arrival_failed after ${attemptCount} attempts — travel fields cleared`);
+          } catch (e) {
+            travelFieldClearFailed = e.message;
+            console.error(`[completeTravelArrivalVerified] Travel-field clear FAILED for ${char.name}: ${e.message}`);
+          }
         }
 
         results.push({
@@ -474,6 +476,9 @@ Deno.serve(async (req) => {
           readback_verified: false,
           next_status:      nextStatus,
           attempt_count:    attemptCount,
+          session_update_failed: sessionUpdateFailed,
+          travel_field_clear_failed: travelFieldClearFailed,
+          violation_log_failed: violationLogResult2.logged ? null : violationLogResult2.error,
         });
       }
     }
@@ -499,34 +504,44 @@ Deno.serve(async (req) => {
 });
 
 // ── Shared violation logger ───────────────────────────────────────────────
+// This is the accountability-of-last-resort record. Its own write must never
+// fail silently — a failed violation log would mean a real travel-arrival
+// failure occurred with zero persisted trace. Callers must check the return
+// value and surface it; it is no longer swallowed inside this function.
 async function _logViolation(base44, {
   session, char, ownerEmail, failureType, blockerReason,
   repairResult, repairDetail, finalLocationId, finalLocationName,
   readbackMatched, resolved, nowISO,
 }) {
-  await base44.asServiceRole.entities.TravelViolation.create({
-    character_id:                 session.character_id,
-    character_name:               session.character_name,
-    owner_email:                  ownerEmail,
-    session_id:                   session.id,
-    origin_location_id:           session.origin_location_id,
-    origin_location_name:         session.origin_location_name,
-    destination_location_id:      session.destination_location_id,
-    destination_location_name:    session.destination_location_name,
-    eta:                          session.estimated_arrival_time,
-    travel_status_at_violation:   char?.travel_status || 'unknown',
-    route_status_at_violation:    session.route_status,
-    presence_status_at_violation: char?.resolved_presence_status || 'unknown',
-    progress_percent:             session.progress_percent || null,
-    failure_type:                 failureType,
-    blocker_reason:               blockerReason,
-    repair_attempted:             true,
-    repair_result:                repairResult,
-    repair_detail:                repairDetail,
-    final_verified_location_id:   finalLocationId,
-    final_verified_location_name: finalLocationName,
-    readback_matched_destination: readbackMatched,
-    violation_resolved:           resolved,
-    detected_at:                  nowISO,
-  }).catch(e => console.warn(`[completeTravelArrivalVerified] Violation log failed: ${e.message}`));
+  try {
+    await base44.asServiceRole.entities.TravelViolation.create({
+      character_id:                 session.character_id,
+      character_name:               session.character_name,
+      owner_email:                  ownerEmail,
+      session_id:                   session.id,
+      origin_location_id:           session.origin_location_id,
+      origin_location_name:         session.origin_location_name,
+      destination_location_id:      session.destination_location_id,
+      destination_location_name:    session.destination_location_name,
+      eta:                          session.estimated_arrival_time,
+      travel_status_at_violation:   char?.travel_status || 'unknown',
+      route_status_at_violation:    session.route_status,
+      presence_status_at_violation: char?.resolved_presence_status || 'unknown',
+      progress_percent:             session.progress_percent || null,
+      failure_type:                 failureType,
+      blocker_reason:               blockerReason,
+      repair_attempted:             true,
+      repair_result:                repairResult,
+      repair_detail:                repairDetail,
+      final_verified_location_id:   finalLocationId,
+      final_verified_location_name: finalLocationName,
+      readback_matched_destination: readbackMatched,
+      violation_resolved:           resolved,
+      detected_at:                  nowISO,
+    });
+    return { logged: true };
+  } catch (e) {
+    console.error(`[completeTravelArrivalVerified] TravelViolation log FAILED — accountability record NOT persisted: ${e.message}`);
+    return { logged: false, error: e.message };
+  }
 }

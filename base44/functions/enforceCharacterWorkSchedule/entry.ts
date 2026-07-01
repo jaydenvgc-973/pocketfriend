@@ -143,35 +143,36 @@ Deno.serve(async (req) => {
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
-      // Shared helper: write a Character location/presence transition, then write its
-      // authoritative proof record (LocationHistory for at_work/home, SleepTransition
-      // when the new status is 'sleeping'). If the proof write fails, revert the
-      // Character write immediately — a state change may never outlive its proof.
+      // Shared helper: write a Character location/presence transition, then write
+      // BOTH authoritative proof records that a dual-fact change requires:
+      // LocationHistory (via the single authoritative writer — closes prior open
+      // records, verifies state) for the location fact, AND SleepTransition for
+      // the sleep fact when the new status is 'sleeping'. A change that mutates
+      // two canonical facts in one write may never leave either fact unproven.
+      // If either proof write fails, the Character write is reverted immediately.
       async function writeVerifiedTransition({ payload, revertPayload, newLocationId, newStatus, eventType, reason }) {
-        await base44.asServiceRole.entities.Character.update(characterId, payload);
+        // A transition INTO 'sleeping' must stamp last_sleep_start — every downstream
+        // consumer (6h guards, 8h sleep cap, wake-time boundary) reads this field as
+        // the authoritative sleep-start timer. Writing the SleepTransition proof
+        // without this field would make the proof and the state diverge.
+        const finalPayload = newStatus === 'sleeping'
+          ? { ...payload, last_sleep_start: singleNowET.toISOString() }
+          : payload;
+        await base44.asServiceRole.entities.Character.update(characterId, finalPayload);
         try {
+          const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+            character_id: characterId, owner_email: character.owner_email, location_id: newLocationId,
+            event_type: eventType, travel_source: 'schedule', travel_reason: reason,
+          });
+          if (!locResult?.data?.success) {
+            throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+          }
           if (newStatus === 'sleeping') {
             await base44.asServiceRole.entities.SleepTransition.create({
               character_id: characterId, character_name: character.name, owner_email: character.owner_email,
               transition_type: 'sleep_start', from_status: character.resolved_presence_status || 'unknown',
               to_status: 'sleeping', authority: 'enforceCharacterWorkSchedule', reason, timestamp: singleNowET.toISOString(),
-            });
-          } else {
-            const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
-              { character_id: characterId, owner_email: character.owner_email, is_current: true }, null, 10
-            );
-            for (const open of openHistory) {
-              if (open.location_id === newLocationId) continue;
-              const durationMinutes = Math.round((singleNowET.getTime() - new Date(open.arrival_time).getTime()) / 60000);
-              await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-                is_current: false, departure_time: singleNowET.toISOString(),
-                duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-              });
-            }
-            await base44.asServiceRole.entities.LocationHistory.create({
-              character_id: characterId, character_name: character.name, owner_email: character.owner_email,
-              location_id: newLocationId, location_name: '', location_category: newStatus === 'at_work' ? 'work' : 'home',
-              event_type: eventType, arrival_time: singleNowET.toISOString(), travel_source: 'schedule', travel_reason: reason, is_current: true,
+              state_start_ref: singleNowET.toISOString(),
             });
           }
           return { verified: true };
@@ -188,6 +189,7 @@ Deno.serve(async (req) => {
         resolved_location_type: character.resolved_location_type,
         resolved_source_reason: character.resolved_source_reason,
         resolved_last_updated_at: character.resolved_last_updated_at,
+        last_sleep_start: character.last_sleep_start,
         presence_stay_lock: character.presence_stay_lock,
         presence_stay_lock_location_id: character.presence_stay_lock_location_id,
         presence_stay_lock_set_at: character.presence_stay_lock_set_at,
@@ -460,12 +462,11 @@ Deno.serve(async (req) => {
               presence_stay_lock_created_by: 'system_automation',
             });
             try {
-              await base44.asServiceRole.entities.LocationHistory.create({
-                character_id: char.id, character_name: char.name, owner_email: ownerEmail,
-                location_id: activeWorkLocId, location_name: locMap[activeWorkLocId]?.name || '',
-                location_category: 'work', event_type: 'work_start', arrival_time: nowET.toISOString(),
-                travel_source: 'schedule', travel_reason: 'work_schedule', is_current: true,
+              const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+                character_id: char.id, owner_email: ownerEmail, location_id: activeWorkLocId,
+                event_type: 'work_start', travel_source: 'schedule', travel_reason: 'work_schedule',
               });
+              if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
               fixes_applied.push(`${char.name}: synced to work location`);
               fixCount++;
             } catch (proofError) {
@@ -499,6 +500,7 @@ Deno.serve(async (req) => {
             resolved_location_type: char.resolved_location_type,
             resolved_source_reason: char.resolved_source_reason,
             resolved_last_updated_at: char.resolved_last_updated_at,
+            last_sleep_start: char.last_sleep_start,
             presence_stay_lock: char.presence_stay_lock,
             presence_stay_lock_location_id: char.presence_stay_lock_location_id,
             presence_stay_lock_set_at: char.presence_stay_lock_set_at,
@@ -508,12 +510,17 @@ Deno.serve(async (req) => {
             presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
             presence_stay_lock_created_by: char.presence_stay_lock_created_by,
           };
+          // A transition INTO 'sleeping' must stamp last_sleep_start in the SAME
+          // write as the location change — otherwise the SleepTransition proof
+          // below would document a sleep-start timestamp the Character record
+          // never actually recorded (proof/state divergence).
           await base44.asServiceRole.entities.Character.update(char.id, {
             resolved_current_location_id: homeLocId,
             resolved_presence_status: newStatus,
             resolved_location_type: 'home',
             resolved_source_reason: 'fallback_to_home_base',
             resolved_last_updated_at: nowET.toISOString(),
+            ...(newStatus === 'sleeping' ? { last_sleep_start: nowET.toISOString() } : {}),
             presence_stay_lock: false,
             presence_stay_lock_location_id: null,
             presence_stay_lock_set_at: null,
@@ -524,19 +531,21 @@ Deno.serve(async (req) => {
             presence_stay_lock_created_by: null,
           });
           try {
+            // Location fact — always proven, regardless of sleep status, since
+            // the location changed in this same write.
+            const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+              character_id: char.id, owner_email: ownerEmail, location_id: homeLocId,
+              event_type: 'return_home', travel_source: 'schedule', travel_reason: 'shift_ended',
+            });
+            if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+            // Sleep fact — proven in addition to (not instead of) the location fact.
             if (newStatus === 'sleeping') {
               await base44.asServiceRole.entities.SleepTransition.create({
                 character_id: char.id, character_name: char.name, owner_email: ownerEmail,
                 transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown',
                 to_status: 'sleeping', authority: 'enforceCharacterWorkSchedule',
                 reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(),
-              });
-            } else {
-              await base44.asServiceRole.entities.LocationHistory.create({
-                character_id: char.id, character_name: char.name, owner_email: ownerEmail,
-                location_id: homeLocId, location_name: locMap[homeLocId]?.name || '',
-                location_category: 'home', event_type: 'return_home', arrival_time: nowET.toISOString(),
-                travel_source: 'schedule', travel_reason: 'shift_ended', is_current: true,
+                state_start_ref: nowET.toISOString(),
               });
             }
             fixes_applied.push(`${char.name}: relocated home (${newStatus})`);
