@@ -312,8 +312,10 @@ Return JSON.`,
     // ── WITNESS CHARACTERS: others present in a scene who saw/heard the exchange ─
     // These are characters who were physically present but not the primary responder.
     // They get a lightweight factual memory so they can recall the scene later in Chat/Text.
+    // Failures are collected and reported explicitly — never silently swallowed.
+    const witnessMemoryFailures = [];
     if (witnessCharacterIds?.length > 0 && characterReply && targetChar) {
-      const witnessWrites = witnessCharacterIds.map(wid =>
+      const witnessResults = await Promise.allSettled(witnessCharacterIds.map(wid =>
         base44.entities.Memory.create({
           character_id: wid,
           title: `Scene exchange — ${targetChar.name}`,
@@ -321,33 +323,49 @@ Return JSON.`,
           emotional_impact: 'neutral',
           timestamp: new Date().toISOString(),
           source_context: conversationId ? `scene_witness_${conversationId}` : 'scene_witness',
-        }).catch(() => {})
-      );
-      await Promise.all(witnessWrites);
+        })
+      ));
+      witnessResults.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          witnessMemoryFailures.push({ character_id: witnessCharacterIds[i], error: r.reason?.message });
+          console.error(`[extractMemoriesFromTurn] Witness memory write FAILED for ${witnessCharacterIds[i]}: ${r.reason?.message}`);
+        }
+      });
     }
 
     // Persist new people as unresolved CharacterMemory records before returning.
     // This ensures detection survives modal dismissal — the modal is a review UI, not the source of truth.
     // validation_status='unresolved_identity' marks them for future resolution without blocking retrieval.
+    const newPeopleWriteFailures = [];
     if (newPeopleDetected.length > 0 && targetChar) {
       for (const person of newPeopleDetected) {
         if (!person.name) continue;
-        base44.asServiceRole.entities.CharacterMemory.create({
-          character_id: characterId,
-          owner_email: user.email,
-          memory_type: 'relationship',
-          memory_text: `${targetChar.name} knows someone named ${person.name} (${person.relationship_type || 'unknown relationship'}). Context: ${person.context || 'mentioned in conversation'}`,
-          memory_summary: `Knows ${person.name}`,
-          importance_score: 4,
-          confidence_score: 0.6,
-          permanence: 'long_term',
-          validation_status: 'unresolved_identity',
-          original_raw_reference: person.name,
-        }).catch(() => {}); // non-fatal
+        try {
+          await base44.asServiceRole.entities.CharacterMemory.create({
+            character_id: characterId,
+            owner_email: user.email,
+            memory_type: 'relationship',
+            memory_text: `${targetChar.name} knows someone named ${person.name} (${person.relationship_type || 'unknown relationship'}). Context: ${person.context || 'mentioned in conversation'}`,
+            memory_summary: `Knows ${person.name}`,
+            importance_score: 4,
+            confidence_score: 0.6,
+            permanence: 'long_term',
+            validation_status: 'unresolved_identity',
+            original_raw_reference: person.name,
+          });
+        } catch (personMemError) {
+          newPeopleWriteFailures.push({ name: person.name, error: personMemError.message });
+          console.error(`[extractMemoriesFromTurn] CharacterMemory write FAILED for new person "${person.name}": ${personMemError.message}`);
+        }
       }
     }
 
-    return Response.json({ success: true, newPeopleDetected });
+    return Response.json({
+      success: true,
+      newPeopleDetected,
+      witness_memory_failures: witnessMemoryFailures,
+      new_people_write_failures: newPeopleWriteFailures,
+    });
   } catch (error) {
     console.error('extractMemoriesFromTurn error:', error);
     return Response.json({ error: error.message }, { status: 500 });

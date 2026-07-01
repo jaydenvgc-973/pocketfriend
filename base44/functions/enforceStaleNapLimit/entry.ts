@@ -82,16 +82,34 @@ Deno.serve(async (req) => {
               presence_stay_lock_set_at: null,
               presence_stay_lock_expires_at: null,
             };
-            await base44.asServiceRole.entities.Character.update(char.id, napWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
-            base44.asServiceRole.entities.SleepTransition.create({
-              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
-              transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
-              authority: 'nap_cap_3h',
-              reason: `Napping exceeded 3-hour max. last_wake_time reset (restorative boundary).`,
-              timestamp: nowEtIso, state_start_ref: char.last_nap_time,
-              elapsed_hours: char.last_nap_time ? Math.round(((nowUtc.getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
-              verified_higher_priority_interrupt: false,
-            }).catch(() => {});
+            const napWakeRevert = {
+              resolved_presence_status: char.resolved_presence_status, location_status: char.location_status,
+              current_activity: char.current_activity, emotional_state: char.emotional_state,
+              resolved_last_updated_at: char.resolved_last_updated_at, last_wake_time: char.last_wake_time,
+              presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+              presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+              presence_stay_lock_authority: char.presence_stay_lock_authority,
+              presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+              presence_stay_lock_expires_at: char.presence_stay_lock_expires_at,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, napWakePayload);
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({
+                character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+                transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+                authority: 'nap_cap_3h',
+                reason: `Napping exceeded 3-hour max. last_wake_time reset (restorative boundary).`,
+                timestamp: nowEtIso, state_start_ref: char.last_nap_time,
+                elapsed_hours: char.last_nap_time ? Math.round(((nowUtc.getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
+                verified_higher_priority_interrupt: false,
+              });
+            } catch (transitionError) {
+              let revertError = null;
+              try { await base44.asServiceRole.entities.Character.update(char.id, napWakeRevert); } catch (e) { revertError = e.message; }
+              violations[violations.length - 1].action = 'WAKE_UNVERIFIED_REVERTED';
+              console.error(`[enforceStaleNapLimit] nap_end SleepTransition failed for ${char.name} — reverted. transition_error=${transitionError.message} revert_error=${revertError}`);
+              continue;
+            }
 
             woken.push(char.id);
             console.log(`[enforceStaleNapLimit] WOKE ${char.name} — nap exceeded 3 hours (last_wake_time written)`);
@@ -122,15 +140,31 @@ Deno.serve(async (req) => {
               presence_stay_lock_set_at: null,
               presence_stay_lock_expires_at: null,
             };
-            await base44.asServiceRole.entities.Character.update(char.id, staleWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
-            base44.asServiceRole.entities.SleepTransition.create({
-              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
-              transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
-              authority: 'nap_cap_3h',
-              reason: `Stale nap (no start time). last_wake_time reset.`,
-              timestamp: nowEtIso,
-              verified_higher_priority_interrupt: false,
-            }).catch(() => {});
+            const staleWakeRevert = {
+              resolved_presence_status: char.resolved_presence_status, location_status: char.location_status,
+              resolved_last_updated_at: char.resolved_last_updated_at, last_wake_time: char.last_wake_time,
+              presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+              presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+              presence_stay_lock_authority: char.presence_stay_lock_authority,
+              presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+              presence_stay_lock_expires_at: char.presence_stay_lock_expires_at,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, staleWakePayload);
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({
+                character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+                transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+                authority: 'nap_cap_3h',
+                reason: `Stale nap (no start time). last_wake_time reset.`,
+                timestamp: nowEtIso,
+                verified_higher_priority_interrupt: false,
+              });
+            } catch (transitionError) {
+              let revertError = null;
+              try { await base44.asServiceRole.entities.Character.update(char.id, staleWakeRevert); } catch (e) { revertError = e.message; }
+              console.error(`[enforceStaleNapLimit] stale-nap SleepTransition failed for ${char.name} — reverted. transition_error=${transitionError.message} revert_error=${revertError}`);
+              continue;
+            }
 
             woken.push(char.id);
             console.log(`[enforceStaleNapLimit] WOKE ${char.name} — stale nap state (last_wake_time written)`);
@@ -209,16 +243,33 @@ Deno.serve(async (req) => {
               presence_stay_lock_set_at: null,
               presence_stay_lock_expires_at: null,
             };
-            await base44.asServiceRole.entities.Character.update(char.id, lateWakePayload).catch(e => console.error(`Update failed: ${e.message}`));
-            base44.asServiceRole.entities.SleepTransition.create({
-              character_id: char.id, character_name: char.name, owner_email: char.owner_email,
-              transition_type: char.resolved_presence_status === 'napping' ? 'nap_end' : 'sleep_end',
-              from_status: char.resolved_presence_status, to_status: 'home',
-              authority: 'wake_time_boundary',
-              reason: `Past wake time + grace. last_wake_time reset.`,
-              timestamp: nowEtIso,
-              verified_higher_priority_interrupt: false,
-            }).catch(() => {});
+            const lateWakeRevert = {
+              resolved_presence_status: char.resolved_presence_status, location_status: char.location_status,
+              current_activity: char.current_activity,
+              resolved_last_updated_at: char.resolved_last_updated_at, last_wake_time: char.last_wake_time,
+              presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+              presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+              presence_stay_lock_authority: char.presence_stay_lock_authority,
+              presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+              presence_stay_lock_expires_at: char.presence_stay_lock_expires_at,
+            };
+            await base44.asServiceRole.entities.Character.update(char.id, lateWakePayload);
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({
+                character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+                transition_type: char.resolved_presence_status === 'napping' ? 'nap_end' : 'sleep_end',
+                from_status: char.resolved_presence_status, to_status: 'home',
+                authority: 'wake_time_boundary',
+                reason: `Past wake time + grace. last_wake_time reset.`,
+                timestamp: nowEtIso,
+                verified_higher_priority_interrupt: false,
+              });
+            } catch (transitionError) {
+              let revertError = null;
+              try { await base44.asServiceRole.entities.Character.update(char.id, lateWakeRevert); } catch (e) { revertError = e.message; }
+              console.error(`[enforceStaleNapLimit] late-wake SleepTransition failed for ${char.name} — reverted. transition_error=${transitionError.message} revert_error=${revertError}`);
+              continue;
+            }
 
             woken.push(char.id);
             console.log(`[enforceStaleNapLimit] WOKE ${char.name} — past wake time, no valid reason (last_wake_time written)`);

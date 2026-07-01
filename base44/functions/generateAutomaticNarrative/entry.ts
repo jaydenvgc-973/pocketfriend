@@ -643,7 +643,9 @@ If no actions occur, return empty action_effects array.`;
 
     console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
 
-    // Save to Memory so character remembers it
+    // Save to Memory so character remembers it. Failure is reported explicitly —
+    // never silently swallowed — but does not invalidate the already-saved narrative.
+    let memoryWriteFailed = null;
     try {
       await base44.asServiceRole.entities.Memory.create({
         character_id: characterId,
@@ -656,7 +658,8 @@ If no actions occur, return empty action_effects array.`;
         timestamp: NOW.toISOString(),
       });
     } catch (memErr) {
-      console.warn(`[generateAutomaticNarrative] Memory save failed (non-blocking):`, memErr.message);
+      memoryWriteFailed = memErr.message;
+      console.error(`[generateAutomaticNarrative] Memory save FAILED (reported, non-reverting):`, memErr.message);
     }
 
     return Response.json({
@@ -666,6 +669,7 @@ If no actions occur, return empty action_effects array.`;
       narrativeText,
       memorySummary,
       timestamp: NOW.toISOString(),
+      memory_write_failed: memoryWriteFailed,
     });
 
   } catch (error) {

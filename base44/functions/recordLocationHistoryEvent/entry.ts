@@ -63,11 +63,15 @@ Deno.serve(async (req) => {
       const arrivalMs = new Date(open.arrival_time).getTime();
       const departureMs = new Date(effectiveArrivalTime).getTime();
       const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
-      await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-        is_current: false,
-        departure_time: effectiveArrivalTime,
-        duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-      }).catch(() => {});
+      try {
+        await base44.asServiceRole.entities.LocationHistory.update(open.id, {
+          is_current: false,
+          departure_time: effectiveArrivalTime,
+          duration_minutes: durationMinutes > 0 ? durationMinutes : null,
+        });
+      } catch (closeError) {
+        console.error(`[recordLocationHistoryEvent] Failed to close prior open record ${open.id}: ${closeError.message}`);
+      }
     }
 
     // Step 2: Write the new arrival record

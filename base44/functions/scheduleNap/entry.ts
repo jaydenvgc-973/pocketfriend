@@ -54,6 +54,20 @@ Deno.serve(async (req) => {
     if (action === 'wake') {
       const wakeTime = nowIso;
 
+      // Snapshot for atomic revert if the proof record below fails.
+      const preWakeSnapshot = {
+        resolved_presence_status: char.resolved_presence_status,
+        current_activity: char.current_activity,
+        last_wake_time: char.last_wake_time,
+        presence_stay_lock: char.presence_stay_lock,
+        presence_stay_lock_reason: char.presence_stay_lock_reason,
+        presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+        pending_alarm_time: char.pending_alarm_time,
+        last_need_simulated_at: char.last_need_simulated_at,
+        mental_value: char.mental_value,
+        comfort_value: char.comfort_value,
+      };
+
       // ── RULE 9: Write last_wake_time — resets consecutive-awake timer ──
       const wakePayload = {
         resolved_presence_status: 'home',
@@ -83,46 +97,62 @@ Deno.serve(async (req) => {
 
       await base44.entities.Character.update(characterId, wakePayload);
 
-      // ── AUDIT: Record the authoritative nap-end transition ────────────
-      base44.entities.SleepTransition.create({
-        character_id: characterId, character_name: charName, owner_email: char.owner_email,
-        transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
-        authority: 'user_directed',
-        reason: 'User-authorized nap completed (scheduled wake). last_wake_time reset.',
-        timestamp: wakeTime, state_start_ref: char.last_nap_time,
-        elapsed_hours: char.last_nap_time ? Math.round(((new Date(wakeTime).getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
-        verified_higher_priority_interrupt: false,
-      }).catch(() => {});
+      // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ────────────
+      try {
+        await base44.entities.SleepTransition.create({
+          character_id: characterId, character_name: charName, owner_email: char.owner_email,
+          transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+          authority: 'user_directed',
+          reason: 'User-authorized nap completed (scheduled wake). last_wake_time reset.',
+          timestamp: wakeTime, state_start_ref: char.last_nap_time,
+          elapsed_hours: char.last_nap_time ? Math.round(((new Date(wakeTime).getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
+          verified_higher_priority_interrupt: false,
+        });
+      } catch (transitionError) {
+        let revertError = null;
+        try { await base44.entities.Character.update(characterId, preWakeSnapshot); } catch (e) { revertError = e.message; }
+        return Response.json({
+          success: false,
+          error: 'unverified_state_write',
+          reason: 'nap_end SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
+          transition_error: transitionError.message,
+          revert_error: revertError,
+        }, { status: 500 });
+      }
 
-      // ── RULE 10: Record nap wake in LifeEvent (Recent Activity) ──────
-      await base44.entities.LifeEvent.create({
-        character_id: characterId,
-        character_name: charName,
-        event_type: 'recovery_event',
-        valence: 'positive',
-        severity: 'minor',
-        title: hadRecentPassOut ? 'Woke from nap feeling more in control' : 'Woke from a nap',
-        description: hadRecentPassOut
-          ? `${charName} woke from a nap feeling calmer and less exhausted. The rest helped ease some of the physical and emotional weight from earlier.`
-          : `${charName} woke from a nap feeling more rested.`,
-        emotional_impact: hadRecentPassOut ? 'calmer, less exhausted, more in control' : 'rested, refreshed',
-        triggered_by: 'user_message',
-        timestamp: wakeTime,
-        context_tags: ['nap_wake', 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],  // backend metadata
-      }).catch(() => {});
-
-      // ── RULE 10: Record nap wake in CharacterMemory (Life Journal) ────
-      await base44.entities.CharacterMemory.create({
-        character_id: characterId,
-        memory_type: 'event',
-        memory_text: hadRecentPassOut
-          ? `${charName} took a nap and woke up feeling calmer and less exhausted. The rest helped ease some of the physical weight from earlier. Felt more in control after getting some sleep.`
-          : `${charName} took a two-hour nap and woke up feeling more rested.`,
-        memory_summary: hadRecentPassOut ? `Napped and woke feeling calmer, less exhausted.` : `Took a two-hour nap, woke feeling rested.`,
-        importance_score: hadRecentPassOut ? 6 : 3,
-        permanence: 'short_term',
-        related_character_id: characterId,
-      }).catch(() => {});
+      // ── RULE 10: Record nap wake — only reached because transition is proven.
+      // A failure here is reported explicitly and does NOT invalidate the transition.
+      let consequenceWriteFailed = null;
+      try {
+        await base44.entities.LifeEvent.create({
+          character_id: characterId,
+          character_name: charName,
+          event_type: 'recovery_event',
+          valence: 'positive',
+          severity: 'minor',
+          title: hadRecentPassOut ? 'Woke from nap feeling more in control' : 'Woke from a nap',
+          description: hadRecentPassOut
+            ? `${charName} woke from a nap feeling calmer and less exhausted. The rest helped ease some of the physical and emotional weight from earlier.`
+            : `${charName} woke from a nap feeling more rested.`,
+          emotional_impact: hadRecentPassOut ? 'calmer, less exhausted, more in control' : 'rested, refreshed',
+          triggered_by: 'user_message',
+          timestamp: wakeTime,
+          context_tags: ['nap_wake', 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],  // backend metadata
+        });
+        await base44.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'event',
+          memory_text: hadRecentPassOut
+            ? `${charName} took a nap and woke up feeling calmer and less exhausted. The rest helped ease some of the physical weight from earlier. Felt more in control after getting some sleep.`
+            : `${charName} took a two-hour nap and woke up feeling more rested.`,
+          memory_summary: hadRecentPassOut ? `Napped and woke feeling calmer, less exhausted.` : `Took a two-hour nap, woke feeling rested.`,
+          importance_score: hadRecentPassOut ? 6 : 3,
+          permanence: 'short_term',
+          related_character_id: characterId,
+        });
+      } catch (consequenceError) {
+        consequenceWriteFailed = consequenceError.message;
+      }
 
       return Response.json({
         success: true,
@@ -131,6 +161,7 @@ Deno.serve(async (req) => {
         wakeTime,
         passout_recovery_applied: hadRecentPassOut,
         message: `${charName} woke from their nap. Consecutive-awake timer reset.`,
+        consequence_write_failed: consequenceWriteFailed,
       });
     }
 
@@ -142,6 +173,22 @@ Deno.serve(async (req) => {
     const napStart    = new Date(napStartTime);
     const napEnd      = new Date(napStart.getTime() + napDurationMinutes * 60 * 1000);
     const napEndIso   = napEnd.toISOString();
+
+    // Snapshot for atomic revert if the proof record below fails.
+    const preNapSnapshot = {
+      resolved_presence_status: char.resolved_presence_status,
+      current_activity: char.current_activity,
+      last_nap_time: char.last_nap_time,
+      last_need_simulated_at: char.last_need_simulated_at,
+      presence_stay_lock: char.presence_stay_lock,
+      presence_stay_lock_reason: char.presence_stay_lock_reason,
+      presence_stay_lock_authority: char.presence_stay_lock_authority,
+      presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+      presence_stay_lock_created_by: char.presence_stay_lock_created_by,
+      presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+      presence_stay_lock_expires_at: char.presence_stay_lock_expires_at,
+      pending_alarm_time: char.pending_alarm_time,
+    };
 
     // ── RULES 3–4: Place into real napping state with authoritative timestamp ──
     // Also write pending_alarm_time = napEndIso so the alarm system can fire
@@ -165,41 +212,57 @@ Deno.serve(async (req) => {
       pending_alarm_time: napEndIso,
     });
 
-    // ── AUDIT: Record the authoritative nap-start transition ─────────────
-    base44.entities.SleepTransition.create({
-      character_id: characterId, character_name: charName, owner_email: char.owner_email,
-      transition_type: 'nap_start', from_status: char.resolved_presence_status || 'home', to_status: 'napping',
-      authority: 'user_directed',
-      reason: `User-authorized ${napDurationMinutes}-minute nap.`,
-      timestamp: napStart.toISOString(),
-      verified_higher_priority_interrupt: false,
-    }).catch(() => {});
+    // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────────
+    try {
+      await base44.entities.SleepTransition.create({
+        character_id: characterId, character_name: charName, owner_email: char.owner_email,
+        transition_type: 'nap_start', from_status: char.resolved_presence_status || 'home', to_status: 'napping',
+        authority: 'user_directed',
+        reason: `User-authorized ${napDurationMinutes}-minute nap.`,
+        timestamp: napStart.toISOString(),
+        verified_higher_priority_interrupt: false,
+      });
+    } catch (transitionError) {
+      let revertError = null;
+      try { await base44.entities.Character.update(characterId, preNapSnapshot); } catch (e) { revertError = e.message; }
+      return Response.json({
+        success: false,
+        error: 'unverified_state_write',
+        reason: 'nap_start SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
+        transition_error: transitionError.message,
+        revert_error: revertError,
+      }, { status: 500 });
+    }
 
-    // ── RULE 5: Write nap start to LifeEvent (Recent Activity) ───────────
-    await base44.entities.LifeEvent.create({
-      character_id: characterId,
-      character_name: charName,
-      event_type: 'recovery_event',
-      valence: 'positive',
-      severity: 'minor',
-      title: 'Decided to get some rest',
-      description: `${charName} decided to take a nap and get some rest. They will wake up in about two hours.`,
-      emotional_impact: 'resting, recovering',
-      triggered_by: 'user_message',
-      timestamp: napStart.toISOString(),
-      context_tags: ['nap_start', 'user_directed_nap'],  // backend metadata — not character-facing
-    }).catch(() => {});
-
-    // ── RULE 6: Write nap start to CharacterMemory (Life Journal) ─────────
-    await base44.entities.CharacterMemory.create({
-      character_id: characterId,
-      memory_type: 'event',
-      memory_text: `${charName} decided to take a nap and get some rest. They slept for a couple of hours and woke up feeling more refreshed.`,
-      memory_summary: `Took a two-hour nap to rest.`,
-      importance_score: 3,
-      permanence: 'short_term',
-      related_character_id: characterId,
-    }).catch(() => {});
+    // ── RULES 5–6: Record nap start — only reached because transition is proven.
+    // A failure here is reported explicitly and does NOT invalidate the transition.
+    let consequenceWriteFailed = null;
+    try {
+      await base44.entities.LifeEvent.create({
+        character_id: characterId,
+        character_name: charName,
+        event_type: 'recovery_event',
+        valence: 'positive',
+        severity: 'minor',
+        title: 'Decided to get some rest',
+        description: `${charName} decided to take a nap and get some rest. They will wake up in about two hours.`,
+        emotional_impact: 'resting, recovering',
+        triggered_by: 'user_message',
+        timestamp: napStart.toISOString(),
+        context_tags: ['nap_start', 'user_directed_nap'],  // backend metadata — not character-facing
+      });
+      await base44.entities.CharacterMemory.create({
+        character_id: characterId,
+        memory_type: 'event',
+        memory_text: `${charName} decided to take a nap and get some rest. They slept for a couple of hours and woke up feeling more refreshed.`,
+        memory_summary: `Took a two-hour nap to rest.`,
+        importance_score: 3,
+        permanence: 'short_term',
+        related_character_id: characterId,
+      });
+    } catch (consequenceError) {
+      consequenceWriteFailed = consequenceError.message;
+    }
 
     return Response.json({
       success: true,
@@ -209,6 +272,7 @@ Deno.serve(async (req) => {
       napEndTime:   napEndIso,
       durationMinutes: napDurationMinutes,
       message: `${charName} is now napping. They will wake in ${napDurationMinutes} minutes or when their alarm fires.`,
+      consequence_write_failed: consequenceWriteFailed,
     });
 
   } catch (error) {

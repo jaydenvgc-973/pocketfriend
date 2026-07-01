@@ -285,39 +285,48 @@ Deno.serve(async (req) => {
           }
 
           // Step 1: Close any open LocationHistory records for this character
-          const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
-            { character_id: char.id, owner_email: char.owner_email, is_current: true },
-            null, 10
-          ).catch(() => []);
+          let locationHistoryWriteFailed = null;
+          try {
+            const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
+              { character_id: char.id, owner_email: char.owner_email, is_current: true },
+              null, 10
+            );
 
-          for (const open of openHistory) {
-            if (open.location_id === destLoc.id) continue;
-            const arrivalMs = new Date(open.arrival_time).getTime();
-            const departureMs = new Date(nowISO).getTime();
-            const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
-            await base44.asServiceRole.entities.LocationHistory.update(open.id, {
-              is_current: false,
-              departure_time: nowISO,
-              duration_minutes: durationMinutes > 0 ? durationMinutes : null,
-            }).catch(() => {});
-          }
+            for (const open of openHistory) {
+              if (open.location_id === destLoc.id) continue;
+              const arrivalMs = new Date(open.arrival_time).getTime();
+              const departureMs = new Date(nowISO).getTime();
+              const durationMinutes = Math.round((departureMs - arrivalMs) / 60000);
+              await base44.asServiceRole.entities.LocationHistory.update(open.id, {
+                is_current: false,
+                departure_time: nowISO,
+                duration_minutes: durationMinutes > 0 ? durationMinutes : null,
+              });
+            }
 
-          // Step 2: Write new arrival record
-          await base44.asServiceRole.entities.LocationHistory.create({
-            character_id:     char.id,
-            character_name:   char.name,
-            owner_email:      char.owner_email,
-            location_id:      destLoc.id,
-            location_name:    destLoc.name,
-            location_category: destLoc.category || 'other',
-            event_type:       eventType,
-            arrival_time:     nowISO,
-            travel_source:    travelSrc,
-            travel_reason:    session.travel_reason || null,
-            is_current:       true,
-          }).then(() => {
+            // Step 2: Write new arrival record — the persisted transition proof for this arrival.
+            await base44.asServiceRole.entities.LocationHistory.create({
+              character_id:     char.id,
+              character_name:   char.name,
+              owner_email:      char.owner_email,
+              location_id:      destLoc.id,
+              location_name:    destLoc.name,
+              location_category: destLoc.category || 'other',
+              event_type:       eventType,
+              arrival_time:     nowISO,
+              travel_source:    travelSrc,
+              travel_reason:    session.travel_reason || null,
+              is_current:       true,
+            });
             console.log(`[completeTravelArrivalVerified] ✓ LocationHistory written | char=${char.name} | loc=${destLoc.name} | event=${eventType}`);
-          }).catch(e => console.log(`[completeTravelArrivalVerified] location history write non-fatal: ${e.message}`));
+          } catch (historyError) {
+            // The Character write is already read-back verified — that is the primary proof.
+            // A failure to write the LocationHistory record is a consequence-write failure,
+            // reported explicitly (never silently swallowed), but does NOT revert the
+            // already-verified arrival — it is surfaced in results below instead.
+            locationHistoryWriteFailed = historyError.message;
+            console.error(`[completeTravelArrivalVerified] LocationHistory write FAILED (non-reverting, reported): ${historyError.message}`);
+          }
         }
 
         // ── CONSEQUENCE: food/drink spending — inline fire-and-forget, NEVER blocks arrival ──
@@ -377,6 +386,7 @@ Deno.serve(async (req) => {
           readback_verified: true,
           travel_cleared:    travelCleared,
           after_location:    charAfter?.resolved_current_location_name,
+          location_history_write_failed: char.owner_email ? locationHistoryWriteFailed : 'skipped_no_owner_email',
         });
 
       } else {

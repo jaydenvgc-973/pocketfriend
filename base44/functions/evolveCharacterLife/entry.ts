@@ -788,6 +788,9 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         // Silent fail — orchestrator is optional
       }
 
+      // ── NARRATIVE FIELDS — inferred ambient narrative, not a state transition ──
+      // current_life_event / emotional_state / health_status are LLM-generated
+      // flavor text and mood, not canonical state facts requiring transition proof.
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
         // transient_encounters: intentionally omitted — user-controlled only
@@ -798,8 +801,45 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         health_habits: update.health_habits || character.health_habits || '',
         life_last_updated: new Date().toISOString(),
         departed_characters: [],
-        ...postShiftUpdate,
       });
+
+      // ── LOCATION STATE TRANSITION — requires authoritative proof, atomic ──
+      // postShiftUpdate moves the character home. This IS a canonical state
+      // transition and must not be committed without a persisted proof record.
+      if (postShiftUpdate.resolved_current_location_id) {
+        const preMoveSnapshot = {
+          resolved_current_location_id: character.resolved_current_location_id,
+          resolved_presence_status: character.resolved_presence_status,
+        };
+        await base44.asServiceRole.entities.Character.update(character.id, postShiftUpdate);
+        try {
+          const homeLocList = await base44.asServiceRole.entities.LocationReference.filter(
+            { id: postShiftUpdate.resolved_current_location_id }, null, 1
+          );
+          const homeLoc = homeLocList?.[0];
+          const openHistory = await base44.asServiceRole.entities.LocationHistory.filter(
+            { character_id: character.id, owner_email: ownerEmail, is_current: true }, null, 10
+          );
+          for (const open of openHistory) {
+            if (open.location_id === postShiftUpdate.resolved_current_location_id) continue;
+            const durationMinutes = Math.round((Date.now() - new Date(open.arrival_time).getTime()) / 60000);
+            await base44.asServiceRole.entities.LocationHistory.update(open.id, {
+              is_current: false, departure_time: new Date().toISOString(),
+              duration_minutes: durationMinutes > 0 ? durationMinutes : null,
+            });
+          }
+          await base44.asServiceRole.entities.LocationHistory.create({
+            character_id: character.id, character_name: character.name, owner_email: ownerEmail,
+            location_id: postShiftUpdate.resolved_current_location_id, location_name: homeLoc?.name || '',
+            location_category: 'home', event_type: 'return_home', arrival_time: new Date().toISOString(),
+            travel_source: 'schedule', travel_reason: 'post_shift_exit_high_drain_job', is_current: true,
+          });
+        } catch (proofError) {
+          let revertError = null;
+          try { await base44.asServiceRole.entities.Character.update(character.id, preMoveSnapshot); } catch (e) { revertError = e.message; }
+          console.error(`[evolveCharacterLife] post-shift location proof failed for ${character.name} — reverted. proof_error=${proofError.message} revert_error=${revertError}`);
+        }
+      }
 
       // ─── PHASE 5: EVENT CHAINS + STORY ARCS
       // Fetch recent life events to detect forming arcs
@@ -835,13 +875,9 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         }
       }
 
-      // Log significant life event if the simulation produced one
-      // STRICT MODE: Block any birth/child/family-creation events from auto-logging.
-      // Birth events require explicit user approval — they must never be auto-created.
-      const BLOCKED_EVENT_TYPES = ['birth_event', 'child_born', 'pregnancy_event', 'family_addition_event'];
-      const BLOCKED_KEYWORDS = /\b(born|birth|baby|infant|pregnancy|pregnant|child was born|new child|gave birth)\b/i;
-      const eventToLog = update.life_event_to_log;
-
+      // NOTE: update.life_event_to_log (LLM-inferred) is intentionally NOT written
+      // to LifeEvent here. LLM narrative output is not proof of a state transition
+      // and must never become canonical history — see forensic audit finding.
       results.push({ id: character.id, name, status: 'updated' });
     } catch (err) {
       results.push({ id: character.id, name: character.name, status: 'error', error: err.message });

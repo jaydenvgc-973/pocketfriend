@@ -119,10 +119,27 @@ Deno.serve(async (req) => {
       applyRelationshipDelta = false,
       relationshipDeltaOverride = null, // { friendship_level, user_respect_level, etc. }
       applyAchievementCheck = true,
+      verifiedTransitionId = null, // ID of the authoritative transition proof record (e.g. SleepTransition) this event documents
     } = body;
 
     if (!characterId || !eventType || !title || !description) {
       return Response.json({ error: 'Missing required: characterId, eventType, title, description' }, { status: 400 });
+    }
+
+    // ── EVIDENCE GATE ──────────────────────────────────────────────────────
+    // LifeEvent is documentation, not proof. Automated callers (life_simulation,
+    // scheduled_event) claiming a physical state collapse (sleep deprivation,
+    // medical, accident) must cite the authoritative transition proof record
+    // that already verified the state change — this hub does not verify it itself.
+    // Conversation-driven events (user_message, character_decision) are exempt:
+    // the conversation itself is the evidence.
+    const STATE_TRANSITION_EVENT_TYPES = ['sleep_deprivation_event', 'medical_event', 'accident_event'];
+    const isAutomatedTrigger = triggeredBy === 'life_simulation' || triggeredBy === 'scheduled_event';
+    if (STATE_TRANSITION_EVENT_TYPES.includes(eventType) && isAutomatedTrigger && !verifiedTransitionId) {
+      return Response.json({
+        error: 'verifiedTransitionId required',
+        reason: `eventType "${eventType}" triggered by "${triggeredBy}" claims a physical state transition. This hub does not verify state transitions itself — pass the SleepTransition (or equivalent) record id that already proved the state change.`,
+      }, { status: 400 });
     }
 
     const audit = {
@@ -151,7 +168,7 @@ Deno.serve(async (req) => {
       emotional_impact: emotionalImpact,
       triggered_by: triggeredBy,
       conversation_id: conversationId,
-      context_tags: contextTags,
+      context_tags: verifiedTransitionId ? [...contextTags, `verified_transition:${verifiedTransitionId}`] : contextTags,
       systems_updated: [],
       timestamp: new Date().toISOString(),
     });

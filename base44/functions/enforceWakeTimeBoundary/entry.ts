@@ -126,13 +126,50 @@ Deno.serve(async (req) => {
       if (wasActualSleep) {
         wakePayload.last_wake_time = nowETIso;
       }
+      // Snapshot for atomic revert if the proof record below fails.
+      const preWakeSnapshot = {
+        resolved_presence_status: char.resolved_presence_status,
+        resolved_location_type: char.resolved_location_type,
+        location_status: char.location_status,
+        current_activity: char.current_activity,
+        resolved_source_reason: char.resolved_source_reason,
+        resolved_last_updated_at: char.resolved_last_updated_at,
+        sleep_interrupted_at: char.sleep_interrupted_at,
+        last_wake_time: char.last_wake_time,
+      };
 
       try {
+        let writeScope = base44.entities.Character;
         try {
-          await base44.entities.Character.update(char.id, wakePayload);
+          await writeScope.update(char.id, wakePayload);
         } catch {
-          await base44.asServiceRole.entities.Character.update(char.id, wakePayload);
+          writeScope = base44.asServiceRole.entities.Character;
+          await writeScope.update(char.id, wakePayload);
         }
+
+        // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────
+        try {
+          await base44.asServiceRole.entities.SleepTransition.create({
+            character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+            transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home',
+            authority: 'wake_time_boundary',
+            reason: `Wake-time boundary (${wakeTime}) reached — character woken.`,
+            timestamp: nowETIso,
+            state_start_ref: char.last_sleep_start || null,
+          });
+        } catch (transitionError) {
+          let revertError = null;
+          try { await writeScope.update(char.id, preWakeSnapshot); } catch (e) { revertError = e.message; }
+          results.push({
+            character_id: char.id, character_name: char.name,
+            woken: false,
+            reason: 'wake_time_boundary SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
+            transition_error: transitionError.message,
+            revert_error: revertError,
+          });
+          continue;
+        }
+
         results.push({
           character_id: char.id,
           character_name: char.name,

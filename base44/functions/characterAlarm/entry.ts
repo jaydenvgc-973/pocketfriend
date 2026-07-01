@@ -100,14 +100,18 @@ Deno.serve(async (req) => {
         resolved_last_updated_at: nowIso,
       });
 
-      base44.asServiceRole.entities.CharacterMemory.create({
-        character_id: characterId,
-        memory_type: 'event',
-        memory_text: `${character.name} canceled their scheduled alarm.`,
-        memory_summary: 'alarm_canceled',
-        importance_score: 2,
-        permanence: 'short_term',
-      }).catch(() => {});
+      try {
+        await base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'event',
+          memory_text: `${character.name} canceled their scheduled alarm.`,
+          memory_summary: 'alarm_canceled',
+          importance_score: 2,
+          permanence: 'short_term',
+        });
+      } catch (memErr) {
+        console.warn(`[characterAlarm] alarm_canceled memory write failed: ${memErr.message}`);
+      }
 
       return Response.json({
         success: true,
@@ -134,14 +138,18 @@ Deno.serve(async (req) => {
         });
       } catch {}
 
-      base44.asServiceRole.entities.CharacterMemory.create({
-        character_id: characterId,
-        memory_type: 'event',
-        memory_text: `${character.name} set an alarm for ${displayTime}.`,
-        memory_summary: `alarm_scheduled::${scheduled_time}`,
-        importance_score: 3,
-        permanence: 'short_term',
-      }).catch(() => {});
+      try {
+        await base44.asServiceRole.entities.CharacterMemory.create({
+          character_id: characterId,
+          memory_type: 'event',
+          memory_text: `${character.name} set an alarm for ${displayTime}.`,
+          memory_summary: `alarm_scheduled::${scheduled_time}`,
+          importance_score: 3,
+          permanence: 'short_term',
+        });
+      } catch (memErr) {
+        console.warn(`[characterAlarm] alarm_scheduled memory write failed: ${memErr.message}`);
+      }
 
       return Response.json({
         success: true,
@@ -298,6 +306,19 @@ Deno.serve(async (req) => {
       // Character RLS is scoped by owner_email — try user-scoped write first.
       // If user-scoped fails (RLS mismatch, expired session), fall back to service-role.
       // Service role bypasses RLS and is safe here because ownership was already verified above.
+      // Snapshot pre-wake state for atomic revert if the proof record fails.
+      const preWakeSnapshot = {
+        resolved_presence_status: character.resolved_presence_status,
+        location_status: character.location_status,
+        current_activity: character.current_activity,
+        emotional_state: character.emotional_state,
+        sleep_interrupted_at: character.sleep_interrupted_at,
+        pending_alarm_time: character.pending_alarm_time,
+        resolved_last_updated_at: character.resolved_last_updated_at,
+        last_wake_time: character.last_wake_time,
+        energy_value: character.energy_value,
+      };
+      const fromStatus = character.resolved_presence_status;
       const wakeFields = {
         resolved_presence_status: 'home',
         location_status: 'home',
@@ -309,18 +330,48 @@ Deno.serve(async (req) => {
         last_wake_time: nowIso,
         ...(finalizedEnergy !== null ? { energy_value: finalizedEnergy } : {}),
       };
+      let writeScope = base44.entities.Character;
       try {
-        await base44.entities.Character.update(characterId, wakeFields);
+        await writeScope.update(characterId, wakeFields);
       } catch (_writeErr) {
         // Fallback: service role — ownership verified above, safe to use
-        await base44.asServiceRole.entities.Character.update(characterId, wakeFields);
+        writeScope = base44.asServiceRole.entities.Character;
+        await writeScope.update(characterId, wakeFields);
+      }
+
+      // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────────
+      // If this write fails, the Character wake write above is reverted immediately.
+      try {
+        await base44.asServiceRole.entities.SleepTransition.create({
+          character_id: characterId,
+          character_name: character.name,
+          owner_email: character.owner_email,
+          transition_type: fromStatus === 'napping' ? 'nap_end' : 'sleep_end',
+          from_status: fromStatus,
+          to_status: 'home',
+          authority: 'user_directed',
+          reason: 'Character alarm rang and woke them (user-triggered ring_now).',
+          timestamp: nowIso,
+        });
+      } catch (transitionError) {
+        let revertError = null;
+        try { await writeScope.update(characterId, preWakeSnapshot); } catch (e) { revertError = e.message; }
+        return Response.json({
+          success: false,
+          error: 'unverified_state_write',
+          reason: 'Alarm wake SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
+          transition_error: transitionError.message,
+          revert_error: revertError,
+        }, { status: 500 });
       }
 
       const timeLabel = now.toLocaleTimeString('en-US', {
         hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York',
       });
 
-      // LifeEvent continuity — framed as character's own alarm, not user action
+      // LifeEvent continuity — framed as character's own alarm, not user action.
+      // Only reached because the transition above is proven. A failure here is
+      // reported explicitly and does NOT invalidate the already-verified transition.
       const lifeEventDesc = isLateWake
         ? `${character.name}'s alarm went off. They were supposed to be at work or school — they're running late.`
         : isShortSleep
@@ -333,24 +384,29 @@ Deno.serve(async (req) => {
         ? 'Tired, groggy from short sleep'
         : 'Awake and starting their routine';
 
-      base44.asServiceRole.entities.LifeEvent.create({
-        character_id: characterId,
-        character_name: character.name,
-        event_type: 'routine_positive_event',
-        valence: (isLateWake || isShortSleep) ? 'mixed' : 'neutral',
-        severity: 'minor',
-        title: `Alarm went off at ${timeLabel}`,
-        description: lifeEventDesc,
-        emotional_impact: lifeEventImpact,
-        triggered_by: 'scheduled_event',
-        timestamp: nowIso,
-        systems_updated: ['memory'],
-        context_tags: [
-          'alarm', 'wake_up',
-          isLateWake ? 'late_for_obligation' : 'on_schedule',
-          isShortSleep ? 'short_sleep' : 'adequate_sleep',
-        ],
-      }).catch(() => {});
+      let lifeEventWriteFailed = null;
+      try {
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: characterId,
+          character_name: character.name,
+          event_type: 'routine_positive_event',
+          valence: (isLateWake || isShortSleep) ? 'mixed' : 'neutral',
+          severity: 'minor',
+          title: `Alarm went off at ${timeLabel}`,
+          description: lifeEventDesc,
+          emotional_impact: lifeEventImpact,
+          triggered_by: 'scheduled_event',
+          timestamp: nowIso,
+          systems_updated: ['memory'],
+          context_tags: [
+            'alarm', 'wake_up',
+            isLateWake ? 'late_for_obligation' : 'on_schedule',
+            isShortSleep ? 'short_sleep' : 'adequate_sleep',
+          ],
+        });
+      } catch (lifeEventError) {
+        lifeEventWriteFailed = lifeEventError.message;
+      }
 
       const message = isLateWake
         ? `${firstName}'s alarm went off. They're awake but running late.`
@@ -366,6 +422,7 @@ Deno.serve(async (req) => {
         hours_slept: Math.round(hoursSlept * 10) / 10,
         new_emotional_state: newEmotionalState,
         message,
+        life_event_write_failed: lifeEventWriteFailed,
       });
     }
 
