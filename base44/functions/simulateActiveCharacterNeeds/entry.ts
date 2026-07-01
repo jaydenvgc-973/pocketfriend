@@ -2089,109 +2089,94 @@ Deno.serve(async (req) => {
           last_need_simulated_at: nowIso,
         };
 
-        // ── RC1: CORRECTIVE ACTIVITY WRITER ───────────────────────────────
-        // When needs cross critical thresholds during simulation, write
-        // corrective states so the NEXT tick uses recovery rates.
+        // ── SINGLE-TRANSITION-PER-TICK CANDIDATE COLLECTION ───────────────
+        // Every RC1/RC2/RC3/RC4/release branch below only PROPOSES a candidate —
+        // it never mutates updatePayload/sleepTransitionsToRecord/pendingConsequences
+        // directly. After all candidates are collected, exactly ONE (the highest
+        // priority) is applied. This makes it structurally impossible for RC6 to
+        // queue more than one SleepTransition proof record per character per tick.
+        // Priority (lower number wins): hospitalized=1, passed_out=2, sleeping=3,
+        // napping=4, pass_out_end=5.
+        const transitionCandidates = [];
+
+        // RC1: corrective activity writer (sleep/nap/pass_out from pressure pipeline)
         const corrective = computeCorrectiveState(newNeeds, char, locationMap);
         if (corrective) {
-          Object.assign(updatePayload, corrective);
-          // Write authoritative timestamps and stay locks per state type.
-          // Each state has its own timestamp field — they must never be mixed.
           const cs = corrective.resolved_presence_status;
           if (cs === 'sleeping') {
-            // Voluntary sleep: last_sleep_start is the authoritative timer for the 8h cap.
-            updatePayload.last_sleep_start = nowIso;
-            updatePayload.presence_stay_lock = true;
-            updatePayload.presence_stay_lock_reason = 'sleep_state';
-            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
-            updatePayload.presence_stay_lock_set_at = nowIso;
-            updatePayload.presence_stay_lock_created_by = 'system_automation';
-            sleepTransitionsToRecord.push({
-              transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown',
-              to_status: 'sleeping', authority: 'wake_time_boundary',
-              reason: 'Corrective state: energy pressure triggered voluntary sleep decision.',
+            transitionCandidates.push({
+              priority: 3,
+              payload: { ...corrective, last_sleep_start: nowIso, presence_stay_lock: true,
+                presence_stay_lock_reason: 'sleep_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
+                presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation' },
+              transition: { transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown',
+                to_status: 'sleeping', authority: 'wake_time_boundary',
+                reason: 'Corrective state: energy pressure triggered voluntary sleep decision.' },
+              consequence: null,
             });
           } else if (cs === 'napping') {
-            // Nap: last_nap_time is the authoritative timer for the 3h cap.
-            updatePayload.last_nap_time = nowIso;
-            updatePayload.presence_stay_lock = true;
-            updatePayload.presence_stay_lock_reason = 'nap_state';
-            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
-            updatePayload.presence_stay_lock_set_at = nowIso;
-            updatePayload.presence_stay_lock_created_by = 'system_automation';
-            sleepTransitionsToRecord.push({
-              transition_type: 'nap_start', from_status: char.resolved_presence_status || 'unknown',
-              to_status: 'napping', authority: 'wake_time_boundary',
-              reason: 'Corrective state: energy pressure triggered nap decision.',
+            transitionCandidates.push({
+              priority: 4,
+              payload: { ...corrective, last_nap_time: nowIso, presence_stay_lock: true,
+                presence_stay_lock_reason: 'nap_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
+                presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation' },
+              transition: { transition_type: 'nap_start', from_status: char.resolved_presence_status || 'unknown',
+                to_status: 'napping', authority: 'wake_time_boundary',
+                reason: 'Corrective state: energy pressure triggered nap decision.' },
+              consequence: null,
             });
           } else if (cs === 'passed_out') {
-            // Involuntary collapse: last_pass_out_at is the authoritative timer for the 12h cap.
-            // Must NOT write last_sleep_start — that field is exclusively for voluntary sleep.
-            updatePayload.last_pass_out_at = nowIso;
-            updatePayload.presence_stay_lock = true;
-            updatePayload.presence_stay_lock_reason = 'pass_out_recovery';
-            updatePayload.presence_stay_lock_authority = 'simulateActiveCharacterNeeds';
-            updatePayload.presence_stay_lock_set_at = nowIso;
-            updatePayload.presence_stay_lock_created_by = 'system_automation';
-            updatePayload.presence_stay_lock_release_condition = 'energy_above_35';
-            // Increment pass_out_count if not already set by a prior branch this tick
-            if (!updatePayload.pass_out_count) {
-              updatePayload.pass_out_count = (char.pass_out_count ?? 0) + 1;
-            }
-            sleepTransitionsToRecord.push({
-              transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
-              to_status: 'passed_out', authority: 'compound_crisis',
-              reason: 'Corrective state: critical need pressure forced involuntary collapse.',
+            transitionCandidates.push({
+              priority: 2,
+              payload: { ...corrective, last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
+                presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
+                presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso,
+                presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35' },
+              transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
+                to_status: 'passed_out', authority: 'compound_crisis',
+                reason: 'Corrective state: critical need pressure forced involuntary collapse.' },
+              consequence: null,
             });
           }
         }
 
-        // ── RC2 (continued): ENERGY ZERO → PASSED OUT ────────────────────
-        // If energy reached zero during this simulation tick, character
-        // collapses. Uses 'passed_out' status — NOT 'sleeping'.
+        // RC2 (continued): energy reached zero this tick
         if (newNeeds.energy <= 0 && !sleepLocked && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out') {
-          Object.assign(updatePayload, {
-            resolved_presence_status: 'passed_out',
-            // TRUTHFUL: energy hit zero — complete energy depletion caused the collapse.
-            // NOT "19 hours awake" — that is a separate enforcement path.
-            current_activity: 'passed out from exhaustion — critical energy depletion',
-            last_pass_out_at: nowIso,
+          transitionCandidates.push({
+            priority: 2,
+            payload: { resolved_presence_status: 'passed_out',
+              current_activity: 'passed out from exhaustion — critical energy depletion',
+              last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
+              presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
+              presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso,
+              presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35' },
+            transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
+              to_status: 'passed_out', authority: 'energy_passout',
+              reason: `Energy reached ${Math.round(newNeeds.energy)} (zero) this tick.` },
+            consequence: null,
           });
         }
 
-        // ── RC3: ER ESCALATION — HEALTH COLLAPSE ─────────────────────────
-        // When health ≤ HEALTH_ER (15) OR compound crisis with health ≤ 20,
-        // create a ScheduledEvent for medical intervention and write
-        // hospitalized presence.
+        // RC3: ER escalation — health ≤15 or compound crisis with health ≤20
         const compoundCrisisHealth = newNeeds.health <= T.HEALTH_CRITICAL &&
           [newNeeds.hunger, newNeeds.energy, newNeeds.health]
             .filter(v => v < T.HEALTH_CRITICAL).length >= 2;
-
         if ((newNeeds.health <= T.HEALTH_ER || compoundCrisisHealth)
             && char.resolved_presence_status !== 'hospitalized') {
-          // Write hospitalized state — medical recovery, NOT sleep.
-          // Do NOT write last_sleep_start here. Hospitalization is not ordinary sleep
-          // and must not reset the 19h awake timer nor confuse sleep cap logic.
-          Object.assign(updatePayload, {
-            resolved_presence_status: 'hospitalized',
-            current_activity: 'hospitalized — health collapsed',
+          transitionCandidates.push({
+            priority: 1,
+            payload: { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' },
+            transition: { transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown',
+              to_status: 'hospitalized', authority: 'energy_medical',
+              reason: `Health reached ${Math.round(newNeeds.health)} (threshold ${T.HEALTH_ER}).`,
+              verified_higher_priority_interrupt: true, interrupt_reason: 'health_critical_15' },
+            consequence: { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
           });
-          sleepTransitionsToRecord.push({
-            transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown',
-            to_status: 'hospitalized', authority: 'energy_medical',
-            reason: `Health reached ${Math.round(newNeeds.health)} (threshold ${T.HEALTH_ER}).`,
-            verified_higher_priority_interrupt: true,
-            interrupt_reason: 'health_critical_15',
-          });
-          // ScheduledEvent + LifeEvent deferred to pendingConsequences — created ONLY
-          // after the hospitalized_start SleepTransition proof record is confirmed.
-          pendingConsequences.push({ type: 'er_escalation', healthValue: Math.round(newNeeds.health) });
         }
 
-        // ── RC4: COMPOUND CRISIS — FORCED STABILIZATION ───────────────────
-        // 3+ needs below 20 triggers forced rest and a recovery event.
+        // RC4: compound crisis — 3+ needs below 20
         const criticalNeeds = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental]
           .filter(v => v < T.HUNGER_CRITICAL).length;
         if (criticalNeeds >= T.COMPOUND_CRISIS
@@ -2200,33 +2185,19 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized'
             && !sleepLocked) {
-          Object.assign(updatePayload, {
-            resolved_presence_status: 'passed_out',
-            current_activity: 'passed out from compound crisis — forced recovery',
-            last_pass_out_at: nowIso,
+          transitionCandidates.push({
+            priority: 2,
+            payload: { resolved_presence_status: 'passed_out',
+              current_activity: 'passed out from compound crisis — forced recovery',
+              last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1 },
+            transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
+              to_status: 'passed_out', authority: 'compound_crisis',
+              reason: `Compound crisis: ${criticalNeeds} needs below critical threshold.` },
+            consequence: { type: 'compound_crisis', criticalNeeds },
           });
-          sleepTransitionsToRecord.push({
-            transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
-            to_status: 'passed_out', authority: 'compound_crisis',
-            reason: `Compound crisis: ${criticalNeeds} needs below critical threshold.`,
-          });
-          // ScheduledEvent + LifeEvent deferred to pendingConsequences — created ONLY
-          // after the pass_out_start SleepTransition proof record is confirmed.
-          pendingConsequences.push({ type: 'compound_crisis', criticalNeeds });
         }
 
-        // ── PASS-OUT STAY LOCK RELEASE ────────────────────────────────────
-        // Pass-out locks the character in 'passed_out' state for recovery.
-        // When energy recovers above 35, release the lock AND transition to 'home'.
-        // CRITICAL: Do NOT transition passed_out → sleeping. They wake up, not go back to sleep.
-        //
-        // ── 6-HOUR MINIMUM PASS-OUT GUARD (CANONICAL) ────────────────────────
-        // pass_out during a valid sleep window MUST protect the character for at least 6 hours.
-        // Energy reaching 35 at ~3.1h is the intended recovery rate — it does NOT mean the
-        // character has had sufficient rest. They must stay in passed_out state until:
-        //   a) 6 hours have elapsed from last_pass_out_at, OR
-        //   b) A verified medical emergency exists (health ≤ 15)
-        // Energy alone is NEVER a valid early-release reason before 6 hours.
+        // Pass-out release: energy > 35 and (6h elapsed OR medical emergency)
         if (char.presence_stay_lock &&
             char.presence_stay_lock_reason === 'pass_out_recovery' &&
             char.resolved_presence_status === 'passed_out' &&
@@ -2234,29 +2205,33 @@ Deno.serve(async (req) => {
           const passOutStart = char.last_pass_out_at;
           const isMedicalEmergency6h = (newNeeds.health ?? 80) <= 15;
           let elapsedPassOutHours = 0;
-          if (passOutStart) {
-            elapsedPassOutHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
-          }
-          // Only release if 6h elapsed OR medical emergency — energy alone is insufficient
+          if (passOutStart) elapsedPassOutHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
           const safeToRelease = (!passOutStart || elapsedPassOutHours >= 6) || isMedicalEmergency6h;
           if (safeToRelease) {
-            Object.assign(updatePayload, {
-              resolved_presence_status: 'home',
-              current_activity: '',
-              last_wake_time: nowIso,
-              presence_stay_lock: false,
-              presence_stay_lock_reason: null,
-              presence_stay_lock_release_condition: null,
-            });
-            sleepTransitionsToRecord.push({
-              transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home',
-              authority: isMedicalEmergency6h ? 'energy_medical' : 'pass_out_cap_12h',
-              reason: `Pass-out release: elapsed=${Math.round(elapsedPassOutHours * 100) / 100}h, energy=${Math.round(newNeeds.energy)}.`,
-              state_start_ref: passOutStart || null,
-              elapsed_hours: Math.round(elapsedPassOutHours * 100) / 100,
+            transitionCandidates.push({
+              priority: 5,
+              payload: { resolved_presence_status: 'home', current_activity: '', last_wake_time: nowIso,
+                presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null },
+              transition: { transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home',
+                authority: isMedicalEmergency6h ? 'energy_medical' : 'pass_out_cap_12h',
+                reason: `Pass-out release: elapsed=${Math.round(elapsedPassOutHours * 100) / 100}h, energy=${Math.round(newNeeds.energy)}.`,
+                state_start_ref: passOutStart || null, elapsed_hours: Math.round(elapsedPassOutHours * 100) / 100 },
+              consequence: null,
             });
           }
           // Under 6h without medical emergency: keep passed_out — 12h hard cap will eventually fire
+        }
+
+        // ── SELECT EXACTLY ONE CANDIDATE ───────────────────────────────────
+        // Lowest priority number wins. Ties broken by declaration order above.
+        // All other candidates are discarded this tick and will be
+        // re-evaluated fresh on the next simulation pass.
+        let selectedTransition = null;
+        if (transitionCandidates.length > 0) {
+          selectedTransition = transitionCandidates.reduce((best, c) => (c.priority < best.priority ? c : best));
+          Object.assign(updatePayload, selectedTransition.payload);
+          sleepTransitionsToRecord.push(selectedTransition.transition);
+          if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
         }
 
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
