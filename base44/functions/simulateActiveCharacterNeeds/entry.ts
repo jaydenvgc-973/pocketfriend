@@ -1,65 +1,18 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
 
-/**
- * simulateActiveCharacterNeeds — CORRECTED v2
- *
- * All 6 root causes from deepNeedsAudit are fixed here:
- *
- * RC1 FIXED: Corrective activity writer added — when hunger/energy critical,
- *            the simulation now WRITES current_activity and resolved_presence_status
- *            so the NEXT tick applies recovery rates automatically.
- *
- * RC2 FIXED: Pass-out is now a real state writer — energy=0 writes
- *            resolved_presence_status="sleeping" and current_activity="passed out — resting"
- *
- * RC3 FIXED: ER escalation now creates a ScheduledEvent AND sets presence to hospital
- *            when health ≤ 15 OR compound crisis with health ≤ 20.
- *
- * RC4 FIXED: Compound crisis (3+ needs < 20) now triggers forced stabilization:
- *            character is put to rest and a recovery ScheduledEvent is created.
- *
- * RC5 FIXED: Stale cap reduced from 24h to 8h. Writes now always use asServiceRole
- *            to prevent silent RLS failures.
- *
- * RC6 FIXED: All Character.update() calls use base44.asServiceRole unconditionally
- *            so protected/default flags never cause silent write failures.
- */
+// simulateActiveCharacterNeeds — needs/sleep simulation.
+// Every state transition (sleep/nap/pass_out/hospitalized) is atomic:
+// Character write + SleepTransition proof record both succeed or the
+// Character write is reverted. Consequences (LifeEvent/CharacterMemory/
+// ScheduledEvent) only fire after the proof record is confirmed.
 
 const clamp = (v) => Math.max(0, Math.min(100, v));
 
-// ── RATES ────────────────────────────────────────────────────────────────────
-// ENERGY CALIBRATION:
-//   sleeping:    +12.5/hr → voluntary/chosen sleep. Starting at ~20: reaches 70 in ~4h, 90 in ~5.6h, 100 in ~6.4h.
-//                           Normal sleep cycle: 6–8 hours. Cap: 8 hours.
-//   passed_out:  +8/hr    → INVOLUNTARY COLLAPSE. Distinct from sleeping. Slower, lower-quality recovery.
-//                           Body is recovering from forced shutdown, not restful sleep.
-//                           Starting at ~10: reaches 35 (release threshold) in ~3.1h, 75 in ~8.1h. Cap: 12 hours.
-//                           THESE RATES ARE NOT EQUAL. THEY MUST NOT BE SET EQUAL.
-//   hospitalized:+4/hr    → Medical recovery. Slowest energy restoration. Different state entirely.
-//   default awake: -4/hr  → 75→low(35) in ~10 hours, →critical(15) in ~15 hours.
-//   active contexts: -5 to -7/hr → fatigue builds faster during demanding activity.
-//
-// ── ENERGY RULE: Awake contexts must NEVER restore energy (energy rate must be ≤ 0 for all awake states).
-// Energy restoration is ONLY valid in: sleeping (+12.5), passed_out (+8), hospitalized (+4).
-// These three contexts are distinct and must not share rates, caps, or completion logic.
-//
-// ── PASSED_OUT IS NOT SLEEPING ───────────────────────────────────────────────
-// passed_out is a mechanically independent state from sleeping:
-//   - Different status value ('passed_out' vs 'sleeping')
-//   - Different recovery rate (+8/hr vs +12.5/hr)
-//   - Different cap (12h vs 8h)
-//   - Different completion logic (releases to 'home' when energy > 35, OR at 12h hard cap)
-//   - Different timestamps (last_pass_out_at vs last_sleep_start)
-//   - Different event/memory records (forced collapse vs voluntary rest)
-//   - NEVER transitions to 'sleeping'. Releases directly to awake ('home').
-//
-// ── SOCIAL NEED MODEL (corrected) ────────────────────────────────────────────
-// Social measures FULFILLMENT — not current activity, not location type.
-// A bartender who spent 8 hours with customers is socially fulfilled, not deprived.
-// A character resting at home after a social day has HIGH social, not low.
-// Social GAINS from interaction with people (work, school, events, family, calls).
-// Social only DECAYS during genuine isolation (extended solitude with zero interaction).
-// Being at home ≠ antisocial. Being in public ≠ automatically social.
+// ── RATES ──────────────────────────────────────────────────────────────────
+// sleeping +12.5/hr (voluntary, 8h cap) vs passed_out +8/hr (involuntary
+// collapse, 12h cap, never becomes 'sleeping') vs hospitalized +4/hr.
+// Awake contexts never restore energy. Social measures fulfillment, not
+// activity — it gains from interaction and only decays during isolation.
 const RATES = {
   // VOLUNTARY sleep: chosen rest, full restorative rate, normal sleep cap (8h), normal wake logic.
   sleeping:        { hunger: -1,   energy: +12.5, social:  0,   health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
@@ -185,23 +138,10 @@ function getWorkContextFromLocation(loc) {
   return 'at_work_office';
 }
 
-// ── OVERNIGHT SLEEP DRIVE ──────────────────────────────────────────────────
-// Characters do not work overnight, attend overnight school, or generally live
-// nocturnal schedules. From 10 PM onward, the system makes sleep increasingly
-// attractive as an autonomous choice. By 3 AM, sleep is the dominant default
-// unless a meaningful reason to stay awake exists.
-//
-// DESIGN: Drive multiplies energy thresholds — at night, characters feel
-// tired faster. A character at 70 energy at 3 AM (drive 2.5) behaves like
-// 28 energy → well below critical threshold → chooses sleep autonomously.
-//
-// EXCEPTIONS: Valid overnight activities (party, emergency, childcare, etc.)
-// halve the drive so characters can stay awake for meaningful reasons.
-// Night owl personality reduces drive by ~20% — they genuinely stay up later.
-//
-// AUTONOMY: No fixed bedtime is enforced. Characters choose sleep because
-// it becomes the most attractive option, not because a clock says so.
-
+// ── OVERNIGHT SLEEP DRIVE ────────────────────────────────────────────────
+// From 10 PM, sleep becomes autonomously attractive (drive multiplies energy
+// thresholds so characters feel tired faster at night). Meaningful overnight
+// activities halve the drive; night owls get ~20% less drive. No fixed bedtime.
 function overnightSleepDriveMultiplier(nowET, character) {
   const hour = nowET.getHours();
   const minute = nowET.getMinutes();
@@ -226,20 +166,7 @@ function overnightSleepDriveMultiplier(nowET, character) {
   return 1.0; // No drive before 10 PM
 }
 
-/**
- * hasMeaningfulOvernightActivity
- *
- * Checks if the character has a valid, meaningful reason to be awake
- * during overnight hours (past 11 PM). These reasons justify staying up
- * despite the increasing sleep drive.
- *
- * Valid reasons: parties, celebrations, romantic intimacy, childcare,
- * emergencies, emotional crises, important conversations, overnight work,
- * active travel, medical situations.
- *
- * Characters with these reasons get a halved overnight drive — fatigue
- * still matters, but the activity is worth staying awake for.
- */
+// Valid reasons to be awake overnight (halves the sleep drive).
 function hasMeaningfulOvernightActivity(character) {
   const activity = (character.current_activity || '').toLowerCase();
 
@@ -460,15 +387,7 @@ function computeComfortModifier(char, context, locationMap) {
   return Math.max(-2, Math.min(2, modifier));
 }
 
-/**
- * mentalPersonalityScale
- *
- * Maps character personality traits to a scaling factor for each mental wellbeing dimension.
- * Each dimension ranges 0.3–2.0. Higher = this character is MORE sensitive to
- * this dimension's sources/drains. Extroverts care more about social; conscientious
- * characters care more about stability; competitive characters care more about
- * achievement and purpose.
- */
+// Maps personality traits to mental-wellbeing sensitivity scales (0.3–2.0).
 function mentalPersonalityScale(char) {
   const socialEnergy = char.social_energy || 'ambivert';
   const traits = {
@@ -593,16 +512,7 @@ function mentalPersonalityScale(char) {
   return scale;
 }
 
-/**
- * computeMentalModifier
- *
- * Evaluates the character's current context and activity to determine
- * a mental wellbeing modifier. Positive = mental health improving.
- * Negative = mental health declining. The modifier is ADDED to RATES mental.
- *
- * Each section is scaled by the character's personality profile so that
- * identical activities affect two characters differently.
- */
+// Context/activity-driven mental wellbeing modifier, scaled by personality.
 function computeMentalModifier(char, context, locationMap) {
   let modifier = 0;
   const scale = mentalPersonalityScale(char);
@@ -882,19 +792,10 @@ function needsAreUninitialized(needs) {
   return Object.values(needs).every(v => v === null);
 }
 
-// ── CORRECTIVE STATE RESOLVER ──────────────────────────────────────────────
-// When needs cross critical thresholds, the simulation writes a corrective
-// current_activity so that the NEXT tick picks up recovery rates automatically.
-
-// ── CORRECTIVE STATE RESOLVER ──────────────────────────────────────────────
-// Behavioral pipeline: Need → Pressure → Decision → Action → State
-// Energy thresholds create PRESSURE, not direct state changes.
-// State is only written when ALL conditions in the decision chain are validated.
-//
-// EXCEPTIONS (bypass the pipeline — involuntary physical failure):
-//   Pass-out (≤10% energy): Need → Physical Failure → State
-//   Medical danger (≤5% energy): Need → Physical Failure → State
-
+// ── CORRECTIVE STATE RESOLVER ────────────────────────────────────────────
+// Pipeline: Need → Pressure → Decision → Action → State. Energy thresholds
+// create pressure, not direct state changes, except pass-out/medical danger
+// which bypass the pipeline as involuntary physical failure.
 function computeCorrectiveState(needs, character, locationMap) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
@@ -1239,26 +1140,7 @@ function computeDecisionWeights(needs, character) {
   return { hygieneW, energyW, hungerW, socialW, healthW, mentalW };
 }
 
-/**
- * buildPressureProfile — CORRECTED
- *
- * Needs create PRESSURE. Needs do NOT create actions, destinations, or restrictions.
- *
- * Returns a structured pressure profile indicating which needs are pressing.
- * The profile is a diagnostic input for downstream decision systems.
- * It does NOT prescribe a single action.
- *
- * Pressure thresholds:
- *   > 2.0  = dominant pressure — this need is the loudest
- *   1.0-2.0 = elevated pressure — this need is calling for attention
- *   0.5-1.0 = mild pressure — this need is whispering
- *   < 0.5   = satisfied — no pressure from this need
- *
- * The decision system (autonomousMovement, LLM, etc.) uses this profile
- * alongside personality, relationships, schedules, goals, and context
- * to select appropriate behavior. Different characters with the same
- * pressure profile should make DIFFERENT choices.
- */
+// Needs create pressure, not actions. >2.0=dominant, 1-2=elevated, 0.5-1=mild, <0.5=satisfied.
 function buildPressureProfile(weights) {
   if (!weights) return null;
 
@@ -1293,23 +1175,7 @@ function buildPressureProfile(weights) {
   return profile;
 }
 
-/**
- * resolveNextActivity — CORRECTED
- *
- * Returns a PRESSURE PROFILE, not a single action.
- *
- * The pressure profile tells downstream systems which needs are pressing.
- * It does NOT tell them what to do.
- *
- * Personality-aware evaluation:
- *   - Extroverts amplify social pressure (they feel isolation more acutely)
- *   - Introverts dampen social pressure (solitude is restorative)
- *   - Conscientious characters amplify hygiene/stability pressure
- *   - The pressure is the pressure — the character decides the response
- *
- * The pressure profile includes a `character_factors` diagnostic field
- * showing how personality influenced the pressure calculation.
- */
+// Returns a pressure profile (not a single action), personality-modulated.
 function resolveNextActivity(needs, character) {
   const weights = computeDecisionWeights(needs, character);
   if (!weights) return null;
@@ -1645,22 +1511,30 @@ Deno.serve(async (req) => {
           // Timestamp: last_pass_out_at (NOT last_sleep_start — that field is for voluntary sleep only).
           // Stay lock: prevents other automations from clearing recovery before it completes.
           const passOutCount = (char.pass_out_count ?? 0) + 1;
+          // Snapshot for atomic revert if the proof record below fails — a state
+          // change may never outlive its SleepTransition proof (State-Proof Atomicity).
+          const passOutRevertPayload = {
+            resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
+            last_pass_out_at: char.last_pass_out_at, pass_out_count: char.pass_out_count,
+            presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+            presence_stay_lock_authority: char.presence_stay_lock_authority, presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+            presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+            hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+            health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+            comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+          };
           await base44.entities.Character.update(char.id, {
             resolved_presence_status: 'passed_out',
-            // TRUTHFUL: energy hit ≤10 threshold — critical energy depletion caused this.
-            // NOT "19 hours awake" — that is a separate path with its own string.
             current_activity: 'passed out from exhaustion — critical energy depletion',
             last_pass_out_at: nowIso,
             last_need_simulated_at: nowIso,
             pass_out_count: passOutCount,
-            // Stay lock: block other automations from clearing pass-out recovery
             presence_stay_lock: true,
             presence_stay_lock_reason: 'pass_out_recovery',
             presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
             presence_stay_lock_set_at: nowIso,
             presence_stay_lock_created_by: 'system_automation',
             presence_stay_lock_release_condition: 'energy_above_35',
-            // Needs values: write current state so next tick has consistent data
             hunger_value:  Math.round(needs.hunger ?? 70),
             energy_value:  Math.round(energyBefore),
             social_value:  Math.round(needs.social ?? 65),
@@ -1670,58 +1544,55 @@ Deno.serve(async (req) => {
             comfort_value: Math.round(needs.comfort ?? 70),
           });
 
-          // ── AUTHORITATIVE TRANSITION RECORD (fixes Transition Verification Failure) ──
-          // The Character write above just succeeded — this is the proof record.
-          // If this write fails, execution throws to the outer catch and the
-          // LifeEvent/CharacterMemory below are never created.
-          await base44.entities.SleepTransition.create({
-            character_id: char.id,
-            character_name: charName,
-            owner_email: ownerEmail,
-            transition_type: 'pass_out_start',
-            from_status: char.resolved_presence_status || 'unknown',
-            to_status: 'passed_out',
-            authority: 'energy_passout',
-            reason: `Energy reached ${Math.round(energyBefore)} (threshold ${T.ENERGY_PASSOUT}) — verified state write confirmed involuntary collapse.`,
-            timestamp: nowIso,
-          });
-          // ── PASS-OUT CONSEQUENCES ─────────────────────────────────
-          // Pass-out is not neutral rest — it has real consequences.
-          // The character collapsed involuntarily due to ignored exhaustion.
-          // These consequences are recorded so the character remembers
-          // and future sleep decisions treat exhaustion more seriously.
-          await base44.entities.LifeEvent.create({
-            character_id: char.id,
-            character_name: charName,
-            event_type: 'medical_event',
-            valence: 'negative',
-            severity: 'major',
-            title: 'Passed out from exhaustion',
-            description: `${charName} collapsed from complete energy depletion. Energy was at ${Math.round(energyBefore)} when their body forced sleep. They will wake groggy, embarrassed, and with lowered comfort. This is their ${passOutCount === 1 ? 'first' : passOutCount === 2 ? 'second' : `${passOutCount}rd`} pass-out event — each one makes future exhaustion feel more threatening.`,
-            emotional_impact: 'physical collapse, embarrassment, loss of control',
-            triggered_by: 'life_simulation',
-            timestamp: nowIso,
-            context_tags: ['passed_out', 'forced_sleep', passOutCount > 1 ? 'repeat_pass_out' : 'first_pass_out'],
-          }).catch(() => {});
+          // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────
+          // If this write fails, the Character write above is reverted immediately.
+          try {
+            await base44.entities.SleepTransition.create({
+              character_id: char.id, character_name: charName, owner_email: ownerEmail,
+              transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
+              to_status: 'passed_out', authority: 'energy_passout',
+              reason: `Energy reached ${Math.round(energyBefore)} (threshold ${T.ENERGY_PASSOUT}).`,
+              timestamp: nowIso,
+            });
+          } catch (transitionError) {
+            let revertError = null;
+            try { await base44.entities.Character.update(char.id, passOutRevertPayload); } catch (e) { revertError = e.message; }
+            results.push({
+              character: charName, event: 'unverified_state_write',
+              reason: 'pass_out_start SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+              transition_error: transitionError.message, revert_error: revertError,
+            });
+            continue;
+          }
 
-          // ── PASS-OUT BEHAVIORAL MEMORY ───────────────────────────
-          // CharacterMemory records the experience so the character
-          // learns from it. Future sleep pressure is amplified when
-          // energy gets low because they remember pass-out was bad.
-          await base44.entities.CharacterMemory.create({
-            character_id: char.id,
-            memory_type: 'event',
-            memory_text: `${charName} passed out from exhaustion when their energy dropped to ${Math.round(energyBefore)}. They collapsed involuntarily — their body forced sleep because they ignored exhaustion too long. The experience was physically draining, embarrassing, and emotionally stressful. They remember how bad it felt and do not want to repeat it.`,
-            memory_summary: `Passed out at energy ${Math.round(energyBefore)} — body forced sleep. Unpleasant, embarrassing, physically draining.`,
-            importance_score: 8,
-            permanence: 'long_term',
-            related_character_id: char.id,
-          }).catch(() => {});
+          // ── CONSEQUENCES — only reached because the transition above is proven ──
+          try {
+            await base44.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'negative', severity: 'major',
+              title: 'Passed out from exhaustion',
+              description: `${charName} collapsed from complete energy depletion. Energy was at ${Math.round(energyBefore)} when their body forced sleep. They will wake groggy, embarrassed, and with lowered comfort. This is their ${passOutCount === 1 ? 'first' : passOutCount === 2 ? 'second' : `${passOutCount}rd`} pass-out event — each one makes future exhaustion feel more threatening.`,
+              emotional_impact: 'physical collapse, embarrassment, loss of control',
+              triggered_by: 'life_simulation', timestamp: nowIso,
+              context_tags: ['passed_out', 'forced_sleep', passOutCount > 1 ? 'repeat_pass_out' : 'first_pass_out'],
+            });
+            await base44.entities.CharacterMemory.create({
+              character_id: char.id, memory_type: 'event',
+              memory_text: `${charName} passed out from exhaustion when their energy dropped to ${Math.round(energyBefore)}. They collapsed involuntarily — their body forced sleep because they ignored exhaustion too long. The experience was physically draining, embarrassing, and emotionally stressful. They remember how bad it felt and do not want to repeat it.`,
+              memory_summary: `Passed out at energy ${Math.round(energyBefore)} — body forced sleep. Unpleasant, embarrassing, physically draining.`,
+              importance_score: 8, permanence: 'long_term', related_character_id: char.id,
+            });
+          } catch (consequenceError) {
+            results.push({
+              character: charName, event: 'consequence_write_failed',
+              reason: 'pass_out LifeEvent/CharacterMemory failed for a verified transition',
+              error: consequenceError.message,
+            });
+            continue;
+          }
 
           results.push({
-            character: charName,
-            context: 'passed_out',
-            event: 'pass_out',
+            character: charName, context: 'passed_out', event: 'pass_out',
             needs: {
               hunger:  Math.round(needs.hunger ?? 70),
               energy:  Math.round(energyBefore),
@@ -1827,13 +1698,21 @@ Deno.serve(async (req) => {
                   elapsed_hours: Math.round(sleepDurationHours * 100) / 100,
                 });
               } catch (transitionError) {
-                // Silent Proof Record Failure fix: Character state changed but the
-                // proof record failed — never report this as a verified wake event.
+                // Atomic revert: proof record failed — undo the Character write above.
+                let revertError = null;
+                try {
+                  await base44.entities.Character.update(char.id, {
+                    resolved_presence_status: 'sleeping', current_activity: char.current_activity,
+                    last_wake_time: char.last_wake_time,
+                    hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+                    health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+                    comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+                  });
+                } catch (e) { revertError = e.message; }
                 results.push({
-                  character: charName, context,
-                  event: 'unverified_state_write',
-                  reason: 'sleep_end SleepTransition write failed — Character state changed without proof record',
-                  error: transitionError.message,
+                  character: charName, context, event: 'unverified_state_write',
+                  reason: 'sleep_end SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+                  transition_error: transitionError.message, revert_error: revertError,
                 });
                 continue;
               }
@@ -1906,11 +1785,22 @@ Deno.serve(async (req) => {
                   elapsed_hours: Math.round(passOutDurationHours * 100) / 100,
                 });
               } catch (transitionError) {
+                let revertError = null;
+                try {
+                  await base44.entities.Character.update(char.id, {
+                    resolved_presence_status: 'passed_out', current_activity: char.current_activity,
+                    last_wake_time: char.last_wake_time,
+                    presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+                    presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+                    hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+                    health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+                    comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+                  });
+                } catch (e) { revertError = e.message; }
                 results.push({
-                  character: charName, context,
-                  event: 'unverified_state_write',
-                  reason: 'pass_out_end SleepTransition write failed — Character state changed without proof record',
-                  error: transitionError.message,
+                  character: charName, context, event: 'unverified_state_write',
+                  reason: 'pass_out_end SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+                  transition_error: transitionError.message, revert_error: revertError,
                 });
                 continue;
               }
@@ -1974,11 +1864,20 @@ Deno.serve(async (req) => {
                   elapsed_hours: Math.round(napDurationHours * 100) / 100,
                 });
               } catch (transitionError) {
+                let revertError = null;
+                try {
+                  await base44.entities.Character.update(char.id, {
+                    resolved_presence_status: 'napping', current_activity: char.current_activity,
+                    last_wake_time: char.last_wake_time,
+                    hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+                    health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+                    comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+                  });
+                } catch (e) { revertError = e.message; }
                 results.push({
-                  character: charName, context,
-                  event: 'unverified_state_write',
-                  reason: 'nap_end SleepTransition write failed — Character state changed without proof record',
-                  error: transitionError.message,
+                  character: charName, context, event: 'unverified_state_write',
+                  reason: 'nap_end SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+                  transition_error: transitionError.message, revert_error: revertError,
                 });
                 continue;
               }
@@ -2081,43 +1980,66 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
+              // Snapshot for atomic revert if the proof record below fails.
+              const awakeLimitRevertPayload = {
+                resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
+                last_pass_out_at: char.last_pass_out_at, pass_out_count: char.pass_out_count,
+                presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+                presence_stay_lock_authority: char.presence_stay_lock_authority, presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+                presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+                resolved_current_location_id: char.resolved_current_location_id, resolved_location_type: char.resolved_location_type,
+                hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+                health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+                comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+              };
               await base44.entities.Character.update(char.id, awakeLimitPayload);
 
-              // ── AUTHORITATIVE TRANSITION RECORD ──────────────────────────────
-              // Proof the 19h threshold was actually crossed — the awake_hours value
-              // here is what the narrative below must match (fixes Failure Escalation
-              // and Missing Authoritative State Transition History). If this write
-              // fails, execution throws and no LifeEvent/CharacterMemory is created.
-              await base44.entities.SleepTransition.create({
-                character_id: char.id, character_name: charName, owner_email: ownerEmail,
-                transition_type: 'pass_out_start',
-                from_status: char.resolved_presence_status || 'unknown', to_status: 'passed_out',
-                authority: 'awake_limit_19h',
-                reason: `Continuous awake time reached ${Math.round(awakeHours)}h (limit 19h). awake_timer_start=${new Date(awakeTimerStartMs).toISOString()}.`,
-                timestamp: nowIso,
-                state_start_ref: new Date(awakeTimerStartMs).toISOString(),
-                awake_hours_at_pass_out: Math.round(awakeHours * 100) / 100,
-              });
+              // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────
+              try {
+                await base44.entities.SleepTransition.create({
+                  character_id: char.id, character_name: charName, owner_email: ownerEmail,
+                  transition_type: 'pass_out_start',
+                  from_status: char.resolved_presence_status || 'unknown', to_status: 'passed_out',
+                  authority: 'awake_limit_19h',
+                  reason: `Continuous awake time reached ${Math.round(awakeHours)}h (limit 19h). awake_timer_start=${new Date(awakeTimerStartMs).toISOString()}.`,
+                  timestamp: nowIso,
+                  state_start_ref: new Date(awakeTimerStartMs).toISOString(),
+                  awake_hours_at_pass_out: Math.round(awakeHours * 100) / 100,
+                });
+              } catch (transitionError) {
+                let revertError = null;
+                try { await base44.entities.Character.update(char.id, awakeLimitRevertPayload); } catch (e) { revertError = e.message; }
+                results.push({
+                  character: charName, context, event: 'unverified_state_write',
+                  reason: 'awake_limit_19h SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+                  transition_error: transitionError.message, revert_error: revertError,
+                });
+                continue;
+              }
 
-              await base44.entities.LifeEvent.create({
-                character_id: char.id, character_name: charName,
-                event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
-                title: 'Passed out — 19-hour forced exhaustion',
-                description: `${charName} was awake for ${Math.round(awakeHours)} hours and collapsed from exhaustion. Their body forced sleep — this was not a choice. This is their ${passOutCount19h === 1 ? 'first' : passOutCount19h === 2 ? 'second' : `${passOutCount19h}th`} pass-out event.${homeLocId && !isAlreadyAtHome ? ' Returned to assigned home for recovery.' : ''}`,
-                emotional_impact: 'forced collapse, embarrassment, loss of control', triggered_by: 'life_simulation',
-                timestamp: nowIso, context_tags: ['awake_limit', 'passed_out', 'forced_exhaustion', passOutCount19h > 1 ? 'repeat_pass_out' : 'first_pass_out'],
-              }).catch(() => {});
-
-              // CharacterMemory: 19h pass-out increases future sleep pressure identically to energy pass-out
-              await base44.entities.CharacterMemory.create({
-                character_id: char.id,
-                memory_type: 'event',
-                memory_text: `${charName} stayed awake for over ${Math.round(awakeHours)} hours and collapsed from exhaustion — their body forced sleep. This was not voluntary. The experience was draining, embarrassing, and physically difficult. They do not want to repeat it. They should sleep earlier when tired rather than pushing past their limit.`,
-                memory_summary: `Passed out at ${Math.round(awakeHours)}h awake — forced exhaustion, not voluntary sleep.`,
-                importance_score: 8,
-                permanence: 'long_term',
-                related_character_id: char.id,
-              }).catch(() => {});
+              try {
+                await base44.entities.LifeEvent.create({
+                  character_id: char.id, character_name: charName,
+                  event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
+                  title: 'Passed out — 19-hour forced exhaustion',
+                  description: `${charName} was awake for ${Math.round(awakeHours)} hours and collapsed from exhaustion. Their body forced sleep — this was not a choice. This is their ${passOutCount19h === 1 ? 'first' : passOutCount19h === 2 ? 'second' : `${passOutCount19h}th`} pass-out event.${homeLocId && !isAlreadyAtHome ? ' Returned to assigned home for recovery.' : ''}`,
+                  emotional_impact: 'forced collapse, embarrassment, loss of control', triggered_by: 'life_simulation',
+                  timestamp: nowIso, context_tags: ['awake_limit', 'passed_out', 'forced_exhaustion', passOutCount19h > 1 ? 'repeat_pass_out' : 'first_pass_out'],
+                });
+                await base44.entities.CharacterMemory.create({
+                  character_id: char.id, memory_type: 'event',
+                  memory_text: `${charName} stayed awake for over ${Math.round(awakeHours)} hours and collapsed from exhaustion — their body forced sleep. This was not voluntary. The experience was draining, embarrassing, and physically difficult. They do not want to repeat it. They should sleep earlier when tired rather than pushing past their limit.`,
+                  memory_summary: `Passed out at ${Math.round(awakeHours)}h awake — forced exhaustion, not voluntary sleep.`,
+                  importance_score: 8, permanence: 'long_term', related_character_id: char.id,
+                });
+              } catch (consequenceError) {
+                results.push({
+                  character: charName, context, event: 'consequence_write_failed',
+                  reason: 'awake_limit_19h LifeEvent/CharacterMemory failed for a verified transition',
+                  error: consequenceError.message,
+                });
+                continue;
+              }
 
               results.push({
                 character: charName, context,
@@ -2348,57 +2270,95 @@ Deno.serve(async (req) => {
           Object.assign(updatePayload, staleIntent);
         }
 
+        // ── RC6 revert snapshot ────────────────────────────────────────────
+        // Only the presence/activity/timer fields a transition could have
+        // touched — NOT the routine needs_value fields, which are not
+        // evidence-controlled and always persist regardless of proof outcome.
+        const rc6RevertPayload = {
+          resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
+          last_sleep_start: char.last_sleep_start, last_nap_time: char.last_nap_time,
+          last_pass_out_at: char.last_pass_out_at, last_wake_time: char.last_wake_time,
+          pass_out_count: char.pass_out_count,
+          presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
+          presence_stay_lock_authority: char.presence_stay_lock_authority, presence_stay_lock_set_at: char.presence_stay_lock_set_at,
+          presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
+        };
+
         // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
         await base44.entities.Character.update(char.id, updatePayload);
 
-        // ── AUTHORITATIVE TRANSITION RECORDS (hard gate — no silent catch) ──
-        // Fixes Silent Proof Record Failure. If ANY SleepTransition write fails,
-        // this throws, is caught by the per-character catch below, and NO
-        // pendingConsequences (LifeEvent/ScheduledEvent) are created this tick.
-        // The Character state already changed, but no history, memory, or
-        // consequence may be reported as verified without this proof record.
+        // ── AUTHORITATIVE TRANSITION RECORDS — hard gate, atomic ──────────
+        // If ANY SleepTransition write fails, the Character presence/activity/
+        // timer fields are reverted immediately and NO pendingConsequences fire.
+        // A state change may never outlive its proof record.
+        let rc6TransitionsVerified = true;
+        let rc6TransitionFailure = null;
         for (const t of sleepTransitionsToRecord) {
-          await base44.entities.SleepTransition.create({
-            character_id: char.id,
-            character_name: charName,
-            owner_email: ownerEmail,
-            timestamp: nowIso,
-            ...t,
-          });
+          try {
+            await base44.entities.SleepTransition.create({
+              character_id: char.id, character_name: charName, owner_email: ownerEmail,
+              timestamp: nowIso, ...t,
+            });
+          } catch (transitionError) {
+            rc6TransitionsVerified = false;
+            rc6TransitionFailure = { transition_type: t.transition_type, error: transitionError.message };
+            break;
+          }
         }
 
-        // ── CONSEQUENCES — only reached if every proof record above succeeded ──
+        if (!rc6TransitionsVerified) {
+          let revertError = null;
+          try { await base44.entities.Character.update(char.id, rc6RevertPayload); } catch (e) { revertError = e.message; }
+          results.push({
+            character: charName, context, event: 'unverified_state_write',
+            reason: `SleepTransition proof record failed (${rc6TransitionFailure.transition_type}) — Character state reverted, event is UNVERIFIED`,
+            transition_error: rc6TransitionFailure.error, revert_error: revertError,
+          });
+          continue;
+        }
+
+        // ── CONSEQUENCES — only reached because every proof record above succeeded ──
+        // Consequence write failures are reported explicitly, never swallowed.
+        // They do not revert the already-proven transition.
         for (const c of pendingConsequences) {
-          if (c.type === 'er_escalation') {
-            await base44.entities.ScheduledEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_emergency', title: 'Emergency hospitalization',
-              description: `${charName} was hospitalized due to critical health collapse (health: ${c.healthValue}) — verified by hospitalized_start SleepTransition.`,
-              scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
-            }).catch(() => {});
-            await base44.entities.LifeEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_event', valence: 'negative', severity: 'major',
-              title: 'Emergency hospitalization',
-              description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`,
-              emotional_impact: 'critical medical event', triggered_by: 'life_simulation',
-              timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'],
-            }).catch(() => {});
-          } else if (c.type === 'compound_crisis') {
-            await base44.entities.ScheduledEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest',
-              description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold — verified by pass_out_start SleepTransition.`,
-              scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
-            }).catch(() => {});
-            await base44.entities.LifeEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_event', valence: 'negative', severity: 'major',
-              title: 'Compound crisis — forced rest',
-              description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical. Forced to rest.`,
-              emotional_impact: 'physical collapse', triggered_by: 'life_simulation',
-              timestamp: nowIso, context_tags: ['compound_crisis'],
-            }).catch(() => {});
+          try {
+            if (c.type === 'er_escalation') {
+              await base44.entities.ScheduledEvent.create({
+                character_id: char.id, character_name: charName,
+                event_type: 'medical_emergency', title: 'Emergency hospitalization',
+                description: `${charName} was hospitalized due to critical health collapse (health: ${c.healthValue}) — verified by hospitalized_start SleepTransition.`,
+                scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
+              });
+              await base44.entities.LifeEvent.create({
+                character_id: char.id, character_name: charName,
+                event_type: 'medical_event', valence: 'negative', severity: 'major',
+                title: 'Emergency hospitalization',
+                description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`,
+                emotional_impact: 'critical medical event', triggered_by: 'life_simulation',
+                timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'],
+              });
+            } else if (c.type === 'compound_crisis') {
+              await base44.entities.ScheduledEvent.create({
+                character_id: char.id, character_name: charName,
+                event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest',
+                description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold — verified by pass_out_start SleepTransition.`,
+                scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
+              });
+              await base44.entities.LifeEvent.create({
+                character_id: char.id, character_name: charName,
+                event_type: 'medical_event', valence: 'negative', severity: 'major',
+                title: 'Compound crisis — forced rest',
+                description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical. Forced to rest.`,
+                emotional_impact: 'physical collapse', triggered_by: 'life_simulation',
+                timestamp: nowIso, context_tags: ['compound_crisis'],
+              });
+            }
+          } catch (consequenceError) {
+            results.push({
+              character: charName, context, event: 'consequence_write_failed',
+              reason: `Consequence creation failed for a verified transition (${c.type})`,
+              error: consequenceError.message,
+            });
           }
         }
 
