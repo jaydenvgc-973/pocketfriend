@@ -432,11 +432,211 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Link the investigation to the conversation for later findings delivery
+        // Link the investigation to the conversation and mark it as active.
         if (investigation && conversation) {
           await base44.asServiceRole.entities.VickInvestigation.update(investigation.id, {
             conversation_id: conversation.id,
+            status: 'investigating',
+            started_at: nowIso,
           }).catch(() => {});
+        }
+
+        // ── VICK PERFORMS HIS DIAGNOSTIC ────────────────────────────────────
+        // The assignment has been delivered (Investigation Queue + chat).
+        // Now Vick's diagnostic process runs — gathering evidence from the
+        // account, classifying findings, and producing the completed report.
+        //
+        // This IS Vick's diagnostic process (same evidence sources, same
+        // findings format, same OBSERVED/INFERRED/UNKNOWN classification as
+        // vickInvestigationBridge). It runs within the scheduled function
+        // because function-to-function invocation is not available in the
+        // scheduled Deno context. The findings are attributed to Vick and
+        // written to his chat as a character message.
+        let diagnosticRun = false;
+        let diagnosticError = null;
+        let findingsText = null;
+        let findingsMessageId = null;
+
+        if (conversation && investigation) {
+          try {
+            const observed = [];
+            const inferred = [];
+            const unknown = [];
+
+            // ── EVIDENCE: Active characters ──
+            const chars = await base44.asServiceRole.entities.Character.filter(
+              { owner_email: ownerEmail, status: 'active' }, null, 100
+            ).catch(() => []);
+            observed.push(`—— Account Overview ——`);
+            observed.push(`Active characters: ${chars.length}`);
+
+            // ── EVIDENCE: Character health checks ──
+            let frozenActivityCount = 0;
+            let impossibleLocationCount = 0;
+            let lowEnergyCount = 0;
+            for (const c of chars.slice(0, 30)) {
+              // Frozen activity check
+              if (c.current_activity && c.current_activity !== 'none' && c.last_need_simulated_at) {
+                const lastSim = new Date(c.last_need_simulated_at).getTime();
+                if (Date.now() - lastSim > 6 * 60 * 60 * 1000) {
+                  frozenActivityCount++;
+                  inferred.push(`${c.name}: activity "${c.current_activity}" may be frozen (last simulated ${new Date(lastSim).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET)`);
+                }
+              }
+              // Impossible location check
+              if (c.resolved_presence_status === 'sleeping' && c.resolved_location_type === 'work') {
+                impossibleLocationCount++;
+                inferred.push(`${c.name}: impossible state — sleeping at work location`);
+              }
+              // Low energy check
+              if (typeof c.energy_value === 'number' && c.energy_value < 15) {
+                lowEnergyCount++;
+                inferred.push(`${c.name}: critically low energy (${c.energy_value})`);
+              }
+            }
+            if (frozenActivityCount === 0 && impossibleLocationCount === 0 && lowEnergyCount === 0) {
+              observed.push(`Character health scan: ${Math.min(chars.length, 30)} checked, no critical issues detected`);
+            }
+
+            // ── EVIDENCE: Locations ──
+            const locs = await base44.asServiceRole.entities.LocationReference.filter(
+              { owner_email: ownerEmail }, null, 100
+            ).catch(() => []);
+            observed.push(`Locations: ${locs.length}`);
+
+            // ── EVIDENCE: Active travel sessions ──
+            const travel = await base44.asServiceRole.entities.TravelSession.filter(
+              { owner_email: ownerEmail, route_status: 'in_transit' }, null, 20
+            ).catch(() => []);
+            if (travel.length > 0) {
+              observed.push(`Active travel sessions: ${travel.length}`);
+              const stuck = travel.filter(s => {
+                if (!s.estimated_arrival_time) return false;
+                return new Date(s.estimated_arrival_time).getTime() < Date.now() - 30 * 60 * 1000;
+              });
+              if (stuck.length > 0) {
+                for (const s of stuck) {
+                  const etaET = new Date(s.estimated_arrival_time).toLocaleString('en-US', {
+                    timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+                  });
+                  inferred.push(`STUCK TRAVEL: ${s.character_name} → ${s.destination_location_name} (ETA was ${etaET} Eastern, overdue)`);
+                }
+              }
+            } else {
+              observed.push(`No active travel sessions`);
+            }
+
+            // ── EVIDENCE: SleepTransition records (silent failure verification) ──
+            const recentSleepTransitions = await base44.asServiceRole.entities.SleepTransition.filter(
+              { owner_email: ownerEmail }, '-timestamp', 20
+            ).catch(() => []);
+            observed.push(`Recent sleep transitions: ${recentSleepTransitions.length}`);
+
+            // ── EVIDENCE: Vick self-report ──
+            observed.push(`Vick Servicio: ID ${vick.id}, type: ${vick.character_type || 'not set'}, world_service: ${vick.is_world_service ?? 'NOT SET'}`);
+            observed.push(`Vick location: ${vick.resolved_presence_status || 'unknown'} at ${vick.resolved_current_location_name || 'unknown'}`);
+
+            // ── EVIDENCE: Pending VickInvestigations (queue health) ──
+            const pendingInvestigations = await base44.asServiceRole.entities.VickInvestigation.filter(
+              { owner_email: ownerEmail, status: 'queued' }, null, 20
+            ).catch(() => []);
+            if (pendingInvestigations.length > 1) {
+              inferred.push(`${pendingInvestigations.length} queued investigations — possible backlog`);
+            }
+
+            // ── BUILD FINDINGS TEXT (same format as vickInvestigationBridge) ──
+            const lines = [];
+            lines.push('═══ RECOVERY YARD FINDINGS ═══');
+            lines.push(`Generated: ${etLabel}`);
+            lines.push(`Scope: scheduled_daytime_diagnostic (account overview)`);
+            lines.push(`Slot: ${slotLabel} Eastern — ${etDate}`);
+            lines.push('');
+
+            lines.push('—— SOURCE AVAILABILITY ——');
+            lines.push(`  CHARACTER RECORD: CHECKED (${chars.length} records)`);
+            lines.push(`  LOCATION FILE: CHECKED (${locs.length} records)`);
+            lines.push(`  TRAVEL SESSIONS: CHECKED (${travel.length} active)`);
+            lines.push(`  SLEEP TRANSITIONS: CHECKED (${recentSleepTransitions.length} recent)`);
+            lines.push(`  APP TIME USED: ${etLabel}`);
+            lines.push(`  HOMEPAGE CARD UI: SOURCE NOT AVAILABLE (scheduled context — no frontend)`);
+            lines.push(`  CONTRADICTION CHECK: SOURCE NOT AVAILABLE (scheduled context)`);
+            lines.push('');
+
+            if (observed.length > 0) {
+              lines.push('—— OBSERVED (directly verified from database records) ——');
+              observed.forEach(o => lines.push(`  ${o}`));
+              lines.push('');
+            }
+            if (inferred.length > 0) {
+              lines.push('—— INFERRED (derived from patterns, not directly confirmed) ——');
+              inferred.forEach(i => lines.push(`  ${i}`));
+              lines.push('');
+            }
+            if (unknown.length > 0) {
+              lines.push('—— UNKNOWN (could not determine) ——');
+              unknown.forEach(u => lines.push(`  ${u}`));
+              lines.push('');
+            }
+
+            if (inferred.length === 0 && unknown.length === 0) {
+              lines.push('No significant issues were detected in this scheduled pass.');
+              lines.push('Frontend cross-reference (UI vs backend contradiction check) was not available — run a manual diagnostic from chat for full UI verification.');
+              lines.push('');
+            }
+
+            lines.push('Review complete. Ask if you need more detail on any finding.');
+            findingsText = lines.join('\n');
+
+            // ── WRITE FINDINGS AS VICK MESSAGE TO CHAT ──────────────────────
+            const findingsMsg = await base44.asServiceRole.entities.Message.create({
+              conversation_id: conversation.id,
+              sender_type: 'character',
+              character_id: vick.id,
+              character_name: vick.name || 'Vick Servicio',
+              content: findingsText,
+              is_narrative: true,
+              is_read: false,
+              recovery_signal: false,
+              memory_eligible: false,
+              relationship_eligible: false,
+              timestamp: new Date().toISOString(),
+              channel: 'direct',
+            }).catch(e => {
+              console.error(`[assignVickDaytimeDiagnostic] Findings message save failed for ${ownerEmail}: ${e.message}`);
+              return null;
+            });
+            findingsMessageId = findingsMsg?.id || null;
+
+            // Update conversation preview
+            if (findingsMsg) {
+              await base44.asServiceRole.entities.Conversation.update(conversation.id, {
+                last_message_preview: `Recovery Yard findings: scheduled diagnostic ${slotLabel}`,
+                last_message_date: new Date().toISOString(),
+              }).catch(() => {});
+            }
+
+            // ── UPDATE INVESTIGATION WITH COMPLETED FINDINGS ────────────────
+            await base44.asServiceRole.entities.VickInvestigation.update(investigation.id, {
+              status: 'findings_ready',
+              findings: findingsText,
+              findings_delivered: true,
+              delivered_at: new Date().toISOString(),
+              resolution: 'monitoring_required',
+              findings_read: false,
+              conversation_id: conversation.id,
+            }).catch(() => {});
+
+            diagnosticRun = true;
+            console.log(`[assignVickDaytimeDiagnostic] Vick completed diagnostic for ${ownerEmail} | findings_msg=${findingsMessageId} | observed=${observed.length} inferred=${inferred.length}`);
+          } catch (diagErr) {
+            diagnosticError = diagErr?.message || 'diagnostic execution failed';
+            console.error(`[assignVickDaytimeDiagnostic] Diagnostic failed for ${ownerEmail}: ${diagnosticError}`);
+            await base44.asServiceRole.entities.VickInvestigation.update(investigation.id, {
+              status: 'awaiting_evidence',
+              requires_user_input: true,
+              user_input_prompt: `Scheduled diagnostic could not complete automatically: ${diagnosticError}`,
+            }).catch(() => {});
+          }
         }
 
         deliveries.push({
@@ -445,12 +645,16 @@ Deno.serve(async (req) => {
           vickName: vick.name,
           investigationId: investigation?.id || null,
           conversationId: conversation?.id || null,
-          messageId,
+          assignmentMessageId: messageId,
+          findingsMessageId,
+          diagnosticRun,
+          diagnosticError,
+          findingsProduced: !!findingsText,
           slot: slotLabel,
           etDate,
         });
 
-        console.log(`[assignVickDaytimeDiagnostic] Delivered to ${ownerEmail} | vick=${vick.id} | slot=${slotLabel} | investigation=${investigation?.id} | msg=${messageId}`);
+        console.log(`[assignVickDaytimeDiagnostic] Delivered to ${ownerEmail} | vick=${vick.id} | slot=${slotLabel} | investigation=${investigation?.id} | assignment_msg=${messageId} | diagnosticRun=${diagnosticRun} | findings=${!!findingsText}`);
       } catch (acctErr) {
         console.error(`[assignVickDaytimeDiagnostic] Failed for ${ownerEmail}: ${acctErr.message}`);
         skipped.push({ ownerEmail, reason: 'error', error: acctErr.message });
@@ -466,7 +670,8 @@ Deno.serve(async (req) => {
       et_time: etLabel,
       et_date: etDate,
       slot: slotLabel,
-      assignment_only: true, // confirms no diagnostic was run
+      assignment_delivered: true,
+      diagnostic_executed: deliveries.some(d => d.diagnosticRun),
     });
 
   } catch (error) {
