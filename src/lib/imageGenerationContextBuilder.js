@@ -1,6 +1,8 @@
 import { resolveLocationWithSchoolGuard } from './campusResidencyResolver.js';
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { resolveUserParticipantInPrompt } from './chatImageSubjectResolver.js';
+import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
+import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -266,6 +268,7 @@ export async function buildImageGenerationContext({
   let outfitText = null;
   let outfitSource = 'none';
   let outfitPrecedenceReason = null;
+  let resolvedOutfit = null;
 
   const promptLowerForOutfit = (prompt || '').toLowerCase();
   const sleepWakeKeywords = ['sleeping', 'asleep', 'in bed', 'woke up', 'waking up', 'just woke', 'napping', 'nap', 'lying in bed'];
@@ -305,7 +308,7 @@ export async function buildImageGenerationContext({
     //   - character.character_closet
     // locationRecord?.category is passed so the engine knows gym/work/home/etc.
     const locationCategoryForOutfit = locationRecord?.category || null;
-    const resolvedOutfit = resolveCurrentOutfit(
+    resolvedOutfit = resolveCurrentOutfit(
       effectiveCharacterRecord,
       prompt || '',          // activity hints from the generation prompt
       locationCategoryForOutfit
@@ -325,11 +328,80 @@ export async function buildImageGenerationContext({
     }
   }
 
+  // ── UNIFORM OVERRIDE ──────────────────────────────────────────────────────
+  // If the character is at a location with a required uniform, the uniform IS
+  // what they're wearing — it takes priority over the closet outfit.
+  // PROOF POINT 3: uniform requirements override weather (uniforms are never adapted).
+  let uniformOutfitObj = null;
+  if (!isSleepContext && effectiveCharacterRecord && locationRecord) {
+    try {
+      const charRole = determineCharacterRoleAtLocation(effectiveCharacterRecord, locationRecord);
+      if (charRole) {
+        const resolvedUniform = resolveUniform(effectiveCharacterRecord, locationRecord, charRole);
+        if (resolvedUniform?.uniform) {
+          const uCtx = buildUniformOutfitContext(resolvedUniform);
+          if (uCtx?.outfit) {
+            uniformOutfitObj = uCtx.outfit;
+            outfitText = uCtx.description || buildOutfitPromptText(uCtx.outfit);
+            outfitSource = `uniform:${resolvedUniform.source}`;
+            outfitPrecedenceReason = `uniform_override:${resolvedUniform.applicability}`;
+          }
+        }
+      }
+    } catch (e) {
+      audit.diagnostics.uniform_resolution_error = e?.message;
+    }
+  }
+
+  // ── WEATHER ADAPTATION LAYER ──────────────────────────────────────────────
+  // Adapt the visible outfit text based on weather — remove outerwear in heat,
+  // allow additional layer removal in extreme heat when socially appropriate.
+  // Uniforms are never adapted (isUniformOutfit check in the adapter).
+  // The outfit object (authority) is never mutated — only the visible text changes.
+  // PROOF POINT 1: weather modifies visible clothing.
+  // PROOF POINT 2: outerwear dynamically worn/removed.
+  // PROOF POINT 5: same adapter used by clothing awareness (Chat) and image gen.
+  let weatherAdaptation = null;
+  if (outfitText && !isSleepContext) {
+    let weatherCache = null;
+    try {
+      if (userRecord?.email && base44) {
+        const settingsList = await base44.asServiceRole?.entities?.UserSettings?.filter(
+          { owner_email: userRecord.email }, null, 1
+        ).catch(() => []) || [];
+        weatherCache = settingsList?.[0]?.daily_weather_cache || null;
+      }
+    } catch { /* non-fatal — weather adaptation is a enhancement, not a requirement */ }
+
+    if (weatherCache) {
+      const isWorkerAtLoc = locationRecord?.worker_character_ids?.includes(effectiveCharacterId) || false;
+      // Use the uniform outfit object if a uniform was resolved, else the rotation outfit
+      const outfitForAdaptation = uniformOutfitObj || resolvedOutfit || effectiveCharacterRecord?.current_outfit || null;
+      weatherAdaptation = adaptOutfitForWeather({
+        outfitText,
+        outfit: outfitForAdaptation,
+        source: outfitSource,
+        category: uniformOutfitObj ? 'uniform' : (resolvedOutfit?.category || null),
+        weatherCache,
+        location: locationRecord,
+        character: effectiveCharacterRecord,
+        isWorker: isWorkerAtLoc,
+      });
+      if (weatherAdaptation?.adapted) {
+        outfitText = weatherAdaptation.adaptedText;
+        outfitPrecedenceReason += ` → weather_adapted:${weatherAdaptation.reason}`;
+      }
+    }
+  }
+
   audit.diagnostics.outfit = {
     source: outfitSource,
     text: outfitText || null,
     precedence_reason: outfitPrecedenceReason,
     sleep_context_detected: isSleepContext,
+    weather_adapted: weatherAdaptation?.adapted || false,
+    weather_adaptation_reason: weatherAdaptation?.reason || null,
+    weather_removed_pieces: weatherAdaptation?.removedPieces || [],
   };
 
   // ── FINAL CONTEXT ────────────────────────────────────────────────────────────

@@ -1381,14 +1381,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         .filter(Boolean);
       const currentLocationForClothing = worldStateLocationMap[character.resolved_current_location_id] || null;
       const specialOccasionForClothing = worldStateReconciliation?.special_occasion_category || null;
+      const weatherCacheForClothing = userSettings?.daily_weather_cache || null;
       const clothingAwarenessContext = buildClothingAwarenessContext(
         character,
         clothingCoPresent,
         currentLocationForClothing,
         character.current_activity || null,
         specialOccasionForClothing,
+        weatherCacheForClothing,
       );
-      const selfClothingContext = buildSelfClothingAwareness(character, specialOccasionForClothing);
+      const selfClothingContext = buildSelfClothingAwareness(character, specialOccasionForClothing, weatherCacheForClothing, currentLocationForClothing);
 
       // ── VICK SERVICIO LIVE DIAGNOSTIC INJECTION ────────────────────────────
       // If vickDiagnosticResults is set, inject the real findings into the prompt

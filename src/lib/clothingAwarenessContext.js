@@ -28,25 +28,118 @@
  */
 
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
+import { adaptOutfitForWeather, buildWeatherAdaptationNote } from './weatherOutfitAdapter.js';
+import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+
+// ── UNIFORM CHECK ─────────────────────────────────────────────────────────────
+// When a character is at a location with a required uniform, the uniform IS
+// what they're wearing — not their closet outfit. The weather adapter will
+// correctly skip adaptation for uniforms (isUniformOutfit check).
+// PROOF POINT 3: uniform requirements override weather.
+function resolveUniformIfApplicable(character, locationRecord) {
+  if (!character || !locationRecord) return null;
+  try {
+    const role = determineCharacterRoleAtLocation(character, locationRecord);
+    if (!role) return null;
+    const resolved = resolveUniform(character, locationRecord, role);
+    if (resolved?.uniform) {
+      return buildUniformOutfitContext(resolved);
+    }
+  } catch { /* non-blocking */ }
+  return null;
+}
 
 // ── OUTFIT TEXT EXTRACTOR ─────────────────────────────────────────────────────
 // Reads from existing character record — does NOT create new authority.
-function getOutfitText(character) {
+// Weather adaptation is applied here so ALL clothing awareness consumers
+// (Chat, Scene, self-awareness) see the same weather-adjusted appearance.
+//
+// PROOF POINT 5: Updated appearance shared consistently — every consumer of
+// clothing awareness gets the weather-adapted text through this single function.
+function getOutfitText(character, weatherCache = null, locationRecord = null, isWorker = false) {
   if (!character) return null;
-  // Try rotation engine first (it is the authority)
+
+  // ── UNIFORM PRIORITY ──────────────────────────────────────────────────────
+  // If the character is at a location with a required uniform, the uniform is
+  // what they're wearing. Uniforms are never weather-adapted (Rule 4).
+  if (locationRecord) {
+    const uniformCtx = resolveUniformIfApplicable(character, locationRecord);
+    if (uniformCtx?.outfit) {
+      const text = uniformCtx.description || buildOutfitPromptText(uniformCtx.outfit);
+      if (text) {
+        return {
+          text,
+          label: 'uniform',
+          category: 'uniform',
+          outfit: uniformCtx.outfit,
+          weatherAdaptation: null, // uniforms are never adapted
+        };
+      }
+    }
+  }
+
+  // ── CLOSET OUTFIT (rotation engine authority) ─────────────────────────────
   try {
     const outfit = resolveCurrentOutfit(character, '', null, null);
     if (outfit) {
-      const text = buildOutfitPromptText(outfit);
-      if (text) return { text, label: outfit.label || null, category: outfit.category || null, outfit };
+      let text = buildOutfitPromptText(outfit);
+      if (text) {
+        // ── WEATHER ADAPTATION LAYER ──────────────────────────────────────
+        // The outfit object stays the authority — only the visible text changes
+        // to reflect which pieces are currently being worn in this weather.
+        // PROOF POINT 1: weather modifies visible clothing here.
+        // PROOF POINT 6: outfit object (authority) is never mutated.
+        let adaptation = null;
+        if (weatherCache) {
+          adaptation = adaptOutfitForWeather({
+            outfitText: text,
+            outfit,
+            source: 'rotation',
+            category: outfit.category || null,
+            weatherCache,
+            location: locationRecord,
+            character,
+            isWorker,
+          });
+          if (adaptation?.adapted) {
+            text = adaptation.adaptedText;
+          }
+        }
+        return {
+          text,
+          label: outfit.label || null,
+          category: outfit.category || null,
+          outfit,
+          weatherAdaptation: adaptation,
+        };
+      }
     }
   } catch { /* non-blocking */ }
   // Fallback: current_outfit stub (only for rotation-off characters)
   const co = character.current_outfit;
   if (co) {
     const parts = [co.top, co.bottom, co.shoes, co.outerwear, co.accessories].filter(Boolean);
-    const text = parts.length > 0 ? parts.join(', ') : (co.full_description || co.label || null);
-    if (text) return { text, label: co.label || null, category: co.category || null, outfit: co };
+    let text = parts.length > 0 ? parts.join(', ') : (co.full_description || co.label || null);
+    if (text) {
+      // Apply weather adaptation to fallback outfit too
+      let adaptation = null;
+      if (weatherCache) {
+        adaptation = adaptOutfitForWeather({
+          outfitText: text,
+          outfit: co,
+          source: 'fallback',
+          category: co.category || null,
+          weatherCache,
+          location: locationRecord,
+          character,
+          isWorker,
+        });
+        if (adaptation?.adapted) {
+          text = adaptation.adaptedText;
+        }
+      }
+      return { text, label: co.label || null, category: co.category || null, outfit: co, weatherAdaptation: adaptation };
+    }
   }
   return null;
 }
@@ -328,6 +421,7 @@ export function buildClothingAwarenessContext(
   currentLocation = null,
   activityText = null,
   contextualSignificance = null,
+  weatherCache = null,
 ) {
   if (!observingCharacter) return '';
 
@@ -335,14 +429,19 @@ export function buildClothingAwarenessContext(
   const locationName = currentLocation?.name || null;
 
   // ── COLLECT VISIBLE OUTFITS ───────────────────────────────────────────────
-  // What the observer can actually see — co-present characters' clothing
+  // What the observer can actually see — co-present characters' clothing.
+  // Weather adaptation is applied inside getOutfitText so the visible text
+  // reflects what is actually being worn right now, not the full outfit.
+  // PROOF POINT 7: characters never react to clothing that has already been removed.
   const visibleOutfits = [];
   for (const other of coPresent) {
     if (!other || other.id === observingCharacter.id) continue;
     const name = other.display_name || other.name;
     if (!name) continue;
 
-    const outfitData = getOutfitText(other);
+    // Determine if this character is a worker at the current location (for uniform check)
+    const isWorkerHere = currentLocation?.worker_character_ids?.includes(other.id) || false;
+    const outfitData = getOutfitText(other, weatherCache, currentLocation, isWorkerHere);
     if (!outfitData?.text) continue;
 
     const contextFit = evaluateContextAppropriateness(
@@ -363,6 +462,7 @@ export function buildClothingAwarenessContext(
       contextFit,
       uniformStatus,
       memorable,
+      weatherAdaptationNote: buildWeatherAdaptationNote(outfitData.weatherAdaptation),
     });
   }
 
@@ -388,6 +488,11 @@ export function buildClothingAwarenessContext(
     lines.push(`━━ VISIBLE: ${v.name}'s clothing ━━`);
     lines.push(`What they are wearing: ${v.outfitText}`);
     if (v.outfitLabel) lines.push(`Outfit name (internal reference): ${v.outfitLabel}`);
+
+    // Weather adaptation note — what they've removed due to weather
+    if (v.weatherAdaptationNote) {
+      lines.push(`Weather adaptation: ${v.weatherAdaptationNote}`);
+    }
 
     // Context appropriateness
     if (v.contextFit === 'appropriate') {
@@ -463,15 +568,21 @@ export function buildClothingAwarenessContext(
  * @param {string|null} contextualSignificance - 'special_occasion' | null
  * @returns {string}
  */
-export function buildSelfClothingAwareness(character, contextualSignificance = null) {
+export function buildSelfClothingAwareness(character, contextualSignificance = null, weatherCache = null, currentLocation = null) {
   if (!character) return '';
 
-  const outfitData = getOutfitText(character);
+  // Determine if character is a worker at current location (for uniform check)
+  const isWorkerHere = currentLocation?.worker_character_ids?.includes(character.id) || false;
+  const outfitData = getOutfitText(character, weatherCache, currentLocation, isWorkerHere);
   if (!outfitData?.text) return '';
 
   const contextLabel = contextualSignificance === 'special_occasion'
     ? ' (special occasion attire)'
     : '';
 
-  return `\n\nYOUR CURRENT OUTFIT: You are currently wearing: ${outfitData.text}${contextLabel}. Reference this if discussing your appearance or when sending images of yourself.`;
+  // Include weather adaptation note so the character knows what they've removed
+  const weatherNote = buildWeatherAdaptationNote(outfitData.weatherAdaptation);
+  const weatherSuffix = weatherNote ? ` ${weatherNote}` : '';
+
+  return `\n\nYOUR CURRENT OUTFIT: You are currently wearing: ${outfitData.text}${contextLabel}.${weatherSuffix} Reference this if discussing your appearance or when sending images of yourself.`;
 }

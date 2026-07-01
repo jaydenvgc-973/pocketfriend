@@ -17,6 +17,7 @@
 import { resolveTargetCategory, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { buildJailUniformOutfitContext } from './jailUniformResolver.js';
 import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
 
 /**
  * Build a context object from a character's current app state.
@@ -307,48 +308,70 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
  * @param {object} character - Character record (for sleep/location state)
  * @returns {string|null} Narrative hint or null if not relevant
  */
-export function buildOutfitNarrativeHint(resolvedOutfit, character) {
+export function buildOutfitNarrativeHint(resolvedOutfit, character, weatherCache = null, locationRecord = null) {
   if (!resolvedOutfit?.outfit && !resolvedOutfit?.category) return null;
   if (!resolvedOutfit.description && !resolvedOutfit.category) return null;
 
-  const { category, reason, description, source } = resolvedOutfit;
+  const { category, reason, source } = resolvedOutfit;
+
+  // ── WEATHER ADAPTATION ──────────────────────────────────────────────────
+  // Apply weather adaptation to the description so narrative hints reflect
+  // what the character is actually wearing right now.
+  // Uniforms are never adapted (adapter checks isUniformOutfit).
+  let adaptedDescription = resolvedOutfit.description;
+  if (weatherCache && resolvedOutfit.description && resolvedOutfit.outfit) {
+    const isWorkerAtLoc = locationRecord?.worker_character_ids?.includes(character?.id) || false;
+    const adaptation = adaptOutfitForWeather({
+      outfitText: resolvedOutfit.description,
+      outfit: resolvedOutfit.outfit,
+      source: resolvedOutfit.source || source,
+      category,
+      weatherCache,
+      location: locationRecord,
+      character,
+      isWorker: isWorkerAtLoc,
+    });
+    if (adaptation?.adapted) {
+      adaptedDescription = adaptation.adaptedText;
+    }
+  }
 
   // Uniform — required by role/job/location — highest explicit priority in hint text
   if (source?.startsWith('uniform:') || category === 'uniform') {
-    if (description) return `wearing required uniform: ${description}`;
+    if (adaptedDescription) return `wearing required uniform: ${adaptedDescription}`;
     return 'in their required uniform for this role';
   }
 
   // Asleep — stay grounded in sleep, not clothing
   if (reason === 'sleep_state') {
-    if (description) return `settled in for sleep in ${description}`;
+    if (adaptedDescription) return `settled in for sleep in ${adaptedDescription}`;
     return 'already in sleepwear for the night';
   }
 
   // Pre-sleep — winding down
   if (reason === 'pre_sleep_window') {
-    if (description) return `changed into ${description} for the night`;
+    if (adaptedDescription) return `changed into ${adaptedDescription} for the night`;
     return 'changed into sleepwear as the evening winds down';
   }
 
   // Work attire — reinforce professional context
-  if (category === 'work' && description) {
-    return `dressed for work in ${description}`;
+  if (category === 'work' && adaptedDescription) {
+    return `dressed for work in ${adaptedDescription}`;
   }
 
   // Lounge at home — softer, relaxed
-  if (category === 'lounge' && description) {
-    return `relaxed at home in ${description}`;
+  if (category === 'lounge' && adaptedDescription) {
+    return `relaxed at home in ${adaptedDescription}`;
   }
 
   // Swimwear — context-locked
-  if (category === 'swimwear' && description) {
-    return `wearing ${description}`;
+  if (category === 'swimwear' && adaptedDescription) {
+    return `wearing ${adaptedDescription}`;
   }
 
   // Daily casual — only mention if description exists, keep it light
-  if (category === 'daily_casual' && description) {
-    return `dressed casually in ${description}`;
+  if (category === 'daily_casual' && adaptedDescription) {
+    return `dressed casually in ${adaptedDescription}`;
   }
 
   return null;
