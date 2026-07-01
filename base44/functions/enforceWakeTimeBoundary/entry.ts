@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
           });
           console.log(`[enforceWakeTimeBoundary] 6H_GUARD: ${char.name} slept ${elapsedSleepHours.toFixed(2)}h < 6h — not waking despite past wake_up_time`);
           try {
-            base44.asServiceRole.entities.SleepTransition.create({
+            await base44.asServiceRole.entities.SleepTransition.create({
               character_id: char.id, character_name: char.name, owner_email: char.owner_email,
               transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
               authority: 'enforceWakeTimeBoundary',
@@ -105,8 +105,10 @@ Deno.serve(async (req) => {
               timestamp: nowETIso, state_start_ref: char.last_sleep_start,
               elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
               verified_higher_priority_interrupt: false,
-            }).catch(() => {});
-          } catch {}
+            });
+          } catch (guardLogError) {
+            console.error(`[enforceWakeTimeBoundary] 6h guard SleepTransition audit log FAILED for ${char.name}: ${guardLogError.message}`);
+          }
           continue;
         }
       }

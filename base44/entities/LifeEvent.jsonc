@@ -87,6 +87,14 @@
       ],
       "description": "What caused this event"
     },
+    "evidence_source": {
+      "type": "string",
+      "enum": [
+        "verified_state_history",
+        "conversation_derived"
+      ],
+      "description": "verified_state_history = backed by a validated SleepTransition or LocationHistory proof record (verifiedTransitionId was looked up and confirmed). conversation_derived = triggered by user_message or character_decision; the conversation itself is the evidence, not a state-history proof record. This field prevents conversation-derived events from masquerading as verified state history."
+    },
     "conversation_id": {
       "type": "string",
       "description": "Source conversation if applicable"

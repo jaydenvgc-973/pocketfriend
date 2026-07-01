@@ -214,6 +214,15 @@ Deno.serve(async (req) => {
       skipped_reasons: [],
     };
 
+    // ── EVIDENCE SOURCE LABELING ──────────────────────────────────────────
+    // Every LifeEvent is stamped with its evidence source so conversation-derived
+    // events can never masquerade as verified state history.
+    //   verified_state_history = a STATE_HISTORY_EVENT_TYPE that passed the proof
+    //     gate (verifiedTransitionId was looked up and confirmed).
+    //   conversation_derived = triggered by user_message/character_decision;
+    //     the conversation itself is the evidence, not a state-history proof record.
+    const evidenceSource = requiresProof ? 'verified_state_history' : 'conversation_derived';
+
     // ── 1. Persist LifeEvent ──────────────────────────────────────────
     const lifeEvent = await base44.asServiceRole.entities.LifeEvent.create({
       character_id: characterId,
@@ -225,6 +234,7 @@ Deno.serve(async (req) => {
       description,
       emotional_impact: emotionalImpact,
       triggered_by: triggeredBy,
+      evidence_source: evidenceSource,
       conversation_id: conversationId,
       context_tags: verifiedTransitionId ? [...contextTags, `verified_transition:${verifiedTransitionId}`] : contextTags,
       systems_updated: [],

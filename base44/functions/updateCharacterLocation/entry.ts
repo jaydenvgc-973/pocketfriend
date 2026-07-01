@@ -166,19 +166,67 @@ Deno.serve(async (req) => {
         else if (sourceReason === 'manual_update') travelSrc = 'manual';
       }
 
-      base44.functions.invoke('recordLocationHistoryEvent', {
-        characterId: matched.id,
-        characterName: matched.name,
-        ownerEmail: matched.owner_email,
-        locationId: matchedLoc.id,
-        locationName: matchedLoc.name,
-        locationCategory: locCategory,
-        eventType,
-        travelSource: travelSrc,
-        travelReason: sourceReason || null,
-        arrivalTime: now,
-        previousLocationId: previousLocationId || null,
-      }).catch(() => {}); // non-blocking
+      // ── CHECKED PROOF — no fire-and-forget. If this fails, revert the Character write.
+      // COMPENSATING ROLLBACK (not atomic): see concurrency note in writeVerifiedLocationHistory.
+      try {
+        const proofResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
+          character_id: matched.id,
+          owner_email: matched.owner_email,
+          location_id: matchedLoc.id,
+          event_type: eventType,
+          travel_source: travelSrc,
+          travel_reason: sourceReason || null,
+        });
+        if (!proofResult?.data?.success) {
+          let revertError = null;
+          try {
+            await base44.entities.Character.update(matched.id, {
+              resolved_current_location_id: previousLocationId,
+              resolved_current_location_name: previousLocationName,
+              resolved_location_type: matched.resolved_location_type,
+              resolved_presence_status: matched.resolved_presence_status,
+              resolved_source_reason: matched.resolved_source_reason,
+              resolved_last_updated_at: matched.resolved_last_updated_at,
+              recent_location_history: matched.recent_location_history,
+              travel_status: matched.travel_status,
+              travel_destination_location_id: matched.travel_destination_location_id,
+              traveling_to_location_id: matched.traveling_to_location_id,
+              traveling_to_location_name: matched.traveling_to_location_name,
+              presence_stay_lock: matched.presence_stay_lock,
+            });
+          } catch (revertErr) { revertError = revertErr.message; }
+          return Response.json({
+            success: false,
+            error: 'unverified_state_write',
+            reason: `LocationHistory proof failed — Character state reverted. proof_error=${proofResult?.data?.error || 'unknown'}`,
+            revert_error: revertError,
+          }, { status: 500 });
+        }
+      } catch (proofError) {
+        let revertError = null;
+        try {
+          await base44.entities.Character.update(matched.id, {
+            resolved_current_location_id: previousLocationId,
+            resolved_current_location_name: previousLocationName,
+            resolved_location_type: matched.resolved_location_type,
+            resolved_presence_status: matched.resolved_presence_status,
+            resolved_source_reason: matched.resolved_source_reason,
+            resolved_last_updated_at: matched.resolved_last_updated_at,
+            recent_location_history: matched.recent_location_history,
+            travel_status: matched.travel_status,
+            travel_destination_location_id: matched.travel_destination_location_id,
+            traveling_to_location_id: matched.traveling_to_location_id,
+            traveling_to_location_name: matched.traveling_to_location_name,
+            presence_stay_lock: matched.presence_stay_lock,
+          });
+        } catch (revertErr) { revertError = revertErr.message; }
+        return Response.json({
+          success: false,
+          error: 'unverified_state_write',
+          reason: `LocationHistory proof call threw — Character state reverted. proof_error=${proofError.message}`,
+          revert_error: revertError,
+        }, { status: 500 });
+      }
     }
 
     return Response.json({

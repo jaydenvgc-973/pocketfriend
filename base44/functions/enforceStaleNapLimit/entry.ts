@@ -209,15 +209,19 @@ Deno.serve(async (req) => {
             const elapsedSleepHours = (nowUtc.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000;
             if (elapsedSleepHours < 6) {
               console.log(`[enforceStaleNapLimit] 6H_GUARD: ${char.name} slept ${elapsedSleepHours.toFixed(2)}h < 6h — not waking despite past wake_up_time`);
-              base44.asServiceRole.entities.SleepTransition.create({
-                character_id: char.id, character_name: char.name, owner_email: char.owner_email,
-                transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
-                authority: 'enforceWakeTimeBoundary',
-                reason: `Wake-time boundary reached after ${elapsedSleepHours.toFixed(2)}h sleep — wake blocked by 6h minimum guard. No verified higher-priority interrupt.`,
-                timestamp: nowEtIso, state_start_ref: char.last_sleep_start,
-                elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
-                verified_higher_priority_interrupt: false,
-              }).catch(() => {});
+              try {
+                await base44.asServiceRole.entities.SleepTransition.create({
+                  character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+                  transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
+                  authority: 'enforceWakeTimeBoundary',
+                  reason: `Wake-time boundary reached after ${elapsedSleepHours.toFixed(2)}h sleep — wake blocked by 6h minimum guard. No verified higher-priority interrupt.`,
+                  timestamp: nowEtIso, state_start_ref: char.last_sleep_start,
+                  elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
+                  verified_higher_priority_interrupt: false,
+                });
+              } catch (guardLogError) {
+                console.error(`[enforceStaleNapLimit] 6h guard SleepTransition audit log FAILED for ${char.name}: ${guardLogError.message}`);
+              }
               continue; // skip — do not wake
             }
           }
