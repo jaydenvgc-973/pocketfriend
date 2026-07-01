@@ -1515,6 +1515,9 @@ Deno.serve(async (req) => {
         // Transition History: no LifeEvent/CharacterMemory may exist without a
         // corresponding SleepTransition record proving the state change occurred.
         let sleepTransitionsToRecord = [];
+        // Consequences (LifeEvent/ScheduledEvent) deferred until the matching
+        // SleepTransition proof record has been confirmed written — never before.
+        let pendingConsequences = [];
 
         // ── WORLD SERVICE GUARD ──────────────────────────────────────────
         // World service characters (Vick Servicio, etc.) are not simulated
@@ -1813,15 +1816,27 @@ Deno.serve(async (req) => {
                 last_need_simulated_at: nowIso,
               };
               await base44.entities.Character.update(char.id, wakePayload);
-              await base44.entities.SleepTransition.create({
-                character_id: char.id, character_name: charName, owner_email: ownerEmail,
-                transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home',
-                authority: 'sleep_cap_8h',
-                reason: `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`,
-                timestamp: nowIso,
-                state_start_ref: char.last_sleep_start || null,
-                elapsed_hours: Math.round(sleepDurationHours * 100) / 100,
-              }).catch(() => {});
+              try {
+                await base44.entities.SleepTransition.create({
+                  character_id: char.id, character_name: charName, owner_email: ownerEmail,
+                  transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home',
+                  authority: 'sleep_cap_8h',
+                  reason: `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`,
+                  timestamp: nowIso,
+                  state_start_ref: char.last_sleep_start || null,
+                  elapsed_hours: Math.round(sleepDurationHours * 100) / 100,
+                });
+              } catch (transitionError) {
+                // Silent Proof Record Failure fix: Character state changed but the
+                // proof record failed — never report this as a verified wake event.
+                results.push({
+                  character: charName, context,
+                  event: 'unverified_state_write',
+                  reason: 'sleep_end SleepTransition write failed — Character state changed without proof record',
+                  error: transitionError.message,
+                });
+                continue;
+              }
               results.push({
                 character: charName, context,
                 event: 'hard_8h_sleep_wake',
@@ -1880,15 +1895,25 @@ Deno.serve(async (req) => {
                 last_need_simulated_at: nowIso,
               };
               await base44.entities.Character.update(char.id, passOutWakePayload);
-              await base44.entities.SleepTransition.create({
-                character_id: char.id, character_name: charName, owner_email: ownerEmail,
-                transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home',
-                authority: 'pass_out_cap_12h',
-                reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`,
-                timestamp: nowIso,
-                state_start_ref: passOutStart || null,
-                elapsed_hours: Math.round(passOutDurationHours * 100) / 100,
-              }).catch(() => {});
+              try {
+                await base44.entities.SleepTransition.create({
+                  character_id: char.id, character_name: charName, owner_email: ownerEmail,
+                  transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home',
+                  authority: 'pass_out_cap_12h',
+                  reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`,
+                  timestamp: nowIso,
+                  state_start_ref: passOutStart || null,
+                  elapsed_hours: Math.round(passOutDurationHours * 100) / 100,
+                });
+              } catch (transitionError) {
+                results.push({
+                  character: charName, context,
+                  event: 'unverified_state_write',
+                  reason: 'pass_out_end SleepTransition write failed — Character state changed without proof record',
+                  error: transitionError.message,
+                });
+                continue;
+              }
               results.push({
                 character: charName, context,
                 event: 'hard_12h_passout_wake',
@@ -1938,15 +1963,25 @@ Deno.serve(async (req) => {
                 last_need_simulated_at: nowIso,
               };
               await base44.entities.Character.update(char.id, napWakePayload);
-              await base44.entities.SleepTransition.create({
-                character_id: char.id, character_name: charName, owner_email: ownerEmail,
-                transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
-                authority: 'nap_cap_3h',
-                reason: `Nap completed 3-hour cap. state_start_ref=${char.last_nap_time}.`,
-                timestamp: nowIso,
-                state_start_ref: char.last_nap_time || null,
-                elapsed_hours: Math.round(napDurationHours * 100) / 100,
-              }).catch(() => {});
+              try {
+                await base44.entities.SleepTransition.create({
+                  character_id: char.id, character_name: charName, owner_email: ownerEmail,
+                  transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+                  authority: 'nap_cap_3h',
+                  reason: `Nap completed 3-hour cap. state_start_ref=${char.last_nap_time}.`,
+                  timestamp: nowIso,
+                  state_start_ref: char.last_nap_time || null,
+                  elapsed_hours: Math.round(napDurationHours * 100) / 100,
+                });
+              } catch (transitionError) {
+                results.push({
+                  character: charName, context,
+                  event: 'unverified_state_write',
+                  reason: 'nap_end SleepTransition write failed — Character state changed without proof record',
+                  error: transitionError.message,
+                });
+                continue;
+              }
               results.push({
                 character: charName, context,
                 event: 'hard_3h_nap_wake',
@@ -2221,33 +2256,16 @@ Deno.serve(async (req) => {
             resolved_presence_status: 'hospitalized',
             current_activity: 'hospitalized — health collapsed',
           });
-
-          // Create a ScheduledEvent for the hospital recovery
-          await base44.entities.ScheduledEvent.create({
-            character_id: char.id,
-            character_name: charName,
-            event_type: 'medical_emergency',
-            title: 'Emergency hospitalization',
-            description: `${charName} was hospitalized due to critical health collapse (health: ${Math.round(newNeeds.health)})`,
-            scheduled_time: nowIso,
-            status: 'active',
-            owner_email: ownerEmail,
-          }).catch(() => {});
-
-          // Log the ER escalation
-          await base44.entities.LifeEvent.create({
-            character_id: char.id,
-            character_name: charName,
-            event_type: 'medical_event',
-            valence: 'negative',
-            severity: 'major',
-            title: 'Emergency hospitalization',
-            description: `${charName} was rushed to the hospital — health collapsed to ${Math.round(newNeeds.health)}.`,
-            emotional_impact: 'critical medical event',
-            triggered_by: 'life_simulation',
-            timestamp: nowIso,
-            context_tags: ['er_escalation', 'hospitalized'],
-          }).catch(() => {});
+          sleepTransitionsToRecord.push({
+            transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown',
+            to_status: 'hospitalized', authority: 'energy_medical',
+            reason: `Health reached ${Math.round(newNeeds.health)} (threshold ${T.HEALTH_ER}).`,
+            verified_higher_priority_interrupt: true,
+            interrupt_reason: 'health_critical_15',
+          });
+          // ScheduledEvent + LifeEvent deferred to pendingConsequences — created ONLY
+          // after the hospitalized_start SleepTransition proof record is confirmed.
+          pendingConsequences.push({ type: 'er_escalation', healthValue: Math.round(newNeeds.health) });
         }
 
         // ── RC4: COMPOUND CRISIS — FORCED STABILIZATION ───────────────────
@@ -2270,32 +2288,9 @@ Deno.serve(async (req) => {
             to_status: 'passed_out', authority: 'compound_crisis',
             reason: `Compound crisis: ${criticalNeeds} needs below critical threshold.`,
           });
-
-          // Create recovery ScheduledEvent
-          await base44.entities.ScheduledEvent.create({
-            character_id: char.id,
-            character_name: charName,
-            event_type: 'compound_crisis_recovery',
-            title: 'Compound crisis — forced rest',
-            description: `${charName} was put to rest — ${criticalNeeds} needs below critical threshold.`,
-            scheduled_time: nowIso,
-            status: 'active',
-            owner_email: ownerEmail,
-          }).catch(() => {});
-
-          await base44.entities.LifeEvent.create({
-            character_id: char.id,
-            character_name: charName,
-            event_type: 'medical_event',
-            valence: 'negative',
-            severity: 'major',
-            title: 'Compound crisis — forced rest',
-            description: `${charName}'s body gave out — ${criticalNeeds} needs were critical. Forced to rest.`,
-            emotional_impact: 'physical collapse',
-            triggered_by: 'life_simulation',
-            timestamp: nowIso,
-            context_tags: ['compound_crisis'],
-          }).catch(() => {});
+          // ScheduledEvent + LifeEvent deferred to pendingConsequences — created ONLY
+          // after the pass_out_start SleepTransition proof record is confirmed.
+          pendingConsequences.push({ type: 'compound_crisis', criticalNeeds });
         }
 
         // ── PASS-OUT STAY LOCK RELEASE ────────────────────────────────────
@@ -2356,11 +2351,12 @@ Deno.serve(async (req) => {
         // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
         await base44.entities.Character.update(char.id, updatePayload);
 
-        // ── AUTHORITATIVE TRANSITION RECORDS ──────────────────────────────
-        // Written only after the Character write above succeeded — this is the
-        // proof record required by Transition Verification Failure / Missing
-        // Authoritative State Transition History / Missing Real-Time Event
-        // Recording. Any transition queued this tick is now a confirmed event.
+        // ── AUTHORITATIVE TRANSITION RECORDS (hard gate — no silent catch) ──
+        // Fixes Silent Proof Record Failure. If ANY SleepTransition write fails,
+        // this throws, is caught by the per-character catch below, and NO
+        // pendingConsequences (LifeEvent/ScheduledEvent) are created this tick.
+        // The Character state already changed, but no history, memory, or
+        // consequence may be reported as verified without this proof record.
         for (const t of sleepTransitionsToRecord) {
           await base44.entities.SleepTransition.create({
             character_id: char.id,
@@ -2368,7 +2364,42 @@ Deno.serve(async (req) => {
             owner_email: ownerEmail,
             timestamp: nowIso,
             ...t,
-          }).catch(() => {});
+          });
+        }
+
+        // ── CONSEQUENCES — only reached if every proof record above succeeded ──
+        for (const c of pendingConsequences) {
+          if (c.type === 'er_escalation') {
+            await base44.entities.ScheduledEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_emergency', title: 'Emergency hospitalization',
+              description: `${charName} was hospitalized due to critical health collapse (health: ${c.healthValue}) — verified by hospitalized_start SleepTransition.`,
+              scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
+            }).catch(() => {});
+            await base44.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'negative', severity: 'major',
+              title: 'Emergency hospitalization',
+              description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`,
+              emotional_impact: 'critical medical event', triggered_by: 'life_simulation',
+              timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'],
+            }).catch(() => {});
+          } else if (c.type === 'compound_crisis') {
+            await base44.entities.ScheduledEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest',
+              description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold — verified by pass_out_start SleepTransition.`,
+              scheduled_time: nowIso, status: 'active', owner_email: ownerEmail,
+            }).catch(() => {});
+            await base44.entities.LifeEvent.create({
+              character_id: char.id, character_name: charName,
+              event_type: 'medical_event', valence: 'negative', severity: 'major',
+              title: 'Compound crisis — forced rest',
+              description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical. Forced to rest.`,
+              emotional_impact: 'physical collapse', triggered_by: 'life_simulation',
+              timestamp: nowIso, context_tags: ['compound_crisis'],
+            }).catch(() => {});
+          }
         }
 
         // ── CRITICAL ESCALATION LOGGING ────────────────────────────────────
