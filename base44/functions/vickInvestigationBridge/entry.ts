@@ -131,30 +131,12 @@ async function collectFrontendEvidence(base44, characterId, ownerEmail) {
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const payload = await req.json().catch(() => ({}));
-
-    // Support scheduled invocation (no user session).
-    // When _scheduledMode is true, the caller (assignVickDaytimeDiagnostic)
-    // provides ownerEmail and vickId directly — no auth.me() required.
-    // This opens Vick's EXISTING diagnostic process to scheduled triggers
-    // without creating a duplicate diagnostic system. Frontend calls remain
-    // unchanged (they don't pass _scheduledMode).
-    const scheduledMode = payload._scheduledMode === true;
-    const scheduledOwnerEmail = payload._scheduledOwnerEmail || null;
-    const scheduledVickId = payload._scheduledVickId || null;
-    const scheduledVickName = payload._scheduledVickName || null;
-
-    let ownerEmail = null;
-    if (scheduledMode && scheduledOwnerEmail) {
-      ownerEmail = scheduledOwnerEmail;
-    } else {
-      const user = await base44.auth.me();
-      if (!user) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-      ownerEmail = user.email;
+    const user = await base44.auth.me();
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const payload = await req.json().catch(() => ({}));
     const conversationId = payload.conversationId || payload.conversation_id;
     let scope = payload.scope || payload.investigationScope || 'account_overview';
     const dryRun = payload.dryRun || payload.dry_run || false;
@@ -162,6 +144,8 @@ Deno.serve(async (req) => {
     if (!conversationId && !dryRun) {
       return Response.json({ error: 'conversation_id is required' }, { status: 400 });
     }
+
+    const ownerEmail = user.email;
     const nowIso = new Date().toISOString();
     const nowET = new Date().toLocaleString('en-US', {
       timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
@@ -172,15 +156,6 @@ Deno.serve(async (req) => {
     // then falls back to service-role queries with explicit owner_email.
     let vick = null;
     let vickLookupPath = '';
-
-    // Scheduled mode: use the provided Vick ID directly. The caller already
-    // resolved the correct account's Vick — skip all lookup paths to avoid
-    // cross-account contamination from service-role queries without owner_email.
-    if (scheduledMode && scheduledVickId) {
-      vick = { id: scheduledVickId, name: scheduledVickName || 'Vick Servicio' };
-      vickLookupPath = 'scheduled_direct';
-      console.log(`[vickInvestigationBridge] Scheduled mode: using provided Vick id=${vick.id} for ${ownerEmail}`);
-    }
 
     // Path 1a: user-scoped is_world_service (RLS scopes to owner_email automatically)
     if (!vick) {
