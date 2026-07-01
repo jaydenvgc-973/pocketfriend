@@ -44,6 +44,8 @@ import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolv
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
+import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
+import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -1061,6 +1063,25 @@ export default function Scene() {
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
+    // ── WORLD PHONE USER INTENT DETECTION ──────────────────────────────────
+    // Rule 2: When the user instructs a character to contact another individual character,
+    // the instruction must execute through World Phone. In a Scene context, the sender is
+    // the privateTarget (pull-aside) or the single eligible known character.
+    const wpIntent = detectWorldPhoneIntent(text);
+    if (wpIntent && wpIntent.recipient && (privateTarget || (broughtCharacters.filter(c => !c.isNpc).length === 1))) {
+      const wpSender = privateTarget || broughtCharacters.find(c => !c.isNpc);
+      if (wpSender) {
+        base44.functions.invoke('sendWorldPhoneMessage', {
+          sender_character_id: wpSender.id,
+          recipient_identifier: wpIntent.recipient,
+          requested_message: wpIntent.message,
+          user_instruction_context: wpIntent.message ? null : text,
+          source: 'user_instruction',
+          owner_email: currentUser?.email,
+        }).catch(err => console.warn('[Scene] World Phone user intent send failed:', err?.message));
+      }
+    }
+
     // Image trigger: product card spawns ONLY when actionCategory AND explicitPrice > 0 are both present.
     // Free actions pass actionCategory=null → no product card, no purchase UI.
     checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource);
@@ -1175,13 +1196,36 @@ Return JSON:
         if (userNames.includes(respNameLower)) continue; // BLOCKED — AI tried to speak as the user
 
         const char = sceneCharacters.find((c) => c.name === resp.character_name);
+
+        // ── WORLD PHONE CLAIM ENFORCEMENT (Rules 3 & 5) ──────────────────────
+        // A character in a scene may claim "I texted him" or "I'll call her".
+        // These claims must produce real World Phone messages or be stripped.
+        // handleCharacterWorldPhoneAction: detects past-tense claims (back-fills WP
+        // or strips false claim) and proactive outreach (sends WP or records failure).
+        let cleanedContent = filterDashes(resp.content);
+        if (char) {
+          try {
+            const wpResult = await handleCharacterWorldPhoneAction({
+              responseText: cleanedContent,
+              character: char,
+              characterId: char.id,
+              conversationId: null,
+              ownerEmail: currentUser?.email,
+              recentMessages: messages.slice(-15),
+            });
+            cleanedContent = wpResult.responseText || cleanedContent;
+          } catch (wpErr) {
+            console.warn('[Scene] World Phone action handler failed:', wpErr?.message);
+          }
+        }
+
         const msg = {
           id: Date.now().toString() + resp.character_name,
           sender: "character",
           senderName: resp.character_name,
           characterId: char?.id,
           avatarUrl: char?.avatar_url,
-          content: filterDashes(resp.content),
+          content: cleanedContent,
           timestamp: new Date().toISOString()
         };
         setMessages((prev) => [...prev, msg]);
@@ -1189,7 +1233,7 @@ Return JSON:
         if (char) {
           const realBrought = broughtCharacters.filter((c) => !c.isNpc && c.id !== char.id);
           base44.functions.invoke("extractMemoriesFromTurn", {
-            characterId: char.id, userMessage: text, characterReply: resp.content,
+            characterId: char.id, userMessage: text, characterReply: cleanedContent,
             playingAsCharacterId: realBrought[0]?.id || null,
             witnessCharacterIds: realBrought.slice(1).map((c) => c.id)
           }).catch(() => {});
