@@ -1,56 +1,34 @@
+/**
+ * commitCharacterTravelToUser — TRANSIT BEHAVIOR REMOVED, PROMISE DETECTION PRESERVED
+ *
+ * Previously: detected travel promise in chat, then calculated travel time,
+ * wrote 'traveling' presence state, created a delayed ScheduledEvent for ETA arrival.
+ * That transit behavior is forbidden.
+ *
+ * Now: detects the travel promise (same regex patterns preserved), then schedules
+ * a one-time instant teleport via the pending relocation fields — the same
+ * mechanism used by confirmMovementCommitment. processScheduledRelocations
+ * executes the teleport instantly at the scheduled time.
+ *
+ * No travel time calculation. No 'traveling' presence state. No ETA.
+ * No in-transit state. No progress. Just: promise detected → schedule teleport →
+ * character appears at destination at the promised time.
+ */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-/**
- * commitCharacterTravelToUser
- *
- * Detects when a character has made a travel PROMISE to the user in chat
- * ("I'm on my way", "I'll be there", "I'm coming now", etc.) and immediately
- * commits a real, durable travel state pointing to the user's current location.
- *
- * This is SEPARATE from autonomous_travel_enabled — that setting governs
- * scheduled/background roaming. This function handles CONVERSATION-TRIGGERED
- * travel commitments that are user-facing promises, not background behavior.
- *
- * RULES:
- *   - Only fires when the character's response contains a clear travel promise.
- *   - Destination = user's current location (from UserSettings).
- *   - If user has no current location, falls back to their home anchor character's home.
- *   - Writes travel state to Character record (all UI surfaces read from this).
- *   - Creates a ScheduledEvent for arrival after a realistic delay (10–30 min).
- *   - The presence_stay_lock is NOT set — this is character-chosen movement.
- *   - Does NOT override an existing travel commitment to the same destination.
- */
-
-// Travel promise phrases — must be from the character's own dialogue (not user's)
 const TRAVEL_PROMISE_PATTERNS = [
   /\b(i'm|i am)\s+(on\s+my\s+way|coming|heading\s+(over|there|to\s+you)|coming\s+(over|now|right\s+now|through))\b/i,
   /\b(i'll|i\s+will)\s+(be\s+(there|over|on\s+my\s+way)|come\s+over|come\s+by|head\s+over|stop\s+by)\b/i,
-  /\b(i'm|i\s+am)\s+(getting\s+in\s+the\s+car|grabbing\s+my\s+keys|leaving\s+now|headed\s+your\s+way|on\s+my\s+way\s+to\s+you)\b/i,
+  /\b(i'm|i am)\s+(getting\s+in\s+the\s+car|grabbing\s+my\s+keys|leaving\s+now|headed\s+your\s+way|on\s+my\s+way\s+to\s+you)\b/i,
   /\bmeet\s+(you|me)\s+there\b/i,
   /\b(be\s+there|coming\s+to\s+you|on\s+my\s+way\s+to\s+you)\b/i,
-  /\b(i'm|i\s+am)\s+(?:already\s+)?(?:in\s+the\s+car|driving\s+over|walking\s+over|heading\s+your\s+way)\b/i,
+  /\b(i'm|i am)\s+(?:already\s+)?(?:in\s+the\s+car|driving\s+over|walking\s+over|heading\s+your\s+way)\b/i,
   /\bgive\s+me\s+\d+\s+(?:min(?:ute)?s?|hours?)\b.*\b(?:there|over|heading|coming)\b/i,
 ];
 
 function detectTravelPromise(text) {
   if (!text) return false;
   return TRAVEL_PROMISE_PATTERNS.some(p => p.test(text));
-}
-
-// Realistic travel delay based on approximate distance / time of day
-function estimateTravelMinutes(character) {
-  // Base: 15 minutes. Adjust for context clues in current_activity or presence.
-  const activity = (character.current_activity || '').toLowerCase();
-  const presence = character.resolved_presence_status || '';
-
-  // If they're already home and it's local, 10–15 min
-  if (presence === 'home') return 10 + Math.floor(Math.random() * 5);
-  // If they're at work, more likely 20–30 min
-  if (presence === 'at_work') return 20 + Math.floor(Math.random() * 10);
-  // If traveling already, 5–10 min (already en route)
-  if (presence === 'traveling') return 5 + Math.floor(Math.random() * 5);
-  // Default: 15–20 min
-  return 15 + Math.floor(Math.random() * 5);
 }
 
 Deno.serve(async (req) => {
@@ -64,14 +42,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId and characterResponse required' }, { status: 400 });
     }
 
-    // ── STEP 1: Detect travel promise in character's response ─────────────────
+    // ── STEP 1: Detect travel promise (PRESERVED) ──────────────────────────
     if (!detectTravelPromise(characterResponse)) {
       return Response.json({ success: true, committed: false, reason: 'no_travel_promise_detected' });
     }
 
     console.log(`[commitCharacterTravelToUser] Travel promise detected for char=${characterId}`);
 
-    // ── STEP 2: Load character + user settings in parallel ────────────────────
+    // ── STEP 2: Load character + user settings ──────────────────────────────
     const [charArr, settingsArr] = await Promise.all([
       base44.entities.Character.filter({ id: characterId }, null, 1),
       base44.entities.UserSettings.filter({ owner_email: user.email }, null, 1),
@@ -82,88 +60,79 @@ Deno.serve(async (req) => {
 
     const userSettings = settingsArr?.[0] || {};
 
-    // ── STEP 3: Resolve destination = user's current location ─────────────────
-    // CRITICAL: User location must be REAL, not guessed.
-    // If user has no current location, the character should ask where the user is.
-    // Do NOT fake a destination using anchor character homes — that creates false arrivals.
+    // ── STEP 3: Resolve destination = user's current location ───────────────
     let destLocationId = userSettings.user_current_location_id || null;
     let destLocationName = userSettings.user_current_location_name || null;
 
-    // If user has no current location, fail visibly and let character respond
     if (!destLocationId || !destLocationName) {
-      console.warn(`[commitCharacterTravelToUser] Cannot commit travel: user location unknown. Character "${character.name}" promised to come but user is not at a known location. Character should ask where the user is.`);
       return Response.json({
         success: false,
         error: 'Cannot resolve travel destination',
         reason: 'user_location_unknown',
-        details: 'User must be present at a location. Character should ask where you are.',
         recoveryAction: 'character_asks_location',
       }, { status: 400 });
     }
 
-    // ── STEP 4: Guard — don't re-commit if already traveling to the same place ─
+    // ── STEP 4: Guard — don't re-commit if already pending to same dest ─────
     if (
-      character.travel_status === 'traveling_to_destination' &&
-      character.traveling_to_location_id === destLocationId
+      character.next_location_id === destLocationId &&
+      character.pending_scheduled_relocation_at
     ) {
-      console.log(`[commitCharacterTravelToUser] "${character.name}" already traveling to ${destLocationName} — skipping duplicate commit`);
-      return Response.json({ success: true, committed: false, reason: 'already_traveling_to_destination' });
+      return Response.json({ success: true, committed: false, reason: 'already_pending_teleport_to_destination' });
     }
 
-    // ── STEP 5: Write durable travel state ───────────────────────────────────
-    const now = new Date().toISOString();
-    const travelMinutes = estimateTravelMinutes(character);
-    const arrivalTime = new Date(Date.now() + travelMinutes * 60 * 1000).toISOString();
+    // ── STEP 5: Schedule one-time instant teleport ──────────────────────────
+    // The teleport fires at the promised time via processScheduledRelocations.
+    // No transit state, no ETA calculation, no 'traveling' presence.
+    // Default teleport time: 10 minutes from now (the character said "on my way"
+    // — they arrive shortly, but there is no distance/ETA calculation).
+    const now = new Date();
+    const teleportTime = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
 
     await base44.entities.Character.update(characterId, {
-      // Traveling state — all UI surfaces read these
-      resolved_presence_status: 'traveling',
-      resolved_location_type: 'traveling',
-      resolved_source_reason: 'conversation_travel_promise',
-      resolved_last_updated_at: now,
-      travel_status: 'traveling_to_destination',
-      traveling_to_location_id: destLocationId,
-      traveling_to_location_name: destLocationName,
-      travel_destination_location_id: destLocationId,
-      last_location_update_time: now,
-      // Clear stay lock — this is a character-chosen movement, not a user-forced stay
-      presence_stay_lock: false,
-      presence_stay_lock_location_id: null,
+      // Pending relocation fields — read by processScheduledRelocations
+      next_location_id: destLocationId,
+      next_location_name: destLocationName,
+      pending_scheduled_relocation_at: teleportTime,
+      pending_relocation_from: character.resolved_current_location_id,
+      pending_relocation_from_name: character.resolved_current_location_name,
+      pending_relocation_source: 'chat_travel_promise',
+      pending_relocation_message_id: null,
+      pending_relocation_confirmed_at: now.toISOString(),
+      resolved_last_updated_at: now.toISOString(),
+      // NO travel_status, NO traveling_to_*, NO 'traveling' presence.
+      // The character stays at their current location until the teleport fires.
     });
 
-    console.log(`[commitCharacterTravelToUser] ✓ "${character.name}" now traveling to "${destLocationName}" (ETA ${travelMinutes}min, arrival=${arrivalTime})`);
-
-    // ── STEP 6: Schedule arrival ──────────────────────────────────────────────
-    // A ScheduledEvent survives page changes, refreshes, and navigation away.
-    // processScheduledEvents will pick this up and call updateCharacterLocation when it fires.
-    await base44.entities.ScheduledEvent.create({
-      character_ids: [characterId],
-      character_names: [character.name],
-      description: `${character.name} arrives at ${destLocationName} after promising to come`,
-      trigger_time: arrivalTime,
-      status: 'pending',
-      type: 'travel_arrival',
-      source: 'conversation_travel_promise',
-      conversation_id: conversationId || null,
-      primary_character_id: characterId,
-      event_payload: {
+    // ── STEP 6: Create CharacterCommitment for tracking ─────────────────────
+    try {
+      await base44.asServiceRole.entities.CharacterCommitment.create({
+        character_id: characterId,
+        character_name: character.name,
+        owner_email: user.email,
+        commitment_type: 'arrival',
         destination_location_id: destLocationId,
         destination_location_name: destLocationName,
-        travel_promise_source: 'chat_response',
-        owner_email: user.email,
-        committed_at: now,
-      },
-    });
+        commitment_source: 'chat_travel_promise',
+        source_conversation_id: conversationId || null,
+        commitment_text: `${character.name} promised to come to ${destLocationName}`,
+        expected_arrival_time: teleportTime,
+        status: 'active',
+        created_at: now.toISOString(),
+      });
+    } catch (commitErr) {
+      console.warn(`[commitCharacterTravelToUser] CharacterCommitment create failed (non-fatal): ${commitErr.message}`);
+    }
 
-    console.log(`[commitCharacterTravelToUser] ✓ Arrival event scheduled for ${arrivalTime}`);
+    console.log(`[commitCharacterTravelToUser] ✓ "${character.name}" promise → teleport scheduled to "${destLocationName}" at ${teleportTime}`);
 
     return Response.json({
       success: true,
       committed: true,
       characterName: character.name,
       destination: destLocationName,
-      travelMinutes,
-      arrivalTime,
+      teleportTime,
+      instant_teleport_scheduled: true,
     });
 
   } catch (error) {
