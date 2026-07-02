@@ -2118,9 +2118,8 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: Attempt evidence-backed reconstruction.
-            // The most recent sleep_end, nap_end, or pass_out_end record for
-            // this character proves when they actually woke up.
+            // MISSING TIMESTAMP: Reconstruct from most recent wake/end record,
+            // unless a later lifecycle start exists (then it's stale).
             let wakeTimeReconstructed = false;
             try {
               const recentTransitions = await base44.entities.SleepTransition.filter(
@@ -2133,17 +2132,29 @@ Deno.serve(async (req) => {
                 t.transition_type === 'pass_out_end'
               );
               if (wakeRecord && wakeRecord.timestamp) {
-                await base44.entities.Character.update(char.id, {
-                  last_wake_time: wakeRecord.timestamp,
-                  last_need_simulated_at: nowIso,
-                });
-                wakeTimeReconstructed = true;
-                results.push({
-                  character: charName, context, event: 'lifecycle_timestamp_reconstructed',
-                  reason: 'last_wake_time reconstructed from SleepTransition wake evidence',
-                  field: 'last_wake_time', evidence: wakeRecord.transition_type,
-                  evidence_timestamp: wakeRecord.timestamp,
-                });
+                // Verify no later sleep_start/nap_start/pass_out_start exists after
+                // this end record — if so, the end record is stale, not the wake boundary.
+                const wakeEndMs = new Date(wakeRecord.timestamp).getTime();
+                const laterStart = recentTransitions.find(t =>
+                  (t.transition_type === 'sleep_start' ||
+                   t.transition_type === 'nap_start' ||
+                   t.transition_type === 'pass_out_start') &&
+                  t.timestamp &&
+                  new Date(t.timestamp).getTime() > wakeEndMs
+                );
+                if (!laterStart) {
+                  await base44.entities.Character.update(char.id, {
+                    last_wake_time: wakeRecord.timestamp,
+                    last_need_simulated_at: nowIso,
+                  });
+                  wakeTimeReconstructed = true;
+                  results.push({
+                    character: charName, context, event: 'lifecycle_timestamp_reconstructed',
+                    reason: 'last_wake_time reconstructed from SleepTransition wake evidence',
+                    field: 'last_wake_time', evidence: wakeRecord.transition_type,
+                    evidence_timestamp: wakeRecord.timestamp,
+                  });
+                }
               }
             } catch (e) { /* fall through to unresolved */ }
             if (!wakeTimeReconstructed) {
