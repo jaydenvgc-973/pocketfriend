@@ -768,10 +768,7 @@ export function isCharacterAsleep(character, locationMap) {
     }
   }
 
-  // Guard 2c: active travel commitment → awake
-  if (character.travel_status && character.travel_status !== 'not_traveling') return false;
-
-  // Guard 2d: confinement — jailed or house arrest characters follow facility schedule, not sleep
+  // Guard 2c: confinement — jailed or house arrest characters follow facility schedule, not sleep
   if (character.is_jailed || character.house_arrest_active) return false;
 
   // Guard 3: sleep window — pass locationMap so VGC residents get the correct window

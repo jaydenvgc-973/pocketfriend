@@ -26,7 +26,6 @@ import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
-import { useTravelSessions, applySessionProofToCharacters } from "@/lib/travelDisplayIntegrity";
 import { useHomeConversations } from "@/hooks/useHomeConversations";
 import { useHomeUnreadCounts } from "@/hooks/useHomeUnreadCounts";
 
@@ -229,9 +228,6 @@ export default function Home() {
   // Register page context so simulationGate knows home is active (no specific character/location)
   usePageContext({ page: 'home' });
 
-  // Load active in_transit sessions — used to gate travel display (ONE TRUTH RULE)
-  const { sessions: activeTravelSessions } = useTravelSessions(currentUser?.email);
-
   // SHARED CONVERSATION + UNREAD LAYER
   // ONE Conversation.filter for all characters (not per-card).
   // ONE batched Message.filter pass for all conversations (not per-card).
@@ -293,8 +289,7 @@ export default function Home() {
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
 
-  // Apply travel display integrity — gate "Traveling to…" on valid in_transit sessions
-  const verifiedActiveCustomChars = applySessionProofToCharacters(activeCustomChars, activeTravelSessions);
+  const verifiedActiveCustomChars = activeCustomChars;
 
   // PRIORITY ARCHITECTURE: Financial integrity audit removed from Home startup.
   // This was a Priority 8 violation — diagnostics do not belong in the Home render pipeline.

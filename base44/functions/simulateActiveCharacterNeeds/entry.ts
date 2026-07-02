@@ -196,9 +196,6 @@ function hasMeaningfulOvernightActivity(character) {
     if (activity.includes(reason)) return true;
   }
 
-  // Active travel — character is in transit somewhere
-  if (character.travel_status && character.travel_status !== 'not_traveling') return true;
-
   // Hospitalized — medical override
   if (character.resolved_presence_status === 'hospitalized') return true;
 
@@ -240,20 +237,6 @@ function getLocationContext(character, locationMap, now) {
   }
 
   if (presenceStatus === 'at_school') return 'at_school';
-
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
-    const destId = character.traveling_to_location_id || character.travel_destination_location_id;
-    if (destId && locationMap[destId]) {
-      const destLoc = locationMap[destId];
-      const destCat = (destLoc.category || '').toLowerCase();
-      if (destCat === 'home') return presenceIsStale ? 'default' : 'home_resting';
-      if (destCat === 'food_drink') return presenceIsStale ? 'default' : 'food_drink';
-      if (destCat === 'gym') return 'gym';
-      if (destCat === 'social') return 'social_out';
-      if (destCat === 'medical') return 'hospital';
-    }
-    return 'default';
-  }
 
   if (presenceStatus === 'at_work') return 'work_off_shift';
 
@@ -890,7 +873,6 @@ function computeCorrectiveState(needs, character, locationMap) {
     // ── HARD BLOCKERS ──────────────────────────────────────────────────
     const inObligation = isOnShift(character, locationMap) ||
       presence === 'at_school' ||
-      (character.travel_status && character.travel_status !== 'not_traveling') ||
       character.is_jailed ||
       character.house_arrest_active;
 
@@ -1730,21 +1712,15 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // Safe correction: set last_sleep_start directly (before updatePayload is built)
+            // MISSING TIMESTAMP: No fabricated history. Set last_sleep_start to now
+            // WITHOUT writing a LifeEvent claiming it is a "correction".
+            // The character remains sleeping — the 8h cap timer starts from now.
+            // This is not ideal but fabricating a timestamp and claiming it is real
+            // history is worse. The next simulation tick will use this as the start.
             await base44.entities.Character.update(char.id, {
               last_sleep_start: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.entities.LifeEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
-              title: 'Missing last_sleep_start — safe correction applied',
-              description: `${charName} is sleeping but missing last_sleep_start. Set to now (${nowIso}) as safe correction. Prior writer failed to record sleep-start evidence.`,
-              emotional_impact: 'system diagnostic',
-              triggered_by: 'life_simulation',
-              timestamp: nowIso,
-              context_tags: ['missing_timestamp', 'last_sleep_start', 'simulateActiveCharacterNeeds'],
-            }).catch(() => {});
           }
         }
 
@@ -1818,7 +1794,8 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // No last_pass_out_at — set it now to start the cap timer
+            // MISSING TIMESTAMP: set last_pass_out_at to now to start the 12h cap timer.
+            // No fabricated history — the timer starts from this point.
             await base44.entities.Character.update(char.id, {
               last_pass_out_at: nowIso,
               last_need_simulated_at: nowIso,
@@ -1895,21 +1872,12 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // Safe correction: set last_nap_time directly (before updatePayload is built)
+            // MISSING TIMESTAMP: set last_nap_time to now to start the 3h cap timer.
+            // No fabricated history.
             await base44.entities.Character.update(char.id, {
               last_nap_time: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.entities.LifeEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
-              title: 'Missing last_nap_time — safe correction applied',
-              description: `${charName} is napping but missing last_nap_time. Set to now (${nowIso}) as safe correction. Prior writer failed to record nap-start evidence.`,
-              emotional_impact: 'system diagnostic',
-              triggered_by: 'life_simulation',
-              timestamp: nowIso,
-              context_tags: ['missing_timestamp', 'last_nap_time', 'simulateActiveCharacterNeeds'],
-            }).catch(() => {});
           }
         }
 
@@ -2057,21 +2025,12 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // Safe correction: set last_wake_time directly (before updatePayload is built)
+            // MISSING TIMESTAMP: set last_wake_time to now to start the 19h awake timer.
+            // No fabricated history.
             await base44.entities.Character.update(char.id, {
               last_wake_time: nowIso,
               last_need_simulated_at: nowIso,
             });
-            base44.entities.LifeEvent.create({
-              character_id: char.id, character_name: charName,
-              event_type: 'medical_event', valence: 'neutral', severity: 'significant',
-              title: 'Missing last_wake_time — safe correction applied',
-              description: `${charName} is awake but missing last_wake_time. Set to now (${nowIso}) as safe correction. Prior wake writer failed to record wake evidence.`,
-              emotional_impact: 'system diagnostic',
-              triggered_by: 'life_simulation',
-              timestamp: nowIso,
-              context_tags: ['missing_timestamp', 'last_wake_time', 'simulateActiveCharacterNeeds'],
-            }).catch(() => {});
           }
         }
 

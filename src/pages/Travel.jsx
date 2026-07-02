@@ -877,24 +877,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
-                    try {
-                      const res = await base44.functions.invoke('completeStuckTravelUserScoped', {});
-                      const fixed = res?.data?.stuck_characters_found || 0;
-                      if (fixed > 0) {
-                        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-                        queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
-                      }
-                      console.log('[Travel Debug] Stuck travel repair:', res?.data);
-                    } catch (e) {
-                      console.error('[Travel Debug] Stuck travel repair failed:', e.message);
-                    }
-                  }}
-                  className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors"
-                >
-                  Fix Stuck Travel
-                </button>
-                <button
-                  onClick={async () => {
                     setIsDistributing(true);
                     setDistributeResult(null);
                     try {

@@ -136,13 +136,6 @@ function scoreAttendance(character, event, appLocations) {
     return { score: 0, reasons: [], blocked: true, blockedReason: 'hospitalized/incapacitated', diagnostic };
   }
 
-  // ── HARD BLOCKER: Active travel / committed elsewhere ───────────────────
-  const travelStatus = character.travel_status || 'not_traveling';
-  if (travelStatus !== 'not_traveling') {
-    diagnostic.blockerChecks.push(`travel_status=${travelStatus} → HARD BLOCK (active travel)`);
-    return { score: 0, reasons: [], blocked: true, blockedReason: `active travel (${travelStatus})`, diagnostic };
-  }
-
   // ── HARD BLOCKER: Presence state ────────────────────────────────────────
   const presence = character.resolved_presence_status || '';
   if (HARD_BLOCKED_PRESENCE.has(presence)) {

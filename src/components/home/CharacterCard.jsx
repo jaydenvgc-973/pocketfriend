@@ -310,9 +310,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 } else if (presence.status === 'at_school') {
                   IconComponent = BookOpen;
                   color = 'text-amber-400';
-                } else if (presence.status === 'in_transit' || presence.isTransit) {
-                  IconComponent = MapPin;
-                  color = 'text-orange-400';
                 } else if (shouldShowHome) {
                   IconComponent = Home;
                   color = 'text-pink-400';

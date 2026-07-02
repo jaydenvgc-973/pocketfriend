@@ -1693,12 +1693,5 @@ HOW TO USE THIS INFORMATION (naturally, not forced):
 export function validateLocationInResponse(text, presence) {
   if (!text || !presence) return text;
   const lower = text.toLowerCase();
-  if (presence.status === 'in_transit') {
-    const dest = (presence.label || '').replace('Traveling to ', '').toLowerCase();
-    if (dest && lower.includes(`i'm at ${dest}`) || lower.includes(`im at ${dest}`)) {
-      console.warn('[LOCATION_DRIFT] AI said arrived but still in transit — correcting');
-      return `I'm on my way to ${presence.label.replace('Traveling to ', '')} right now.`;
-    }
-  }
   return text;
 }

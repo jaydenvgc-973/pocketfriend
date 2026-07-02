@@ -455,15 +455,6 @@ export function getCharacterSleepState(character, locationMap) {
         }
       }
 
-      // Travel blocker
-      if (character.travel_status && character.travel_status !== 'not_traveling') {
-        return {
-          isSleeping: false, isNapping: false, displayLabel: 'awake',
-          contextLabel: null, visible_label: null, confidence: 1,
-          stale_risk: false, isLikelyStale: false, blockingCondition: 'traveling',
-        };
-      }
-
       // Jail / house arrest blocker
       if (character.is_jailed || character.house_arrest_active) {
         return {
@@ -560,8 +551,6 @@ export function getCharacterSleepState(character, locationMap) {
       return false;
     })();
 
-    // Active travel or commitment
-    const isActivelyTraveling = !!(character.travel_status && character.travel_status !== 'not_traveling');
     const isPlayerCharacter = character.character_type === 'active_created_character';
 
     const isConfinedOrWorking = character.is_jailed ||
@@ -570,8 +559,7 @@ export function getCharacterSleepState(character, locationMap) {
       status === 'at_school' ||
       status === 'house_arrest' ||
       isLiveOnWorkShift ||
-      isInSchoolWindow ||
-      isActivelyTraveling;
+      isInSchoolWindow;
 
     if (!isConfinedOrWorking) {
       if (isActiveCreated) {

@@ -118,8 +118,6 @@ export function resolveCoPresence(character, userSettings, userDisplayName = nul
     blockReason = 'character is incarcerated';
   } else if (character?.house_arrest_active) {
     blockReason = 'character is under house arrest';
-  } else if (character?.travel_status && character.travel_status !== 'not_traveling') {
-    blockReason = `character is traveling (${character.travel_status})`;
   }
   const charBlocked = !!blockReason;
 

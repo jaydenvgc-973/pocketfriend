@@ -740,11 +740,6 @@ export function verifyNoFalseHomeFallback(character, locationMap = {}) {
     return resolved.resolved_location_type !== 'school';
   }
 
-  // If traveling, must not be Home
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
-    return resolved.resolved_location_type !== 'home';
-  }
-
   return true;
 }
 
