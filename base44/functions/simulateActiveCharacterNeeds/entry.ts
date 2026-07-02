@@ -1698,6 +1698,8 @@ Deno.serve(async (req) => {
                 });
                 continue;
               }
+              try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up after full sleep', description: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['sleep_end', 'woke_up'] });
+                await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h and woke rested.`, memory_summary: `Slept ${Math.round(sleepDurationHours * 100) / 100}h — woke rested.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
               results.push({
                 character: charName, context,
                 event: 'hard_8h_sleep_wake',
@@ -1813,6 +1815,8 @@ Deno.serve(async (req) => {
                 });
                 continue;
               }
+              try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${Math.round(passOutDurationHours * 100) / 100}h of recovery. Energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
+                await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${Math.round(passOutDurationHours * 100) / 100}h of recovery from passing out. Groggy. Energy at ${Math.round(newNeeds.energy)}.`, memory_summary: `Recovered from pass-out after ${Math.round(passOutDurationHours * 100) / 100}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
               results.push({
                 character: charName, context,
                 event: 'hard_12h_passout_wake',
@@ -1922,6 +1926,8 @@ Deno.serve(async (req) => {
                 });
                 continue;
               }
+              try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up from a nap', description: `${charName} napped ${Math.round(napDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'refreshed', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['nap_end', 'woke_up'] });
+                await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} napped ${Math.round(napDurationHours * 100) / 100}h and woke refreshed.`, memory_summary: `Napped ${Math.round(napDurationHours * 100) / 100}h — woke refreshed.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
               results.push({
                 character: charName, context,
                 event: 'hard_3h_nap_wake',
@@ -2184,14 +2190,7 @@ Deno.serve(async (req) => {
           last_need_simulated_at: nowIso,
         };
 
-        // ── SINGLE-TRANSITION-PER-TICK CANDIDATE COLLECTION ───────────────
-        // Every RC1/RC2/RC3/RC4/release branch below only PROPOSES a candidate —
-        // it never mutates updatePayload/sleepTransitionsToRecord/pendingConsequences
-        // directly. After all candidates are collected, exactly ONE (the highest
-        // priority) is applied. This makes it structurally impossible for RC6 to
-        // queue more than one SleepTransition proof record per character per tick.
-        // Priority (lower number wins): hospitalized=1, passed_out=2, sleeping=3,
-        // napping=4, pass_out_end=5.
+        // ── SINGLE-TRANSITION-PER-TICK: candidates propose, one selected by priority (1=hospitalized, 2=passed_out, 3=sleeping, 4=napping, 5=pass_out_end) ──
         const transitionCandidates = [];
 
         // RC1: corrective activity writer (sleep/nap/pass_out from pressure pipeline)
@@ -2207,7 +2206,7 @@ Deno.serve(async (req) => {
               transition: { transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown',
                 to_status: 'sleeping', authority: 'wake_time_boundary',
                 reason: 'Corrective state: energy pressure triggered voluntary sleep decision.' },
-              consequence: null,
+              consequence: { type: 'sleep_start', energyValue: Math.round(newNeeds.energy) },
             });
           } else if (cs === 'napping') {
             transitionCandidates.push({
@@ -2218,7 +2217,7 @@ Deno.serve(async (req) => {
               transition: { transition_type: 'nap_start', from_status: char.resolved_presence_status || 'unknown',
                 to_status: 'napping', authority: 'wake_time_boundary',
                 reason: 'Corrective state: energy pressure triggered nap decision.' },
-              consequence: null,
+              consequence: { type: 'nap_start', energyValue: Math.round(newNeeds.energy) },
             });
           } else if (cs === 'passed_out') {
             transitionCandidates.push({
@@ -2311,16 +2310,13 @@ Deno.serve(async (req) => {
                 authority: isMedicalEmergency6h ? 'energy_medical' : 'pass_out_cap_12h',
                 reason: `Pass-out release: elapsed=${Math.round(elapsedPassOutHours * 100) / 100}h, energy=${Math.round(newNeeds.energy)}.`,
                 state_start_ref: passOutStart || null, elapsed_hours: Math.round(elapsedPassOutHours * 100) / 100 },
-              consequence: null,
+              consequence: { type: 'pass_out_end_recovery', elapsedHours: Math.round(elapsedPassOutHours * 100) / 100, energyValue: Math.round(newNeeds.energy) },
             });
           }
           // Under 6h without medical emergency: keep passed_out — 12h hard cap will eventually fire
         }
 
-        // ── SELECT EXACTLY ONE CANDIDATE ───────────────────────────────────
-        // Lowest priority number wins. Ties broken by declaration order above.
-        // All other candidates are discarded this tick and will be
-        // re-evaluated fresh on the next simulation pass.
+        // ── SELECT EXACTLY ONE CANDIDATE — lowest priority wins, others re-evaluated next tick
         let selectedTransition = null;
         if (transitionCandidates.length > 0) {
           selectedTransition = transitionCandidates.reduce((best, c) => (c.priority < best.priority ? c : best));
@@ -2340,10 +2336,7 @@ Deno.serve(async (req) => {
           Object.assign(updatePayload, staleIntent);
         }
 
-        // ── RC6 revert snapshot ────────────────────────────────────────────
-        // Only the presence/activity/timer fields a transition could have
-        // touched — NOT the routine needs_value fields, which are not
-        // evidence-controlled and always persist regardless of proof outcome.
+        // ── RC6 revert snapshot — presence/activity/timer fields only (not needs_value) ──
         const rc6RevertPayload = {
           resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
           last_sleep_start: char.last_sleep_start, last_nap_time: char.last_nap_time,
@@ -2357,10 +2350,7 @@ Deno.serve(async (req) => {
         // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
         await base44.entities.Character.update(char.id, updatePayload);
 
-        // ── AUTHORITATIVE TRANSITION RECORDS — hard gate, atomic ──────────
-        // If ANY SleepTransition write fails, the Character presence/activity/
-        // timer fields are reverted immediately and NO pendingConsequences fire.
-        // A state change may never outlive its proof record.
+        // ── AUTHORITATIVE TRANSITION RECORDS — hard gate, atomic. Revert on failure.
         let rc6TransitionsVerified = true;
         let rc6TransitionFailure = null;
         for (const t of sleepTransitionsToRecord) {
@@ -2387,9 +2377,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── CONSEQUENCES — only reached because every proof record above succeeded ──
-        // Consequence write failures are reported explicitly, never swallowed.
-        // They do not revert the already-proven transition.
+        // ── CONSEQUENCES — only after proof records succeeded. Failures reported, not swallowed.
         for (const c of pendingConsequences) {
           try {
             if (c.type === 'er_escalation') {
@@ -2422,6 +2410,15 @@ Deno.serve(async (req) => {
                 emotional_impact: 'physical collapse', triggered_by: 'life_simulation',
                 timestamp: nowIso, context_tags: ['compound_crisis'],
               });
+            } else if (c.type === 'sleep_start') {
+              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Went to sleep', description: `${charName} felt tired and went to sleep. Energy at ${c.energyValue}.`, emotional_impact: 'tired but choosing rest', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['sleep_start', 'voluntary_sleep'] });
+              await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} felt tired and went to sleep. Energy at ${c.energyValue}. Healthy rest decision.`, memory_summary: `Went to sleep at energy ${c.energyValue}.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id });
+            } else if (c.type === 'nap_start') {
+              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Took a nap', description: `${charName} took a nap to recover. Energy at ${c.energyValue}.`, emotional_impact: 'tired, resting', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['nap_start', 'voluntary_nap'] });
+              await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} took a nap to recover energy. Energy at ${c.energyValue}.`, memory_summary: `Took a nap at energy ${c.energyValue}.`, importance_score: 2, permanence: 'short_term', related_character_id: char.id });
+            } else if (c.type === 'pass_out_end_recovery') {
+              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${c.elapsedHours}h of recovery. Energy at ${c.energyValue}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
+              await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${c.elapsedHours}h of recovery from passing out. Groggy and embarrassed. Energy at ${c.energyValue}.`, memory_summary: `Recovered from pass-out after ${c.elapsedHours}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id });
             }
           } catch (consequenceError) {
             results.push({

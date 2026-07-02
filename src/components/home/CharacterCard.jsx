@@ -261,14 +261,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 // A stale nap/sleep in resolved_presence_status is NOT authoritative without
                 // getCharacterSleepState confirming it as valid.
                 const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping') &&
-                  (sleepState.isSleeping || sleepState.isNapping);
+                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping');
 
                 // Sleep derivation is suppressed when school or work is the verified active state
                 const derivedAsleep = canonicalIsSleeping ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
-                const isNapping = (canonicalPresence === 'napping' && sleepState.isNapping && !isVerifiedAtSchool && !isVerifiedAtWork) ||
-                  (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isNapping);
+                const isNapping = !isVerifiedAtSchool && !isVerifiedAtWork &&
+                  (canonicalPresence === 'napping' || sleepState.isNapping);
 
                 // RESTING: awake state — relaxing but NOT asleep.
                 // Never grouped with sleeping/napping. Uses location icon, not sleep icon.
