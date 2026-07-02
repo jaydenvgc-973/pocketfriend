@@ -1712,17 +1712,48 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: Do not fabricate last_sleep_start. The 8h cap
-            // cannot be evaluated without a real start timestamp. Update only
-            // last_need_simulated_at so normal needs simulation continues.
-            await base44.entities.Character.update(char.id, {
-              last_need_simulated_at: nowIso,
-            });
-            results.push({
-              character: charName, context, event: 'unresolved_lifecycle_timestamp',
-              reason: 'last_sleep_start missing — 8h sleep cap blocked, no fabricated history',
-              field: 'last_sleep_start', status: 'sleeping',
-            });
+            // MISSING TIMESTAMP: Attempt evidence-backed reconstruction before
+            // giving up. Query SleepTransition for the most recent sleep_start
+            // for this character. If it exists and no sleep_end follows it,
+            // reconstruct last_sleep_start from that proven timestamp.
+            let sleepStartReconstructed = false;
+            try {
+              const sleepStartRecs = await base44.entities.SleepTransition.filter(
+                { character_id: char.id, transition_type: 'sleep_start', owner_email: ownerEmail },
+                '-timestamp', 1
+              );
+              if (sleepStartRecs.length > 0 && sleepStartRecs[0].timestamp) {
+                const startTs = sleepStartRecs[0].timestamp;
+                const sleepEndRecs = await base44.entities.SleepTransition.filter(
+                  { character_id: char.id, transition_type: 'sleep_end', owner_email: ownerEmail },
+                  '-timestamp', 1
+                );
+                const noContradictingEnd = sleepEndRecs.length === 0 ||
+                  new Date(sleepEndRecs[0].timestamp).getTime() < new Date(startTs).getTime();
+                if (noContradictingEnd) {
+                  await base44.entities.Character.update(char.id, {
+                    last_sleep_start: startTs,
+                    last_need_simulated_at: nowIso,
+                  });
+                  sleepStartReconstructed = true;
+                  results.push({
+                    character: charName, context, event: 'lifecycle_timestamp_reconstructed',
+                    reason: 'last_sleep_start reconstructed from SleepTransition sleep_start evidence',
+                    field: 'last_sleep_start', evidence: 'sleep_start', evidence_timestamp: startTs,
+                  });
+                }
+              }
+            } catch (e) { /* fall through to unresolved */ }
+            if (!sleepStartReconstructed) {
+              await base44.entities.Character.update(char.id, {
+                last_need_simulated_at: nowIso,
+              });
+              results.push({
+                character: charName, context, event: 'unresolved_lifecycle_timestamp',
+                reason: 'last_sleep_start missing — 8h sleep cap blocked, no fabricated history',
+                field: 'last_sleep_start', status: 'sleeping',
+              });
+            }
           }
         }
 
@@ -1796,28 +1827,54 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: Do not fabricate last_pass_out_at. The 12h cap
-            // cannot be evaluated without a real start timestamp. Update only
-            // last_need_simulated_at so normal needs simulation continues.
-            await base44.entities.Character.update(char.id, {
-              last_need_simulated_at: nowIso,
-            });
-            results.push({
-              character: charName, context, event: 'unresolved_lifecycle_timestamp',
-              reason: 'last_pass_out_at missing — 12h pass-out cap blocked, no fabricated history',
-              field: 'last_pass_out_at', status: 'passed_out',
-            });
+            // MISSING TIMESTAMP: Attempt evidence-backed reconstruction before
+            // giving up. Query SleepTransition for the most recent pass_out_start
+            // for this character. If it exists and no pass_out_end follows it,
+            // reconstruct last_pass_out_at from that proven timestamp.
+            let passOutStartReconstructed = false;
+            try {
+              const passOutStartRecs = await base44.entities.SleepTransition.filter(
+                { character_id: char.id, transition_type: 'pass_out_start', owner_email: ownerEmail },
+                '-timestamp', 1
+              );
+              if (passOutStartRecs.length > 0 && passOutStartRecs[0].timestamp) {
+                const startTs = passOutStartRecs[0].timestamp;
+                const passOutEndRecs = await base44.entities.SleepTransition.filter(
+                  { character_id: char.id, transition_type: 'pass_out_end', owner_email: ownerEmail },
+                  '-timestamp', 1
+                );
+                const noContradictingEnd = passOutEndRecs.length === 0 ||
+                  new Date(passOutEndRecs[0].timestamp).getTime() < new Date(startTs).getTime();
+                if (noContradictingEnd) {
+                  await base44.entities.Character.update(char.id, {
+                    last_pass_out_at: startTs,
+                    last_need_simulated_at: nowIso,
+                  });
+                  passOutStartReconstructed = true;
+                  results.push({
+                    character: charName, context, event: 'lifecycle_timestamp_reconstructed',
+                    reason: 'last_pass_out_at reconstructed from SleepTransition pass_out_start evidence',
+                    field: 'last_pass_out_at', evidence: 'pass_out_start', evidence_timestamp: startTs,
+                  });
+                }
+              }
+            } catch (e) { /* fall through to unresolved */ }
+            if (!passOutStartReconstructed) {
+              await base44.entities.Character.update(char.id, {
+                last_need_simulated_at: nowIso,
+              });
+              results.push({
+                character: charName, context, event: 'unresolved_lifecycle_timestamp',
+                reason: 'last_pass_out_at missing — 12h pass-out cap blocked, no fabricated history',
+                field: 'last_pass_out_at', status: 'passed_out',
+              });
+            }
           }
         }
 
         // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
-        // Uses last_nap_time ONLY. If missing, state violation — apply safe
-        // correction by setting last_nap_time=now (resets timer, conservative).
-        // Naps are not full sleep cycles, but nap wake RESETS consecutive-awake
-        // exposure. last_wake_time is written on nap wake because the 19-hour
-        // pass-out calculation reads last_wake_time. Without this write, time
-        // before the nap would still count toward the consecutive-awake period,
-        // violating the rule that a nap is a restorative boundary.
+        // Uses last_nap_time ONLY. Nap wake writes last_wake_time (restorative
+        // boundary for 19h awake timer). Missing timestamp → reconstruction.
         if (dbIsNapping) {
           if (char.last_nap_time) {
             const napStartMs = new Date(char.last_nap_time).getTime();
@@ -1879,35 +1936,59 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: Do not fabricate last_nap_time. The 3h cap
-            // cannot be evaluated without a real start timestamp. Update only
-            // last_need_simulated_at so normal needs simulation continues.
-            await base44.entities.Character.update(char.id, {
-              last_need_simulated_at: nowIso,
-            });
-            results.push({
-              character: charName, context, event: 'unresolved_lifecycle_timestamp',
-              reason: 'last_nap_time missing — 3h nap cap blocked, no fabricated history',
-              field: 'last_nap_time', status: 'napping',
-            });
+            // MISSING TIMESTAMP: Attempt evidence-backed reconstruction before
+            // giving up. Query SleepTransition for the most recent nap_start
+            // for this character. If it exists and no nap_end follows it,
+            // reconstruct last_nap_time from that proven timestamp.
+            let napStartReconstructed = false;
+            try {
+              const napStartRecs = await base44.entities.SleepTransition.filter(
+                { character_id: char.id, transition_type: 'nap_start', owner_email: ownerEmail },
+                '-timestamp', 1
+              );
+              if (napStartRecs.length > 0 && napStartRecs[0].timestamp) {
+                const startTs = napStartRecs[0].timestamp;
+                const napEndRecs = await base44.entities.SleepTransition.filter(
+                  { character_id: char.id, transition_type: 'nap_end', owner_email: ownerEmail },
+                  '-timestamp', 1
+                );
+                const noContradictingEnd = napEndRecs.length === 0 ||
+                  new Date(napEndRecs[0].timestamp).getTime() < new Date(startTs).getTime();
+                if (noContradictingEnd) {
+                  await base44.entities.Character.update(char.id, {
+                    last_nap_time: startTs,
+                    last_need_simulated_at: nowIso,
+                  });
+                  napStartReconstructed = true;
+                  results.push({
+                    character: charName, context, event: 'lifecycle_timestamp_reconstructed',
+                    reason: 'last_nap_time reconstructed from SleepTransition nap_start evidence',
+                    field: 'last_nap_time', evidence: 'nap_start', evidence_timestamp: startTs,
+                  });
+                }
+              }
+            } catch (e) { /* fall through to unresolved */ }
+            if (!napStartReconstructed) {
+              await base44.entities.Character.update(char.id, {
+                last_need_simulated_at: nowIso,
+              });
+              results.push({
+                character: charName, context, event: 'unresolved_lifecycle_timestamp',
+                reason: 'last_nap_time missing — 3h nap cap blocked, no fabricated history',
+                field: 'last_nap_time', status: 'napping',
+              });
+            }
           }
         }
 
         // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
-        // Uses last_wake_time ONLY — marks when character last completed actual
-        // sleep (not nap). Naps do NOT reset this timer. If last_wake_time is
-        // missing, state violation — apply safe correction by setting
-        // last_wake_time=now (assumes they just woke, giving a full 19h window).
+        // Uses last_wake_time ONLY. Naps do NOT reset this timer (but
+        // last_nap_time from a completed nap is a valid reset boundary).
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
           // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
-          // A completed nap is a RESTORATIVE BOUNDARY that resets the consecutive-
-          // awake timer, even if the nap wake did not explicitly write last_wake_time.
-          // Use the MOST RECENT of last_wake_time and last_nap_time (the !dbIsNapping
-          // guard above guarantees the character is not mid-nap, so last_nap_time
-          // refers to a COMPLETED nap and is a valid reset boundary).
-          // This prevents the 19h pass-out narrative from fabricating elapsed time
-          // by crossing a completed nap whose wake wasn't explicitly recorded.
+          // Use the MOST RECENT of last_wake_time and last_nap_time.
+          // A completed nap is a restorative boundary that resets the awake timer.
           const awakeTimerCandidates = [];
           if (char.last_wake_time) awakeTimerCandidates.push(new Date(char.last_wake_time).getTime());
           if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
@@ -2037,17 +2118,44 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: Do not fabricate last_wake_time. The 19h awake
-            // timer cannot be evaluated without a real wake timestamp. Update only
-            // last_need_simulated_at so normal needs simulation continues.
-            await base44.entities.Character.update(char.id, {
-              last_need_simulated_at: nowIso,
-            });
-            results.push({
-              character: charName, context, event: 'unresolved_lifecycle_timestamp',
-              reason: 'last_wake_time missing — 19h awake enforcement blocked, no fabricated history',
-              field: 'last_wake_time', status: char.resolved_presence_status || 'unknown',
-            });
+            // MISSING TIMESTAMP: Attempt evidence-backed reconstruction.
+            // The most recent sleep_end, nap_end, or pass_out_end record for
+            // this character proves when they actually woke up.
+            let wakeTimeReconstructed = false;
+            try {
+              const recentTransitions = await base44.entities.SleepTransition.filter(
+                { character_id: char.id, owner_email: ownerEmail },
+                '-timestamp', 10
+              );
+              const wakeRecord = recentTransitions.find(t =>
+                t.transition_type === 'sleep_end' ||
+                t.transition_type === 'nap_end' ||
+                t.transition_type === 'pass_out_end'
+              );
+              if (wakeRecord && wakeRecord.timestamp) {
+                await base44.entities.Character.update(char.id, {
+                  last_wake_time: wakeRecord.timestamp,
+                  last_need_simulated_at: nowIso,
+                });
+                wakeTimeReconstructed = true;
+                results.push({
+                  character: charName, context, event: 'lifecycle_timestamp_reconstructed',
+                  reason: 'last_wake_time reconstructed from SleepTransition wake evidence',
+                  field: 'last_wake_time', evidence: wakeRecord.transition_type,
+                  evidence_timestamp: wakeRecord.timestamp,
+                });
+              }
+            } catch (e) { /* fall through to unresolved */ }
+            if (!wakeTimeReconstructed) {
+              await base44.entities.Character.update(char.id, {
+                last_need_simulated_at: nowIso,
+              });
+              results.push({
+                character: charName, context, event: 'unresolved_lifecycle_timestamp',
+                reason: 'last_wake_time missing — 19h awake enforcement blocked, no fabricated history',
+                field: 'last_wake_time', status: char.resolved_presence_status || 'unknown',
+              });
+            }
           }
         }
 
