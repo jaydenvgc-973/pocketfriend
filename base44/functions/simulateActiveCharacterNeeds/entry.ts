@@ -1658,7 +1658,7 @@ Deno.serve(async (req) => {
               const wakePayload = {
                 resolved_presence_status: 'home',
                 current_activity: '',
-                last_wake_time: nowIso,
+                last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
                 hunger_value:  Math.round(newNeeds.hunger),
                 energy_value:  Math.round(newNeeds.energy),
                 social_value:  Math.round(newNeeds.social),
@@ -1883,7 +1883,7 @@ Deno.serve(async (req) => {
               const napWakePayload = {
                 resolved_presence_status: 'home',
                 current_activity: '',
-                last_wake_time: nowIso,  // RESTORATIVE BOUNDARY: resets consecutive-awake timer
+                last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
                 hunger_value:  Math.round(newNeeds.hunger),
                 energy_value:  Math.round(newNeeds.energy),
                 social_value:  Math.round(newNeeds.social),
