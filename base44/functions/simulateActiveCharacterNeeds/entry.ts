@@ -1712,14 +1712,16 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: No fabricated history. Set last_sleep_start to now
-            // WITHOUT writing a LifeEvent claiming it is a "correction".
-            // The character remains sleeping — the 8h cap timer starts from now.
-            // This is not ideal but fabricating a timestamp and claiming it is real
-            // history is worse. The next simulation tick will use this as the start.
+            // MISSING TIMESTAMP: Do not fabricate last_sleep_start. The 8h cap
+            // cannot be evaluated without a real start timestamp. Update only
+            // last_need_simulated_at so normal needs simulation continues.
             await base44.entities.Character.update(char.id, {
-              last_sleep_start: nowIso,
               last_need_simulated_at: nowIso,
+            });
+            results.push({
+              character: charName, context, event: 'unresolved_lifecycle_timestamp',
+              reason: 'last_sleep_start missing — 8h sleep cap blocked, no fabricated history',
+              field: 'last_sleep_start', status: 'sleeping',
             });
           }
         }
@@ -1794,11 +1796,16 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: set last_pass_out_at to now to start the 12h cap timer.
-            // No fabricated history — the timer starts from this point.
+            // MISSING TIMESTAMP: Do not fabricate last_pass_out_at. The 12h cap
+            // cannot be evaluated without a real start timestamp. Update only
+            // last_need_simulated_at so normal needs simulation continues.
             await base44.entities.Character.update(char.id, {
-              last_pass_out_at: nowIso,
               last_need_simulated_at: nowIso,
+            });
+            results.push({
+              character: charName, context, event: 'unresolved_lifecycle_timestamp',
+              reason: 'last_pass_out_at missing — 12h pass-out cap blocked, no fabricated history',
+              field: 'last_pass_out_at', status: 'passed_out',
             });
           }
         }
@@ -1872,11 +1879,16 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: set last_nap_time to now to start the 3h cap timer.
-            // No fabricated history.
+            // MISSING TIMESTAMP: Do not fabricate last_nap_time. The 3h cap
+            // cannot be evaluated without a real start timestamp. Update only
+            // last_need_simulated_at so normal needs simulation continues.
             await base44.entities.Character.update(char.id, {
-              last_nap_time: nowIso,
               last_need_simulated_at: nowIso,
+            });
+            results.push({
+              character: charName, context, event: 'unresolved_lifecycle_timestamp',
+              reason: 'last_nap_time missing — 3h nap cap blocked, no fabricated history',
+              field: 'last_nap_time', status: 'napping',
             });
           }
         }
@@ -2025,11 +2037,16 @@ Deno.serve(async (req) => {
               continue;
             }
           } else {
-            // MISSING TIMESTAMP: set last_wake_time to now to start the 19h awake timer.
-            // No fabricated history.
+            // MISSING TIMESTAMP: Do not fabricate last_wake_time. The 19h awake
+            // timer cannot be evaluated without a real wake timestamp. Update only
+            // last_need_simulated_at so normal needs simulation continues.
             await base44.entities.Character.update(char.id, {
-              last_wake_time: nowIso,
               last_need_simulated_at: nowIso,
+            });
+            results.push({
+              character: charName, context, event: 'unresolved_lifecycle_timestamp',
+              reason: 'last_wake_time missing — 19h awake enforcement blocked, no fabricated history',
+              field: 'last_wake_time', status: char.resolved_presence_status || 'unknown',
             });
           }
         }
