@@ -852,7 +852,7 @@ function computeCorrectiveState(needs, character, locationMap) {
     // Multiple pass-outs (≥ 2): additional 10% amplification per extra pass-out
     let passOutAmp = 1.0;
     if (character.last_pass_out_at) {
-      const daysSincePassOut = (nowET.getTime() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
+      const daysSincePassOut = (Date.now() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
       if (daysSincePassOut < 7) {
         passOutAmp = 0.70; // recent trauma — strong avoidance
       } else if (daysSincePassOut < 30) {
@@ -1110,7 +1110,7 @@ function computeDecisionWeights(needs, character) {
   // Decay: beyond 30 days, amplification fades to zero
   if (character.last_pass_out_at) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const daysSince = (nowET.getTime() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
+    const daysSince = (Date.now() - new Date(character.last_pass_out_at).getTime()) / (24 * 3_600_000);
     if (daysSince < 30) {
       let amp = daysSince < 7 ? 1.5 : 1.3;
       const extraCount = Math.max(0, (character.pass_out_count ?? 0) - 1);
@@ -1253,7 +1253,7 @@ function resolveStaleCorrectiveActivities(character, needs) {
     // Character is still asleep — enforce 6h minimum before clearing
     if (character.last_sleep_start) {
       const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const elapsedSleepHours = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3600000;
+      const elapsedSleepHours = (Date.now() - new Date(character.last_sleep_start).getTime()) / 3600000;
       if (elapsedSleepHours < 6) {
         // Not enough sleep — do NOT clear the corrective state. Keep sleeping.
         return null;
@@ -1653,7 +1653,7 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked) {
           if (char.last_sleep_start) {
             const sleepStartMs = new Date(char.last_sleep_start).getTime();
-            const sleepDurationHours = (nowET.getTime() - sleepStartMs) / 3_600_000;
+            const sleepDurationHours = (Date.now() - sleepStartMs) / 3_600_000;
             if (sleepDurationHours >= 8) {
               const wakePayload = {
                 resolved_presence_status: 'home',
@@ -1764,7 +1764,7 @@ Deno.serve(async (req) => {
         if (dbIsPassedOut && !sleepLocked) {
           const passOutStart = char.last_pass_out_at;
           if (passOutStart) {
-            const passOutDurationHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
+            const passOutDurationHours = (Date.now() - new Date(passOutStart).getTime()) / 3_600_000;
             if (passOutDurationHours >= 12) {
               const passOutWakePayload = {
                 resolved_presence_status: 'home',
@@ -1878,7 +1878,7 @@ Deno.serve(async (req) => {
         if (dbIsNapping) {
           if (char.last_nap_time) {
             const napStartMs = new Date(char.last_nap_time).getTime();
-            const napDurationHours = (nowET.getTime() - napStartMs) / 3_600_000;
+            const napDurationHours = (Date.now() - napStartMs) / 3_600_000;
             if (napDurationHours >= 3) {
               const napWakePayload = {
                 resolved_presence_status: 'home',
@@ -1994,7 +1994,7 @@ Deno.serve(async (req) => {
           if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
           if (awakeTimerCandidates.length > 0) {
             const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
-            const awakeHours = (nowET.getTime() - awakeTimerStartMs) / 3_600_000;
+            const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.
@@ -2300,7 +2300,7 @@ Deno.serve(async (req) => {
           const passOutStart = char.last_pass_out_at;
           const isMedicalEmergency6h = (newNeeds.health ?? 80) <= 15;
           let elapsedPassOutHours = 0;
-          if (passOutStart) elapsedPassOutHours = (nowET.getTime() - new Date(passOutStart).getTime()) / 3_600_000;
+          if (passOutStart) elapsedPassOutHours = (Date.now() - new Date(passOutStart).getTime()) / 3_600_000;
           const safeToRelease = (!passOutStart || elapsedPassOutHours >= 6) || isMedicalEmergency6h;
           if (safeToRelease) {
             transitionCandidates.push({
