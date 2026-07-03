@@ -109,8 +109,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
-  if (!hasValidCallout) {
-  // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
+  if (!hasValidCallout && !isCharacterAsleepFromUtils(character)) {
+  // LAYER 1: Work schedule — SLEEP GUARD: asleep/napping characters must not be forced to work
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
   if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
