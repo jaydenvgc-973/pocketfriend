@@ -16,6 +16,7 @@
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocationForCharacter';
 import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } from '@/lib/sleepUtils';
+import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 
 /**
@@ -833,27 +834,22 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // For active_created_character: isCharacterAsleepFromUtils applies the strict
   // schedule-anchored validator — raw DB sleeping is NOT accepted without window validation.
   // For NPCs: clock-window approach unchanged.
-  // ── SLEEP/REST DETECTION: DB-first with window cross-check ──────────────
-  // If DB says sleeping/napping/resting, trust it UNLESS school/work is actively verified.
-  // This prevents the card from showing "Home" when the authoritative state is sleep/rest.
-  // The window validator (isCharacterAsleepFromUtils) may reject DB sleep if no explicit
-  // sleep_start_time/wake_up_time exist, but the DB state is still authoritative for display.
-  const dbSleepStatus = presenceStatus === 'sleeping' || presenceStatus === 'napping' || presenceStatus === 'resting';
-  const characterIsSleepingLive = isCharacterAsleepFromUtils(character, locationMap);
+  // ── SLEEP/REST DETECTION: SINGLE AUTHORITATIVE TRUTH ──────────────────────
+  // Delegates to getCharacterSleepState — the SAME validator used by AlarmTool and
+  // ChatHeader. Eliminates split truth: every sleep consumer reads one source.
+  // For active_created_character, DB sleeping/napping is accepted ONLY when window +
+  // cap + blocker validation passes. For NPCs, DB truth is accepted. resting is a
+  // low-energy home state trusted from DB (no window required).
+  const sleepState = getCharacterSleepState(character, locationMap);
 
-  // DB says sleeping/napping/resting — use it directly as the authoritative display state
-  // ONLY for non-active_created characters. For active_created_character, DB sleep status
-  // without window validation is stale and must not override actual presence.
-  if (dbSleepStatus) {
-    const label = presenceStatus === 'napping' ? 'Napping' : presenceStatus === 'resting' ? 'Resting' : 'Sleeping';
-    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+  if (sleepState.isSleeping) {
+    return { status: 'sleeping', label: 'Sleeping', sublabel: locName, isTransit: false, isSleeping: true };
   }
-
-  // Window validator confirms sleep (even if DB doesn't explicitly say it)
-  if (characterIsSleepingLive) {
-    const sleepStatus = presenceStatus === 'napping' ? 'napping' : 'sleeping';
-    const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
-    return { status: sleepStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+  if (sleepState.isNapping) {
+    return { status: 'napping', label: 'Napping', sublabel: locName, isTransit: false, isSleeping: true };
+  }
+  if (presenceStatus === 'resting') {
+    return { status: 'resting', label: 'Resting', sublabel: locName, isTransit: false, isSleeping: true };
   }
 
   // Critical needs override — hunger/health emergencies must surface

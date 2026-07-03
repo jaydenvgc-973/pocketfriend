@@ -929,10 +929,24 @@ function computeCorrectiveState(needs, character, locationMap) {
     // ═══════════════════════════════════════════════════════════════════
     if (effectiveEnergy <= T.ENERGY_CRITICAL) {
       if (!isBlocked) {
+        const wakeMinCrit = character.wake_up_time ? toMin(character.wake_up_time) : null;
+        let insideSleepWindowCrit = false;
+        if (sleepStartMin !== null && wakeMinCrit !== null) {
+          insideSleepWindowCrit = sleepStartMin > wakeMinCrit
+            ? (nowMin >= sleepStartMin || nowMin < wakeMinCrit)
+            : (nowMin >= sleepStartMin && nowMin < wakeMinCrit);
+        }
+        if (insideSleepWindowCrit || closeToSleepWindow) {
+          return {
+            resolved_presence_status: 'sleeping',
+            current_activity: 'sleeping — energy critically low',
+            last_sleep_start: new Date().toISOString(),
+          };
+        }
         return {
-          resolved_presence_status: 'sleeping',
-          current_activity: 'sleeping — energy critically low',
-          last_sleep_start: new Date().toISOString(),
+          resolved_presence_status: 'napping',
+          current_activity: 'napping — energy critically low recovery',
+          last_nap_time: new Date().toISOString(),
         };
       }
       return null; // blocked by obligation or not home — re-evaluate next tick; pass-out will happen naturally if energy drains to ≤10

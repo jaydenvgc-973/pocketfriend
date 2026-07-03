@@ -1,6 +1,7 @@
 import { isCharacterAsleep } from './sleepUtils';
 import { isCharacterAtWork } from './workScheduleUtils';
 import { isCharacterInPrayer } from './religionUtils';
+import { getCharacterSleepState } from './characterSleepState';
 
 /**
  * Derives the current status category for a character.
@@ -11,18 +12,13 @@ import { isCharacterInPrayer } from './religionUtils';
 export function getCharacterStatus(character) {
   if (!character) return 'available';
 
-  // ── DB TRUTH FIRST: resolved_presence_status is the authoritative single source of truth ──
-  // This MUST be checked before any schedule-based inference. A character with
-  // resolved_presence_status = 'sleeping' or 'napping' IS asleep — regardless of
-  // what schedule logic computes, regardless of energy value, regardless of missing fields.
-  // This is the same field read by Home cards, Travel page, and co-presence resolver.
-  const resolvedPS = character.resolved_presence_status;
-  if (resolvedPS === 'sleeping' || resolvedPS === 'napping') return 'asleep';
-
-  // ── SCHEDULE FALLBACK: only when DB has no sleep signal ──
-  // isCharacterAsleep() is a schedule-window computation — it must only run when
-  // resolved_presence_status does NOT already confirm the sleep state.
-  if (isCharacterAsleep(character)) return 'asleep';
+  // ── SINGLE AUTHORITATIVE TRUTH ──────────────────────────────────────────────
+  // Delegates to getCharacterSleepState — the SAME validator used by AlarmTool,
+  // ChatHeader, CharacterCard, and presence resolver. No consumer keeps its own
+  // independent sleep interpretation. For active_created_character, DB sleeping is
+  // accepted ONLY when window + cap + blocker validation passes.
+  const sleepState = getCharacterSleepState(character);
+  if (sleepState.isSleeping || sleepState.isNapping) return 'asleep';
 
   // Prayer check
   const prayer = isCharacterInPrayer(character);
@@ -136,8 +132,14 @@ export function getTextSystemMessage(character) {
 
   switch (status) {
     case 'asleep': {
-      const wakeTime = character.wake_up_time || '07:00';
-      return `${name} is asleep and plans to wake up at ${wakeTime}`;
+      // Display wake from ACTUAL sleep state (last_sleep_start + 8h ordinary cap),
+      // NOT the stored preferred wake_up_time. If no valid sleep start, no wake estimate.
+      if (character.last_sleep_start) {
+        const capWake = new Date(new Date(character.last_sleep_start).getTime() + 8 * 3600000);
+        const wakeStr = capWake.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
+        return `${name} is asleep and should wake around ${wakeStr}`;
+      }
+      return `${name} is asleep right now`;
     }
     case 'prayer': {
       const prayer = isCharacterInPrayer(character);

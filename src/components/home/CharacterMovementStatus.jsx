@@ -3,6 +3,7 @@ import { RefreshCw, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 /**
  * CharacterMovementStatus
@@ -15,6 +16,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 function getPlainStatus(character) {
   const status = character.resolved_presence_status || '';
+  const sleepState = getCharacterSleepState(character);
   const reason = character.resolved_source_reason || '';
   const name = character.name?.split(' ')[0] || 'This character';
   const loc = character.resolved_current_location_name || 'home';
@@ -25,8 +27,8 @@ function getPlainStatus(character) {
     ? (Date.now() - lastUpdated.getTime()) / 3600000
     : 999;
 
-  // Sleeping
-  if (status === 'sleeping') {
+  // Sleeping — single authoritative truth (same validator as AlarmTool/ChatHeader)
+  if (sleepState.isSleeping) {
     return {
       text: `${name} is sleeping right now.`,
       color: 'text-blue-300',
@@ -35,7 +37,7 @@ function getPlainStatus(character) {
   }
 
   // Napping
-  if (status === 'napping') {
+  if (sleepState.isNapping) {
     return {
       text: `${name} is napping right now — low energy.`,
       color: 'text-indigo-300',
