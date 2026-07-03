@@ -13,6 +13,8 @@ export default function SettingsTextFields({ settings, onSave, firstCharacterId 
   const [birthday, setBirthday] = useState("");
   const [scheduleNotes, setScheduleNotes] = useState("");
   const [gender, setGender] = useState("");
+  const [culture, setCulture] = useState("");
+  const [race, setRace] = useState("");
   const loadedSettingsId = useRef(null);
 
   // Only load from DB once per settings record (identified by settings.id)
@@ -22,9 +24,11 @@ export default function SettingsTextFields({ settings, onSave, firstCharacterId 
       setBirthday(settings.user_birthday || "");
       setScheduleNotes(settings.user_schedule_notes || "");
       setGender(settings.user_gender || "");
+      setCulture(settings.user_culture || "");
+      setRace(settings.user_race || "");
       loadedSettingsId.current = settings.id;
     }
-  }, [settings.id, settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes, settings.user_gender]);
+  }, [settings.id, settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes, settings.user_gender, settings.user_culture, settings.user_race]);
 
   return (
     <div className="space-y-6 pt-2 border-t border-border">
@@ -64,6 +68,34 @@ export default function SettingsTextFields({ settings, onSave, firstCharacterId 
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Your Culture */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Culture</p>
+        <p className="text-xs text-muted-foreground">Used for character context and image generation</p>
+        <input
+          type="text"
+          placeholder="e.g. African American, Korean, Mexican American..."
+          value={culture}
+          onChange={e => setCulture(e.target.value)}
+          onBlur={() => onSave({ user_culture: culture })}
+          className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+        />
+      </div>
+
+      {/* Your Race */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Race</p>
+        <p className="text-xs text-muted-foreground">Used for character context and image generation</p>
+        <input
+          type="text"
+          placeholder="e.g. Black, Asian, White, Mixed..."
+          value={race}
+          onChange={e => setRace(e.target.value)}
+          onBlur={() => onSave({ user_race: race })}
+          className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+        />
       </div>
 
       {/* Your Birthday */}

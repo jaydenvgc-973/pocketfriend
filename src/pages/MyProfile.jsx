@@ -308,6 +308,8 @@ export default function MyProfile() {
             {settings.fictional_world_name && <ProfileRow label="World Name" value={settings.fictional_world_name} />}
             {settings.user_birthday && <ProfileRow label="Birthday" value={settings.user_birthday} />}
             {settings.user_gender && <ProfileRow label="Gender" value={settings.user_gender} capitalize />}
+            {settings.user_culture && <ProfileRow label="Culture" value={settings.user_culture} />}
+            {settings.user_race && <ProfileRow label="Race" value={settings.user_race} />}
             {settings.user_aliases?.length > 0 && <ProfileRow label="Aliases" value={settings.user_aliases.join(", ")} />}
           </div>
           {settings.user_schedule_notes && (

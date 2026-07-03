@@ -70,6 +70,14 @@
       ],
       "description": "User's gender"
     },
+    "user_culture": {
+      "type": "string",
+      "description": "User's culture (free-text, user-edited in Settings)."
+    },
+    "user_race": {
+      "type": "string",
+      "description": "User's race (free-text, user-edited in Settings)."
+    },
     "fictional_world_name": {
       "type": "string",
       "description": "The name the user goes by in the fictional world."
