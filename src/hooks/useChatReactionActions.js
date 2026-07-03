@@ -32,7 +32,14 @@ export function useChatReactionActions({
       : [...nonUserReactions, { emoji, reactor_type: "user", reactor_id: "user" }];
 
     setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: updatedReactions } : m));
-    await base44.entities.Message.update(messageId, { reactions: updatedReactions });
+    try {
+      await base44.entities.Message.update(messageId, { reactions: updatedReactions });
+    } catch (err) {
+      // Revert optimistic UI so the reaction stays consistent with the database.
+      setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: currentReactions } : m));
+      console.warn('[ReactionActions] Failed to persist reaction — reverted:', err?.message);
+      return;
+    }
 
     if (msg.sender_type === "character" && !isSameEmoji && character) {
       // ── Relationship update — gated by rate-limit flag ────────────────────
