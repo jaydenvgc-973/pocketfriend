@@ -546,23 +546,27 @@ function isOnShiftNow(shift, currentTime = new Date()) {
   if (!shift?.start || !shift?.end) return false;
   // CRITICAL: Convert to Eastern Time
   const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  
-  // Check day of week if days array is specified
-  if (shift.days && shift.days.length > 0) {
-    const dayOfWeek = etTime.getDay();
-    if (!shift.days.includes(dayOfWeek)) return false;
-  }
 
   const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const today = etTime.getDay();
+  const yesterday = (today + 6) % 7;
   const [startH, startM] = shift.start.split(':').map(Number);
   const [endH, endM] = shift.end.split(':').map(Number);
   const startMin = startH * 60 + startM;
   const endMin = endH * 60 + endM;
+  const hasDays = shift.days && shift.days.length > 0;
 
-  // Overnight shift (e.g. 17:00 -> 01:00)
+  // Overnight shift (e.g. 17:00 -> 01:00): shift starts on a work day and ends after midnight.
+  // On shift if: today is a work day AND time >= start (e.g. Fri 5 PM -> midnight)
+  //           OR yesterday was a work day AND time < end (e.g. Fri 12 AM -> 1 AM, from Thu shift)
   if (endMin < startMin) {
-    return now >= startMin || now < endMin;
+    const afterStartToday = (!hasDays || shift.days.includes(today)) && now >= startMin;
+    const beforeEndYesterday = (!hasDays || shift.days.includes(yesterday)) && now < endMin;
+    return afterStartToday || beforeEndYesterday;
   }
+
+  // Same-day shift
+  if (hasDays && !shift.days.includes(today)) return false;
   return now >= startMin && now < endMin;
 }
 
