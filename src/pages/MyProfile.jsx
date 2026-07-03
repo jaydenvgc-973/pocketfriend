@@ -6,14 +6,16 @@ import { Link } from "react-router-dom";
 import {
   ArrowLeft, Sparkles, RefreshCw, DollarSign, Key, MapPin, Briefcase,
   Home, Phone, Send, User, Eye, Wallet, Shirt, Palette, Users, ChevronRight,
+  TrendingUp, Pencil, Settings as SettingsIcon, ChevronDown, ChevronUp,
 } from "lucide-react";
-import VGCRevenueDashboard from "@/components/finance/VGCRevenueDashboard";
+import ProfileAnalytics from "@/components/profile/ProfileAnalytics";
 import { Button } from "@/components/ui/button";
 import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
 import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
+import { useUserActiveOutfit } from "@/lib/activeOutfitResolver";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
@@ -24,6 +26,9 @@ export default function MyProfile() {
   const [showTransferModal, setShowTransferModal] = useState(false);
   const [transferAmount, setTransferAmount] = useState("");
   const [isTransferring, setIsTransferring] = useState(false);
+  const [showClosetEditor, setShowClosetEditor] = useState(false);
+  const [showAppearanceEditor, setShowAppearanceEditor] = useState(false);
+  const [showCharacterManager, setShowCharacterManager] = useState(false);
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
@@ -61,6 +66,10 @@ export default function MyProfile() {
   const balance = settings.user_balance ?? 6000;
   const vgcRevenue = settings.vgc_mobile_revenue ?? 0;
   const userGender = settings.user_gender || "other";
+
+  // Active outfit for compact closet summary
+  const activeOutfitResult = useUserActiveOutfit(settings);
+  const activeOutfit = activeOutfitResult?.outfit || null;
 
   useEffect(() => {
     if (settings.user_relatives) {
@@ -111,8 +120,6 @@ export default function MyProfile() {
     const character = characters.find(c => c.id === charId);
     if (!character) return;
 
-    const oldRelationship = updated[charId];
-
     if (relationship) {
       updated[charId] = relationship;
     } else {
@@ -161,6 +168,19 @@ export default function MyProfile() {
   };
 
   const fmtMoney = (v) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const memberSince = user?.created_date ? new Date(user.created_date).toLocaleDateString("en-US", { month: "short", year: "numeric" }) : "—";
+
+  // Appearance lock traits for compact display
+  const appearanceTraits = settings.appearance_lock
+    ? [
+        { label: "Height", value: settings.appearance_lock.height_display },
+        { label: "Skin", value: settings.appearance_lock.skin_tone },
+        { label: "Hair", value: settings.appearance_lock.hairstyle },
+        { label: "Facial Hair", value: settings.appearance_lock.facial_hair },
+        { label: "Style", value: settings.appearance_lock.clothing_style },
+        { label: "Footwear", value: settings.appearance_lock.footwear },
+      ].filter(t => t.value)
+    : [];
 
   return (
     <div className="min-h-screen bg-background pb-28">
@@ -170,36 +190,45 @@ export default function MyProfile() {
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <h1 className="text-base font-bold text-foreground flex-1">Your Information</h1>
-        <Link to="/settings" className="text-xs text-muted-foreground hover:text-primary transition-colors font-medium">
-          Settings
+        <Link to="/settings" className="text-muted-foreground hover:text-primary transition-colors">
+          <SettingsIcon className="w-5 h-5" />
         </Link>
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-6 space-y-8">
 
-        {/* ═══ MODULE 1: HERO + FINANCIAL SUMMARY ═══ */}
+        {/* ═══ MODULE 1: HERO + FINANCIAL CARDS ═══ */}
         <section className="space-y-5">
-          {/* Hero profile */}
-          <div className="flex flex-col items-center gap-3 pt-2">
-            <div className="relative">
-              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-primary/40 to-accent/20 blur-xl scale-110" />
-              <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-primary/20 to-accent/10 ring-2 ring-primary/30 flex items-center justify-center overflow-hidden">
+          {/* Hero — left-aligned with profile pic + info */}
+          <div className="flex items-center gap-4">
+            <div className="relative flex-shrink-0">
+              <div className="absolute inset-0 rounded-full bg-gradient-to-br from-primary/30 to-accent/15 blur-lg scale-110" />
+              <div className="relative w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-accent/10 ring-2 ring-primary/30 flex items-center justify-center overflow-hidden">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
                 ) : (
-                  <span className="text-3xl font-bold text-primary">
+                  <span className="text-2xl font-bold text-primary">
                     {displayName?.[0]?.toUpperCase() || "?"}
                   </span>
                 )}
               </div>
+              <Link to="/settings" className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-card border border-border flex items-center justify-center shadow-lg hover:border-primary/40 transition-colors">
+                <Pencil className="w-3 h-3 text-muted-foreground" />
+              </Link>
             </div>
-            <div className="text-center">
-              <h2 className="text-xl font-bold text-foreground">{displayName}</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">{user?.email}</p>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-xl font-bold text-foreground truncate">{displayName}</h2>
+              <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+              <div className="flex items-center gap-3 mt-2 flex-wrap">
+                <span className="text-[10px] text-muted-foreground">Member since {memberSince}</span>
+                {settings.user_gender && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary capitalize font-medium">{settings.user_gender}</span>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Financial summary cards */}
+          {/* Financial summary — two equal cards */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-card border border-border rounded-2xl p-4 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-20 h-20 bg-green-500/5 rounded-full blur-2xl" />
@@ -212,7 +241,6 @@ export default function MyProfile() {
                 <p className="text-[10px] text-muted-foreground mt-1.5">Personal spending</p>
               </div>
             </div>
-
             <div className="bg-card border border-border rounded-2xl p-4 relative overflow-hidden">
               <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/5 rounded-full blur-2xl" />
               <div className="relative">
@@ -238,7 +266,7 @@ export default function MyProfile() {
           </div>
         </section>
 
-        {/* ═══ MODULE 2: HOW THE WORLD SEES YOU ═══ */}
+        {/* ═══ MODULE 2: HOW THE WORLD SEES YOU — full width, highlighted ═══ */}
         <section className="bg-gradient-to-br from-primary/10 via-card to-card border border-primary/20 rounded-2xl p-5 relative overflow-hidden">
           <div className="absolute -top-8 -right-8 w-32 h-32 bg-primary/10 rounded-full blur-3xl" />
           <div className="relative">
@@ -264,35 +292,22 @@ export default function MyProfile() {
             ) : narrative ? (
               <p className="text-sm text-foreground/90 leading-relaxed italic">"{narrative}"</p>
             ) : (
-              <Button
-                onClick={generateNarrative}
-                variant="outline"
-                size="sm"
-                className="w-full rounded-xl gap-2"
-              >
+              <Button onClick={generateNarrative} variant="outline" size="sm" className="w-full rounded-xl gap-2">
                 <Sparkles className="w-4 h-4" /> Generate narrative
               </Button>
             )}
           </div>
         </section>
 
-        {/* ═══ MODULE 3: PROFILE INFORMATION ═══ */}
+        {/* ═══ MODULE 3: PROFILE — full width, clean rows ═══ */}
         <section className="bg-card border border-border rounded-2xl p-5">
           <ProfileSectionHeader icon={User} title="Profile" />
           <div className="space-y-px">
             <ProfileRow label="Real Name" value={user?.full_name} />
-            {settings.fictional_world_name && (
-              <ProfileRow label="World Name" value={settings.fictional_world_name} />
-            )}
-            {settings.user_birthday && (
-              <ProfileRow label="Birthday" value={settings.user_birthday} />
-            )}
-            {settings.user_gender && (
-              <ProfileRow label="Gender" value={settings.user_gender} capitalize />
-            )}
-            {settings.user_aliases?.length > 0 && (
-              <ProfileRow label="Aliases" value={settings.user_aliases.join(", ")} />
-            )}
+            {settings.fictional_world_name && <ProfileRow label="World Name" value={settings.fictional_world_name} />}
+            {settings.user_birthday && <ProfileRow label="Birthday" value={settings.user_birthday} />}
+            {settings.user_gender && <ProfileRow label="Gender" value={settings.user_gender} capitalize />}
+            {settings.user_aliases?.length > 0 && <ProfileRow label="Aliases" value={settings.user_aliases.join(", ")} />}
           </div>
           {settings.user_schedule_notes && (
             <div className="mt-3 pt-3 border-t border-border">
@@ -307,112 +322,205 @@ export default function MyProfile() {
           </Link>
         </section>
 
-        {/* ═══ MODULE 4: BUSINESSES & LOCATIONS ═══ */}
+        {/* ═══ MODULE 4: BUSINESSES & LOCATIONS — horizontal gallery ═══ */}
         <section className="bg-card border border-border rounded-2xl p-5">
-          <ProfileSectionHeader
-            icon={Briefcase}
-            title="Businesses & Locations"
-            subtitle={`${ownedLocations.length + 1} owned`}
-          />
-          <div className="space-y-2.5">
-            {/* VGC Mobile — always listed */}
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-primary/5 border border-primary/20">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 text-lg">
+          <ProfileSectionHeader icon={Briefcase} title="Businesses & Locations" subtitle={`${ownedLocations.length + 1} owned`} />
+          <div className="flex gap-3 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
+            {/* VGC Mobile card */}
+            <div className="flex-shrink-0 w-40 bg-secondary/40 border border-primary/20 rounded-xl overflow-hidden">
+              <div className="h-24 bg-gradient-to-br from-primary/20 to-accent/10 flex items-center justify-center text-4xl">
                 📱
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-foreground font-semibold">VGC Mobile</p>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold uppercase tracking-wider">Owner</span>
+              <div className="p-3">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <p className="text-sm font-semibold text-foreground truncate">VGC Mobile</p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5">Phone company</p>
-                <p className="text-[10px] text-muted-foreground/60 mt-1">Characters pay monthly bills — revenue goes to you</p>
+                <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold uppercase mb-2">Owner</span>
+                <p className="text-[10px] text-muted-foreground">Phone company</p>
+                <p className="text-[10px] text-muted-foreground/60 mt-1">Monthly billing</p>
               </div>
             </div>
             {ownedLocations.map(loc => (
-              <div key={loc.id} className="flex items-start gap-3 p-3 rounded-xl bg-secondary/40 border border-border/60 hover:border-primary/20 transition-colors">
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <MapPin className="w-4 h-4 text-primary" />
+              <div key={loc.id} className="flex-shrink-0 w-40 bg-secondary/40 border border-border/60 rounded-xl overflow-hidden hover:border-primary/20 transition-colors">
+                <div className="h-24 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden">
+                  {loc.image_urls?.[0] ? (
+                    <img src={loc.image_urls[0]} alt={loc.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <MapPin className="w-8 h-8 text-primary/40" />
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-foreground font-medium truncate">{loc.name}</p>
-                    {loc.image_urls?.[0] && (
-                      <img src={loc.image_urls[0]} alt="" className="w-4 h-4 rounded object-cover flex-shrink-0" />
-                    )}
+                <div className="p-3">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <p className="text-sm font-semibold text-foreground truncate">{loc.name}</p>
                   </div>
-                  <p className="text-xs text-muted-foreground capitalize mt-0.5">{loc.category || loc.location_type}</p>
-                  {loc.owner_role && <p className="text-[10px] text-muted-foreground/70 mt-0.5">{loc.owner_role}</p>}
+                  <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold uppercase mb-2">Owner</span>
+                  <p className="text-[10px] text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
+                  {loc.owner_role && <p className="text-[10px] text-muted-foreground/60 mt-0.5">{loc.owner_role}</p>}
                 </div>
               </div>
             ))}
             {ownedLocations.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-2">No additional locations owned.</p>
+              <p className="text-xs text-muted-foreground py-4">No additional locations owned.</p>
             )}
           </div>
         </section>
 
-        {/* ═══ MODULE 5: REVENUE DASHBOARD ═══ */}
-        <section className="bg-card border border-border rounded-2xl p-5">
-          <ProfileSectionHeader icon={DollarSign} title="Revenue Dashboard" />
-          <VGCRevenueDashboard userSettings={settings} />
-        </section>
+        {/* ═══ MODULE 5+6: REVENUE DASHBOARD + CHARACTER BALANCES ═══ */}
+        <ProfileAnalytics userSettings={settings} />
 
-        {/* ═══ MODULE 6: WHERE YOU LIVE ═══ */}
-        {residentLocations.length > 0 && (
-          <section className="bg-card border border-border rounded-2xl p-5">
-            <ProfileSectionHeader icon={Home} title="Where You Live" />
-            <div className="space-y-2.5">
-              {residentLocations.map(loc => (
-                <div key={loc.id} className="flex items-start gap-3 p-3 rounded-xl bg-secondary/40 border border-border/60">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                    {loc.image_urls?.[0] ? (
-                      <img src={loc.image_urls[0]} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      <Home className="w-4 h-4 text-primary" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground font-medium">{loc.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize mt-0.5">{loc.category || loc.location_type}</p>
+        {/* ═══ MODULE 7: HOME + CLOSET — two columns ═══ */}
+        <section className="grid grid-cols-2 gap-3">
+          {/* LEFT: Where You Live */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="p-4 pb-2">
+              <ProfileSectionHeader icon={Home} title="Where You Live" />
+            </div>
+            {residentLocations.length > 0 ? (
+              <>
+                <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
+                  {residentLocations[0].image_urls?.[0] ? (
+                    <img src={residentLocations[0].image_urls[0]} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Home className="w-8 h-8 text-primary/40" />
+                    </div>
+                  )}
+                </div>
+                <div className="p-4 pt-2">
+                  <p className="text-sm font-semibold text-foreground truncate">{residentLocations[0].name}</p>
+                  <p className="text-[10px] text-muted-foreground capitalize mt-0.5">{residentLocations[0].category || residentLocations[0].location_type}</p>
+                  {residentLocations.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground/60 mt-1">+{residentLocations.length - 1} more</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="px-4 pb-4">
+                <p className="text-xs text-muted-foreground italic">No residence assigned.</p>
+              </div>
+            )}
+          </div>
+
+          {/* RIGHT: Your Closet — compact summary */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="p-4 pb-2">
+              <ProfileSectionHeader icon={Shirt} title="Your Closet" />
+            </div>
+            <div className="px-4 pb-4 space-y-3">
+              {/* Rotation toggle (compact, read-only display) */}
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className={`px-2 py-0.5 rounded-full font-medium ${settings.user_outfit_rotation_enabled ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                  {settings.user_outfit_rotation_enabled ? "Rotation On" : "Manual"}
+                </span>
+              </div>
+              {/* Current outfit preview */}
+              {activeOutfit ? (
+                <div className="flex gap-2 items-start">
+                  {activeOutfit.image_url && (
+                    <img src={activeOutfit.image_url} alt={activeOutfit.label} className="w-14 h-14 rounded-lg object-cover flex-shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-primary font-semibold uppercase">Currently Wearing</p>
+                    <p className="text-xs font-medium text-foreground truncate">{activeOutfit.label}</p>
+                    {activeOutfit.top && <p className="text-[10px] text-muted-foreground truncate">{activeOutfit.top}</p>}
                   </div>
                 </div>
-              ))}
+              ) : (
+                <p className="text-[10px] text-muted-foreground italic">No outfit selected.</p>
+              )}
+              <button
+                onClick={() => setShowClosetEditor(v => !v)}
+                className="w-full py-2 rounded-lg border border-border text-[10px] text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors font-medium"
+              >
+                {showClosetEditor ? "Hide" : "Manage"} Closet
+              </button>
             </div>
-          </section>
-        )}
+          </div>
+        </section>
 
-        {/* ═══ MODULE 7: CLOSET ═══ */}
-        <section className="space-y-3">
-          <ProfileSectionHeader icon={Shirt} title="Closet" subtitle="Outfits & rotation" />
+        {/* Full closet editor — collapsible */}
+        {showClosetEditor && (
           <UserClosetPanel
             settings={settings}
             onUpdate={updateSettings}
             displayName={displayName}
             gender={settings.user_gender}
           />
+        )}
+
+        {/* ═══ MODULE 8: APPEARANCE + CHARACTERS — two columns ═══ */}
+        <section className="grid grid-cols-2 gap-3">
+          {/* LEFT: Appearance Lock — compact categories */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="p-4 pb-2">
+              <ProfileSectionHeader icon={Palette} title="Appearance" />
+            </div>
+            <div className="px-4 pb-4 space-y-2">
+              {appearanceTraits.length > 0 ? (
+                appearanceTraits.map(trait => (
+                  <div key={trait.label} className="bg-secondary/30 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{trait.label}</p>
+                    <p className="text-xs text-foreground font-medium truncate">{trait.value}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[10px] text-muted-foreground italic">No appearance locked.</p>
+              )}
+              <button
+                onClick={() => setShowAppearanceEditor(v => !v)}
+                className="w-full py-2 rounded-lg border border-border text-[10px] text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors font-medium mt-1"
+              >
+                {showAppearanceEditor ? "Hide" : "Edit"} Appearance
+              </button>
+            </div>
+          </div>
+
+          {/* RIGHT: Characters — horizontal avatar row */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="p-4 pb-2">
+              <ProfileSectionHeader icon={Users} title="Characters" subtitle={`${characters.length}`} />
+            </div>
+            <div className="px-4 pb-4">
+              <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
+                {characters.slice(0, 8).map(char => (
+                  <Link key={char.id} to={`/profile/${char.id}`} className="flex-shrink-0 flex flex-col items-center gap-1 w-14">
+                    <div className="w-11 h-11 rounded-full bg-gradient-to-br from-primary/20 to-accent/10 ring-1 ring-primary/20 flex items-center justify-center overflow-hidden">
+                      {char.avatar_url ? (
+                        <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-foreground font-medium text-center truncate w-full">{char.name?.split(" ")[0]}</p>
+                  </Link>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowCharacterManager(v => !v)}
+                className="w-full py-2 mt-2 rounded-lg border border-border text-[10px] text-muted-foreground hover:text-primary hover:border-primary/40 transition-colors font-medium"
+              >
+                {showCharacterManager ? "Hide" : "Manage"} Relationships
+              </button>
+            </div>
+          </div>
         </section>
 
-        {/* ═══ MODULE 8: APPEARANCE LOCK ═══ */}
-        <section className="space-y-3">
-          <ProfileSectionHeader icon={Palette} title="Appearance" subtitle="Visual identity settings" />
+        {/* Full appearance editor — collapsible */}
+        {showAppearanceEditor && (
           <UserAppearanceLockEditor settings={settings} user={user} />
-        </section>
+        )}
 
-        {/* ═══ MODULE 9: CHARACTER MANAGEMENT ═══ */}
-        {characters.length > 0 && (
+        {/* Full character relationship manager — collapsible */}
+        {showCharacterManager && characters.length > 0 && (
           <section className="bg-card border border-border rounded-2xl p-5">
-            <ProfileSectionHeader
-              icon={Users}
-              title="Characters in Your World"
-              subtitle={`${characters.length} active · Assign your relationship`}
-            />
+            <ProfileSectionHeader icon={Users} title="Characters in Your World" subtitle={`${characters.length} active · Assign your relationship`} />
             <div className="space-y-1">
               {characters.map(char => {
                 const currentRelative = relativeRelationships[char.id];
                 const reciprocal = currentRelative ? getReciprocalRole(currentRelative, userGender) : null;
                 const hasKey = (settings.home_key_holders || []).some(k => k.character_id === char.id);
-
                 return (
                   <div key={char.id} className="py-3 border-b border-border/60 last:border-b-0">
                     <Link to={`/profile/${char.id}`}>
@@ -429,7 +537,7 @@ export default function MyProfile() {
                           {char.archetype && <p className="text-[10px] text-muted-foreground truncate">{char.archetype}</p>}
                         </div>
                         {hasKey && (
-                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30" title={`${char.name} gave you a key to their home`}>
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30">
                             <Key className="w-3 h-3 text-amber-400" />
                             <span className="text-[9px] text-amber-400 font-bold uppercase">Key</span>
                           </div>
@@ -437,14 +545,12 @@ export default function MyProfile() {
                         <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
                       </div>
                     </Link>
-
                     <UserCharacterRelationshipSelector
                       character={char}
                       currentValue={currentRelative}
                       onSave={(rel) => handleAssignRelative(char.id, rel)}
                       onRemove={() => handleAssignRelative(char.id, null)}
                     />
-
                     {currentRelative && reciprocal && (
                       <p className="ml-12 mt-1.5 text-[10px] text-muted-foreground">
                         {char.name} sees you as: <span className="text-foreground font-medium capitalize">{getRelationshipLabel(reciprocal)}</span>
@@ -526,7 +632,6 @@ export default function MyProfile() {
   );
 }
 
-/** Clean two-column label/value row used inside the Profile section */
 function ProfileRow({ label, value, capitalize }) {
   if (!value) return null;
   return (
