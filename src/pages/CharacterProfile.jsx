@@ -541,6 +541,7 @@ export default function CharacterProfile() {
               </button>
               <div className="flex-1 min-w-0">
                 <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
+                <p className="text-[10px] text-muted-foreground/70 truncate font-mono">{character.id}</p>
                 {character.profile_summary && (
                   <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{character.profile_summary}</p>
                 )}

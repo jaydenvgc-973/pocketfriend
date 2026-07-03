@@ -218,6 +218,7 @@ export default function MyProfile() {
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-xl font-bold text-foreground truncate">{displayName}</h2>
+              <p className="text-[10px] text-muted-foreground/70 truncate font-mono">{user?.id}</p>
               <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
               <div className="flex items-center gap-3 mt-2 flex-wrap">
                 <span className="text-[10px] text-muted-foreground">Member since {memberSince}</span>
