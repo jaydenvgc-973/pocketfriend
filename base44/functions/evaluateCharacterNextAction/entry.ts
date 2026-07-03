@@ -33,6 +33,7 @@ const T = {
   MENTAL_CRITICAL:   15,
   HYGIENE_CRITICAL:  20,
   SOCIAL_CRITICAL:   15,
+  SOCIAL_LOW:        35,   // social need low — should seek social connection (not sleep)
 };
 
 // ── PERSONALITY TRAIT INFLUENCES ───────────────────────────────────────────
@@ -254,6 +255,7 @@ function evaluateNeeds(char) {
   if (needs.mental <= T.MENTAL_CRITICAL) urgency.mental = 'critical';
   if (needs.hygiene <= T.HYGIENE_CRITICAL) urgency.hygiene = 'critical';
   if (needs.social <= T.SOCIAL_CRITICAL) urgency.social = 'critical';
+  else if (needs.social <= T.SOCIAL_LOW) urgency.social = 'low';
   
   return { values: needs, urgency };
 }
@@ -374,7 +376,9 @@ function computeBaseWeights(char, schedule, needs, restrictions, timeCtx, locati
     weights.rest = 0.18;
   }
 
-  // ── SOCIAL CRITICAL: mandatory social-seeking boost, suppress home ──────
+  // ── SOCIAL NEED: mandatory social-seeking boost, suppress home/isolation ──
+  // Low Social Need = unmet need for connection. Character MUST seek social contact.
+  // Low Social Need must NEVER cause sleep, naps, rest, or isolation.
   if (needs.urgency.social === 'critical') {
     // Social is critically low — character MUST seek social contact.
     // Boost social weight significantly, suppress home (home IS the deprivation).
@@ -383,6 +387,18 @@ function computeBaseWeights(char, schedule, needs, restrictions, timeCtx, locati
     // Suppress rest/recreation to prevent "just stay home and relax" winning
     weights.rest = Math.min(weights.rest, 0.05);
     weights.recreation = Math.min(weights.recreation, 0.02);
+  } else if (needs.urgency.social === 'low') {
+    // Social is low — character should seek social contact.
+    weights.social = Math.max(weights.social, 0.25);
+    weights.home  = Math.min(weights.home, 0.03);
+    // Do NOT boost rest — low Social Need is not a reason to rest
+  }
+  
+  // ── SOCIAL-NEED SLEEP BLOCK ─────────────────────────────────────────────
+  // When Social Need is low but Energy is adequate (>=50), rest must NOT win.
+  // Low Social Need = connection need, not rest need.
+  if ((needs.urgency.social === 'critical' || needs.urgency.social === 'low') && needs.values.energy >= 50) {
+    weights.rest = Math.min(weights.rest, 0.03);
   }
   
   // ── TIME-OF-DAY MODULATION ──────────────────────────────────────────────
@@ -568,6 +584,27 @@ function evaluateDecision(char, schedule, needs, weights, restrictions, timeCtx,
     }
   }
   
+  if (needs.urgency.social === 'low') {
+    const atHome = locationType === 'home' || locCat === 'home' || presence === 'home';
+    if (atHome) {
+      options.push({
+        action: 'reach out to someone or go out — needs social connection',
+        actionType: 'go_out_socialize',
+        dimension: 'social',
+        score: 0.55,
+        explanation: `${char.name} has low Social Need and should seek connection — message, call, or go out.`
+      });
+    } else {
+      options.push({
+        action: 'seek social interaction — connect with people nearby',
+        actionType: 'social',
+        dimension: 'social',
+        score: 0.50,
+        explanation: `${char.name} has low Social Need — should connect with people.`
+      });
+    }
+  }
+  
   if (needs.urgency.mental === 'critical') {
     options.push({ action: 'take time to decompress', actionType: 'rest', dimension: 'rest', score: weights.rest + 0.12, explanation: `${char.name} is mentally strained and needs to step back.` });
   }
@@ -587,6 +624,18 @@ function evaluateDecision(char, schedule, needs, weights, restrictions, timeCtx,
   
   // Default fallback: home routine
   options.push({ action: 'relax at home', actionType: 'home_routine', dimension: 'home', score: weights.home + 0.05, explanation: `${char.name} is spending time at home.` });
+  
+  // ── SOCIAL-NEED SLEEP GUARD ────────────────────────────────────────────
+  // When Social Need is low but Energy is adequate (>=50), sleep/nap/home are FORBIDDEN.
+  // Low Social Need = unmet connection need. Sleep is NOT a valid repair for Social Need.
+  // Mental-critical rest (actionType 'rest') is PRESERVED — Mental is a separate exception.
+  if ((needs.urgency.social === 'critical' || needs.urgency.social === 'low') && needs.values.energy >= 50) {
+    for (let i = options.length - 1; i >= 0; i--) {
+      if (['sleep', 'nap', 'go_home_rest', 'home_routine'].includes(options[i].actionType)) {
+        options.splice(i, 1);
+      }
+    }
+  }
   
   // Sort by score descending
   options.sort((a, b) => b.score - a.score);

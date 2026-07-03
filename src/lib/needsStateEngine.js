@@ -245,10 +245,11 @@ You remain fully available and alert at all times regardless of any Life Need va
     combos.push('Physically activated but emotionally strained — may be restless, impulsive, or brittle despite having energy.');
   }
 
-  // Social combos
+  // Social Need combos — Low Social Need = unmet need for connection, NOT isolation
   if (s.social === 'critical' || s.social === 'low') {
-    combos.push('Low social: reduce unnecessary interaction. May prefer solitude, short replies, or selective engagement.');
-    if (s.energy === 'strong') combos.push('Physically capable but not in the mood for people.');
+    combos.push('Low Social Need: the character needs more meaningful social interaction. Seek connection — message, call, visit, or go somewhere with people. This is NOT a desire for solitude.');
+    if (s.energy === 'strong') combos.push('High energy + low Social Need = wants to go out, see people, be social. Energy is available for social activity.');
+    if (s.mental === 'low' || s.mental === 'critical') combos.push('Low Social Need + low Mental = seek gentle connection (one-on-one, family) rather than large crowds. Mental strain may make socializing harder, but isolation is NOT the answer.');
   }
   if ((s.social === 'strong') && (s.energy === 'low' || s.energy === 'critical')) {
     combos.push('Wants connection but may lack stamina — seeks company but keeps it low-key.');
@@ -298,7 +299,7 @@ You remain fully available and alert at all times regardless of any Life Need va
   const contradictions = [];
 
   if (s.energy === 'stable' || s.energy === 'strong') {
-    contradictions.push('Do NOT say "I\'m exhausted," "running on zero," "I can barely function," or imply severe fatigue unless a separate sleep-deprivation or illness event is active.');
+    contradictions.push('Do NOT say "I\'m tired," "I\'m exhausted," "running on zero," "I can barely function," "I\'m sleepy," or imply ANY fatigue when Energy is 60% or higher. High Energy = alert and capable. "Tired" is FORBIDDEN at 98-100% Energy unless an approved sleep-deprivation or illness event is explicitly active.');
   }
   if (s.hunger === 'stable' || s.hunger === 'strong') {
     contradictions.push('Do NOT say "I\'m starving," "I haven\'t eaten in forever," or imply severe hunger.');
@@ -326,7 +327,8 @@ You remain fully available and alert at all times regardless of any Life Need va
     contradictions.push('Do NOT casually plan or agree to expensive activities when finances are critically low.');
   }
   if (s.social === 'critical' || s.social === 'low') {
-    contradictions.push('Do NOT initiate large group interactions or act highly people-seeking when social need is depleted.');
+    contradictions.push('Do NOT treat low Social Need as a desire for isolation, solitude, or withdrawal. The character WANTS connection — they are socially deprived, not antisocial.');
+    contradictions.push('Do NOT use sleep, naps, rest, or "staying home" as a response to low Social Need. Sleep is controlled by Energy and approved sleep authorities only — Social Need is NOT one of them.');
   }
 
   const contradictionBlock = contradictions.length > 0
@@ -372,13 +374,40 @@ These values are current and authoritative. They override memory, prior summarie
 ════════════════════════════════════
   Hunger:    ${v.hunger}/100  → ${s.hunger.toUpperCase()}
   Energy:    ${v.energy}/100  → ${s.energy.toUpperCase()}
-  Social:    ${v.social}/100  → ${s.social.toUpperCase()}
+  Social Need: ${v.social}/100  → ${s.social.toUpperCase()}
   Health:    ${v.health}/100  → ${s.health.toUpperCase()}
   Mental:    ${v.mental}/100  → ${s.mental.toUpperCase()}
   Financial: ${v.financial}/100 → ${s.financial.toUpperCase()}
   Hygiene:   ${v.hygiene}/100 → ${s.hygiene.toUpperCase()}
   Comfort:   ${v.comfort}/100 → ${s.comfort.toUpperCase()}
 ${comboBlock}${contradictionBlock}
+
+═══════════════════════════════════════════════════════════════════════════
+SOCIAL NEED — CONNECTION-SEEKING RULE (HARD SEPARATION FROM SLEEP)
+═══════════════════════════════════════════════════════════════════════════
+Social Need measures how FULFILLED the character's need for interpersonal connection is.
+  • Low Social Need = the character needs more meaningful social interaction.
+  • Low Social Need does NOT mean the character wants isolation, sleep, a nap, or withdrawal.
+  • Low Social Need must NEVER be repaired with sleep, naps, rest, or "staying home because isolated."
+  • Sleep, naps, and rest are controlled ONLY by: low Energy, exhaustion, approved sleep window, illness, or approved low-Mental recovery.
+  • Social Need is NOT one of those sleep authorities.
+
+WHEN SOCIAL NEED IS LOW, THE CHARACTER MUST SEEK CONNECTION:
+  ✓ Message or call someone
+  ✓ Visit someone or invite someone over
+  ✓ Talk to family, friends, or coworkers
+  ✓ Go to a bar, restaurant, park, club, gym, or community location
+  ✓ Remain in a healthy social environment
+  ✗ Sleep, nap, rest, or withdraw — FORBIDDEN as Social Need repairs
+
+PERSONALITY DIFFERENCES (both are social repair — neither means sleep):
+  Introverts: prefer one-on-one contact, family, quiet public places, parks, coffee shops.
+  Extroverts: prefer bars, clubs, parties, larger gatherings.
+
+MENTAL IS A SEPARATE EXCEPTION:
+  Low Mental may support withdrawal, rest, or a nap as mental-health recovery.
+  This exception is separate from Social Need. Social Need may NOT borrow Mental's recovery behaviors.
+═══════════════════════════════════════════════════════════════════════════
 
 NEEDS CONSISTENCY RULE: Every word of dialogue, every described action, every stated preference, every plan or refusal must be consistent with the need states above. If a proposed output contradicts any of the above states, it must be rewritten before display. Memory is context — it does not override current need values.
 
@@ -411,6 +440,7 @@ INVOLUNTARY PASS-OUT STATE (resolved_presence_status = 'passed_out'):
 
 HARD RULES:
   ✗ NEVER treat "I'm tired" as evidence the character is currently asleep or passed out.
+  ✗ NEVER display "Tired" as an emotional state or say "I'm tired" when Energy is 98-100% unless an approved sleep-deprivation or illness event is explicitly active. Recovered Energy must clear stale tired states — High Energy = alert and capable.
   ✗ NEVER transition a character to sleep state because they said they need sleep.
   ✗ NEVER describe passed_out recovery as "sleeping" or "resting normally".
   ✗ NEVER conflate "planning to sleep later" with "currently sleeping."

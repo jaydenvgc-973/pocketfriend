@@ -7,7 +7,7 @@ import { discardDashboardCacheForCharacter } from '@/components/character/Charac
 const NEEDS = [
   { label: 'Hunger',    key: 'hunger_value',         emoji: '🍽️', description: 'How hungry they are' },
   { label: 'Energy',    key: 'energy_value',          emoji: '⚡', description: 'Physical energy level' },
-  { label: 'Social',    key: 'social_value',          emoji: '👥', description: 'Social connection need' },
+  { label: 'Social Need', key: 'social_value',      emoji: '👥', description: 'How fulfilled their need for interpersonal connection is' },
   { label: 'Health',    key: 'health_value',          emoji: '❤️', description: 'Physical health status' },
   { label: 'Mental',    key: 'mental_value',          emoji: '🧠', description: 'Mental wellbeing' },
   { label: 'Financial', key: 'financial_need_value',  emoji: '💰', description: 'Financial stability' },
