@@ -676,30 +676,11 @@ export function isCharacterAsleep(character, locationMap) {
       if ((nowET.getTime() - sleepStartMs) / 3_600_000 >= 8) return false;
     }
 
-    // RULE 3: Work shift beats ordinary sleep
-    if (character.work_start_time && character.work_end_time &&
-        Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
-      const s = toMin(character.work_start_time);
-      const e = toMin(character.work_end_time);
-      if (s !== null && e !== null) {
-        const onShift = e < s ? (currentMin >= s || currentMin < e) : (currentMin >= s && currentMin < e);
-        if (onShift) return false;
-      }
-    }
-
-    // RULE 4: School window beats ordinary sleep
-    if (character.student_status === 'enrolled' && character.education_location_id &&
-        [1, 2, 3, 4, 5].includes(dayOfWeek)) {
-      const enrollments = character.education_enrollments;
-      if (Array.isArray(enrollments) && enrollments.length > 0) {
-        const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-        if (active) {
-          const s = toMin(active.start_time);
-          const e = toMin(active.end_time);
-          if (s !== null && e !== null && currentMin >= s && currentMin < e) return false;
-        }
-      }
-    }
+    // RULE 3 (REMOVED): Work-shift and school-window overrides.
+    // The backend enforceCharacterWorkSchedule already has a sleep guard (isBlockedFromWork).
+    // If the backend let the character sleep through a shift, that is the authoritative decision.
+    // Frontend overrides here caused the card to show "at work" when the character was in bed.
+    // The 8-hour cap (RULE 2) already handles truly stale sleep.
 
     return true; // All rules passed — ordinary sleep is valid
   }

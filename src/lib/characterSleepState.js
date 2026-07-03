@@ -339,42 +339,9 @@ export function getCharacterSleepState(character, locationMap) {
         }
       }
 
-      // Work shift override
-      if (character.work_start_time && character.work_end_time &&
-          Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
-        const s = toMinLocal(character.work_start_time);
-        const e = toMinLocal(character.work_end_time);
-        if (s !== null && e !== null) {
-          const onShift = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
-          if (onShift) {
-            return {
-              isSleeping: false, isNapping: false, displayLabel: 'awake',
-              contextLabel: 'At Work', visible_label: 'At Work', confidence: 1,
-              stale_risk: false, isLikelyStale: false, blockingCondition: 'work_shift_active',
-            };
-          }
-        }
-      }
-
-      // School window override
-      if (character.student_status === 'enrolled' && character.education_location_id &&
-          [1, 2, 3, 4, 5].includes(dayOfWeek)) {
-        const enrollments = character.education_enrollments;
-        if (Array.isArray(enrollments) && enrollments.length > 0) {
-          const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-          if (active) {
-            const s = toMinLocal(active.start_time);
-            const e = toMinLocal(active.end_time);
-            if (s !== null && e !== null && nowMin >= s && nowMin < e) {
-              return {
-                isSleeping: false, isNapping: false, displayLabel: 'awake',
-                contextLabel: 'At School', visible_label: 'At School', confidence: 1,
-                stale_risk: false, isLikelyStale: false, blockingCondition: 'school_window_active',
-              };
-            }
-          }
-        }
-      }
+      // REMOVED: Work-shift and school-window overrides for sleeping status.
+      // The backend (enforceCharacterWorkSchedule) already has a sleep guard. If it let the
+      // character sleep, the frontend must respect that. The 8-hour cap above handles stale sleep.
 
       // All checks passed — sleep is valid
       return {
@@ -417,43 +384,8 @@ export function getCharacterSleepState(character, locationMap) {
         };
       }
 
-      // ── BLOCKERS ──────────────────────────────────────────────────
-      // Work shift override
-      if (character.work_start_time && character.work_end_time &&
-          Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
-        const s = toMinLocal(character.work_start_time);
-        const e = toMinLocal(character.work_end_time);
-        if (s !== null && e !== null) {
-          const onShift = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
-          if (onShift) {
-            return {
-              isSleeping: false, isNapping: false, displayLabel: 'awake',
-              contextLabel: 'At Work', visible_label: 'At Work', confidence: 1,
-              stale_risk: false, isLikelyStale: false, blockingCondition: 'work_shift_active',
-            };
-          }
-        }
-      }
-
-      // School window override
-      if (character.student_status === 'enrolled' && character.education_location_id &&
-          [1, 2, 3, 4, 5].includes(dayOfWeek)) {
-        const enrollments = character.education_enrollments;
-        if (Array.isArray(enrollments) && enrollments.length > 0) {
-          const active = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-          if (active) {
-            const s = toMinLocal(active.start_time);
-            const e = toMinLocal(active.end_time);
-            if (s !== null && e !== null && nowMin >= s && nowMin < e) {
-              return {
-                isSleeping: false, isNapping: false, displayLabel: 'awake',
-                contextLabel: 'At School', visible_label: 'At School', confidence: 1,
-                stale_risk: false, isLikelyStale: false, blockingCondition: 'school_window_active',
-              };
-            }
-          }
-        }
-      }
+      // REMOVED: Work-shift and school-window overrides for napping status.
+      // Backend authorities decide whether a napping character should be at work — not the frontend.
 
       // Jail / house arrest blocker
       if (character.is_jailed || character.house_arrest_active) {
