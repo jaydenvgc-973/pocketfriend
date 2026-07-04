@@ -24,6 +24,8 @@
 // This is a read-only retrieval module. It does NOT write, create, or modify
 // any records. It is non-blocking — returns null if no intent is detected.
 
+import { resolveRelationshipRoleRecipient } from './relationshipRoleResolver.js';
+
 // Canonical shared key — matches WorldContactsPopup.getCanonicalSharedKey
 // and sendWorldPhoneMessage backend function.
 function getCanonicalSharedKey(charIdA, charIdB) {
@@ -104,43 +106,9 @@ function findMentionedCharacter(text, currentCharacterId, allCharacters) {
   return null;
 }
 
-// Map relationship-role words (from the user's message) to label keywords that
-// might appear in a character's fictional_relationships / family_members data.
-// Example: "your father" → look for a relationship whose label contains "father"/"dad".
-const ROLE_LABEL_MAP = {
-  father: ['father', 'dad', 'daddy', 'pa', 'papa', 'pop'],
-  dad: ['father', 'dad', 'daddy', 'pa', 'papa', 'pop'],
-  daddy: ['father', 'dad', 'daddy', 'pa', 'papa', 'pop'],
-  mother: ['mother', 'mom', 'mommy', 'ma', 'mama', 'mum', 'mummy'],
-  mom: ['mother', 'mom', 'mommy', 'ma', 'mama', 'mum', 'mummy'],
-  mommy: ['mother', 'mom', 'mommy', 'ma', 'mama', 'mum', 'mummy'],
-  son: ['son'],
-  daughter: ['daughter'],
-  brother: ['brother', 'bro'],
-  bro: ['brother', 'bro'],
-  sister: ['sister', 'sis'],
-  sis: ['sister', 'sis'],
-  uncle: ['uncle'],
-  aunt: ['aunt'],
-  cousin: ['cousin'],
-  nephew: ['nephew'],
-  niece: ['niece'],
-  grandfather: ['grandfather', 'grandpa', 'granddad'],
-  grandpa: ['grandfather', 'grandpa', 'granddad'],
-  grandmother: ['grandmother', 'grandma', 'grandmom'],
-  grandma: ['grandmother', 'grandma', 'grandmom'],
-  husband: ['husband'],
-  wife: ['wife', 'spouse'],
-  spouse: ['husband', 'wife', 'spouse'],
-  boyfriend: ['boyfriend'],
-  girlfriend: ['girlfriend'],
-  partner: ['partner', 'boyfriend', 'girlfriend', 'spouse'],
-  fiance: ['fiance', 'fianc'],
-  fiancee: ['fiance', 'fianc'],
-};
-
 // Extract the relationship role from a user message like "what did your father say".
-// Returns the canonical role key (e.g. 'father') or null.
+// Returns the role term as typed (e.g. 'father', 'dad') or null. Detection only —
+// the role term is then resolved through the shared relationshipRoleResolver authority.
 function extractRelationshipRole(text) {
   if (!text) return null;
   const m = text.match(/\byour (father|dad|daddy|mother|mom|mommy|ma|mama|son|daughter|brother|bro|sis|sister|uncle|aunt|cousin|nephew|niece|grandpa|grandfather|grandma|grandmother|husband|wife|spouse|boyfriend|girlfriend|partner|fiance|fiancee)\b/i);
@@ -149,67 +117,30 @@ function extractRelationshipRole(text) {
 
 /**
  * Resolve a relationship role ("your father", "your mom") to a specific character
- * using the current character's fictional_relationships and family_members data.
+ * for read-only World Phone retrieval context.
  *
- * A relationship role only resolves a person when ALL of the following are true:
- *   1. The speaker/subject context is known (the current character is asking).
- *   2. A relationship edge exists in the app (fictional_relationships / family_members).
- *   3. The relationship role points to a specific represented character.
- *   4. The resolved character exists in the roster.
+ * This is a thin adapter over relationshipRoleResolver.resolveRelationshipRoleRecipient —
+ * the SINGLE authority for relationship-role recipient resolution, shared with the
+ * send path (user instruction, proactive outreach, past-tense claim). It reads ONLY
+ * the acting character's authoritative family_members / fictional_relationships and
+ * uses exact canonical-role equality (dad→father). It never uses substring matching,
+ * never guesses by roster name, and never consults conversation history.
  *
- * Returns the resolved Character object or null.
+ * Retrieval needs a Character object (with .id/.name) to look up the conversation by
+ * canonical key. We map the authoritative {characterId, name} to a roster Character
+ * when available, else return a minimal object so the canonical-key lookup still works.
+ *
+ * Returns the resolved Character object (or {id, name}) or null. Read-only — no writes.
  */
 function resolveContactByRelationshipRole(role, character, allCharacters) {
   if (!role || !character || !Array.isArray(allCharacters)) return null;
-  const labelKeywords = ROLE_LABEL_MAP[role];
-  if (!labelKeywords || labelKeywords.length === 0) return null;
-  const keywordSet = new Set(labelKeywords);
-
-  const candidateIds = new Set();
-
-  // Source 1: fictional_relationships — look for related_character_id where the
-  // relationship_type or label fields contain a matching keyword.
-  const ficRels = character.fictional_relationships || [];
-  for (const rel of ficRels) {
-    if (!rel || !rel.related_character_id) continue;
-    const haystack = [
-      rel.relationship_type,
-      rel.label_from_source_perspective,
-      rel.label_from_target_perspective,
-      rel.description,
-      rel.label,
-      rel.role,
-    ].filter(Boolean).join(' ').toLowerCase();
-    if (keywordSet.some(kw => haystack.includes(kw))) {
-      candidateIds.add(rel.related_character_id);
-    }
-  }
-
-  // Source 2: family_members — objects may carry a name + relationship_type.
-  // Resolve the name to a roster character.
-  const familyMembers = character.family_members || [];
-  for (const fm of familyMembers) {
-    if (!fm) continue;
-    const relType = (fm.relationship_type || fm.relation || fm.role || '').toLowerCase();
-    const fmName = fm.name || fm.character_name || '';
-    if (keywordSet.some(kw => relType.includes(kw)) && fmName) {
-      // Try to find the character by name in the roster
-      const match = allCharacters.find(c =>
-        c.name && c.name.toLowerCase() === fmName.toLowerCase()
-      );
-      if (match) candidateIds.add(match.id);
-      // Some family_members carry source_character_id directly
-      if (fm.source_character_id) candidateIds.add(fm.source_character_id);
-      if (fm.character_id) candidateIds.add(fm.character_id);
-    }
-  }
-
-  // Resolve candidate IDs to roster characters — return the first match
-  for (const id of candidateIds) {
-    const found = allCharacters.find(c => c.id === id);
-    if (found) return found;
-  }
-  return null;
+  const resolved = resolveRelationshipRoleRecipient(character, role);
+  if (!resolved) return null;
+  const found = allCharacters.find(c => c.id === resolved.characterId);
+  if (found) return found;
+  // Authoritative ID exists but the character isn't in the loaded roster. Return a
+  // minimal object so the canonical-key conversation lookup still resolves.
+  return { id: resolved.characterId, name: resolved.name || role };
 }
 
 // ── PROMPT BLOCK BUILDERS ──────────────────────────────────────────────────
