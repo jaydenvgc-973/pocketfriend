@@ -274,6 +274,46 @@ export function detectCharacterWorldPhoneAction(responseText, senderName) {
   const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
   const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','my','your','his','their']);
 
+  // ── RELATIONSHIP-ROLE PAST-TENSE CLAIMS ("I texted my dad", "I already called my mom") ──
+  // The recipient is a family/romantic role term, not a proper noun. Resolved by the caller
+  // against the acting character's authoritative family_members / fictional_relationships.
+  const rolePastWithMessage = [
+    new RegExp(`\\bI\\s+(?:just\\s+|already\\s+)?(?:texted|messaged|called|hit\\s+up)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:and\\s+told\\s+(?:him|her|them)\\s+|saying\\s+|that\\s+|to\\s+say\\s+|:\\s*)["']?(.{5,}?)["']?[.!]`, 'i'),
+    new RegExp(`\\bI\\s+(?:let|told)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+know\\s+(?:that\\s+)?(.{5,}?)[.!]`, 'i'),
+    new RegExp(`\\bI\\s+reached\\s+out\\s+to\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:about\\s+|to\\s+say\\s+|saying\\s+|that\\s+)?(.{5,}?)[.!]`, 'i'),
+    new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:about\\s+|that\\s+|saying\\s+)?(.{5,}?)[.!]`, 'i'),
+  ];
+  for (const pattern of rolePastWithMessage) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const role = match[1]?.trim().toLowerCase();
+      const message = match[2]?.trim();
+      if (role && message && message.length >= 5) {
+        return { recipient: null, hasRelationshipRole: true, role, message };
+      }
+    }
+  }
+  const rolePastNameOnly = [
+    new RegExp(`\\bI\\s+(?:just\\s+|already\\s+)?(?:texted|messaged|called|contacted|hit\\s+up)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+reached\\s+out\\s+to\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+(?:let|told)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+know\\b`, 'i'),
+    new RegExp(`\\bI\\s+(?:asked|told|informed|notified|warned|updated|checked\\s+(?:on|in\\s+with))\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+sent\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:a\\s+)?(?:text|message|dm)\\b`, 'i'),
+    new RegExp(`\\bI\\s+sent\\s+(?:a\\s+)?(?:text|message|dm)\\s+to\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+(?:shot|dropped)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:a\\s+)?(?:text|message|dm|line)\\b`, 'i'),
+    new RegExp(`\\bI\\s+gave\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\s+(?:a\\s+)?call\\b`, 'i'),
+    new RegExp(`\\bI\\s+got\\s+in\\s+touch\\s+with\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+checked\\s+(?:in\\s+with|on)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\b(?:already|just)\\s+(?:texted|messaged|called|contacted)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+  ];
+  for (const pattern of rolePastNameOnly) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const role = match[1]?.trim().toLowerCase();
+      if (role) return { recipient: null, hasRelationshipRole: true, role, message: null };
+    }
+  }
+
   // Name pattern: 1 or 2 capitalized words
   const NAME = '([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)?)';
 

@@ -178,17 +178,43 @@ export async function handleCharacterWorldPhoneAction({
     // Regex stripping is a defensive fallback only — the primary enforcement is this result check.
     const candidateMessage = pastTenseAction.message || null;
 
-    const result = await base44.functions.invoke('sendWorldPhoneMessage', {
-      sender_character_id: characterId,
-      recipient_identifier: pastTenseAction.recipient,
-      requested_message: candidateMessage,
-      user_instruction_context: candidateMessage
-        ? null
-        : `${character.name} previously mentioned contacting ${pastTenseAction.recipient}`,
-      source: 'character_action',
-      current_conversation_id: conversationId,
-      owner_email: ownerEmail,
-    }).catch(err => ({ data: { success: false, error: err.message } }));
+    // ── RELATIONSHIP-ROLE RESOLUTION for past-tense claims ("I texted my dad") ──
+    // Resolve the role against the acting character's authoritative family_members /
+    // fictional_relationships. Conversation history is never consulted. If no
+    // authoritative record matches, fail cleanly — no send, no guess — and strip the
+    // false claim so the character cannot assert a communication that never occurred.
+    let pastTenseRecipient = pastTenseAction.recipient;
+    let roleUnresolved = false;
+    if (!pastTenseRecipient && pastTenseAction.hasRelationshipRole) {
+      const resolved = resolveRelationshipRoleRecipient(character, pastTenseAction.role);
+      if (resolved) {
+        pastTenseRecipient = resolved.characterId;
+        console.log(`[WorldPhone] past-tense role "${pastTenseAction.role}" resolved to ${resolved.characterId} from authoritative data`);
+      } else {
+        roleUnresolved = true;
+        console.warn(`[WorldPhone] past-tense role "${pastTenseAction.role}" unresolved — failing cleanly, no send`);
+        const roleEscaped = pastTenseAction.role.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pastVerb = '(?:texted|messaged|called|contacted|hit\\s+up|reached\\s+out\\s+to|let|told|asked|informed|notified|warned|updated|sent|shot|dropped|gave|checked\\s+(?:on|in\\s+with)|got\\s+in\\s+touch\\s+with)';
+        modifiedResponseText = (modifiedResponseText
+          .replace(new RegExp(`[^.!?]*\\bI\\s+(?:just\\s+|already\\s+)?${pastVerb}\\s+(?:a\\s+)?(?:text|message|dm|call)?\\s*(?:my|your|our)?\\s*${roleEscaped}[^.!?]*[.!?]`, 'gi'), ' ')
+          .replace(new RegExp(`[^.!?]*\\b(?:already|just)\\s+${pastVerb}\\s+(?:my|your|our)?\\s*${roleEscaped}[^.!?]*[.!?]`, 'gi'), ' ')
+          .replace(/\s{2,}/g, ' ').trim()) || '...';
+      }
+    }
+
+    const result = roleUnresolved
+      ? { data: { success: false, error: 'relationship_role_unresolvable', role: pastTenseAction.role } }
+      : await base44.functions.invoke('sendWorldPhoneMessage', {
+          sender_character_id: characterId,
+          recipient_identifier: pastTenseRecipient,
+          requested_message: candidateMessage,
+          user_instruction_context: candidateMessage
+            ? null
+            : `${character.name} previously mentioned contacting ${pastTenseAction.recipient || `their ${pastTenseAction.role}`}`,
+          source: 'character_action',
+          current_conversation_id: conversationId,
+          owner_email: ownerEmail,
+        }).catch(err => ({ data: { success: false, error: err.message } }));
 
     worldPhoneSendResult = result;
     const data = result?.data;
