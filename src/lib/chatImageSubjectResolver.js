@@ -272,7 +272,7 @@ function hasVisualPresenceSignal(prompt, name) {
  * @param {string} senderCharacterId
  * @returns {{ subjects: Character[], ambiguous: string[], log: string[] }}
  */
-function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId) {
+function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId, { relaxPresenceGate = false } = {}) {
   const log = [];
   const ambiguous = [];
   const matchedIds = new Set();
@@ -309,13 +309,13 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
       // VISUAL-PRESENCE GATE: only resolve as a visual subject when the prompt
       // explicitly places this person in the scene. Conversation-topic mentions
       // ("thinking about Name", "remembers Name") do NOT create visual subjects.
-      if (!hasVisualPresenceSignal(prompt, c.name)) {
+      if (!relaxPresenceGate && !hasVisualPresenceSignal(prompt, c.name)) {
         log.push(`[SubjectResolver] Full-name match "${c.name}" SKIPPED — no visual-presence signal (conversation topic, not in scene)`);
         continue;
       }
       matchedIds.add(c.id);
       subjects.push(c);
-      log.push(`[SubjectResolver] Full-name match (visual-presence): "${c.name}" (id=${c.id})`);
+      log.push(`[SubjectResolver] Full-name match (${relaxPresenceGate ? 'JOINT-relaxed' : 'visual-presence'}): "${c.name}" (id=${c.id})`);
     }
   }
 
@@ -334,13 +334,13 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
         log.push(`[SubjectResolver] ⚠️ Ambiguous first-name "${firstName}" (${count} matches) — excluded from subjects`);
       }
     } else {
-      if (!hasVisualPresenceSignal(prompt, c.name)) {
+      if (!relaxPresenceGate && !hasVisualPresenceSignal(prompt, c.name)) {
         log.push(`[SubjectResolver] First-name match "${firstName}" SKIPPED — no visual-presence signal (conversation topic, not in scene)`);
         continue;
       }
       matchedIds.add(c.id);
       subjects.push(c);
-      log.push(`[SubjectResolver] First-name match (unique, visual-presence): "${c.name}" via "${firstName}" (id=${c.id})`);
+      log.push(`[SubjectResolver] First-name match (unique, ${relaxPresenceGate ? 'JOINT-relaxed' : 'visual-presence'}): "${c.name}" via "${firstName}" (id=${c.id})`);
     }
   }
 
@@ -407,12 +407,37 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, r
   const hasJointTag = /^\[JOINT\]/i.test(imagePrompt.trim());
   if (hasJointTag) {
     log.push(`[SubjectResolver] [JOINT] tag detected — sender is confirmed visual subject`);
-    // Still resolve named co-subjects from the prompt for additionalCharacterIds
-    const { subjects: jointSubjects, log: jointLog } = resolveSubjectCharactersFromPrompt(
-      imagePrompt, allChars, senderCharacterId
+    // [JOINT] is the LLM's EXPLICIT multi-subject signal. The visual-presence gate is RELAXED
+    // here: any named character (full name or unique first name) in the prompt is a co-subject.
+    // Requiring additional "and/with/next-to" phrasing ON TOP of [JOINT] drops co-subjects when
+    // the prompt uses comma lists or other phrasings — leaving only the sender locked while the
+    // named co-subject stays plain prompt text and renders as a generic person. The [JOINT] tag
+    // is the authority that the named characters are in the scene; the gate is redundant here.
+    const { subjects: jointSubjects, ambiguous: jointAmbiguous, log: jointLog } = resolveSubjectCharactersFromPrompt(
+      imagePrompt, allChars, senderCharacterId, { relaxPresenceGate: true }
     );
     log.push(...jointLog);
     log.push(`[SubjectResolver] [JOINT] co-subjects found: [${jointSubjects.map(c => c.name).join(', ')}]`);
+
+    // BLOCK on ambiguous co-subject name — a required named subject that matches multiple
+    // roster characters cannot be resolved. Do not generate (do not fall back to sender-only).
+    if (jointAmbiguous.length > 0 && jointSubjects.length === 0 && !userIsVisualSubject) {
+      const blockReason = `[JOINT] ambiguous co-subject name(s): "${jointAmbiguous.join('", "')}" — multiple characters share this name. Cannot determine the correct subject.`;
+      log.push(`[SubjectResolver] ⛔ BLOCKED — ${blockReason}`);
+      return {
+        resolutionState: 'ambiguous_named',
+        primarySubjectId: null,
+        additionalCharacterIds: [],
+        includeSender: false,
+        isInanimateScene: false,
+        blockReason,
+        ambiguousNames: jointAmbiguous,
+        userIsVisualSubject,
+        userWorldName,
+        log,
+      };
+    }
+
     return {
       resolutionState: 'resolved',
       primarySubjectId: senderCharacterId,
