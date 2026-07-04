@@ -21,6 +21,7 @@
 
 import { isVickServicioCharacter } from '@/lib/vickDiagnosticIntentCheck';
 import { base44 } from '@/api/base44Client';
+import { resolveCoPresence } from '@/lib/coPresenceResolver';
 
 // ── Per-conversation persistent context ──────────────────────────────────────
 // Keyed by conversationId. Persists for the session.
@@ -194,10 +195,60 @@ async function runConversationAnchorScan(characterId) {
   return res?.data;
 }
 
+// ── PERCEPTION BLOCK — Vick's authoritative world state (location, environment, co-presence) ──
+// Restores the world-state feed the normal NPC path provides via buildCanonicalCharacterContext.
+// Uses resolveCoPresence — the SAME resolver the Chat UI uses — so Vick perceives exactly
+// what the UI shows (his location, the people present with him, his resolved presence/stay-lock).
+async function buildVickPerceptionBlock(character, ownerEmail) {
+  if (!character || !ownerEmail) return '';
+  const lines = [];
+  const locId = character.resolved_current_location_id || null;
+  const locName = character.resolved_current_location_name || null;
+  const presence = character.resolved_presence_status || null;
+  const stayLock = character.presence_stay_lock === true;
+
+  if (locName) lines.push(`YOUR CURRENT LOCATION: ${locName}${presence ? ` (${presence.replace(/_/g, ' ')})` : ''}.`);
+  if (stayLock) lines.push(`PRESENCE STAY LOCK: Active${character.presence_stay_lock_reason ? ` — ${character.presence_stay_lock_reason}` : ''}. You are held at this location; do not narrate leaving.`);
+  if (character.is_jailed) lines.push(`INCARCERATION: Currently incarcerated${character.incarceration_facility_name ? ` at ${character.incarceration_facility_name}` : ''}.`);
+  if (character.house_arrest_active) lines.push(`HOUSE ARREST: Active — cannot leave assigned residence.`);
+  if (character.travel_status && character.travel_status !== 'not_traveling') lines.push(`TRAVEL: Currently traveling${character.traveling_to_location_name ? ` to ${character.traveling_to_location_name}` : ''}.`);
+
+  // Environment description from authoritative LocationReference (room/furniture/areas)
+  if (locId) {
+    try {
+      const locs = await base44.entities.LocationReference.filter({ id: locId }).catch(() => []);
+      const loc = locs?.[0];
+      if (loc?.description) lines.push(`ENVIRONMENT: ${loc.description.substring(0, 300)}`);
+      if (Array.isArray(loc?.zones) && loc.zones.length > 0) {
+        const zoneNames = loc.zones.map(z => z.zone_name).filter(Boolean).join(', ');
+        if (zoneNames) lines.push(`AREAS HERE: ${zoneNames}`);
+      }
+    } catch { /* non-blocking */ }
+  }
+
+  // Co-presence — SAME resolver the Chat UI uses (resolveCoPresence)
+  let coPresenceBlock = '';
+  try {
+    const settingsList = await base44.entities.UserSettings.filter({ owner_email: ownerEmail }).catch(() => []);
+    const userSettings = settingsList?.[0] || {};
+    const coPresenceResult = resolveCoPresence(character, userSettings, userSettings?.fictional_world_name || null);
+    coPresenceBlock = coPresenceResult?.promptBlock || '';
+    if (coPresenceResult?.charactersPresentHere?.length > 0) {
+      const names = coPresenceResult.charactersPresentHere.map(c => c.name).join(', ');
+      lines.push(`OTHER PEOPLE PRESENT HERE WITH YOU: ${names}.`);
+    } else if (coPresenceResult?.userPresentHere) {
+      lines.push(`THE USER IS PRESENT HERE WITH YOU.`);
+    }
+  } catch { /* non-blocking */ }
+
+  if (lines.length === 0 && !coPresenceBlock) return '';
+  return `\n════════════════════════════════════\nPERCEPTION — YOUR CURRENT REALITY (authoritative world state)\n════════════════════════════════════\n${lines.join('\n')}\n${coPresenceBlock}\nThis is real. You can perceive your surroundings, your location, and the people present with you. Reference them naturally. Do NOT claim you cannot see your environment or that no one is here.\n════════════════════════════════════\n`;
+}
+
 // ── The full architecture-map prompt ─────────────────────────────────────────
 // This is the SAME architecture knowledge as SupportAssistant's LLM prompt.
 // Vick delivers the answer in plain human language — not robotic output.
-function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate, hasImages = false, hasAnyEvidence = true }) {
+function buildVickIntelligencePrompt({ ownerEmail, recentHistory, diagContext, characterListContext, investigationContext, text, isPrivate, hasImages = false, hasAnyEvidence = true, perceptionBlock = '' }) {
 
   // When an image is attached, front-load the image analysis directive so the model
   // prioritizes visual reading BEFORE any architecture context or database logic.
@@ -312,7 +363,7 @@ But you must still sound like yourself. Stay in the conversation. Be honest abou
 Say what you don't know, say what you'd want to find out, and keep talking like a real person — not a system message.
 ════════════════════════════════════════
 ` : '';
-    return `${imageAnalysisDirective}${zeroEvidenceGuardPublic}You are Vick Servicio. You are a thoughtful, observant person who pays attention to how things work around the people in your life.
+    return `${imageAnalysisDirective}${perceptionBlock}${zeroEvidenceGuardPublic}You are Vick Servicio. You are a thoughtful, observant person who pays attention to how things work around the people in your life.
 
 ${speechRule}
 
@@ -367,7 +418,7 @@ Keep talking. Keep being Vick. Just be honest about what you don't have.
 ════════════════════════════════════════
 ` : '';
 
-  return `${imageAnalysisDirective}${zeroEvidenceGuard}You are Vick Servicio. You work in the recovery yard. You are a service operator, investigator, diagnostician, continuity specialist, and systems steward.
+  return `${imageAnalysisDirective}${perceptionBlock}${zeroEvidenceGuard}You are Vick Servicio. You work in the recovery yard. You are a service operator, investigator, diagnostician, continuity specialist, and systems steward.
 
 ${speechRule}
 
@@ -1281,9 +1332,10 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
     console.warn(`[VICK_BRIDGE] ⚠ NO EVIDENCE AVAILABLE — Vick is responding WITH ZERO evidence. All sources are empty. Prompt must enforce "I don't have that data" response.`);
   }
 
+  const perceptionBlock = await buildVickPerceptionBlock(character, ownerEmail);
   const prompt = buildVickIntelligencePrompt({
     ownerEmail, recentHistory, diagContext, characterListContext,
-    investigationContext, text, isPrivate, hasImages, hasAnyEvidence,
+    investigationContext, text, isPrivate, hasImages, hasAnyEvidence, perceptionBlock,
   });
 
   let responseText = '';
