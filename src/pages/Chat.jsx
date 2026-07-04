@@ -80,6 +80,7 @@ import { isCharacterConfined, canCharacterRespond, getConfinementNotice } from "
 import { useChatTimingProof } from "@/hooks/useChatTimingProof";
 import ChatTimingOverlay from "@/components/chat/ChatTimingOverlay";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
+import { resolveRelationshipRoleRecipient } from "@/lib/relationshipRoleResolver";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { enforceWorldPhoneStateGuard } from "@/lib/worldPhoneStateGuard";
 import { finalizeWorldPhoneResponse } from "@/lib/worldPhoneResponseFinalizer";
@@ -472,20 +473,40 @@ export default function Chat({ chatTypeOverride } = {}) {
     if (locationShareResult.handled) return;
 
     // ── WORLD PHONE EXPLICIT INTENT DETECTION ─────────────────────────────────
+    // SINGLE IDENTITY DECISION: relationship roles ("text your dad") are resolved
+    // ONCE here against the acting character's authoritative family_members /
+    // fictional_relationships — the SAME authoritative context the LLM's system
+    // prompt reads to understand "your dad" = Victor. The resolved character_id
+    // flows to sendWorldPhoneMessage's direct_id path (no second resolution), and
+    // the post-LLM character-claim handler is skipped (line ~1560 guards on
+    // !worldPhoneIntent) so no duplicate identity decision occurs for this turn.
     const worldPhoneIntent = detectWorldPhoneIntent(text);
     let worldPhoneSendResult = null;
     if (worldPhoneIntent) {
-      const wpPayload = buildWorldPhonePayload({
-        intent: worldPhoneIntent,
-        text,
-        characterId,
-        conversationId: conversationIdRef.current || conversationId,
-        currentUserEmail: currentUser.email,
-        recentMessages: messages,
-        characterName: character.name,
-      });
-      worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => ({ data: { success: false, error: err.message } }));
-      console.log('[WorldPhone] send result:', worldPhoneSendResult?.data);
+      let resolvedIntent = worldPhoneIntent;
+      if (worldPhoneIntent.relationshipRoleIntent) {
+        const resolved = resolveRelationshipRoleRecipient(character, worldPhoneIntent.role);
+        if (!resolved) {
+          console.warn(`[WorldPhone] Relationship role "${worldPhoneIntent.role}" unresolved from authoritative data — skipping send`);
+          worldPhoneSendResult = { data: { success: false, error: 'relationship_role_unresolvable', role: worldPhoneIntent.role } };
+        } else {
+          console.log(`[WorldPhone] Relationship role "${worldPhoneIntent.role}" → character ${resolved.characterId} (${resolved.name || 'unnamed'})`);
+          resolvedIntent = { ...worldPhoneIntent, recipient: resolved.characterId };
+        }
+      }
+      if (!worldPhoneSendResult && (resolvedIntent.recipient || resolvedIntent.pronounIntent)) {
+        const wpPayload = buildWorldPhonePayload({
+          intent: resolvedIntent,
+          text,
+          characterId,
+          conversationId: conversationIdRef.current || conversationId,
+          currentUserEmail: currentUser.email,
+          recentMessages: messages,
+          characterName: character.name,
+        });
+        worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => ({ data: { success: false, error: err.message } }));
+        console.log('[WorldPhone] send result:', worldPhoneSendResult?.data);
+      }
     }
 
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
