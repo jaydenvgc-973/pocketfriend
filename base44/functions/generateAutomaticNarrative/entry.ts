@@ -543,8 +543,17 @@ If no actions occur, return empty action_effects array.`;
       },
     });
 
-    const narrativeText = narrativeRes?.narrative_text?.trim() ||
+    let narrativeText = narrativeRes?.narrative_text?.trim() ||
       `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
+    // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+    // Prompt-level bans exist below but the LLM occasionally ignores them; this strip
+    // enforces the ban regardless. Removes the token and any dangling article, then
+    // cleans whitespace/punctuation so the sentence still reads naturally.
+    narrativeText = narrativeText
+      .replace(/\bchaotic\b/gi, 'hectic')
+      .replace(/\bchaos\b/gi, 'turmoil')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
     
     const actionEffects = narrativeRes?.action_effects || [];
 

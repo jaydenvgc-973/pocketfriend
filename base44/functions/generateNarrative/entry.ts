@@ -966,6 +966,18 @@ Narrative:`,
       }
     }
 
+    // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+    // Prompt-level bans exist above but the LLM occasionally ignores them; this strip
+    // enforces the ban regardless. Removes the token and any dangling article, then
+    // cleans whitespace/punctuation so the sentence still reads naturally.
+    if (typeof response === 'string') {
+      response = response
+        .replace(/\bchaotic\b/gi, 'hectic')
+        .replace(/\bchaos\b/gi, 'turmoil')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }
+
     return Response.json({ success: true, narrative: response, diagLog });
 
   } catch (error) {
