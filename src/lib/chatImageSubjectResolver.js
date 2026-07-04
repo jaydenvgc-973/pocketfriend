@@ -144,7 +144,13 @@ export function resolveUserParticipantInPrompt(prompt, resolvedUser) {
     const formLower = form.toLowerCase();
     // Require at least 3 chars to avoid spurious single-letter matches
     if (formLower.length < 3) continue;
-    if (promptLower.includes(formLower)) {
+    // WORD-BOUNDARY MATCHING — prevents short aliases from matching as substrings
+    // of longer words. Example: alias "son" must NOT match inside "Thompson".
+    // Uses \b word boundary so "son" only matches standalone "son", not "Thompson".
+    // Escapes regex special characters in the name form.
+    const escaped = formLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordBoundaryRegex = new RegExp(`\\b${escaped}\\b`, 'i');
+    if (wordBoundaryRegex.test(prompt)) {
       return { matched: true, worldName, matchedForm: form };
     }
   }

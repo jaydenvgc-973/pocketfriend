@@ -817,14 +817,35 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       // 1. ctx.subjects names  2. ctx.character_name  3. prompt [CHARACTER] token
                       const subjectNames = (generationContext?.subjects || [])
                         .map(s => s.subject_name).filter(Boolean);
-                      const resolvedSubjectDisplay =
+                      const ctxSubjectDisplay =
                         subjectNames.length > 0
                           ? subjectNames.join(' + ')
                           : generationContext?.character_name ||
                             parsedPromptIdentity.name ||
                             null;
                       const hasId = !!(generationContext?.character_id || generationContext?.subjects?.length > 0);
-                      const identitySource = subjectNames.length > 0 ? 'subjects_bundle'
+
+                      // CROSS-CHECK: The prompt is the actual visual description — the source
+                      // of truth for what the image shows. If the [CHARACTER] name parsed
+                      // from the prompt does NOT match the stored subjects names, the stored
+                      // metadata was wrong (e.g. a short alias matched as a substring of a
+                      // character's last name, causing the user to be locked as subject when
+                      // the prompt actually describes the character). In that case, show the
+                      // prompt-derived name — it reflects what the image actually depicts.
+                      const promptName = parsedPromptIdentity.name || null;
+                      const promptNameLower = promptName?.toLowerCase() || '';
+                      const ctxNamesMatchPrompt = !promptName || subjectNames.some(n =>
+                        n.toLowerCase() === promptNameLower ||
+                        n.toLowerCase().includes(promptNameLower) ||
+                        promptNameLower.includes(n.toLowerCase())
+                      );
+                      const mismatchDetected = !ctxNamesMatchPrompt && promptName;
+
+                      const resolvedSubjectDisplay = mismatchDetected
+                        ? promptName
+                        : ctxSubjectDisplay;
+                      const identitySource = mismatchDetected ? 'prompt_token_corrected'
+                        : subjectNames.length > 0 ? 'subjects_bundle'
                         : generationContext?.character_name ? 'ctx_character_name'
                         : parsedPromptIdentity.name ? 'prompt_token'
                         : 'unresolved';
@@ -832,21 +853,32 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       return (
                         <div className="space-y-1">
                           <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border ${
-                            identitySource === 'unresolved'
-                              ? 'bg-amber-500/10 border-amber-500/20'
-                              : 'bg-blue-500/10 border-blue-500/20'
+                            mismatchDetected
+                              ? 'bg-amber-500/10 border-amber-500/30'
+                              : identitySource === 'unresolved'
+                                ? 'bg-amber-500/10 border-amber-500/20'
+                                : 'bg-blue-500/10 border-blue-500/20'
                           }`}>
-                            <span className={`text-[10px] font-medium ${identitySource === 'unresolved' ? 'text-amber-400' : 'text-blue-400'}`}>
+                            <span className={`text-[10px] font-medium ${mismatchDetected ? 'text-amber-400' : identitySource === 'unresolved' ? 'text-amber-400' : 'text-blue-400'}`}>
                               Subject locked:
                             </span>
-                            <span className={`text-[10px] ${identitySource === 'unresolved' ? 'text-amber-300' : 'text-blue-300'}`}>
+                            <span className={`text-[10px] ${mismatchDetected ? 'text-amber-300' : identitySource === 'unresolved' ? 'text-amber-300' : 'text-blue-300'}`}>
                               {resolvedSubjectDisplay || 'ID only (name unknown — load roster for full lock)'}
                             </span>
-                            {identitySource === 'prompt_token' && (
+                            {mismatchDetected && (
+                              <span className="text-[9px] text-amber-400/60 ml-auto">(corrected from prompt)</span>
+                            )}
+                            {!mismatchDetected && identitySource === 'prompt_token' && (
                               <span className="text-[9px] text-blue-400/60 ml-auto">(from prompt)</span>
                             )}
                           </div>
-                          {identitySource === 'unresolved' && (
+                          {mismatchDetected && (
+                            <p className="text-[9px] text-amber-400/70 px-1 leading-tight">
+                              Stored subject metadata didn't match the prompt. The prompt describes <span className="font-medium">{promptName}</span> — using that as the subject.
+                              The old metadata had: {subjectNames.join(', ') || 'none'}.
+                            </p>
+                          )}
+                          {!mismatchDetected && identitySource === 'unresolved' && (
                             <p className="text-[9px] text-amber-400/70 px-1">
                               Character name could not be resolved. The backend will attempt name resolution from the prompt before generating.
                             </p>
