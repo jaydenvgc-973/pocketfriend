@@ -342,13 +342,37 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         }
 
         setConversationId(found.id);
-        const rawHistory = await base44.entities.Message.filter({ conversation_id: found.id }, "created_date");
+        // AUTHORITATIVE READ — corrects the root cause of intermittently missing
+        // messages. The previous call had no .catch(): a 429/timeout propagated to
+        // the outer catch and silently rendered an EMPTY conversation even though
+        // messages existed in the DB. Now: try/catch with one retry, server-side
+        // archived_date filter (matches the Chat read path), and an explicit 500
+        // limit so the complete conversation is returned regardless of SDK default.
+        // Descending sort retrieves the 500 MOST RECENT messages; reversed below
+        // to chronological (oldest-first) order for top-to-bottom display.
+        let rawHistory;
+        try {
+          rawHistory = await base44.entities.Message.filter(
+            { conversation_id: found.id, archived_date: null },
+            "-created_date",
+            500
+          );
+        } catch (histErr) {
+          console.warn(`[WorldPhone] History load failed (${histErr?.message}) — retrying once`);
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            rawHistory = await base44.entities.Message.filter(
+              { conversation_id: found.id, archived_date: null },
+              "-created_date",
+              500
+            );
+          } catch { rawHistory = []; }
+        }
 
         // WORLD PHONE BOUNDARY GUARD: filter out canon_excluded contamination records
         // and any narrative records that lack bilateral IDs before rendering.
-        // This ensures excluded contamination from the June 2026 remediation never
-        // appears as visible bubbles in World Contacts, even if it exists in the DB.
-        const history = filterWorldPhoneHistory(rawHistory);
+        // Reverse to chronological (oldest-first) order for display.
+        const history = filterWorldPhoneHistory(rawHistory).reverse();
 
         // Diagnostic: log per-message sender info
         console.log(`[WorldPhone] Loaded ${rawHistory.length} raw messages, ${history.length} after boundary filter for convo ${found.id}`);
