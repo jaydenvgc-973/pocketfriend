@@ -377,7 +377,7 @@ const TIcon = ({ type }) => { const I = ICON_MAP[type] || Activity; return <I cl
 // Key: characterId → dashboard data object.
 // VERSION stamp: bump this whenever the data shape or classification logic changes so
 // stale pre-fix cached entries are automatically discarded on next load.
-const DASHBOARD_CACHE_VERSION = 18; // added liveSnapshot validation
+const DASHBOARD_CACHE_VERSION = 19; // added timelineSourcesComplete flag
 const dashboardCache = {};
 const dashboardCacheVersion = {};
 
@@ -540,6 +540,14 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const allChars   = allCharsR.status   === "fulfilled" ? (allCharsR.value   || []) : [];
       // Event participation — community events the character attended
       const eventParts = eventPartR?.status === "fulfilled" ? (eventPartR.value  || []) : [];
+      // Recent Activity timeline completeness — true ONLY if every timeline-authoritative
+      // source query fulfilled. A silent 429 on any of these must NOT render as "no activity"
+      // (the empty-placeholder bug) nor as a partial timeline. locHistR is optional-gated.
+      const timelineSourcesComplete =
+        narrR.status === "fulfilled" &&
+        charNarrR.status === "fulfilled" &&
+        lifeEventsR.status === "fulfilled" &&
+        (locHistR == null || locHistR.status === "fulfilled");
       // Combine for full picture — deduplicated by id
       const allMsgIds = new Set(msgs.map(m => m.id));
       const allMsgs   = [...msgs, ...rcvMsgs.filter(m => !allMsgIds.has(m.id))];
@@ -1280,17 +1288,22 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
         ` | activeRequestRef=${activeRequestRef.current}`
       );
 
-      const dashData = { charId: requestCharId, liveSnapshot: buildLiveCharacterSnapshot(character), liveLocationDisplay, liveStatus, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
+      const dashData = { charId: requestCharId, liveSnapshot: buildLiveCharacterSnapshot(character), liveLocationDisplay, liveStatus, timelineSourcesComplete, trendData, timelineEntries: timelineEntries.slice(0, 20), socialStats: { msgsSent, positiveInteractions, conflictEvents, unclassifiedCount }, insights: insights.slice(0, 5), memoryHighlights, workDisplay, hasPeopleJob, occSocialContext };
       // Guard: only write if this charId is still the active request
       if (requestCharId !== activeRequestRef.current) {
         console.log(`[CharacterDashboard] STALE — discarding result for ${requestCharId}, active is ${activeRequestRef.current}`);
         return;
       }
-      // Write cache under REQUEST charId (not the potentially-stale outer charId)
-      dashboardCache[requestCharId] = dashData;
-      dashboardCacheVersion[requestCharId] = DASHBOARD_CACHE_VERSION;
+      // Write cache under REQUEST charId — but ONLY when the timeline-authoritative
+      // queries all fulfilled. A partial result (transient 429 on a timeline-critical
+      // query) must NOT be cached, so the next profile open refetches instead of
+      // serving an incomplete record as if it were authoritative.
+      if (timelineSourcesComplete) {
+        dashboardCache[requestCharId] = dashData;
+        dashboardCacheVersion[requestCharId] = DASHBOARD_CACHE_VERSION;
+      }
       setData(dashData);
-      setLoaded(true);
+      setLoaded(timelineSourcesComplete);
       setLoading(false);
     }).catch((err) => {
       if (requestCharId !== activeRequestRef.current) return;
@@ -1302,6 +1315,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const fallbackData = {
         liveLocationDisplay: character?.resolved_current_location_name || '—',
         liveStatus: character?.resolved_presence_status || 'home',
+        timelineSourcesComplete: false,
         trendData: [],
         timelineEntries: [],
         socialStats: { msgsSent: 0, positiveInteractions: 0, conflictEvents: 0, unclassifiedCount: 0 },
@@ -1322,7 +1336,7 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
   // NEVER return null — always render the dashboard shell even if data is minimal
   if (!data) return <div className="flex items-center justify-center py-10"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>;
 
-  const { liveLocationDisplay, liveStatus, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
+  const { liveLocationDisplay, liveStatus, timelineSourcesComplete, trendData, timelineEntries, socialStats, insights, memoryHighlights, workDisplay } = data;
   const emotionState = character.emotional_state || "calm";
   const now = format(new Date(), "h:mm aa");
   const moodColor = eColor(emotionState);
@@ -1440,25 +1454,32 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
           <div className="px-4 py-3 border-b border-border">
             <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Recent Activity · Last 3 Days</p>
           </div>
-          {timelineEntries.length === 0
-            ? <p className="px-4 py-4 text-xs text-muted-foreground italic">No recorded activity in the last 3 days.</p>
-            : (
-              <div className="divide-y divide-border/40">
-                {timelineEntries.map((entry, i) => (
-                  <div key={i} className={`flex items-start gap-2.5 px-4 py-2.5 border-l-2 ${entryAccent(entry.emotion)}`}>
-                    <div className="mt-0.5 flex-shrink-0 text-muted-foreground"><TIcon type={entry.icon} /></div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs text-foreground leading-snug">{entry.text}</p>
-                      {entry.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{entry.sub}</p>}
-                    </div>
-                    <div className="flex-shrink-0 text-right ml-1">
-                      {entry.time && <p className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtDayTime(entry.time)}</p>}
-                      {entry.emotion && <p className="text-[9px] font-medium capitalize whitespace-nowrap" style={{ color: eColor(entry.emotion) }}>{entry.emotion}</p>}
-                    </div>
-                  </div>
-                ))}
+          {!timelineSourcesComplete
+            ? (
+              <div className="px-4 py-6 flex items-center gap-2.5">
+                <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin flex-shrink-0" />
+                <p className="text-xs text-muted-foreground">Loading recent activity…</p>
               </div>
             )
+            : timelineEntries.length === 0
+              ? <p className="px-4 py-4 text-xs text-muted-foreground italic">No recorded activity in the last 3 days.</p>
+              : (
+                <div className="divide-y divide-border/40">
+                  {timelineEntries.map((entry, i) => (
+                    <div key={i} className={`flex items-start gap-2.5 px-4 py-2.5 border-l-2 ${entryAccent(entry.emotion)}`}>
+                      <div className="mt-0.5 flex-shrink-0 text-muted-foreground"><TIcon type={entry.icon} /></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-foreground leading-snug">{entry.text}</p>
+                        {entry.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{entry.sub}</p>}
+                      </div>
+                      <div className="flex-shrink-0 text-right ml-1">
+                        {entry.time && <p className="text-[9px] text-muted-foreground whitespace-nowrap">{fmtDayTime(entry.time)}</p>}
+                        {entry.emotion && <p className="text-[9px] font-medium capitalize whitespace-nowrap" style={{ color: eColor(entry.emotion) }}>{entry.emotion}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
           }
         </div>
 
