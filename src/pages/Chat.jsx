@@ -1782,7 +1782,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       let subjectResult = null; // hoisted so it's accessible after try-catch for userIsVisualSubject
 
       try {
-        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId);
+        // ── USER-PARTICIPANT RESOLUTION ─────────────────────────────────────────
+        // Pass resolvedCurrentUser (User entity + UserSettings bundle) so resolveImageSubjects
+        // can detect the authenticated user as a visual subject by scanning the LLM prompt for
+        // their world name / full name / aliases. Without this, userIsVisualSubject is always
+        // false and the backend identity-resolution gate never fires on initial generation,
+        // producing images that don't preserve the user's identity. This activates the SAME
+        // authoritative User entity + UserSettings resolution the "Doesn't look like them"
+        // regeneration path uses — no duplicate identity storage, no parallel system.
+        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser);
         // Log all resolution steps for diagnostics
         (subjectResult.log || []).forEach(entry => console.log(entry));
 
@@ -1839,6 +1847,32 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         resolvedCharacterId = characterId;
         resolvedCharRefs = charRefs;
         resolvedAdditionalCharacterIds = [];
+      }
+
+      // ── USER VISUAL SUBJECT UPGRADE ─────────────────────────────────────────
+      // When resolveImageSubjects detected the authenticated user's world name / full name /
+      // aliases in the LLM-generated prompt, the user is a visual subject. Upgrade subjectType
+      // so the backend identity-resolution gate (effectiveUserSubject) fires on the INITIAL
+      // generation — the same authoritative User entity + UserSettings resolution the
+      // "Doesn't look like them" regeneration path uses. No duplicate identity storage.
+      //   user only (no character in image)  → 'user'
+      //   user + one or more characters      → 'joint'
+      //   no user present                    → 'character' (unchanged)
+      const userIsVisualSubjectDetected = !!(subjectResult?.userIsVisualSubject);
+      if (userIsVisualSubjectDetected) {
+        if (subjectResult?.resolutionState === 'user_participant') {
+          // User is the SOLE visual subject — clear any sender default so the backend does not
+          // inject a character identity that is not in the requested image.
+          resolvedCharacterId = null;
+          resolvedCharRefs = [];
+          resolvedAdditionalCharacterIds = [];
+          resolvedSubjectType = 'user';
+          console.log(`[Chat] USER VISUAL SUBJECT: sole subject → subjectType="user" (char cleared)`);
+        } else {
+          // User + character(s) in the image
+          resolvedSubjectType = 'joint';
+          console.log(`[Chat] USER VISUAL SUBJECT: joint with character → subjectType="joint" | char=${resolvedCharacterId || 'sender'}`);
+        }
       }
 
       // ── ENFORCE SUBJECT NAMES IN PROMPT ────────────────────────────────────
@@ -1904,7 +1938,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         imageGenPrompt: validatedPrompt,
         charRefs: resolvedCharRefs,
         userRefImages,
-        useUserRefs: false,
+        // Forward the authoritative user avatar/profile/reference image bundle (from
+        // resolveAuthenticatedUser → User entity visual_reference_images) BEFORE the first
+        // generation whenever the user is a visual subject. The backend uses these as the
+        // caller-bundle fallback and stores them in generation_context.user_reference_images
+        // for regeneration. Previously hardcoded false — which discarded the already-loaded
+        // User entity reference images and forced the user to use "Doesn't look like them".
+        useUserRefs: userIsVisualSubjectDetected && userRefImages.length > 0,
         character,
         userSettings,
         currentUser,
@@ -1922,7 +1962,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         // in the prompt (any position). Backend uses this to trigger full user identity resolution
         // (User entity + UserSettings) even when subjectType is not explicitly 'user'/'joint'.
         // CRITICAL: never pass rel.photo_url or rel.avatar_url as the user's canonical avatar.
-        userIsVisualSubject: !!(subjectResult?.userIsVisualSubject),
+        userIsVisualSubject: userIsVisualSubjectDetected,
       }), delayMs);
       return imgMsg;
     };
