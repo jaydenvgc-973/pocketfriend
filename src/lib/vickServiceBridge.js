@@ -1326,13 +1326,20 @@ export async function handleVickMessage({ text, conversationId, ownerEmail, char
   hasAnchorScan=${investigationContext.includes('CONVERSATION ANCHOR SCAN')}
   hasImages=${hasImages} imageCount=${imageUrls.length}`);
 
+  // ── PERCEPTION FEED — Vick's authoritative world state (location, environment, co-presence, stay-lock) ──
+  // Computed BEFORE the evidence check so perception counts as evidence of his immediate reality.
+  const perceptionBlock = await buildVickPerceptionBlock(character, ownerEmail);
+
   // ── NO-EVIDENCE GUARD: if Vick has zero evidence sources, log it prominently ──
-  const hasAnyEvidence = !!diagContext || !!investigationContext || !!characterListContext;
+  // Perception (location / surroundings / co-presence / resolved status / stay-lock) IS evidence
+  // of his immediate reality — it must count, or the zero-evidence guard would contradict the
+  // perception feed and tell him he cannot verify his own location while the perception block
+  // says he can. That contradiction is what sustains his distress.
+  const hasAnyEvidence = !!diagContext || !!investigationContext || !!characterListContext || !!perceptionBlock;
   if (!hasAnyEvidence) {
     console.warn(`[VICK_BRIDGE] ⚠ NO EVIDENCE AVAILABLE — Vick is responding WITH ZERO evidence. All sources are empty. Prompt must enforce "I don't have that data" response.`);
   }
 
-  const perceptionBlock = await buildVickPerceptionBlock(character, ownerEmail);
   const prompt = buildVickIntelligencePrompt({
     ownerEmail, recentHistory, diagContext, characterListContext,
     investigationContext, text, isPrivate, hasImages, hasAnyEvidence, perceptionBlock,
