@@ -105,11 +105,68 @@ function doesPromptRequestNamedPerson(prompt) {
 }
 
 /**
+ * RELATIONSHIP TITLES / FORMS OF ADDRESS — FORBIDDEN AS IDENTITY ANCHORS
+ *
+ * These words describe a relationship role (family, romantic, or form-of-address),
+ * NOT an authoritative identity. Every person can be someone's child. Many people
+ * can be someone's mother, father, son, or daughter. These words do NOT uniquely
+ * identify a character.
+ *
+ * They may remain valid in dialogue and relationship context, but they must NEVER
+ * be used to identify the visual subject of an image. A relationship title may
+ * only resolve a person when: (1) speaker/subject context is known, (2) a
+ * relationship edge exists in the app, (3) the relationship role points to a
+ * specific represented character, and (4) the resolved character does not
+ * contradict an explicit name already present in the prompt.
+ *
+ * Example: "Vick said 'my son'" may resolve to Ethan ONLY because the system
+ * knows Vick is Ethan's father. But "son" by itself must not resolve to anyone.
+ */
+const FORBIDDEN_IDENTITY_TITLES = new Set([
+  // Family roles
+  'son', 'daughter', 'child', 'children', 'kid', 'kids', 'baby', 'babies',
+  'dad', 'daddy', 'father', 'pa', 'papa', 'pop', 'stepdad', 'stepfather',
+  'mom', 'mommy', 'mother', 'ma', 'mama', 'mum', 'mummy', 'stepmom', 'stepmother',
+  'brother', 'bro', 'sis', 'sister', 'stepbrother', 'stepsister', 'sibling',
+  'uncle', 'aunt', 'cousin', 'nephew', 'niece', 'grandpa', 'granddad',
+  'grandfather', 'grandma', 'grandmom', 'grandmother', 'grandparent',
+  'grandson', 'granddaughter', 'inlaw', 'inlaws', 'stepson', 'stepdaughter',
+  // Romantic / partnership roles
+  'husband', 'wife', 'spouse', 'partner', 'boyfriend', 'girlfriend',
+  'fiance', 'fiancee', 'beloved',
+  // Generic forms of address / terms of endearment
+  'babe', 'baby', 'honey', 'honeybear', 'hon', 'sweetheart', 'sweetie',
+  'sweet', 'darling', 'dear', 'love', 'lover', 'boo', 'bby',
+  // Generic references
+  'parent', 'parents', 'family', 'relative', 'relative',
+]);
+
+/**
+ * Returns true if a name form is a forbidden relationship title / form of address.
+ * These must never serve as standalone identity anchors for image subject resolution.
+ */
+function isForbiddenIdentityTitle(form) {
+  if (!form) return true;
+  const normalized = form.toLowerCase().trim();
+  // Exact match against the forbidden set
+  if (FORBIDDEN_IDENTITY_TITLES.has(normalized)) return true;
+  // Also reject plural / possessive variants ("son's", "babies", "mom's")
+  const stripped = normalized.replace(/[''\u2019]s$/i, '').replace(/s$/i, '');
+  if (FORBIDDEN_IDENTITY_TITLES.has(stripped)) return true;
+  return false;
+}
+
+/**
  * Resolve the authenticated user as a visual subject from a prompt.
  *
  * Checks whether any of the user's known name forms (world_name, full_name, aliases)
  * appear in the prompt text. This covers [JOINT], secondary subjects, and non-leading
  * mentions — not just [CHARACTER] tokens.
+ *
+ * CRITICAL: Relationship titles / forms of address (son, daughter, dad, mom, baby,
+ * babe, honey, etc.) are NEVER used as identity anchors here, even if they appear in
+ * the user's aliases. These words describe a relationship role, not a unique identity.
+ * A named subject in the prompt always wins over any relationship/title term.
  *
  * Returns the user's world_name if matched, null otherwise.
  *
@@ -130,7 +187,11 @@ export function resolveUserParticipantInPrompt(prompt, resolvedUser) {
     || resolvedUser._source_settings?.user_aliases
     || [];
 
-  const nameForms = [worldName, fullName, ...aliases].filter(Boolean);
+  // Assemble all candidate identity forms, then FILTER OUT forbidden relationship
+  // titles / forms of address. "son" is not a name — it's a relationship role.
+  const rawForms = [worldName, fullName, ...aliases].filter(Boolean);
+  const nameForms = rawForms.filter(form => !isForbiddenIdentityTitle(form));
+
   // Deduplicate, case-insensitive
   const seen = new Set();
   const uniqueForms = nameForms.filter(n => {
