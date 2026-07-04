@@ -70,7 +70,10 @@ export async function buildImageGenerationContext({
   let appearanceLockText = '';
 
   if (!effectiveCharacterId && prompt) {
-    // Scan prompt for [CHARACTER] Name token
+    // Scan prompt for [CHARACTER] Name token — this is the explicit subject authority.
+    // Only the [CHARACTER] token resolves a character here; conversation-topic name
+    // mentions elsewhere in the prompt do NOT create subjects (handled by the frontend
+    // chatImageSubjectResolver's visual-presence gating).
     const m = prompt.match(/^\[CHARACTER\]\s+([A-Za-z][A-Za-z\s'-]{1,40}?)(?:\s+|[,.]|$)/i);
     if (m) {
       const nameInPrompt = m[1].trim();

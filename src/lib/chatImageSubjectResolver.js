@@ -220,7 +220,54 @@ export function resolveUserParticipantInPrompt(prompt, resolvedUser) {
 }
 
 /**
+ * VISUAL-PRESENCE GATING — Conversation Topic Must Not Override Prompt Subject
+ *
+ * A character name appearing in the prompt is NOT automatically a visual subject.
+ * The name may be a CONVERSATION TOPIC ("Ethan thinking about Victor", "Ethan
+ * remembers what his father said") — mentioning a person is not the same as
+ * placing them in the scene.
+ *
+ * Only resolve a named character as an additional visual subject when the prompt
+ * EXPLICITLY places them in the scene via a visual-presence signal:
+ *   - "and Name" / "Name and" (co-presence)
+ *   - "with Name" / "Name with" (co-presence)
+ *   - "together with Name"
+ *   - "me and Name" / "Name and me"
+ *   - "Name is sitting/standing/here/in the" (explicit position)
+ *   - "Name sits/stands/sitting/standing" (explicit position)
+ *
+ * This prevents conversation-topic characters (father, father figure, dad, Victor)
+ * from being resolved as additional visual subjects and having their reference
+ * images injected — which causes the image model to render them instead of the
+ * prompt subject.
+ */
+function hasVisualPresenceSignal(prompt, name) {
+  if (!prompt || !name) return false;
+  const firstName = name.split(/\s+/)[0];
+  if (!firstName || firstName.length < 2) return false;
+  const escaped = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const patterns = [
+    new RegExp(`\\band\\s+${escaped}\\b`, 'i'),
+    new RegExp(`\\b${escaped}\\s+and\\b`, 'i'),
+    new RegExp(`\\bwith\\s+${escaped}\\b`, 'i'),
+    new RegExp(`\\b${escaped}\\s+with\\b`, 'i'),
+    new RegExp(`\\btogether with\\s+${escaped}\\b`, 'i'),
+    new RegExp(`\\bme and\\s+${escaped}\\b`, 'i'),
+    new RegExp(`\\b${escaped}\\s+and me\\b`, 'i'),
+    new RegExp(`\\b${escaped}\\s+(is|are)\\s+(sitting|standing|here|in|next|beside|lying|leaning|present)\\b`, 'i'),
+    new RegExp(`\\b${escaped}\\s+(sits|stands|sitting|standing|lying|leaning)\\b`, 'i'),
+    // Spatial co-presence prepositions — name is physically present in the scene
+    new RegExp(`\\b(next to|beside|behind|in front of|across from|near)\\s+${escaped}\\b`, 'i'),
+  ];
+  return patterns.some(p => p.test(prompt));
+}
+
+/**
  * Extract character names that appear in a visual-subject position in the prompt.
+ *
+ * VISUAL-PRESENCE GATE: A name is only resolved as an additional visual subject
+ * when the prompt EXPLICITLY places that person in the scene (visual-presence
+ * signal). Conversation-topic mentions do NOT create visual subjects.
  *
  * @param {string} prompt
  * @param {Array} allChars
@@ -256,18 +303,26 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
     firstNameCount[firstName] = (firstNameCount[firstName] || 0) + 1;
   }
 
-  // Phase 1: Full name match
+  // Phase 1: Full name match — gated by visual-presence signal
   for (const c of sortedRoster) {
     if (matchedIds.has(c.id)) continue;
     const fullNameLower = c.name.toLowerCase();
     if (promptLower.includes(fullNameLower)) {
+      // VISUAL-PRESENCE GATE: only resolve as a visual subject when the prompt
+      // explicitly places this person in the scene. Conversation-topic mentions
+      // ("thinking about Name", "remembers Name") do NOT create visual subjects.
+      if (!hasVisualPresenceSignal(prompt, c.name)) {
+        log.push(`[SubjectResolver] Full-name match "${c.name}" SKIPPED — no visual-presence signal (conversation topic, not in scene)`);
+        continue;
+      }
       matchedIds.add(c.id);
       subjects.push(c);
-      log.push(`[SubjectResolver] Full-name match: "${c.name}" (id=${c.id})`);
+      log.push(`[SubjectResolver] Full-name match (visual-presence): "${c.name}" (id=${c.id})`);
     }
   }
 
   // Phase 2: First-name match (only if unique, only if ≥4 chars, not already matched)
+  // Also gated by visual-presence signal.
   for (const c of sortedRoster) {
     if (matchedIds.has(c.id)) continue;
     const firstName = c.name.split(/\s+/)[0].toLowerCase();
@@ -281,9 +336,13 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId)
         log.push(`[SubjectResolver] ⚠️ Ambiguous first-name "${firstName}" (${count} matches) — excluded from subjects`);
       }
     } else {
+      if (!hasVisualPresenceSignal(prompt, c.name)) {
+        log.push(`[SubjectResolver] First-name match "${firstName}" SKIPPED — no visual-presence signal (conversation topic, not in scene)`);
+        continue;
+      }
       matchedIds.add(c.id);
       subjects.push(c);
-      log.push(`[SubjectResolver] First-name match (unique): "${c.name}" via "${firstName}" (id=${c.id})`);
+      log.push(`[SubjectResolver] First-name match (unique, visual-presence): "${c.name}" via "${firstName}" (id=${c.id})`);
     }
   }
 

@@ -2034,6 +2034,19 @@ All reference images (if any) are environment/location refs only — do NOT trea
     const participantNameRefKeyBlock = buildParticipantNameReferenceKeyBlock(nameKeyParticipants);
     console.log(`[generateImageAsync] NAME REFERENCE KEY: ${nameKeyParticipants.length} participant(s) — ${nameKeyParticipants.map(p => `${p.participant_type}:${p.display_name}`).join(', ')}`);
 
+    // ── SUBJECT AUTHORITY — conversation topic must not override prompt subject ──
+    // The prompt subject (charRecord.name / characterName) is the ONLY visual subject.
+    // Relationship terms (father, dad, parent) may explain emotion but must NOT create
+    // or substitute a visual subject. Injected into every single-subject prompt.
+    const _subjectAuthName = (charRecord?.name || characterName || null);
+    const _subjectAuthId = charRecord?.id || characterId || null;
+    const _subjectAuthBlock = _subjectAuthName
+      ? `\n═══════════════════════════════════════════════════════════\n⛔ VISUAL SUBJECT AUTHORITY — PROMPT SUBJECT IS THE ONLY SUBJECT\n═══════════════════════════════════════════════════════════\nTHE VISUAL SUBJECT OF THIS IMAGE IS: "${_subjectAuthName}".\nRelationship terms (father, dad, father figure, parent, mother) may explain emotion but must NOT create or substitute a visual subject.\n⛔ DO NOT invent an unnamed father/parent/father figure based on conversation context.\n⛔ DO NOT substitute a different person for "${_subjectAuthName}".\n✅ The visible foreground subject MUST be "${_subjectAuthName}" and match their reference images.\n═══════════════════════════════════════════════════════════\n`
+      : '';
+
+    // Relationship-term risk detection — triggers post-generation subject validation
+    const _promptHasRelRisk = /\b(father|dad|daddy|father.?figure|parent|mother|mom|mommy|parent.?figure|son|daughter|brother|sister|husband|wife|spouse)\b/i.test(sanitizedPrompt || prompt || '');
+
     let finalPrompt;
 
     if (hasMultipleCharSubjects) {
@@ -2176,8 +2189,8 @@ UNIFIED COMPOSITION RULE
 ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — same lighting, same floor plane, same perspective.
 `;
     } else {
-      // ── SINGLE-SUBJECT PATH: original format with Name Reference Key prepended ─
-      finalPrompt = participantNameRefKeyBlock + thirdPartyPreamble + buildPrompt({
+      // ── SINGLE-SUBJECT PATH: original format with Name Reference Key + Subject Authority prepended ─
+      finalPrompt = participantNameRefKeyBlock + _subjectAuthBlock + thirdPartyPreamble + buildPrompt({
         prompt: sanitizedPrompt,
         charName: isThirdPartyPhoto && !characterId ? 'the described person' : (charRecord?.name || characterName || 'the character'),
         charDesc: isThirdPartyPhoto && !characterId ? '' : charDesc,
@@ -2392,6 +2405,27 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
     // ── SUCCESS ───────────────────────────────────────────────────────────────
     const cameraVars = extractCameraVarsFromPrompt(finalPrompt);
     const generatedImageDescription = sanitizedPrompt ? sanitizedPrompt.substring(0, 500) : null;
+
+    // ── POST-GENERATION SUBJECT VALIDATION (gated by relationship-term risk) ───
+    // Validate the generated image depicts the prompt subject. If it substitutes a
+    // different person, FAIL — do not post the failed image to chat.
+    if (_promptHasRelRisk && _subjectAuthName && genRes?.url) {
+      const _sd = charRecord ? [charRecord.age_range, charRecord.gender, (charRecord.ethnicities||[]).join('/'), charRecord.appearance_lock?.skin_tone, charRecord.appearance_lock?.hairstyle].filter(Boolean).join(', ') : null;
+      try {
+        const _vR = await base44.asServiceRole.integrations.Core.InvokeLLM({
+          prompt: `Validate SUBJECT ACCURACY. Intended subject: "${_subjectAuthName}" (appearance: ${_sd||'refs'}). Does the primary visible person match, or is a DIFFERENT person shown (older man / father figure / substitute)? JSON: { "depicts_subject": boolean, "reason": "brief" }`,
+          file_urls: [genRes.url],
+          response_json_schema: { type: 'object', properties: { depicts_subject: { type: 'boolean' }, reason: { type: 'string' } }, required: ['depicts_subject','reason'] },
+        });
+        const _vD = (_vR?.data||_vR); const _ok = _vD?.depicts_subject === true; const _rsn = _vD?.reason || 'none';
+        console.log(`[generateImageAsync] SUBJECT VALIDATION: depicts=${_ok} | reason="${_rsn}"`);
+        if (!_ok) {
+          console.error(`[generateImageAsync] ⛔ SUBJECT MISMATCH — image does not depict "${_subjectAuthName}". Failing (not posted).`);
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { ...baseGenerationContext, failure_reason: 'subject_mismatch', failure_error: `Image did not depict "${_subjectAuthName}". ${_rsn}`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: failedAttempts, attempt_count: attemptCount } }).catch(()=>{});
+          return Response.json({ success: false, reason: 'subject_mismatch', filtered: false, error: `Image did not depict the prompt subject "${_subjectAuthName}".`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: attemptCount }, { status: 500 });
+        }
+      } catch (_vE) { console.warn(`[generateImageAsync] Subject validation error (non-blocking): ${_vE?.message}`); }
+    }
 
     const successfulAttempts = [
       ...failedAttempts,
