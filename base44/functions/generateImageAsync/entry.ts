@@ -2406,19 +2406,22 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
     const cameraVars = extractCameraVarsFromPrompt(finalPrompt);
     const generatedImageDescription = sanitizedPrompt ? sanitizedPrompt.substring(0, 500) : null;
 
-    // ── POST-GENERATION SUBJECT VALIDATION (gated by relationship-term risk) ───
-    // Validate the generated image depicts the prompt subject. If it substitutes a
-    // different person, FAIL — do not post the failed image to chat.
-    if (_promptHasRelRisk && _subjectAuthName && genRes?.url) {
-      const _sd = charRecord ? [charRecord.age_range, charRecord.gender, (charRecord.ethnicities||[]).join('/'), charRecord.appearance_lock?.skin_tone, charRecord.appearance_lock?.hairstyle].filter(Boolean).join(', ') : null;
+    // ── POST-GENERATION SUBJECT VALIDATION ────────────────────────────────────
+    // Validate the generated image depicts the prompt subject on EVERY single-subject
+    // character image. Conversation context (father/dad themes) can cause the model to
+    // substitute a different person even when the image prompt has no relationship terms.
+    // If the image substitutes a different person, FAIL — do not post to chat.
+    const _canValidate = _subjectAuthName && charRecord && genRes?.url && subjectType !== 'joint' && !hasMultipleCharSubjects && !effectiveUserSubject;
+    if (_canValidate) {
+      const _sd = [charRecord.age_range, charRecord.gender, (charRecord.ethnicities||[]).join('/'), charRecord.appearance_lock?.skin_tone, charRecord.appearance_lock?.hairstyle].filter(Boolean).join(', ');
       try {
         const _vR = await base44.asServiceRole.integrations.Core.InvokeLLM({
-          prompt: `Validate SUBJECT ACCURACY. Intended subject: "${_subjectAuthName}" (appearance: ${_sd||'refs'}). Does the primary visible person match, or is a DIFFERENT person shown (older man / father figure / substitute)? JSON: { "depicts_subject": boolean, "reason": "brief" }`,
+          prompt: `Validate SUBJECT ACCURACY for an AI image. Intended subject: "${_subjectAuthName}" (expected appearance: ${_sd||'match reference photos'}). Does the primary visible person clearly match "${_subjectAuthName}", or is a DIFFERENT person shown (e.g. older man, father figure, substitute, wrong age)? JSON: { "depicts_subject": boolean, "reason": "brief" }`,
           file_urls: [genRes.url],
           response_json_schema: { type: 'object', properties: { depicts_subject: { type: 'boolean' }, reason: { type: 'string' } }, required: ['depicts_subject','reason'] },
         });
         const _vD = (_vR?.data||_vR); const _ok = _vD?.depicts_subject === true; const _rsn = _vD?.reason || 'none';
-        console.log(`[generateImageAsync] SUBJECT VALIDATION: depicts=${_ok} | reason="${_rsn}"`);
+        console.log(`[generateImageAsync] SUBJECT VALIDATION: depicts=${_ok} | reason="${_rsn}" | subject="${_subjectAuthName}"`);
         if (!_ok) {
           console.error(`[generateImageAsync] ⛔ SUBJECT MISMATCH — image does not depict "${_subjectAuthName}". Failing (not posted).`);
           await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { ...baseGenerationContext, failure_reason: 'subject_mismatch', failure_error: `Image did not depict "${_subjectAuthName}". ${_rsn}`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: failedAttempts, attempt_count: attemptCount } }).catch(()=>{});

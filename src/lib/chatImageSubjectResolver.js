@@ -248,9 +248,7 @@ function hasVisualPresenceSignal(prompt, name) {
   const escaped = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const patterns = [
     new RegExp(`\\band\\s+${escaped}\\b`, 'i'),
-    new RegExp(`\\b${escaped}\\s+and\\b`, 'i'),
     new RegExp(`\\bwith\\s+${escaped}\\b`, 'i'),
-    new RegExp(`\\b${escaped}\\s+with\\b`, 'i'),
     new RegExp(`\\btogether with\\s+${escaped}\\b`, 'i'),
     new RegExp(`\\bme and\\s+${escaped}\\b`, 'i'),
     new RegExp(`\\b${escaped}\\s+and me\\b`, 'i'),
