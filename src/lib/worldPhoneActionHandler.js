@@ -35,6 +35,7 @@
 import { detectCharacterWorldPhoneAction, detectCharacterProactiveOutreach, stripFabricatedReplyFromResponse } from "@/lib/worldPhoneIntentDetector";
 import { base44 } from "@/api/base44Client";
 import { checkEcho } from "@/lib/worldPhoneEchoGuard";
+import { resolveRelationshipRoleRecipient } from "@/lib/relationshipRoleResolver";
 
 /**
  * stripWorldPhoneStateConfirmationClaims
@@ -243,7 +244,18 @@ export async function handleCharacterWorldPhoneAction({
   if (outreach) {
     let recipient = outreach.recipient;
 
-    // Resolve pronoun to actual name if needed
+    // ── RELATIONSHIP-ROLE RESOLUTION ("I'll text my/your dad") ──────────────────
+    // Resolve from the acting character's authoritative family_members /
+    // fictional_relationships BEFORE any conversation-history pronoun scan.
+    if (!recipient && outreach.hasRelationshipRole) {
+      const resolved = resolveRelationshipRoleRecipient(character, outreach.role);
+      if (resolved) {
+        recipient = resolved.characterId;
+        console.log(`[WorldPhone] relationship role "${outreach.role}" resolved to ${resolved.characterId} from authoritative data`);
+      }
+    }
+
+    // Resolve pronoun to actual name if needed (non-role pronouns only)
     if (!recipient && outreach.hasPronoun) {
       recipient = resolvePronounRecipient(character, recentMessages);
       if (recipient) {

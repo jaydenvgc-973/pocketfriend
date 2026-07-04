@@ -16,6 +16,7 @@
 import { base44 } from "@/api/base44Client";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { checkEcho, isVerificationRequest, isExactSendInstruction } from "@/lib/worldPhoneEchoGuard";
+import { resolveRelationshipRoleRecipient } from "@/lib/relationshipRoleResolver";
 
 /**
  * buildWorldPhonePayload
@@ -133,6 +134,25 @@ export async function detectAndSendWorldPhoneIntent({
 }) {
   const intent = detectWorldPhoneIntent(text);
   if (!intent) return { worldPhoneIntent: null, worldPhoneSendResult: null };
+
+  // ── RELATIONSHIP-ROLE RESOLUTION ("text your dad") ───────────────────────────
+  // Resolve the role against the acting character's authoritative family_members /
+  // fictional_relationships. Pass the resolved character ID to sendWorldPhoneMessage
+  // (backend recipient path #1: direct character ID). Conversation history is never
+  // consulted for relationship-role recipients.
+  if (intent.relationshipRoleIntent) {
+    const resolved = resolveRelationshipRoleRecipient(character, intent.role);
+    if (!resolved) {
+      console.warn(`[WorldPhone] Relationship role "${intent.role}" unresolved from authoritative data — skipping send`);
+      return { worldPhoneIntent: intent, worldPhoneSendResult: { data: { success: false, error: 'relationship_role_unresolvable', role: intent.role } } };
+    }
+    console.log(`[WorldPhone] Relationship role "${intent.role}" → character ${resolved.characterId} (${resolved.name || 'unnamed'}) from authoritative data`);
+    const effectiveIntent = { ...intent, recipient: resolved.characterId };
+    const wpPayload = buildWorldPhonePayload({ intent: effectiveIntent, text, characterId, conversationId, currentUserEmail, recentMessages, characterName: character?.name || '' });
+    const result = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => ({ data: { success: false, error: err.message } }));
+    console.log(`[WorldPhone] send result for role "${intent.role}":`, result?.data);
+    return { worldPhoneIntent: intent, worldPhoneSendResult: result };
+  }
 
   let resolvedRecipient = intent.recipient;
 

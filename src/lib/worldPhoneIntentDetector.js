@@ -9,6 +9,10 @@
  * No side effects. Pure detection only.
  */
 
+import { KNOWN_ROLE_TERMS } from './relationshipRoleResolver.js';
+
+const ROLE_ALT = KNOWN_ROLE_TERMS.slice().sort((a, b) => b.length - a.length).join('|');
+
 /**
  * detectWorldPhoneIntent
  * Detects explicit user instructions to contact another character.
@@ -22,6 +26,29 @@
  */
 export function detectWorldPhoneIntent(userText) {
   if (!userText || userText.length < 5) return null;
+
+  // ── RELATIONSHIP-ROLE INTENTS ("text your dad", "call your mom", "message your wife") ──
+  // The recipient is a family/romantic role term, not a proper noun. Resolved by the caller
+  // against the acting character's authoritative family_members / fictional_relationships.
+  const roleWithMessage = new RegExp(`\\b(?:text|call|message|msg|dm|tell|contact|hit\\s+up|reach\\s+out\\s+to)\\s+(?:your|my|our)?\\s*(${ROLE_ALT})\\s+(?:and\\s+(?:tell\\s+(?:him|her|them)\\s+)?|to\\s+say\\s+|that\\s+|:\\s*|,\\s*)(.{5,})`, 'i');
+  const roleTellThat = new RegExp(`\\btell\\s+(?:your|my|our)?\\s*(${ROLE_ALT})\\s+(?:that\\s+|to\\s+)(.{5,})`, 'i');
+  const roleLetKnow = new RegExp(`\\blet\\s+(?:your|my|our)?\\s*(${ROLE_ALT})\\s+know\\s+(?:that\\s+)?(.{5,})`, 'i');
+  for (const pattern of [roleWithMessage, roleTellThat, roleLetKnow]) {
+    const match = userText.match(pattern);
+    if (match) {
+      const role = match[1]?.trim().toLowerCase();
+      const message = match[2]?.trim();
+      if (role && (!message || message.length >= 5)) {
+        return { recipient: null, message: message || null, relationshipRoleIntent: true, role };
+      }
+    }
+  }
+  const roleNameOnly = new RegExp(`^\\s*(?:text|call|message|msg|dm|hit\\s+up|reach\\s+out\\s+to|contact)\\s+(?:your|my|our)?\\s*(${ROLE_ALT})\\s*(?:now|please|real\\s+quick|asap)?\\s*[.!]?\\s*$`, 'i');
+  const roleNameOnlyMatch = userText.match(roleNameOnly);
+  if (roleNameOnlyMatch) {
+    const role = roleNameOnlyMatch[1]?.trim().toLowerCase();
+    if (role) return { recipient: null, message: null, relationshipRoleIntent: true, role };
+  }
 
   const excludedWords = new Set(['me','him','her','them','us','you','the','a','an','it','this','that','my','your','his','her','their']);
 
@@ -140,6 +167,26 @@ export function detectCharacterProactiveOutreach(responseText, senderName) {
 
   const senderFirst = (senderName || '').toLowerCase().split(' ')[0];
   const excludedWords = new Set(['me', 'him', 'her', 'them', 'us', 'you', 'the', 'a', 'an', 'it', 'my', 'your', 'his', 'their', 'everyone', 'nobody', 'someone', 'anyone']);
+
+  // ── RELATIONSHIP-ROLE OUTREACH ("I'll text my/your dad", "I'll call my mom") ──
+  const proactiveRolePatterns = [
+    new RegExp(`\\bI'?ll\\s+(?:text|call|message|contact|hit\\s+up|reach\\s+out\\s+to)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI'?ll\\s+(?:let|tell)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+should\\s+(?:text|call|message|contact)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\bI\\s+need\\s+to\\s+(?:text|call|message)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+    new RegExp(`\\b(?:going\\s+to|gonna)\\s+(?:text|call|message)\\s+(?:my|your|our)?\\s*(${ROLE_ALT})\\b`, 'i'),
+  ];
+  for (const pattern of proactiveRolePatterns) {
+    const match = responseText.match(pattern);
+    if (match) {
+      const role = match[1]?.trim().toLowerCase();
+      if (role) {
+        const sentenceMatch = responseText.match(new RegExp(`[^.!?]*${role}[^.!?]*[.!?]`, 'i'));
+        const topic = sentenceMatch ? sentenceMatch[0].trim() : null;
+        return { recipient: null, hasRelationshipRole: true, role, topic };
+      }
+    }
+  }
 
   // Name pattern: 1 or 2 capitalized words
   const NAME = '([A-Z][a-zA-Z]+(?:\\s+[A-Z][a-zA-Z]+)?)';
