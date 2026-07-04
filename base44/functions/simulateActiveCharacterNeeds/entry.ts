@@ -2194,13 +2194,13 @@ Deno.serve(async (req) => {
         // BUILD UPDATE PAYLOAD
         // ═══════════════════════════════════════════════════════════════════
         const updatePayload = {
-          hunger_value:  Math.round(newNeeds.hunger),
-          energy_value:  Math.round(newNeeds.energy),
-          social_value:  Math.round(newNeeds.social),
-          health_value:  Math.round(newNeeds.health),
-          mental_value:  Math.round(newNeeds.mental),
-          hygiene_value: Math.round(newNeeds.hygiene),
-          comfort_value: Math.round(newNeeds.comfort),
+          hunger_value:  Math.round(newNeeds.hunger * 100) / 100,
+          energy_value:  Math.round(newNeeds.energy * 100) / 100,
+          social_value:  Math.round(newNeeds.social * 100) / 100,
+          health_value:  Math.round(newNeeds.health * 100) / 100,
+          mental_value:  Math.round(newNeeds.mental * 100) / 100,
+          hygiene_value: Math.round(newNeeds.hygiene * 100) / 100,
+          comfort_value: Math.round(newNeeds.comfort * 100) / 100,
           last_need_simulated_at: nowIso,
         };
 
