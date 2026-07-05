@@ -163,36 +163,8 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // ── 6-HOUR MINIMUM SLEEP GUARD ──────────────────────────────────────
-      // Same canonical rule as enforceWakeTimeBoundary: normal sleep cannot end
-      // before 6 hours unless a verified medical emergency exists.
-      // This prevents clearing sleep that started less than 6h ago, even if
-      // past wake_up_time — the character needs their minimum rest.
-      if (char.resolved_presence_status === 'sleeping' && char.last_sleep_start) {
-        const elapsedSleepHours = (nowUtc.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000;
-        const isMedicalEmergency = (char.health_value ?? 80) <= 15;
-        if (elapsedSleepHours < 6 && !isMedicalEmergency) {
-          kept.push({ name: char.name, status: 'valid_sleep', reason: `6h_sleep_minimum_guard (${elapsedSleepHours.toFixed(2)}h elapsed)` });
-          continue;
-        }
-      }
-
-      // ── SLEEP BLOCKS WORK ────────────────────────────────────────────────
-      // When clearing stale sleep, use 'home' as the fallback — NOT 'at_work'.
-      // Work schedule enforcement is handled by enforceCharacterWorkSchedule,
-      // which now has its own sleep guard. Forcing a sleeping character to
-      // 'at_work' here creates a silent wake and violates the architectural
-      // rule that sleep blocks activities.
       const correctLocation = resolveCorrectLocation(char, nowEt);
       const wasActualSleep = char.resolved_presence_status === 'sleeping';
-      // Override: if resolveCorrectLocation returned at_work/at_school, change to home
-      if (correctLocation.resolved_presence_status === 'at_work' || correctLocation.resolved_presence_status === 'at_school') {
-        const homeId = char.current_home_location_id || char.home_location_id;
-        correctLocation.resolved_presence_status = 'home';
-        correctLocation.resolved_current_location_id = homeId || char.resolved_current_location_id;
-        correctLocation.resolved_location_type = 'home';
-        correctLocation.resolved_source_reason = 'stale_sleep_cleared_home_fallback';
-      }
 
       if (!dry_run) {
         await base44.entities.Character.update(char.id, {
@@ -210,7 +182,7 @@ Deno.serve(async (req) => {
           await base44.asServiceRole.entities.SleepTransition.create({
             character_id: char.id, character_name: char.name, owner_email: user.email,
             transition_type: _transitionType,
-            from_status: char.resolved_presence_status, to_status: 'home',
+            from_status: char.resolved_presence_status, to_status: correctLocation.resolved_presence_status,
             authority: 'clearStaleSleepByOwnerEmail',
             reason: `Cleared stale sleep — ${isStale ? `past wake time (${Math.round(minutesPastWake)}m)` : 'nap exceeded 3h'}.`,
             timestamp: nowIso,
@@ -240,7 +212,7 @@ Deno.serve(async (req) => {
           console.warn(`[clearStaleSleepByOwnerEmail] LifeEvent/Memory failed for ${char.name} (non-reverting): ${consequenceError.message}`);
         }
 
-        console.log(`[clearStaleSleepByOwnerEmail] WOKE ${char.name} → home (proof records created)`);
+        console.log(`[clearStaleSleepByOwnerEmail] WOKE ${char.name} → ${correctLocation.resolved_presence_status} (proof records created)`);
       }
 
       cleared.push({

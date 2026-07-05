@@ -70,15 +70,18 @@ Deno.serve(async (req) => {
 
       // Helper: Check if character is blocked from work
       const isBlockedFromWork = (char) => {
-        const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
         const isCriticallyIll = char.health_value !== undefined && char.health_value < 20;
         const isInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
-        return isSleeping || isCriticallyIll || isInEmergency;
+        return isCriticallyIll || isInEmergency;
       };
 
-            if (isBlockedFromWork(character)) {
-        return Response.json({ updated: false, reason: 'Character blocked from work (sleeping/sick/emergency)' });
+      if (isBlockedFromWork(character)) {
+        return Response.json({ updated: false, reason: 'Character blocked from work (sick/emergency)' });
       }
+
+      // Work is an authorized wake source. Track if character was sleeping so the
+      // wake is recorded (last_wake_time + proof records) — prevents silent wake.
+      const _wasSleepingBeforeWork = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
       const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -208,6 +211,7 @@ Deno.serve(async (req) => {
             resolved_location_type: 'work',
             resolved_source_reason: 'work_schedule',
             resolved_last_updated_at: singleNowET.toISOString(),
+            ...(_wasSleepingBeforeWork ? { last_wake_time: singleNowET.toISOString() } : {}),
             presence_stay_lock: true,
             presence_stay_lock_reason: 'work_shift',
             presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
@@ -223,6 +227,12 @@ Deno.serve(async (req) => {
         });
         if (!result.verified) {
           return Response.json({ updated: false, reason: 'unverified_state_write', proof_error: result.proof_error, revert_error: result.revert_error });
+        }
+        if (_wasSleepingBeforeWork) {
+          try {
+            await base44.asServiceRole.entities.SleepTransition.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: singleNowET.toISOString(), state_start_ref: character.last_sleep_start || null });
+            await base44.asServiceRole.entities.LifeEvent.create({ character_id: characterId, character_name: character.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${character.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: singleNowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] });
+          } catch (proofError) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: work-wake proof failed (non-reverting): ${proofError.message}`); }
         }
         return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: singleActiveWorkLocId, reason: 'On shift — moved to work' });
       }
@@ -433,19 +443,6 @@ Deno.serve(async (req) => {
             issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — work location not in owner scope`);
             continue;
           }
-          // ── SLEEP BLOCKS WORK — ARCHITECTURAL RULE ──────────────────────────
-          // Sleep is the SUSPENSION of activities. Work is an activity.
-          // A sleeping character must NOT be forced to work. The single-character
-          // mode has isBlockedFromWork — global mode must enforce the same rule.
-          // Overwriting a sleeping character to 'at_work' without a wake activity
-          // creates a silent wake (no SleepTransition, no LifeEvent) and leaves
-          // last_sleep_start stale, which previously caused the 19-hour pass-out
-          // regression. Sleeping characters sleep through their shift and deal
-          // with consequences (missed shift, late callout) when they wake.
-          if (isSleeping) {
-            issues_found.push(`${char.name}: SLEEPING — work shift skipped (sleep blocks work activities)`);
-            continue;
-          }
           if (resolvedLocId !== activeWorkLocId) {
             issues_found.push(`${char.name}: should be at work but location stale`);
             const revertPayload = {
@@ -467,6 +464,7 @@ Deno.serve(async (req) => {
               resolved_location_type: 'work',
               resolved_source_reason: 'work_schedule',
               resolved_last_updated_at: nowET.toISOString(),
+              ...(isSleeping ? { last_wake_time: nowET.toISOString() } : {}),
               presence_stay_lock: true,
               presence_stay_lock_reason: 'work_shift',
               presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
@@ -480,6 +478,12 @@ Deno.serve(async (req) => {
                 event_type: 'work_start', travel_source: 'schedule', travel_reason: 'work_schedule',
               });
               if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+              if (isSleeping) {
+                try {
+                  await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null });
+                  await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${char.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] });
+                } catch (wakeProofError) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-wake proof failed (non-reverting): ${wakeProofError.message}`); }
+              }
               fixes_applied.push(`${char.name}: synced to work location`);
               fixCount++;
             } catch (proofError) {
