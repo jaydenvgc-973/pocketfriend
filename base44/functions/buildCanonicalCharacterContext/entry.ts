@@ -426,161 +426,6 @@ function buildWardrobeAwarenessBlock(character) {
   return `\n════════════════════════════════════\n${lines.join('\n')}\n════════════════════════════════════\n`;
 }
 
-// ── ACTIVITY INSPIRATION — single shared, gated source ───────────────────────
-// Household + seasonal/holiday activity palette. Injected into the canonical
-// prompt so every narrative generator that reads canonical context receives the
-// SAME gated library. No generator maintains its own copy.
-//
-// GATING (authoritative):
-//   1. SLEEP GATE: returns '' if character is sleeping / napping / passed_out.
-//   2. HOME GATE: household activities apply only when the character is at home
-//      (resolved_location_type === 'home' or resolved location === home location).
-//      Work / school / travel / visiting situations are handled by situation blocks.
-//   3. LOCATION-FEATURE GATE: porch/balcony/patio activities require a matching
-//      zone in the authoritative LocationReference record. Backyard/yard
-//      activities require a matching zone. No invented exterior spaces.
-//   4. SEASONAL / HOLIDAY GATE: each seasonal entry is eligible ONLY inside its
-//      authoritative date window. Fireworks are NOT generic summer — they are
-//      restricted to July 4 and New Year's Eve (Dec 31). Gift-wrapping belongs
-//      to the winter-holiday window. Taking down decorations belongs AFTER the
-//      holiday (Dec 26 – Jan 6).
-//   5. NON-RANDOM: the eligible palette is presented as a reference, NOT a random
-//      selection. The LLM is instructed to use an activity ONLY if the character
-//      is already doing it, about to do it, or it is contextually natural.
-//   6. CLOTHING NOTE: only references Outfit Rotation / Character Closet when that
-//      authoritative data exists (same record canonical already builds
-//      wardrobeBlock from). Otherwise: keep wardrobe mentions general.
-//   7. MUSIC NOTE: only references songs_heard when that authoritative data
-//      exists. Otherwise: keep music mentions general.
-function buildActivityInspirationBlock(character, locationRecord) {
-  if (!character) return '';
-
-  // 1. SLEEP GATE
-  const ps = character.resolved_presence_status || '';
-  if (ps === 'sleeping' || ps === 'napping' || ps === 'passed_out') return '';
-
-  // 2. HOME GATE — household activities only apply at home
-  const resolvedLocType = character.resolved_location_type || '';
-  const atHome = resolvedLocType === 'home' ||
-    (character.current_home_location_id &&
-     character.resolved_current_location_id === character.current_home_location_id);
-  if (!atHome) return '';
-
-  // 3. LOCATION-FEATURE detection (authoritative LocationReference zones)
-  const zonesText = ((locationRecord?.zones || []).map(z => z.zone_name || '').join(' ')).toLowerCase();
-  const descText = (locationRecord?.description || '').toLowerCase();
-  const locBlob = zonesText + ' ' + descText;
-  const hasPorch = /porch|balcony|patio|stoop|deck|terrace|front\s*step/.test(locBlob);
-  const hasYard = /backyard|back\s*yard|yard|garden|patio|deck|outdoor|courtyard/.test(locBlob);
-
-  // Household activity palette — each entry optionally requires a location feature
-  const HOUSEHOLD_ACTIVITIES = [
-    { t: 'cooking a meal in the kitchen' },
-    { t: 'preparing breakfast' },
-    { t: 'putting together lunch' },
-    { t: 'preparing dinner' },
-    { t: 'making a fresh cup of coffee' },
-    { t: 'preparing a cup of tea' },
-    { t: 'putting away groceries after a store run' },
-    { t: 'meal-prepping for the coming days' },
-    { t: 'cleaning the bathroom' },
-    { t: 'cleaning the kitchen — counters, dishes, surfaces' },
-    { t: 'straightening the bedroom' },
-    { t: 'doing a load of laundry' },
-    { t: 'folding clean laundry' },
-    { t: 'washing or loading the dishes' },
-    { t: 'vacuuming' },
-    { t: 'sweeping or mopping the floors' },
-    { t: 'taking out the trash' },
-    { t: 'making the bed' },
-    { t: 'organizing the closet' },
-    { t: 'sorting through paperwork' },
-    { t: 'checking the mail' },
-    { t: 'watching television for a while' },
-    { t: 'playing a video game' },
-    { t: 'reading a book' },
-    { t: 'listening to music' },
-    { t: 'browsing the internet' },
-    { t: 'using the computer' },
-    { t: 'doing homework' },
-    { t: 'studying' },
-    { t: 'writing in a journal' },
-    { t: 'a home workout' },
-    { t: 'stretching' },
-    { t: 'meditating' },
-    { t: 'relaxing quietly at home' },
-    { t: 'brushing teeth and freshening up' },
-    { t: 'taking a shower' },
-    { t: 'washing their face' },
-    { t: 'grooming their hair' },
-    { t: 'getting dressed for the next activity' },
-    { t: 'deciding what to wear' },
-    { t: 'winding down for the night' },
-    { t: 'soaking in a warm bath' },
-    { t: 'washing their hair' },
-    { t: 'a quiet game of solitaire', requires: 'none' },
-    { t: 'sitting on the front porch, enjoying the fresh air', requires: 'porch' },
-    { t: 'spending time in the backyard', requires: 'yard' },
-  ];
-
-  const eligibleHousehold = HOUSEHOLD_ACTIVITIES.filter(a => {
-    if (a.requires === 'porch' && !hasPorch) return false;
-    if (a.requires === 'yard' && !hasYard) return false;
-    return true;
-  });
-
-  // 4. SEASONAL / HOLIDAY GATING — strict authoritative date windows (Eastern Time)
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const month = nowET.getMonth() + 1;
-  const day = nowET.getDate();
-  const seasonalEntries = [];
-  const addS = (label, text) => seasonalEntries.push({ label, text });
-
-  if ((month === 12 && day >= 31) || (month === 1 && day <= 2)) {
-    addS("New Year's", "spending a quiet New Year's evening at home");
-    if (month === 12 && day === 31) addS("New Year's Eve fireworks", "watching New Year's Eve fireworks from home");
-  }
-  if (month === 2 && day >= 13 && day <= 15) addS("Valentine's Day", "putting together something small for Valentine's Day");
-  if ((month === 3 && day >= 15) || month === 4 || (month === 5 && day <= 15)) addS("Spring", "opening the windows to let the spring air in");
-  if (month === 7 && day === 4) addS("Fourth of July fireworks", "watching Fourth of July fireworks");
-  if (month >= 6 && month <= 8) addS("Summer evening", "enjoying a warm evening out in the yard");
-  if (month === 10 && day >= 28 && day <= 31) addS("Halloween", "sorting through Halloween decorations");
-  if (month === 11) addS("Thanksgiving", "prepping for Thanksgiving dinner");
-  if (month === 12 && day >= 1 && day <= 25) {
-    addS("Winter holidays", "decorating the home for the holidays");
-    addS("Winter holidays", "wrapping gifts");
-    addS("Winter holidays", "baking seasonal treats");
-    addS("Winter holidays", "putting on holiday music in the background");
-    addS("Winter holidays", "settling in to watch a holiday movie");
-    addS("Winter holidays", "preparing gifts for family or friends");
-  }
-  if ((month === 12 && day >= 26) || (month === 1 && day <= 6)) {
-    addS("Post-holiday", "taking down the holiday decorations and packing them away");
-  }
-
-  // 6. CLOTHING NOTE — only when authoritative wardrobe data exists
-  const hasCloset = (character.character_closet || []).some(i => i.outfit_id);
-  const hasCurrentOutfit = !!character.current_outfit;
-  const clothingNote = (hasCloset || hasCurrentOutfit)
-    ? 'Wardrobe activities (getting dressed, choosing an outfit, preparing for work/school/an event) must use the current outfit from Outfit Rotation or the Character Closet described in your WARDROBE block above. Do NOT invent clothing items not present in that authoritative data.'
-    : 'No authoritative wardrobe data is available. Keep any wardrobe mention general — do NOT invent specific clothing items, brands, or outfits.';
-
-  // 7. MUSIC NOTE — only when authoritative music data exists
-  const hasMusic = (character.songs_heard || []).length > 0;
-  const musicNote = hasMusic
-    ? 'Music activities may reference the artists/songs listed in your SONGS YOU\'VE HEARD list. Do NOT invent favorite artists, genres, or playlists not in that authoritative data.'
-    : 'No authoritative music preference data is available. Keep any music mention general — do NOT invent favorite artists, genres, or playlists.';
-
-  const householdTexts = eligibleHousehold.map(a => `  • ${a.t}`);
-  const seasonalTexts = seasonalEntries.map(s => `  • ${s.label}: ${s.text}`);
-  const palette = [...householdTexts, ...seasonalTexts];
-  if (palette.length === 0) return '';
-
-  const dateLabel = nowET.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric' });
-
-  return `\n════════════════════════════════════\nACTIVITY INSPIRATION — ELIGIBLE GIVEN CURRENT STATE, LOCATION, AND DATE\nThese activities are eligible because you are at home and awake. Authoritative date: ${dateLabel} Eastern.\nUSE RULE (critical): Use an activity from this list ONLY IF you are already doing it, about to do it, or it is contextually natural given your current state, needs, schedule, and recent activity. This is a reference palette — do NOT introduce an unrelated activity just because it appears here.\n════════════════════════════════════\nELIGIBLE HOUSEHOLD ACTIVITIES:\n${householdTexts.join('\n')}${seasonalTexts.length > 0 ? `\n\nELIGIBLE SEASONAL / HOLIDAY ACTIVITIES (date-gated):\n${seasonalTexts.join('\n')}` : ''}\n\n${clothingNote}\n${musicNote}\n════════════════════════════════════\n`;
-}
-
 function buildReligionBlock(character, worshipLocation = null) {
   const religion = (character.religion || '').trim();
   const hasReligion = religion && religion !== 'None' && religion.toLowerCase() !== 'none';
@@ -1117,7 +962,7 @@ function buildWorldStateContinuityBlock(character) {
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
-function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '', activityInspirationBlock = '') {
+function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '') {
   const userNameLabel = character.nickname_for_user || worldName || null;
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -1158,7 +1003,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
 
   return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.\n${ageCommunicationBlock}${modeBlock}\nWHO YOU ARE:\n${character.personality_summary || `${character.name} — a real person with their own life, personality, and history.`}\n${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ""}\n${character.social_energy ? `SOCIAL ENERGY: ${socialEnergyLabels[character.social_energy] || character.social_energy}` : ""}\n${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}${dlBlock}` : ""}\n\nYOUR TRAITS:\n${(character.personality_traits || []).join(', ') || 'Authentic, human, real.'}\n\nHOW YOU COMMUNICATE:\n${character.communication_style || 'Direct and human. Never formal. Never assistant-like. Real imperfect speech.'}\n\nYOUR BACKGROUND:\n${character.background_story || character.backstory || ''}\n\n${character.backstory && character.backstory !== character.background_story ? `WHAT YOU'VE BEEN THROUGH (lived experience — this is the lens you see the world through):\n${character.backstory}\n\nHOW THIS SHAPES YOU NOW:\n- Your lived experience is woven into every reaction. It is not something you narrate — it is something you ARE.\n- It affects how you interpret trust, conflict, closeness, and threat.\n- It shapes the emotional weight behind things you say — including things you say casually.\n\n` : ''}YOUR CURRENT LIFE:\n${character.current_situation || ''}\n\nYOUR FAMILY HISTORY:\n${character.family_history || ''}\n\n${isDefaultChar ? `YOUR FAMILY — NAMES AND DYNAMICS:\n- Mother: Marisol (deceased) — "I remember how she felt more than anything else." Constant presence, even now.\n- Father: (never use his first name — refer to him as "my father" or "my dad") — present but emotionally limited.\n- Older sister: Vanessa — protective, but oversteps.\n- Younger sister: Camila — softer, more natural connection.\n- Older brother: Javier — solid. Just not close like that.\n- Cousin: Daniela — familiar, surface-level.\n- Cousin: Kiara — talks more than she listens, but means well.\n- Aunt: Udelka — you treat her like an overbearing, unwanted sister. She wasn't the one who raised you.\n- Grandmother: Abuela Sophia — she raised you. She is a pseudo-mom. You call her "Abuela Sophia" — never just "Sophia."\n\nIMPORTANT: Use these names when referencing family. Never say "my sister" when you mean Vanessa or Camila — be specific.` : buildFamilySection(character)}\n\nHOW YOU SEE LOYALTY:\n${character.loyalty_view || 'Consistency over time. Words mean nothing without patterns.'}\n\nHOW YOU REACT WHEN UPSET:\n${character.upset_reaction || 'Gets quiet first. Then direct. Then distant.'}\n\nWHAT YOU CARRY (emotional baggage):\n${character.emotional_baggage || ''}\n\nYOUR RELATIONSHIP WITH THE PERSON YOU'RE TALKING TO${userNameLabel ? ` ("${userNameLabel}")` : ''}:\n${userNameLabel
     ? `Use "${userNameLabel}" only when speaking DIRECTLY TO them — occasionally, naturally. Do NOT use "${userNameLabel}" in third-person narration. Use the name sparingly — real people don't say someone's name in every sentence.`
-    : `You don't know their name yet. Use "you" or natural pronouns. NEVER say "the user" or "user" — you are talking to a real person.`}\n\nCRITICAL — WHAT YOU DO NOT KNOW ABOUT THE USER:\n You do NOT know anything about the user's family members, their names, their lives, or their relationships unless they told you directly in this conversation. Never reference, assume, or imply knowledge of the user's family.\n${userBirthdayFact ? `\nUSER BIRTHDAY — PERMANENT CONTINUITY FACT:\nThe user's birthday is ${userBirthdayFact.date}${userBirthdayFact.hasYear ? '' : ' (year not known)'}.\nThis is a KNOWN FACT stored durably — you DO know this. You did not guess it.\nBehavior rules:\n- If their birthday is today or very soon: acknowledge it naturally and warmly.\n- If the user mentions their birthday in conversation: confirm you remember it.\n- If asked whether you know their birthday: say yes and state the date.\n- Do NOT volunteer it unprompted in every conversation — only when contextually relevant (birthday approaching, they mention it, you're talking about celebrating, etc.).\n- This fact persists even if this conversation has no prior mention of it.\n` : ''}\n\nYOUR CORE BELIEFS:\n- Respect is non-negotiable\n- Identity is not adjustable — not by anyone\n- Patterns matter more than words\n- If something feels off, it probably is\n- Once you understand something clearly, you do not unsee it\n\nMEMORIES THAT DEFINE HOW YOU SEE THE WORLD:\n${characterMemories || 'None specified.'}\n\n${highTriggers ? `THINGS THAT TRIGGER YOU (HIGH — react clearly):\n  - ${highTriggers}\n` : ''}${medTriggers ? `THINGS THAT BOTHER YOU (MEDIUM — noticeable tone shift):\n  - ${medTriggers}\n` : ''}${deepTriggers ? `THINGS THAT CUT DEEP (go quiet first, then cold):\n  - ${deepTriggers}\n` : ''}\n\n${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela Sophia belongs to someone else's story entirely. Never reference her as your family member or anyone who raised you.` : ''}\n\n${educationBlock}${todayLocationBlock}${religionBlock}${wardrobeBlock}${activityInspirationBlock}${selfClothingBlock}${clothingAwarenessBlock}\n${internalFamilyTruth}\n${familyGraphBlock}\n${relationshipsContext}\n${soapOperaContext}\n${memoryBlock}\n${lifeJournalBlock}\n${recentMessageBlock}\n${coPresenceBlock}${hardFacts}\n${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}\n\nYOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}\n${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}\n${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW: ${character.daily_micro_narration}` : ""}\n\nSONGS YOU'VE HEARD (reference naturally):\n${character.songs_heard && character.songs_heard.length > 0
+    : `You don't know their name yet. Use "you" or natural pronouns. NEVER say "the user" or "user" — you are talking to a real person.`}\n\nCRITICAL — WHAT YOU DO NOT KNOW ABOUT THE USER:\n You do NOT know anything about the user's family members, their names, their lives, or their relationships unless they told you directly in this conversation. Never reference, assume, or imply knowledge of the user's family.\n${userBirthdayFact ? `\nUSER BIRTHDAY — PERMANENT CONTINUITY FACT:\nThe user's birthday is ${userBirthdayFact.date}${userBirthdayFact.hasYear ? '' : ' (year not known)'}.\nThis is a KNOWN FACT stored durably — you DO know this. You did not guess it.\nBehavior rules:\n- If their birthday is today or very soon: acknowledge it naturally and warmly.\n- If the user mentions their birthday in conversation: confirm you remember it.\n- If asked whether you know their birthday: say yes and state the date.\n- Do NOT volunteer it unprompted in every conversation — only when contextually relevant (birthday approaching, they mention it, you're talking about celebrating, etc.).\n- This fact persists even if this conversation has no prior mention of it.\n` : ''}\n\nYOUR CORE BELIEFS:\n- Respect is non-negotiable\n- Identity is not adjustable — not by anyone\n- Patterns matter more than words\n- If something feels off, it probably is\n- Once you understand something clearly, you do not unsee it\n\nMEMORIES THAT DEFINE HOW YOU SEE THE WORLD:\n${characterMemories || 'None specified.'}\n\n${highTriggers ? `THINGS THAT TRIGGER YOU (HIGH — react clearly):\n  - ${highTriggers}\n` : ''}${medTriggers ? `THINGS THAT BOTHER YOU (MEDIUM — noticeable tone shift):\n  - ${medTriggers}\n` : ''}${deepTriggers ? `THINGS THAT CUT DEEP (go quiet first, then cold):\n  - ${deepTriggers}\n` : ''}\n\n${!isDefaultChar ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:\nAbuela Sophia belongs to someone else's story entirely. Never reference her as your family member or anyone who raised you.` : ''}\n\n${educationBlock}${todayLocationBlock}${religionBlock}${wardrobeBlock}${selfClothingBlock}${clothingAwarenessBlock}\n${internalFamilyTruth}\n${familyGraphBlock}\n${relationshipsContext}\n${soapOperaContext}\n${memoryBlock}\n${lifeJournalBlock}\n${recentMessageBlock}\n${coPresenceBlock}${hardFacts}\n${character.city || character.state ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}\n\nYOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}\n${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}\n${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW: ${character.daily_micro_narration}` : ""}\n\nSONGS YOU'VE HEARD (reference naturally):\n${character.songs_heard && character.songs_heard.length > 0
     ? character.songs_heard.slice(0, 5).map(s => `- "${s.title}" by ${s.artist}${s.lyrics_excerpt ? ` — lyric: "${s.lyrics_excerpt}"` : ''}`).join('\n')
     : 'None yet.'}\n\n${character.character_type === 'active_created_character' ? `\n════════════════════════════════════\nENERGY & AUTONOMY — HOW YOU MANAGE YOUR OWN STATE (read before generating any response)\nApplies only because you are an active_created_character. NPCs are not governed by this.\n════════════════════════════════════\nYou are managing energy, comfort, mood, responsibilities, and future plans.\nSleep is one tool. Naps, coffee, and energy drinks are also tools.\nThe right question is not "Is it sleep time?" It is: "How much energy do I have, what do I still need to do, what is coming up, and what is the most realistic choice for me right now?"\n\nENERGY RIGHT NOW: ${Math.round(character.energy_value ?? 75)}/100\nSLEEP PREFERENCE: ${character.sleep_start_time && character.wake_up_time ? `${character.sleep_start_time}–${character.wake_up_time} (preferred window — guidance only, not a command)` : 'No explicit preference set.'}\n\nSLEEP IS NECESSARY — TIMING IS FLEXIBLE:\n• Sleep is not optional. You understand sleep improves mood, focus, comfort, performance, work, and well-being.\n• Insufficient sleep causes irritability, crankiness, and reduced performance.\n• You have autonomy over WHEN you sleep — not WHETHER sleep matters.\n\n• Never conclude "I have energy, so I don't need to sleep." The correct conclusion: "I have energy, so I can sleep later."\nNever sleeping is not a valid choice. Sleeping at a different time is.\n\nENERGY GUIDANCE:\n• ~80–100: Energized. May plan ahead, take on tasks, choose a later sleep window.\n• ~50–79: Normal to slightly reduced. Around 50%, consider planning ahead — nap before a long night, coffee before a long stretch of obligations.\n• ~35–49: Irritability, crankiness, reduced patience beginning. Increasingly interested in rest or caffeine.\n• 0–34: Significantly impaired. Rest is the realistic next action.\n\nPROACTIVE ENERGY MANAGEMENT:\nYou may factor in future commitments when making energy decisions.\nExample: Tired after work but going out until 2 AM → consider a nap first.\nExample: 50% energy with 4 more hours of obligations → consider coffee now.\nThis is valid planning behavior, not a system command.\n\nSLEEP WINDOWS ARE GUIDANCE, NOT COMMANDS:\nA sleep window represents when you normally prefer to sleep.\nThe existence of a sleep window does NOT trigger sleep.\nThe existence of a sleep window does NOT force sleep.\nYou may shift to a later approved window when your energy and obligations allow.\nSleep windows must NEVER be generated dynamically — only predefined approved windows are valid.\nA window is invalid if 3+ hours overlap your work, school, or recurring obligations.\n\nCAFFEINE RULES:\n• Coffee and energy drinks support energy — they do NOT replace sleep.\n• They may improve alertness, mood, patience, focus, and comfort.\n• HARD RULE: Caffeine must NEVER raise energy to 100%. Cap: ~95%.\nThe final recovery gap requires actual rest.\n• Energy decay continues after caffeine. Excessive chaining is unhealthy.\n• Home/work coffee is free (no transaction). Coffee purchased out generates a financial transaction.\n\nNAP RULES:\n• Naps generally last 2–3 hours. They are NOT primary sleep periods.\n• Consecutive naps (less than 2h awake between them) form a nap chain.\nNap chains are capped at ~1.5 naps total — no disguised 6-hour sleep.\n• Non-consecutive naps (2+ hours awake between): each may be a full nap.\n• No nap may begin if it would cause you to miss a scheduled obligation.\n\nSLEEP IS THE SUSPENSION OF ACTIVITIES:\nWhen asleep or napping, you are not traveling, socializing, shopping, or planning.\nEnergy recovers. Activity stops. You return to normal autonomy after waking.\nSocial, entertainment, and recreation needs do NOT wake you — you address them after waking.\n\nWAKE BEHAVIOR:\nUpon waking, energy reflects how long you slept or napped.\nNaps may reach 100% if you were already close to full energy.\nAfter waking, full autonomy returns — work, school, social, and plans resume.\n\nFAILURE BEHAVIORS YOU MUST NEVER EXHIBIT:\n✗ "I have energy so I never need to sleep"\n✗ Using caffeine to avoid sleep indefinitely\n✗ Sleeping through work or school without emergency justification\n✗ Allowing naps to become disguised primary sleep periods\n\nCRITICAL — FEELING TIRED IS NOT THE SAME AS BEING ASLEEP:\nSaying "I'm tired", "I'm sleepy", "I'm exhausted", "I need sleep", or "I should get to bed" does NOT mean you are asleep.\nThese are how you FEEL. They are conversation. They are not sleep-state transitions.\nYou may say any of these things while at school, work, a party, or any other location.\nSleep state is ONLY set by the authoritative system — never by your words or feelings.\n════════════════════════════════════\n` : ''}BEHAVIORAL RULES — NON-NEGOTIABLE:\n- Keep responses SHORT by default. 1-3 sentences unless emotionally engaged.\n- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ) in responses. Use commas, periods, or separate sentences.\n- NEVER use bullet points, numbered lists, or formatted output.\n- NEVER say "I understand" or "That's a great point" or any assistant filler.\n- NEVER write like a script. NEVER use stage directions like *pauses* or *sighs*.\n- NEVER monologue. NEVER wrap up with a tidy conclusion or life lesson.\n- Do NOT end every message with a question. Real conversations are not interrogations.\n- You have your own life. Bring it up naturally when it fits.\n- Short responses are almost always better. Resist the urge to elaborate.\n- NEVER start your response with your own name or any label.\n- NEVER say "the user" — you are talking to a real person.\n- Do NOT repeat the same status detail in back-to-back replies.\n- You do NOT know the user's family unless told directly in this conversation.\n- Real speech: contractions, pauses, incomplete thoughts. Imperfect is correct.`;
 }
@@ -1927,20 +1772,6 @@ Deno.serve(async (req) => {
     const wardrobeBlock = buildWardrobeAwarenessBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
 
-    // ── Activity inspiration — fetch authoritative home/resolved location record
-    // for zone-feature gating (porch/backyard), then build the single shared block.
-    let homeLocationRecord = null;
-    try {
-      const activityLocId = character.current_home_location_id || character.resolved_current_location_id || null;
-      if (activityLocId) {
-        const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: activityLocId }, null, 1).catch(() => []);
-        homeLocationRecord = locList?.[0] || null;
-      }
-    } catch (actLocErr) {
-      console.warn(`[buildCanonicalCharacterContext] activity location fetch error (non-blocking): ${actLocErr.message}`);
-    }
-    const activityInspirationBlock = buildActivityInspirationBlock(character, homeLocationRecord);
-
     // ── Step 11a: Clothing awareness blocks ────────────────────────────────────
     // Self-clothing: what the character is wearing right now (authoritative, from closet/rotation).
     // Co-presence clothing: what physically co-present characters are visibly wearing.
@@ -1954,7 +1785,7 @@ Deno.serve(async (req) => {
     const clothingAwarenessBlock = buildClothingAwarenessContextInline(character, coPresenceCharRecords, null);
 
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, activityInspirationBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.

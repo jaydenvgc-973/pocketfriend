@@ -328,10 +328,6 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     const objectPronoun = charGender === 'male' ? 'him' : charGender === 'female' ? 'her' : 'them';
     const possessivePronoun = charGender === 'male' ? 'his' : charGender === 'female' ? 'her' : 'their';
 
-    // Household & seasonal activity inspiration is owned by buildCanonicalCharacterContext
-    // (single shared, gated source) and flows into canonicalSystemPrompt above.
-    // It is NOT duplicated here. See buildActivityInspirationBlock in canonical context.
-
     const narrativePrompt = `${canonicalSystemPrompt}
 
 ════════════════════════════════════

@@ -191,29 +191,7 @@ ${city ? `- City: ${city}` : ''}
       ? `\nIMPORTANT: ${character.name} IS ASLEEP. Write ONLY about the room's ambient environment and stillness. No movement, no actions, no objects interacted with. Just quiet and rest.`
       : '';
 
-    // ── ACTIVITY INSPIRATION via canonical context (single shared, gated source) ──
-    // triggerCharacterNarratives routes through buildCanonicalCharacterContext so the
-    // household/seasonal library is NOT duplicated here. canonicalSystemPrompt carries
-    // the gated ACTIVITY INSPIRATION block (sleep-gated, home-gated, location-feature-
-    // gated, date-gated) plus authoritative wardrobe (Outfit Rotation / Character Closet)
-    // and songs_heard. Non-blocking: if canonical is unavailable, generation continues
-    // with the state block below.
-    let canonicalSystemPrompt = '';
-    try {
-      const ctxRes = await base44SR.functions.invoke('buildCanonicalCharacterContext', {
-        characterId: character.id,
-        interactionContext: 'automatic_narrative',
-        topKMemories: 6,
-      });
-      const ctxData = ctxRes?.data || ctxRes;
-      if (ctxData?.systemPrompt) canonicalSystemPrompt = ctxData.systemPrompt;
-    } catch (ctxErr) {
-      console.warn(`[triggerCharacterNarratives] canonical context unavailable (non-blocking): ${ctxErr.message}`);
-    }
-
-    const prompt = `${canonicalSystemPrompt}
-
-You are writing a short, third-person narrative moment for a character named ${character.name}.
+    const prompt = `You are writing a short, third-person narrative moment for a character named ${character.name}.
 ${stateBlock}
 
 RECENT CONVERSATION:

@@ -391,10 +391,6 @@ Choose a DIFFERENT home activity. Repeating a blocked activity is a generation f
 ════════════════════════════════════`;
 }
 
-// Household & seasonal activity inspiration is owned by buildCanonicalCharacterContext
-// (single shared, gated source) and flows into canonicalData.systemPrompt.
-// It is NOT duplicated here. See buildActivityInspirationBlock in canonical context.
-
 // ── INTERACTION LIBRARIES (scene-specific — not identity) ─────────────────────
 const INTERACTION_LIBRARIES = `
 ════════════════════════════════════

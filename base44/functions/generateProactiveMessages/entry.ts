@@ -237,15 +237,6 @@ function getNeedExamples(character) {
   return `\n\nCURRENT NEEDS (low): ${lowNeeds.join(', ')}\nNARRATIVE STYLE PATTERNS (use these as inspiration — generate a NEW variation, never copy verbatim):\n${examples.map(e => `- ${e}`).join('\n')}`;
 }
 
-// Household & seasonal activity inspiration is NOT injected here.
-// generateProactiveMessages produces first-person text DMs (1-3 sentences), not
-// third-person narration. Household/seasonal narration patterns are not relevant
-// to a spontaneous text message and could randomly steer characters into narrating
-// unrelated activities. The existing need-driven examples (getNeedExamples) serve
-// needs-driven outreach, which is the correct fit for this generator. Authoritative
-// wardrobe / music data continues to flow through the character record when needed.
-// The shared household/seasonal library lives only in buildCanonicalCharacterContext.
-
 async function generateProactiveMessage(base44, character, user, recentContext) {
   const et = getEasternTime();
   const hour = et.getHours();
@@ -264,7 +255,6 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
 
   const locationAffinityNote = buildLocationAffinityContext(character);
   const needExamples = getNeedExamples(character);
-  const householdActivityExamples = getHouseholdActivityExamples(character);
 
   // Determine emotional tone directive based on current state
   const emotionalState = character.emotional_state || 'calm';
@@ -280,7 +270,7 @@ ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
-Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}${householdActivityExamples}
+Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}
 ${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
 
 ${emotionalBalanceDirective}
