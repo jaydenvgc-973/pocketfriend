@@ -85,8 +85,20 @@ Deno.serve(async (req) => {
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
       const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      // CRITICAL: Do NOT use toISOString() — that returns UTC date which differs from ET date at night.
-      const todayET = `${singleNowET.getFullYear()}-${String(singleNowET.getMonth()+1).padStart(2,'0')}-${String(singleNowET.getDate()).padStart(2,'0')}`;
+      // CRITICAL: getHours()/getMinutes()/getDay() return UTC values in Deno sandbox.
+      // Use Intl.DateTimeFormat for correct ET hour/minute/day.
+      const _sEtParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+      }).formatToParts(new Date());
+      const _sWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const singleClock = {
+        getHours: () => parseInt(_sEtParts.find(p => p.type === 'hour').value) % 24,
+        getMinutes: () => parseInt(_sEtParts.find(p => p.type === 'minute').value),
+        getDay: () => _sWdMap[_sEtParts.find(p => p.type === 'weekday').value],
+      };
+      const todayET = `${_sEtParts.find(p => p.type === 'year').value}-${_sEtParts.find(p => p.type === 'month').value}-${_sEtParts.find(p => p.type === 'day').value}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
@@ -119,7 +131,7 @@ Deno.serve(async (req) => {
         if (!loc) continue;
         const locationShift = loc.worker_shifts?.[characterId];
         if (locationShift) {
-          if (isLocationShiftActiveNow(locationShift, singleNowET)) {
+          if (isLocationShiftActiveNow(locationShift, singleClock)) {
             singleActiveWorkLocId = locId;
             break;
           }
@@ -127,13 +139,13 @@ Deno.serve(async (req) => {
         }
         // No location-specific shift — use character-level schedule
         if (character.work_start_time && character.work_end_time && character.work_days) {
-          const nowMin = singleNowET.getHours() * 60 + singleNowET.getMinutes();
+          const nowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
           const [sh, sm] = character.work_start_time.split(':').map(Number);
           const [eh, em] = character.work_end_time.split(':').map(Number);
           const startMin = sh * 60 + sm;
           const endMin = eh * 60 + em;
           const isCross = endMin < startMin;
-          const today = singleNowET.getDay();
+          const today = singleClock.getDay();
           const yesterday = (today + 6) % 7;
           const active = isCross
             ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
@@ -372,8 +384,19 @@ Deno.serve(async (req) => {
 
         // CALLOUT GUARD: skip work enforcement for characters with valid callout today
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        // CRITICAL: Do NOT use toISOString() — returns UTC date, wrong when ET date ≠ UTC date (e.g. 11PM ET = next day UTC).
-        const todayET = `${nowET.getFullYear()}-${String(nowET.getMonth()+1).padStart(2,'0')}-${String(nowET.getDate()).padStart(2,'0')}`;
+        // CRITICAL: getHours()/getMinutes()/getDay() return UTC values in Deno sandbox.
+        const _gEtParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+        }).formatToParts(new Date());
+        const _gWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const globalClock = {
+          getHours: () => parseInt(_gEtParts.find(p => p.type === 'hour').value) % 24,
+          getMinutes: () => parseInt(_gEtParts.find(p => p.type === 'minute').value),
+          getDay: () => _gWdMap[_gEtParts.find(p => p.type === 'weekday').value],
+        };
+        const todayET = `${_gEtParts.find(p => p.type === 'year').value}-${_gEtParts.find(p => p.type === 'month').value}-${_gEtParts.find(p => p.type === 'day').value}`;
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
         }
@@ -403,7 +426,7 @@ Deno.serve(async (req) => {
           if (!loc) continue;
           const locationShift = loc.worker_shifts?.[char.id];
           if (locationShift) {
-            if (isLocationShiftActiveNow(locationShift, nowET)) {
+            if (isLocationShiftActiveNow(locationShift, globalClock)) {
               activeWorkLocId = locId;
               break;
             }
@@ -412,13 +435,13 @@ Deno.serve(async (req) => {
           }
           // No location-specific shift — use character-level schedule
           if (char.work_start_time && char.work_end_time && char.work_days) {
-            const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+            const nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
             const [sh, sm] = char.work_start_time.split(':').map(Number);
             const [eh, em] = char.work_end_time.split(':').map(Number);
             const startMin = sh * 60 + sm;
             const endMin = eh * 60 + em;
             const isCross = endMin < startMin;
-            const today = nowET.getDay();
+            const today = globalClock.getDay();
             const yesterday = (today + 6) % 7;
             const onCharSchedule = isCross
               ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)

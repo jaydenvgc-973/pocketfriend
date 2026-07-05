@@ -25,11 +25,21 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     try { await base44.auth.me(); } catch { /* scheduled execution */ }
 
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
-    const nowETIso = nowET.toISOString();
+    // CRITICAL: Do NOT use new Date(toLocaleString(...)) — in a UTC-timezone runtime
+    // (Deno sandbox), that pattern creates a Date 4 hours behind actual ET, causing
+    // getHours() to return UTC hour instead of ET hour. Use Intl.DateTimeFormat instead.
+    const _now = new Date();
+    const _etParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(_now);
+    const etHour = parseInt(_etParts.find(p => p.type === 'hour').value) % 24;
+    const etMinute = parseInt(_etParts.find(p => p.type === 'minute').value);
+    const currentMinutes = etHour * 60 + etMinute;
+    const nowETIso = _now.toISOString();
+    const etTimeStr = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).format(_now);
 
-    console.log(`[enforceWakeTimeBoundary] Running at ${nowET.toLocaleTimeString('en-US', { timeZone: 'America/New_York' })} Eastern`);
+    console.log(`[enforceWakeTimeBoundary] Running at ${etTimeStr} Eastern`);
 
     // Load all characters. Try user-scoped first, then service role.
     let allChars = [];
@@ -85,7 +95,9 @@ Deno.serve(async (req) => {
       // Verified higher-priority interrupts: medical emergency (health ≤ 15).
       // Energy 100%, chat activity, presence refresh, background recovery are NOT valid.
       if (char.last_sleep_start) {
-        const elapsedSleepHours = (nowET.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000;
+        // CRITICAL: Use Date.now() (correct epoch) — NOT nowET.getTime() which is
+        // 4h behind actual time due to the broken toLocaleString Date construction.
+        const elapsedSleepHours = (Date.now() - new Date(char.last_sleep_start).getTime()) / 3600000;
         const isMedicalEmergency = (char.health_value ?? 80) <= 15;
         if (elapsedSleepHours < 6 && !isMedicalEmergency) {
           results.push({
@@ -95,7 +107,7 @@ Deno.serve(async (req) => {
             woken: false,
             reason: `6h_sleep_minimum_guard_active (${elapsedSleepHours.toFixed(2)}h elapsed)`,
           });
-          console.log(`[enforceWakeTimeBoundary] 6H_GUARD: ${char.name} slept ${elapsedSleepHours.toFixed(2)}h < 6h — not waking despite past wake_up_time`);
+          console.log(`[enforceWakeTimeBoundary] 6H_GUARD: ${char.name} slept ${elapsedSleepHours.toFixed(2)}h < 6h — not waking (wake_up_time=${wakeTime}, current ET=${etTimeStr})`);
           // BLOCKED WAKE: No SleepTransition record is created.
           // A blocked wake is NOT a sleep_end. Creating transition evidence for an event
           // that did not occur corrupts the sleep timeline with contradictory state.
@@ -167,7 +179,7 @@ Deno.serve(async (req) => {
         // This is created AFTER the SleepTransition proof is confirmed (atomic).
         try {
           const elapsedSleepHours = char.last_sleep_start
-            ? Math.round(((nowET.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000) * 100) / 100
+            ? Math.round(((Date.now() - new Date(char.last_sleep_start).getTime()) / 3600000) * 100) / 100
             : null;
           await base44.asServiceRole.entities.LifeEvent.create({
             character_id: char.id, character_name: char.name,
@@ -196,7 +208,7 @@ Deno.serve(async (req) => {
           woken: true,
         });
         wokenCount++;
-        console.log(`[enforceWakeTimeBoundary] WOKE ${char.name} | was=${char.resolved_presence_status} | wake_time=${wakeTime} | activity=${char.current_activity}`);
+        console.log(`[enforceWakeTimeBoundary] WOKE ${char.name} | was=${char.resolved_presence_status} | wake_time=${wakeTime} | activity=${char.current_activity} | et=${etTimeStr}`);
       } catch (err) {
         console.error(`[enforceWakeTimeBoundary] FAILED to wake ${char.name}: ${err.message}`);
         results.push({
@@ -210,8 +222,8 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      et_time: nowET.toLocaleTimeString('en-US', { timeZone: 'America/New_York' }),
-      et_hour: nowET.getHours(),
+      et_time: etTimeStr,
+      et_hour: etHour,
       total_checked: eligibleChars.length,
       sleeping_count: eligibleChars.filter(c => ['sleeping', 'napping'].includes(c.resolved_presence_status)).length,
       woken: wokenCount,

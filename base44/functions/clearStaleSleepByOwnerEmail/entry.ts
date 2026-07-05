@@ -142,9 +142,17 @@ Deno.serve(async (req) => {
     for (const char of sleeping) {
       const wakeTime = char.wake_up_time || '07:00';
       const [wh, wm] = wakeTime.split(':').map(Number);
-      const scheduledWake = new Date(nowEt);
-      scheduledWake.setHours(wh, wm, 0, 0);
-      const minutesPastWake = (nowEt - scheduledWake) / 60000;
+      // CRITICAL: Use Intl.DateTimeFormat for ET hour/minute — nowEt is broken
+      // (new Date(toLocaleString(...)) is 4h behind in UTC sandbox).
+      const _etParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(nowUtc);
+      const _etHour = parseInt(_etParts.find(p => p.type === 'hour').value) % 24;
+      const _etMinute = parseInt(_etParts.find(p => p.type === 'minute').value);
+      const _etTotalMinutes = _etHour * 60 + _etMinute;
+      const _wakeTotalMinutes = wh * 60 + (wm || 0);
+      const minutesPastWake = _etTotalMinutes - _wakeTotalMinutes;
       const isPastWakeTime = minutesPastWake > 0;
 
       const napDuration = char.last_nap_time ? (nowUtc - new Date(char.last_nap_time)) / 3600000 : null;
@@ -154,6 +162,19 @@ Deno.serve(async (req) => {
       const isHouseArrest = char.house_arrest_active;
       const isConfinement = ['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status);
       const hasHardBlocker = isJailed || isHouseArrest || isConfinement;
+
+      // ── 6-HOUR MINIMUM SLEEP GUARD ─────────────────────────────────────
+      // Same canonical rule as enforceWakeTimeBoundary: actual sleep cannot end
+      // before 6 hours unless a verified medical emergency exists.
+      const _isActualSleepForGuard = char.resolved_presence_status === 'sleeping';
+      const _isMedicalEmergencyForGuard = (char.health_value ?? 80) <= 15;
+      if (_isActualSleepForGuard && char.last_sleep_start) {
+        const _elapsedSleepHoursForGuard = (Date.now() - new Date(char.last_sleep_start).getTime()) / 3600000;
+        if (_elapsedSleepHoursForGuard < 6 && !_isMedicalEmergencyForGuard) {
+          kept.push({ name: char.name, status: 'valid_sleep', reason: `6h_minimum_guard (${_elapsedSleepHoursForGuard.toFixed(2)}h elapsed)` });
+          continue;
+        }
+      }
 
       const isStale = isPastWakeTime && !hasHardBlocker;
       const napStale = napExceeded && !hasHardBlocker;
