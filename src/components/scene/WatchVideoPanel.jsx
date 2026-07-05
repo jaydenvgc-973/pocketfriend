@@ -76,7 +76,7 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
           <div className="text-center space-y-1">
             <p className="text-sm text-white/90 font-medium">Watch something together</p>
             <p className="text-[11px] text-white/50">
-              Paste a YouTube, Vimeo, Dailymotion, X (Twitter), Instagram, or Facebook video link, or a direct HTTPS MP4/WebM link.
+              Paste a link from YouTube, Vimeo, Dailymotion, Internet Archive, X, Instagram, Facebook, TikTok, Twitch, Wistia, Brightcove, Loom, Vidyard, Kaltura, Cloudflare Stream, Bunny Stream, Spotify, SoundCloud, or Mixcloud — or a direct HTTPS MP4/WebM link.
               The link is not saved permanently.
             </p>
           </div>
