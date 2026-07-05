@@ -328,93 +328,9 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     const objectPronoun = charGender === 'male' ? 'him' : charGender === 'female' ? 'her' : 'them';
     const possessivePronoun = charGender === 'male' ? 'his' : charGender === 'female' ? 'her' : 'their';
 
-    // ── HOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (additive) ───────────────────
-    // Additional narrative-style patterns. Inspiration only — the generator must
-    // expand them into complete narrative beats, never copy verbatim.
-    const HOUSEHOLD_ACTIVITY_EXAMPLES = {
-      cooking_meal: ["They spend time in the kitchen preparing food, moving between ingredients, cookware, and the stove until the meal comes together."],
-      preparing_breakfast: ["They start the morning by preparing breakfast, taking a few quiet moments to make something to eat before beginning the day."],
-      preparing_lunch: ["They put together lunch, taking a break from whatever they were doing before sitting down to eat."],
-      preparing_dinner: ["They prepare dinner, taking their time in the kitchen before enjoying the meal they made."],
-      making_coffee: ["They make a fresh cup of coffee, taking a moment to enjoy the familiar routine before continuing with the day."],
-      making_tea: ["They prepare a cup of tea, letting the quiet routine help them slow down for a few moments."],
-      putting_away_groceries: ["After returning from the store, they unpack the groceries and organize the food, household items, and supplies where they belong."],
-      meal_prepping: ["They prepare food ahead of time, portioning and organizing meals to make the coming days easier."],
-      cleaning_bathroom: ["They clean the bathroom, working through the sink, mirror, shower, and surfaces until everything feels fresh again."],
-      cleaning_kitchen: ["They clear the counters, deal with dishes, wipe down the kitchen, and put everything back where it belongs."],
-      cleaning_bedroom: ["They straighten the bedroom, organize their belongings, and leave the room noticeably cleaner and more comfortable."],
-      doing_laundry: ["They gather dirty clothes, start or finish a load of laundry, and later put everything away once it is clean."],
-      folding_laundry: ["They fold clean laundry, organizing everything before putting it away where it belongs."],
-      doing_dishes: ["They wash or load the dishes, clean the sink, and leave the kitchen ready to use again."],
-      vacuuming: ["They vacuum around the house, moving from room to room until the floors feel noticeably cleaner."],
-      sweeping_mopping: ["They spend some time sweeping or mopping the floors, freshening up the house one room at a time."],
-      taking_out_trash: ["They gather the household trash and take it outside before replacing the bags and returning inside."],
-      making_bed: ["They straighten the bed, smooth the bedding, and leave the room looking more organized."],
-      organizing_closet: ["They organize the closet, straightening shelves, hanging clothes, and putting stored items back into order."],
-      organizing_paperwork: ["They sort through paperwork, organizing important documents and clearing away unnecessary clutter."],
-      checking_mail: ["They check the mailbox, sort through what arrived, and bring everything inside."],
-      watching_television: ["They settle in and watch television for a while, taking a chance to relax and unwind."],
-      playing_video_games: ["They spend some time playing a video game, focusing on the experience before eventually stepping away."],
-      reading_book: ["They settle into a comfortable place and spend some quiet time reading."],
-      listening_to_music: ["They turn on some music and let it play while they relax or move through the house."],
-      browsing_internet: ["They spend some time browsing the internet, catching up on things that interest them before moving on."],
-      using_computer: ["They sit down at the computer for a while, taking care of whatever they wanted to work on."],
-      doing_homework: ["They sit down with homework, making steady progress before moving on with the rest of their day."],
-      studying: ["They spend time studying, reviewing information and working toward a better understanding of the material."],
-      writing_journal: ["They spend a few quiet moments writing in a journal, reflecting on their thoughts before continuing with the day."],
-      exercising_home: ["They complete a workout or exercise session at home before cooling down."],
-      stretching: ["They spend a few minutes stretching, loosening up and helping themselves feel more comfortable."],
-      meditating: ["They take a few quiet moments to meditate, slowing their breathing and clearing their mind."],
-      relaxing_home: ["They spend some quiet time relaxing at home before continuing with the rest of their day."],
-      brushing_teeth: ["They brush their teeth and freshen up before continuing with the day or preparing for the night."],
-      taking_shower: ["They take a shower, cleaning up and giving themselves a chance to reset before moving on."],
-      washing_face: ["They wash their face and freshen up before returning to the rest of their routine."],
-      grooming_hair: ["They spend a few moments fixing and grooming their hair before continuing with the day."],
-      getting_dressed: ["They get dressed for the day or for their next activity, choosing clothing that matches their plans."],
-      choosing_outfit: ["They spend a few moments deciding what to wear before settling on an outfit appropriate for the day."],
-      getting_ready_bed: ["They begin winding down for the night, finishing the last parts of their evening routine before settling in to sleep."],
-      taking_bath: ["They spend some quiet time soaking in a warm bath, using the opportunity to relax and unwind before continuing with the rest of their day or evening."],
-      washing_hair: ["They spend a little extra time washing and caring for their hair as part of their normal grooming routine."],
-      front_porch: ["They spend some time sitting on the front porch, enjoying the fresh air and watching the neighborhood as the day quietly passes by."],
-      backyard: ["They head out into the backyard for a while, enjoying the outdoors and taking a peaceful break from being inside."],
-      playing_solitaire: ["They sit down for a quiet game of solitaire, passing the time while enjoying a few moments to themselves."],
-    };
-    const SEASONAL_ACTIVITY_EXAMPLES = {
-      new_year: ["They spend a quiet New Year's evening at home, letting the night settle in without needing much else."],
-      valentines: ["They put together something small for Valentine's Day, keeping it low-key but intentional."],
-      spring: ["They open the windows to let the spring air in, taking a moment before getting back to the day."],
-      summer: [
-        "They step outside to watch the fireworks in the night sky, letting the sound carry over the neighborhood.",
-        "They enjoy the warm evening out in the yard, taking a break from being inside.",
-      ],
-      halloween: ["They sort through a few Halloween decorations, deciding what to put out this year."],
-      thanksgiving: ["They start prepping for Thanksgiving dinner early, moving through the kitchen at their own pace."],
-      winter_holidays: [
-        "They decorate the home for the holidays, working through the familiar pieces one at a time.",
-        "They spend a quiet holiday evening at home, letting the night come on its own terms.",
-        "They bake seasonal treats, filling the kitchen with the smell of it for a while.",
-        "They settle in to watch a holiday movie, letting the evening slow down around it.",
-      ],
-    };
-    const _seasonalKeysAuto = (() => {
-      const m = nowET.getMonth() + 1, d = nowET.getDate();
-      const k = [];
-      if ((m === 12 && d >= 30) || (m === 1 && d <= 2)) k.push('new_year');
-      if (m === 2 && d >= 12 && d <= 16) k.push('valentines');
-      if (m === 3 || m === 4) k.push('spring');
-      if (m >= 6 && m <= 8) k.push('summer');
-      if (m === 10 && d >= 28) k.push('halloween');
-      if (m === 11) k.push('thanksgiving');
-      if (m === 12) k.push('winter_holidays');
-      return k;
-    })();
-    const _householdKeysAuto = [...Object.keys(HOUSEHOLD_ACTIVITY_EXAMPLES)].sort(() => Math.random() - 0.5).slice(0, 3);
-    const _householdExAuto = _householdKeysAuto.flatMap(k => (HOUSEHOLD_ACTIVITY_EXAMPLES[k] || []).slice(0, 1)).slice(0, 3);
-    const _seasonalExAuto = _seasonalKeysAuto.flatMap(k => (SEASONAL_ACTIVITY_EXAMPLES[k] || []).slice(0, 1)).slice(0, 2);
-    const _combinedAuto = [..._householdExAuto, ..._seasonalExAuto];
-    const householdActivityBlock = _combinedAuto.length > 0
-      ? `\n\nHOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (use as inspiration — generate a NEW variation, never copy verbatim):\n${_combinedAuto.map(e => `  • ${e}`).join('\n')}\n\nCLOTHING-AWARE NOTE: For wardrobe activities, if Outfit Rotation is enabled and today's outfit is available, use the current scheduled outfit. If Character Closet data exists, use the appropriate clothing from the closet. If neither is available, keep the narrative general — do NOT invent clothing items or wardrobe details.\nMUSIC PREFERENCE NOTE: When authoritative music preference data exists, naturally incorporate favorite artists, genres, styles, or playlists into music narratives. If none exists, keep music narratives general.`
-      : '';
+    // Household & seasonal activity inspiration is owned by buildCanonicalCharacterContext
+    // (single shared, gated source) and flows into canonicalSystemPrompt above.
+    // It is NOT duplicated here. See buildActivityInspirationBlock in canonical context.
 
     const narrativePrompt = `${canonicalSystemPrompt}
 
@@ -426,7 +342,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
 ${situationBlock}
-${needsLine}${householdActivityBlock}
+${needsLine}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
 Gender: ${charGender || 'unknown — use they/them'}
