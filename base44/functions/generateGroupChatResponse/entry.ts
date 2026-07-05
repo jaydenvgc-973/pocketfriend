@@ -324,7 +324,12 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
       let responseText = '';
       try {
         const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt, add_context_from_internet: false });
-        responseText = (response || '').replace(/^[\w\s]+:\s*/i, '').trim();
+        // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+        responseText = (response || '').replace(/^[\w\s]+:\s*/i, '')
+          .replace(/\bchaotic\b/gi, 'hectic')
+          .replace(/\bchaos\b/gi, 'turmoil')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
         if (!responseText) continue;
 
         // ── VICK CHARACTER BOUNDARY — GROUP CHAT ─────────────────────────────

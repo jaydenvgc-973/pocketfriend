@@ -296,7 +296,12 @@ Be authentic and varied. Just a natural message someone would send.`;
     prompt: systemPrompt,
   });
   
-  return content;
+  // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+  return (content || '')
+    .replace(/\bchaotic\b/gi, 'hectic')
+    .replace(/\bchaos\b/gi, 'turmoil')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 Deno.serve(async (req) => {

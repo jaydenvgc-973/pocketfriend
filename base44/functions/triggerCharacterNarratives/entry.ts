@@ -227,6 +227,13 @@ Return ONLY the narrative text, nothing else.`;
       continue;
     }
 
+    // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+    narrativeContent = (narrativeContent || '')
+      .replace(/\bchaotic\b/gi, 'hectic')
+      .replace(/\bchaos\b/gi, 'turmoil')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
     // ── 9. SAVE — scoped to the correct conversation + character ──
     let createdMessage;
     try {

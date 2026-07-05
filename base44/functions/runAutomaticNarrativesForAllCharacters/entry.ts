@@ -329,8 +329,14 @@ Only include action_effects if the narrative describes concrete actions (eating,
           },
         });
 
-        const narrativeText = narrativeRes?.narrative_text?.trim() ||
+        let narrativeText = narrativeRes?.narrative_text?.trim() ||
           `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
+        // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+        narrativeText = narrativeText
+          .replace(/\bchaotic\b/gi, 'hectic')
+          .replace(/\bchaos\b/gi, 'turmoil')
+          .replace(/\s{2,}/g, ' ')
+          .trim();
         const actionEffects = narrativeRes?.action_effects || [];
         const memorySummary = `[Auto] ${timeStr} ${dayName}: ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} — ${narrativeText.substring(0, 80)}...`;
 
