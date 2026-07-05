@@ -657,8 +657,22 @@ If no actions occur, return empty action_effects array.`;
     if (actionEffects && actionEffects.length > 0) {
       console.log(`[generateAutomaticNarrative] Applying ${actionEffects.length} action effects...`);
       
+      // ── ENERGY SIGN GUARD ───────────────────────────────────────────────
+      // Energy may ONLY increase in approved recovery states (sleeping,
+      // napping, passed_out, hospitalized). Awake/work/school states must
+      // NEVER gain energy from narrative action_effects — that would
+      // overwrite the authoritative decay applied by simulateActiveCharacterNeeds.
+      // This guard does NOT affect negative energy changes (decay reinforcement).
+      // Coffee is a separate explicit mechanic, not an LLM action_effect.
+      const ENERGY_RECOVERY_PRESENCES = new Set(['sleeping', 'napping', 'passed_out', 'hospitalized']);
+      const _narrativePresence = character.resolved_presence_status || '';
+
       for (const effect of actionEffects) {
         if (effect.type === 'needs' && effect.need) {
+          if (effect.need === 'energy' && effect.change > 0 && !ENERGY_RECOVERY_PRESENCES.has(_narrativePresence)) {
+            console.warn(`[generateAutomaticNarrative] BLOCKED +energy effect (${effect.change}) for ${character.name} in presence=${_narrativePresence} — awake/work states cannot gain energy from narrative action_effects`);
+            continue;
+          }
           const needFieldMap = {
             'hunger': 'hunger_value',
             'energy': 'energy_value',
