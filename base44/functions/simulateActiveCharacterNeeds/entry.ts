@@ -550,9 +550,7 @@ function computeMentalModifier(char, context, locationMap) {
 
   const hasCloseRel = relationships.some(r => (r.friendship_level ?? 0) > 70 || (r.trust_level ?? 0) > 70 || (r.romantic_level ?? 0) > 50);
 
-  // ═══════════════════════════════════════════════════════════════════════
   // REST & RECOVERY + MOVEMENT & EXERCISE
-  // ═══════════════════════════════════════════════════════════════════════
   const mQualitySleep = context === 'sleeping' && (locCat === 'home' || locCat === 'hotel');
   const mNap          = presence === 'napping' || activity.includes('nap') || activity.includes('siesta');
   const mRestRecover  = activity.includes('rest') || activity.includes('recover') || activity.includes('recharge') || activity.includes('rested');
@@ -569,9 +567,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (mGym)          modifier += 1.0;  // exercise is universally beneficial
   if (mWalk)         modifier += 0.75;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // CHARACTER & PERSONAL VALUES
-  // ═══════════════════════════════════════════════════════════════════════
   const mHelping     = activity.includes('help') || activity.includes('volunteer') || activity.includes('donate') || activity.includes('assist');
   const mKind        = activity.includes('kind') || activity.includes('nice') || activity.includes('generous');
   const mRespectful  = activity.includes('respect') || activity.includes('pleasant') || activity.includes('polite');
@@ -584,9 +580,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (mProud)      modifier += 1.0 * scale.characterValues;
   if (mValues)     modifier += 0.75 * scale.characterValues;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // PERSONAL CONFIDENCE & SELF-WORTH
-  // ═══════════════════════════════════════════════════════════════════════
   const mPepTalk     = activity.includes('pep talk') || (activity.includes('positive') && activity.includes('self'));
   const mProgress    = activity.includes('progress') || activity.includes('better') || activity.includes('improve');
   const mCapable     = activity.includes('capable') || activity.includes('competent') || activity.includes('confident');
@@ -602,9 +596,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (mUseful)    modifier += 1.0 * scale.confidence;
   if (hasCloseRel) modifier += 0.2 * scale.confidence;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // GOALS & PURPOSE
-  // ═══════════════════════════════════════════════════════════════════════
   const mGoals     = activity.includes('goal') || activity.includes('plan') || activity.includes('future');
   const mPurpose   = activity.includes('purpose') || activity.includes('direction') || activity.includes('meaning');
   const mWorking   = activity.includes('working toward') || activity.includes('making progress');
@@ -617,9 +609,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (atSchool)   modifier += 0.4 * scale.purpose;
   if (hasJob)     modifier += 0.2 * scale.purpose;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // DAILY STABILITY & ROUTINE
-  // ═══════════════════════════════════════════════════════════════════════
   const mRoutine     = activity.includes('routine') || activity.includes('habit') || activity.includes('consistent');
   const mProductive  = activity.includes('productive') || activity.includes('getting things done');
   const mOrganized   = activity.includes('organize') || activity.includes('tidy') || activity.includes('clean');
@@ -637,9 +627,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (hasStructure) modifier += 0.15 * scale.stability;
   if (onShift)     modifier += 0.25 * scale.stability;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // HEALTHY THINKING & RESILIENCE
-  // ═══════════════════════════════════════════════════════════════════════
   const mOutlook  = activity.includes('positive outlook') || activity.includes('optimistic') || activity.includes('hopeful');
   const mHope     = activity.includes('hope') || activity.includes('better days') || activity.includes('looking forward');
   const mNotWorst = activity.includes('not assuming worst') || activity.includes('staying calm') || activity.includes('realistic');
@@ -650,9 +638,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (mNotWorst)  modifier += 0.5 * scale.resilience;
   if (mResilient) modifier += 1.0 * scale.resilience;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // LOCATION-BASED (environmental context)
-  // ═══════════════════════════════════════════════════════════════════════
   if (locCat === 'outdoor') modifier += 0.75;
   if (atHome && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.5;
   if (locName.includes('park') || locName.includes('garden') || locName.includes('trail') || locName.includes('nature')) modifier += 0.75;
@@ -661,9 +647,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (activity.includes('pray') || activity.includes('worship') || activity.includes('spiritual')) modifier += 1.25;
   if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.5;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // DRAINS (safety, conflict, isolation, grief)
-  // ═══════════════════════════════════════════════════════════════════════
   if (locCat === 'jail_prison' || (loc && loc.is_confinement_facility)) modifier -= 1.5;
   if (activity.includes('fear') || activity.includes('threat') || activity.includes('danger') || activity.includes('unsafe')) modifier -= 1.5;
   if (activity.includes('conflict') || activity.includes('argument') || activity.includes('fight')) modifier -= 1.25;
@@ -672,9 +656,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (activity.includes('critic') && activity.includes('self')) modifier -= 0.5;
   if (activity.includes('worst') && activity.includes('outcome')) modifier -= 0.5;
 
-  // ═══════════════════════════════════════════════════════════════════════
   // PERSONALITY-MATCHED PREFERENCES
-  // ═══════════════════════════════════════════════════════════════════════
   if (char.trait_conscientious && (mOrganized || activity.includes('clean'))) modifier += 0.75;
   if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
     if (context === 'social_out' || context === 'bar_club' || activity.includes('social')) modifier += 0.5;
@@ -786,10 +768,7 @@ function computeCorrectiveState(needs, character, locationMap) {
   const isInRestState = presence === 'sleeping' || presence === 'napping' ||
     presence === 'passed_out' || presence === 'hospitalized';
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse
-  // Pass-out is NOT sleeping. Uses 'passed_out' status, not 'sleeping'.
-  // ═══════════════════════════════════════════════════════════════════════
+  // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse. NOT sleeping.
   if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
     return {
       resolved_presence_status: 'passed_out',
@@ -800,12 +779,7 @@ function computeCorrectiveState(needs, character, locationMap) {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // MEDICAL DANGER (≤5%): bypass pipeline — AWAKE CHARACTERS ONLY.
-  // Sleeping/napping characters get +12.5/hr energy recovery — that is
-  // the correct treatment. Hospitalization override is only for AWAKE
-  // characters whose energy crashed below 5 while conscious.
-  // ═══════════════════════════════════════════════════════════════════════
+  // MEDICAL DANGER (≤5%): AWAKE CHARACTERS ONLY. Sleeping chars get +12.5/hr recovery.
   if (needs.energy <= T.ENERGY_MEDICAL && !isInRestState) {
     return {
       resolved_presence_status: 'hospitalized',
@@ -813,12 +787,7 @@ function computeCorrectiveState(needs, character, locationMap) {
     };
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // ENERGY 25-50%: DECISION PIPELINE REQUIRED
-  // State only written if: at home + no obligations + no sleep lock
-  // Blocked characters: return null, re-evaluate next tick
-  // ═══════════════════════════════════════════════════════════════════════
-
+  // ENERGY 25-50%: DECISION PIPELINE REQUIRED — state only if at home + no obligations
   if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
@@ -2002,10 +1971,13 @@ Deno.serve(async (req) => {
         }
 
         // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
-        // Uses last_wake_time ONLY. Naps do NOT reset this timer (but
-        // last_nap_time from a completed nap is a valid reset boundary).
+        // SLEEP BLOCKS PASS-OUT: If last_sleep_start is within 8h, the character
+        // is asleep — even if another automation momentarily cleared the status.
+        const _sleptRecently = char.last_sleep_start &&
+          ((Date.now() - new Date(char.last_sleep_start).getTime()) / 3_600_000) < 8;
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
-            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock
+            && !_sleptRecently) {
           // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
           // Use the MOST RECENT of last_wake_time and last_nap_time.
           // A completed nap is a restorative boundary that resets the awake timer.
@@ -2340,9 +2312,19 @@ Deno.serve(async (req) => {
         }
 
         // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
+        // WAKE ACTIVITY MUST BE MANDATORY: If stale cleanup clears a sleep state,
+        // a wake transition + LifeEvent/Memory MUST be created. Silent wake-up is forbidden.
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
         if (staleCleanup) {
           Object.assign(updatePayload, staleCleanup);
+          const _wasResting = dbIsSleeping || dbIsNapping || dbIsPassedOut;
+          const _nowAwake = staleCleanup.resolved_presence_status === 'home';
+          if (_wasResting && _nowAwake && !sleepTransitionsToRecord.some(t => t.transition_type.endsWith('_end'))) {
+            const _wt = dbIsSleeping ? 'sleep_end' : dbIsNapping ? 'nap_end' : 'pass_out_end';
+            const _fs = dbIsSleeping ? 'sleeping' : dbIsNapping ? 'napping' : 'passed_out';
+            sleepTransitionsToRecord.push({ transition_type: _wt, from_status: _fs, to_status: 'home', authority: 'stale_corrective_cleanup', reason: 'Stale corrective state cleared — wake activity created to prevent silent wake.' });
+            pendingConsequences.push({ type: 'stale_wake', energyValue: Math.round(newNeeds.energy), wakeType: _wt });
+          }
         }
 
         const staleIntent = resolveStaleDecisionIntents(char);
@@ -2433,6 +2415,10 @@ Deno.serve(async (req) => {
             } else if (c.type === 'pass_out_end_recovery') {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${c.elapsedHours}h of recovery. Energy at ${c.energyValue}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
               await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${c.elapsedHours}h of recovery from passing out. Groggy and embarrassed. Energy at ${c.energyValue}.`, memory_summary: `Recovered from pass-out after ${c.elapsedHours}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id });
+            } else if (c.type === 'stale_wake') {
+              const _wTitle = c.wakeType === 'pass_out_end' ? 'Recovered from pass-out' : c.wakeType === 'nap_end' ? 'Woke up from a nap' : 'Woke up';
+              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'minor', title: _wTitle, description: `${charName} woke up. Energy at ${c.energyValue}.`, emotional_impact: c.wakeType === 'pass_out_end' ? 'groggy' : 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: [c.wakeType, 'woke_up', 'stale_cleanup'] });
+              await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke up. Energy at ${c.energyValue}.`, memory_summary: `Woke up at energy ${c.energyValue}.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id });
             }
           } catch (consequenceError) {
             results.push({
