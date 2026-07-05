@@ -1971,13 +1971,11 @@ Deno.serve(async (req) => {
         }
 
         // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
-        // SLEEP BLOCKS PASS-OUT: If last_sleep_start is within 8h, the character
-        // is asleep — even if another automation momentarily cleared the status.
-        const _sleptRecently = char.last_sleep_start &&
-          ((Date.now() - new Date(char.last_sleep_start).getTime()) / 3_600_000) < 8;
+        // Uses last_wake_time (and last_nap_time as secondary boundary) as the
+        // authoritative awake timer. All wake sources now correctly update
+        // last_wake_time — no secondary guard needed.
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
-            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock
-            && !_sleptRecently) {
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
           // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
           // Use the MOST RECENT of last_wake_time and last_nap_time.
           // A completed nap is a restorative boundary that resets the awake timer.
