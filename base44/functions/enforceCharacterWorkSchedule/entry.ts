@@ -84,21 +84,22 @@ Deno.serve(async (req) => {
       const _wasSleepingBeforeWork = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
-      const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      // CRITICAL: getHours()/getMinutes()/getDay() return UTC values in Deno sandbox.
-      // Use Intl.DateTimeFormat for correct ET hour/minute/day.
-      const _sEtParts = new Intl.DateTimeFormat('en-US', {
+      const singleNowET = new Date();
+      // CRITICAL: Intl.DateTimeFormat.formatToParts with timeZone does NOT work in
+      // Deno sandbox — returns UTC. toLocaleString with timeZone DOES work.
+      const _sEtDateStr = singleNowET.toLocaleString('en-US', {
         timeZone: 'America/New_York',
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
-      }).formatToParts(new Date());
+      });
       const _sWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const _sEtParsed = _sEtDateStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
       const singleClock = {
-        getHours: () => parseInt(_sEtParts.find(p => p.type === 'hour').value) % 24,
-        getMinutes: () => parseInt(_sEtParts.find(p => p.type === 'minute').value),
-        getDay: () => _sWdMap[_sEtParts.find(p => p.type === 'weekday').value],
+        getHours: () => parseInt(_sEtParsed[5]) % 24,
+        getMinutes: () => parseInt(_sEtParsed[6]),
+        getDay: () => _sWdMap[_sEtParsed[1]],
       };
-      const todayET = `${_sEtParts.find(p => p.type === 'year').value}-${_sEtParts.find(p => p.type === 'month').value}-${_sEtParts.find(p => p.type === 'day').value}`;
+      const todayET = `${_sEtParsed[4]}-${_sEtParsed[2].padStart(2,'0')}-${_sEtParsed[3].padStart(2,'0')}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
@@ -175,12 +176,32 @@ Deno.serve(async (req) => {
           : payload;
         await base44.asServiceRole.entities.Character.update(characterId, finalPayload);
         try {
-          const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
-            character_id: characterId, owner_email: character.owner_email, location_id: newLocationId,
-            event_type: eventType, travel_source: 'schedule', travel_reason: reason,
-          });
-          if (!locResult?.data?.success) {
-            throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+          // Inline LocationHistory write — cross-function invoke returns 403 because
+          // createClientFromRequest(req) cannot establish service-role auth when
+          // called from another backend function. Write directly here instead.
+          const _nowIso = singleNowET.toISOString();
+          const _openRecs = await base44.asServiceRole.entities.LocationHistory.filter(
+            { character_id: characterId, owner_email: character.owner_email, is_current: true }, null, 20
+          );
+          for (const _open of _openRecs) {
+            if (_open.location_id === newLocationId) continue;
+            const _arrMs = new Date(_open.arrival_time).getTime();
+            const _durMin = Math.round((Date.now() - _arrMs) / 60000);
+            await base44.asServiceRole.entities.LocationHistory.update(_open.id, {
+              is_current: false, departure_time: _nowIso,
+              duration_minutes: _durMin > 0 ? _durMin : null,
+            });
+          }
+          const _already = _openRecs.find(o => o.location_id === newLocationId);
+          if (!_already) {
+            const [_destLoc] = await base44.asServiceRole.entities.LocationReference.filter({ id: newLocationId }, null, 1);
+            await base44.asServiceRole.entities.LocationHistory.create({
+              character_id: characterId, character_name: character.name,
+              owner_email: character.owner_email, location_id: newLocationId,
+              location_name: _destLoc?.name || '', location_category: _destLoc?.category || 'generic',
+              event_type: eventType, arrival_time: _nowIso,
+              travel_source: 'schedule', travel_reason: reason, is_current: true,
+            });
           }
           if (newStatus === 'sleeping') {
             await base44.asServiceRole.entities.SleepTransition.create({
@@ -383,20 +404,22 @@ Deno.serve(async (req) => {
         const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
 
         // CALLOUT GUARD: skip work enforcement for characters with valid callout today
-        const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        // CRITICAL: getHours()/getMinutes()/getDay() return UTC values in Deno sandbox.
-        const _gEtParts = new Intl.DateTimeFormat('en-US', {
+        const nowET = new Date();
+        // CRITICAL: Intl.DateTimeFormat.formatToParts with timeZone does NOT work
+        // in Deno sandbox. Use toLocaleString which IS working.
+        const _gEtDateStr = nowET.toLocaleString('en-US', {
           timeZone: 'America/New_York',
           year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
-        }).formatToParts(new Date());
+        });
         const _gWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const _gEtParsed = _gEtDateStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
         const globalClock = {
-          getHours: () => parseInt(_gEtParts.find(p => p.type === 'hour').value) % 24,
-          getMinutes: () => parseInt(_gEtParts.find(p => p.type === 'minute').value),
-          getDay: () => _gWdMap[_gEtParts.find(p => p.type === 'weekday').value],
+          getHours: () => parseInt(_gEtParsed[5]) % 24,
+          getMinutes: () => parseInt(_gEtParsed[6]),
+          getDay: () => _gWdMap[_gEtParsed[1]],
         };
-        const todayET = `${_gEtParts.find(p => p.type === 'year').value}-${_gEtParts.find(p => p.type === 'month').value}-${_gEtParts.find(p => p.type === 'day').value}`;
+        const todayET = `${_gEtParsed[4]}-${_gEtParsed[2].padStart(2,'0')}-${_gEtParsed[3].padStart(2,'0')}`;
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
         }
@@ -496,11 +519,29 @@ Deno.serve(async (req) => {
               presence_stay_lock_created_by: 'system_automation',
             });
             try {
-              const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
-                character_id: char.id, owner_email: ownerEmail, location_id: activeWorkLocId,
-                event_type: 'work_start', travel_source: 'schedule', travel_reason: 'work_schedule',
-              });
-              if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+              // Inline LocationHistory write — cross-function invoke returns 403
+              const _nowIso1 = nowET.toISOString();
+              const _openRecs1 = await base44.asServiceRole.entities.LocationHistory.filter(
+                { character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20
+              );
+              for (const _open of _openRecs1) {
+                if (_open.location_id === activeWorkLocId) continue;
+                const _arrMs1 = new Date(_open.arrival_time).getTime();
+                const _durMin1 = Math.round((Date.now() - _arrMs1) / 60000);
+                await base44.asServiceRole.entities.LocationHistory.update(_open.id, {
+                  is_current: false, departure_time: _nowIso1,
+                  duration_minutes: _durMin1 > 0 ? _durMin1 : null,
+                });
+              }
+              if (!_openRecs1.find(o => o.location_id === activeWorkLocId)) {
+                await base44.asServiceRole.entities.LocationHistory.create({
+                  character_id: char.id, character_name: char.name, owner_email: ownerEmail,
+                  location_id: activeWorkLocId, location_name: locMap[activeWorkLocId]?.name || '',
+                  location_category: locMap[activeWorkLocId]?.category || 'generic',
+                  event_type: 'work_start', arrival_time: _nowIso1,
+                  travel_source: 'schedule', travel_reason: 'work_schedule', is_current: true,
+                });
+              }
               if (isSleeping) {
                 try {
                   await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null });
@@ -571,13 +612,29 @@ Deno.serve(async (req) => {
             presence_stay_lock_created_by: null,
           });
           try {
-            // Location fact — always proven, regardless of sleep status, since
-            // the location changed in this same write.
-            const locResult = await base44.asServiceRole.functions.invoke('writeVerifiedLocationHistory', {
-              character_id: char.id, owner_email: ownerEmail, location_id: homeLocId,
-              event_type: 'return_home', travel_source: 'schedule', travel_reason: 'shift_ended',
-            });
-            if (!locResult?.data?.success) throw new Error(locResult?.data?.error || 'writeVerifiedLocationHistory failed');
+            // Inline LocationHistory write — cross-function invoke returns 403
+            const _nowIso2 = nowET.toISOString();
+            const _openRecs2 = await base44.asServiceRole.entities.LocationHistory.filter(
+              { character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20
+            );
+            for (const _open of _openRecs2) {
+              if (_open.location_id === homeLocId) continue;
+              const _arrMs2 = new Date(_open.arrival_time).getTime();
+              const _durMin2 = Math.round((Date.now() - _arrMs2) / 60000);
+              await base44.asServiceRole.entities.LocationHistory.update(_open.id, {
+                is_current: false, departure_time: _nowIso2,
+                duration_minutes: _durMin2 > 0 ? _durMin2 : null,
+              });
+            }
+            if (!_openRecs2.find(o => o.location_id === homeLocId)) {
+              await base44.asServiceRole.entities.LocationHistory.create({
+                character_id: char.id, character_name: char.name, owner_email: ownerEmail,
+                location_id: homeLocId, location_name: locMap[homeLocId]?.name || '',
+                location_category: locMap[homeLocId]?.category || 'home',
+                event_type: 'return_home', arrival_time: _nowIso2,
+                travel_source: 'schedule', travel_reason: 'shift_ended', is_current: true,
+              });
+            }
             // Sleep fact — proven in addition to (not instead of) the location fact.
             if (newStatus === 'sleeping') {
               await base44.asServiceRole.entities.SleepTransition.create({

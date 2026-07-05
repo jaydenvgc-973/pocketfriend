@@ -142,14 +142,15 @@ Deno.serve(async (req) => {
     for (const char of sleeping) {
       const wakeTime = char.wake_up_time || '07:00';
       const [wh, wm] = wakeTime.split(':').map(Number);
-      // CRITICAL: Use Intl.DateTimeFormat for ET hour/minute — nowEt is broken
-      // (new Date(toLocaleString(...)) is 4h behind in UTC sandbox).
-      const _etParts = new Intl.DateTimeFormat('en-US', {
+      // CRITICAL: Intl.DateTimeFormat.formatToParts with timeZone does NOT work
+      // in Deno sandbox. Use toLocaleString which IS working.
+      const _etStr = nowUtc.toLocaleString('en-US', {
         timeZone: 'America/New_York',
         hour: '2-digit', minute: '2-digit', hour12: false
-      }).formatToParts(nowUtc);
-      const _etHour = parseInt(_etParts.find(p => p.type === 'hour').value) % 24;
-      const _etMinute = parseInt(_etParts.find(p => p.type === 'minute').value);
+      });
+      const _etMatch = _etStr.match(/(\d+):(\d+)/);
+      const _etHour = parseInt(_etMatch[1]) % 24;
+      const _etMinute = parseInt(_etMatch[2]);
       const _etTotalMinutes = _etHour * 60 + _etMinute;
       const _wakeTotalMinutes = wh * 60 + (wm || 0);
       const minutesPastWake = _etTotalMinutes - _wakeTotalMinutes;

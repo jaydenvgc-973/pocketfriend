@@ -25,19 +25,20 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     try { await base44.auth.me(); } catch { /* scheduled execution */ }
 
-    // CRITICAL: Do NOT use new Date(toLocaleString(...)) — in a UTC-timezone runtime
-    // (Deno sandbox), that pattern creates a Date 4 hours behind actual ET, causing
-    // getHours() to return UTC hour instead of ET hour. Use Intl.DateTimeFormat instead.
+    // CRITICAL: Intl.DateTimeFormat.formatToParts with timeZone does NOT work in
+    // the Deno sandbox — it returns UTC time. But toLocaleString with timeZone
+    // DOES work. Parse the toLocaleString output to get correct ET hour/minute.
     const _now = new Date();
-    const _etParts = new Intl.DateTimeFormat('en-US', {
+    const _etStr = _now.toLocaleString('en-US', {
       timeZone: 'America/New_York',
       hour: '2-digit', minute: '2-digit', hour12: false
-    }).formatToParts(_now);
-    const etHour = parseInt(_etParts.find(p => p.type === 'hour').value) % 24;
-    const etMinute = parseInt(_etParts.find(p => p.type === 'minute').value);
+    });
+    const _etMatch = _etStr.match(/(\d+):(\d+)/);
+    const etHour = parseInt(_etMatch[1]) % 24;
+    const etMinute = parseInt(_etMatch[2]);
     const currentMinutes = etHour * 60 + etMinute;
     const nowETIso = _now.toISOString();
-    const etTimeStr = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }).format(_now);
+    const etTimeStr = _now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
 
     console.log(`[enforceWakeTimeBoundary] Running at ${etTimeStr} Eastern`);
 
