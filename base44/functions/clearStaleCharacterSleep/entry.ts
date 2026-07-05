@@ -96,7 +96,46 @@ Deno.serve(async (req) => {
         if (!dry_run) {
           await base44.asServiceRole.entities.Character.update(charId, wakePayload);
 
-          console.log(`[clearStaleCharacterSleep] WOKE ${char.name} (${charId})`);
+          // ── MANDATORY WAKE PROOF — SleepTransition + LifeEvent + CharacterMemory ──
+          // Every wake must create authoritative proof records. Silent wake-up is forbidden.
+          // This prevents the "Current State shows awake but Recent Activity has no wake" defect.
+          try {
+            const _transitionType = wasActualSleep ? 'sleep_end' : 'nap_end';
+            await base44.asServiceRole.entities.SleepTransition.create({
+              character_id: charId, character_name: char.name, owner_email: char.owner_email,
+              transition_type: _transitionType,
+              from_status: char.resolved_presence_status, to_status: 'home',
+              authority: 'clearStaleCharacterSleep',
+              reason: `Cleared stale sleep state (${char.resolved_presence_status}). Wake-up activity created.`,
+              timestamp: nowEtIso,
+              state_start_ref: char.last_sleep_start || char.last_nap_time || null,
+            });
+          } catch (transitionError) {
+            console.warn(`[clearStaleCharacterSleep] SleepTransition proof failed for ${char.name} (non-reverting): ${transitionError.message}`);
+          }
+          try {
+            const _wakeTitle = wasActualSleep ? 'Woke up' : 'Woke up from a nap';
+            await base44.asServiceRole.entities.LifeEvent.create({
+              character_id: charId, character_name: char.name,
+              event_type: 'recovery_event', valence: 'positive', severity: 'minor',
+              title: _wakeTitle,
+              description: `${char.name} woke up. Stale sleep state was cleared. Energy at ${char.energy_value ?? 75}.`,
+              emotional_impact: wasActualSleep ? 'rested' : 'refreshed',
+              triggered_by: 'life_simulation',
+              timestamp: nowEtIso,
+              context_tags: ['woke_up', 'stale_sleep_cleared', wasActualSleep ? 'sleep_end' : 'nap_end'],
+            });
+            await base44.asServiceRole.entities.CharacterMemory.create({
+              character_id: charId, memory_type: 'event',
+              memory_text: `${char.name} woke up. Energy at ${char.energy_value ?? 75}.`,
+              memory_summary: `Woke up — stale sleep cleared.`,
+              importance_score: 3, permanence: 'short_term', related_character_id: charId,
+            });
+          } catch (consequenceError) {
+            console.warn(`[clearStaleCharacterSleep] LifeEvent/Memory creation failed for ${char.name} (non-reverting): ${consequenceError.message}`);
+          }
+
+          console.log(`[clearStaleCharacterSleep] WOKE ${char.name} (${charId}) — proof records created`);
         }
 
         results.push({

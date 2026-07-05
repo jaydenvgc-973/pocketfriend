@@ -433,6 +433,19 @@ Deno.serve(async (req) => {
             issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — work location not in owner scope`);
             continue;
           }
+          // ── SLEEP BLOCKS WORK — ARCHITECTURAL RULE ──────────────────────────
+          // Sleep is the SUSPENSION of activities. Work is an activity.
+          // A sleeping character must NOT be forced to work. The single-character
+          // mode has isBlockedFromWork — global mode must enforce the same rule.
+          // Overwriting a sleeping character to 'at_work' without a wake activity
+          // creates a silent wake (no SleepTransition, no LifeEvent) and leaves
+          // last_sleep_start stale, which previously caused the 19-hour pass-out
+          // regression. Sleeping characters sleep through their shift and deal
+          // with consequences (missed shift, late callout) when they wake.
+          if (isSleeping) {
+            issues_found.push(`${char.name}: SLEEPING — work shift skipped (sleep blocks work activities)`);
+            continue;
+          }
           if (resolvedLocId !== activeWorkLocId) {
             issues_found.push(`${char.name}: should be at work but location stale`);
             const revertPayload = {

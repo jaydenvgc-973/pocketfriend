@@ -162,6 +162,31 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── MANDATORY WAKE ACTIVITY — LifeEvent + CharacterMemory ──────────
+        // Every wake must create a Recent Activity entry. Silent wake-up is forbidden.
+        // This is created AFTER the SleepTransition proof is confirmed (atomic).
+        try {
+          const elapsedSleepHours = char.last_sleep_start
+            ? Math.round(((nowET.getTime() - new Date(char.last_sleep_start).getTime()) / 3600000) * 100) / 100
+            : null;
+          await base44.asServiceRole.entities.LifeEvent.create({
+            character_id: char.id, character_name: char.name,
+            event_type: 'routine_positive_event', valence: 'positive', severity: 'minor',
+            title: 'Woke up',
+            description: `${char.name} woke up at their scheduled wake time (${wakeTime}).${elapsedSleepHours ? ` Slept ${elapsedSleepHours}h.` : ''} Energy at ${char.energy_value ?? 75}.`,
+            emotional_impact: 'rested', triggered_by: 'life_simulation',
+            timestamp: nowETIso, context_tags: ['sleep_end', 'woke_up', 'wake_time_boundary'],
+          });
+          await base44.asServiceRole.entities.CharacterMemory.create({
+            character_id: char.id, memory_type: 'event',
+            memory_text: `${char.name} woke up at ${wakeTime}.${elapsedSleepHours ? ` Slept ${elapsedSleepHours}h.` : ''} Feeling rested.`,
+            memory_summary: `Woke up at scheduled time ${wakeTime}.`,
+            importance_score: 3, permanence: 'short_term', related_character_id: char.id,
+          });
+        } catch (consequenceError) {
+          console.warn(`[enforceWakeTimeBoundary] LifeEvent/Memory creation failed for ${char.name} (non-reverting): ${consequenceError.message}`);
+        }
+
         results.push({
           character_id: char.id,
           character_name: char.name,
