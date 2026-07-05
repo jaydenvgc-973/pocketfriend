@@ -1640,7 +1640,7 @@ Return JSON:
             <span className="text-5xl">{CATEGORY_EMOJIS[location.category]}</span>
           </div>
         }
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
+        {!watchVideoActive && <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60 pointer-events-none" />}
 
         {/* Zone picker */}
         {locationZones.length > 1 &&
