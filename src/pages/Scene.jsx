@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut, X } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut, X, Tv } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,8 @@ import { usePageContext } from "@/hooks/usePageContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
+import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
+import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -92,6 +94,9 @@ export default function Scene() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [privateTarget, setPrivateTarget] = useState(null); // { id, name } — pull aside mode
   const [pendingPurchase, setPendingPurchase] = useState(null); // { price, productId, targetCharacterId }
+  // Watch Video / Watch Party — ephemeral session state only, never persisted to entities.
+  const [watchVideoActive, setWatchVideoActive] = useState(false);
+  const [watchContext, setWatchContext] = useState(null); // { provider, title, videoType }
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -1140,11 +1145,16 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
         return null;
       }).filter(Boolean).join('\n');
 
+      const watchContextBlock = watchContext
+        ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\nWATCH PARTY RULES:\n- You know you are watching something together. You may react to the shared activity, the mood, the setting, or the title/type/source if provided.\n- You MUST NOT pretend to know the video's contents, plot, dialogue, score, or specific scenes. You cannot see the video.\n- Do NOT laugh at jokes, react to specific moments, summarize the story, claim a team scored, or describe events unless ${displayName} tells you what happened.\n- Permitted: commenting on the shared experience, asking what ${displayName} thinks, responding to descriptions ${displayName} gives you, reacting to the title/type/source.\n- If asked about the video content, say you can only know what ${displayName} shares.\n===\n`
+        : "";
+
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
 ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}
 People present: ${displayName}, ${charSummaries || "no one they know"}
 ${memSection ? `\n=== CROSS-PAGE MEMORY — use for continuity, do NOT act like strangers ===\n${memSection}\n===` : ''}
+${watchContextBlock}
 
 Recent scene conversation:
 ${conversationHistory}
@@ -1568,13 +1578,50 @@ Return JSON:
           
           <Camera className="w-4 h-4" />
         </button>
+
+        {/* Watch Video / Watch Party toggle — available in ANY scene/location type */}
+        <button
+          onClick={() => setWatchVideoActive((v) => !v)}
+          className={`p-2 rounded-xl transition-colors ${
+            watchVideoActive
+              ? "bg-primary text-primary-foreground"
+              : "bg-secondary text-muted-foreground hover:text-foreground"
+          }`}
+          title="Watch Video">
+          <Tv className="w-4 h-4" />
+        </button>
       </div>
 
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
-      {/* Scene image */}
-      <div className="relative h-32 flex-shrink-0" style={{ zIndex: 0 }}>
-        {isGeneratingImage ?
+      {/* Scene media area — switches between Watch Video player and Scene Image */}
+      <div className="relative flex-shrink-0" style={{ zIndex: 0, height: watchVideoActive ? "40dvh" : "8rem" }}>
+        {watchVideoActive ? (
+          <WatchVideoPanel
+            onClose={() => {
+              setWatchVideoActive(false);
+              setWatchContext(null);
+            }}
+            onStarted={(ctx) => {
+              setWatchContext(ctx);
+              setMessages((prev) => [...prev, {
+                id: Date.now().toString(),
+                sender: "narrative",
+                content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`,
+                timestamp: new Date().toISOString()
+              }]);
+            }}
+            onStopped={() => {
+              setWatchContext(null);
+              setMessages((prev) => [...prev, {
+                id: Date.now().toString(),
+                sender: "narrative",
+                content: `The watch party ended.`,
+                timestamp: new Date().toISOString()
+              }]);
+            }}
+          />
+        ) : isGeneratingImage ?
         <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
               <Sparkles className="w-4 h-4 animate-pulse" />
