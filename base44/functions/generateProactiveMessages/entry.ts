@@ -237,6 +237,249 @@ function getNeedExamples(character) {
   return `\n\nCURRENT NEEDS (low): ${lowNeeds.join(', ')}\nNARRATIVE STYLE PATTERNS (use these as inspiration — generate a NEW variation, never copy verbatim):\n${examples.map(e => `- ${e}`).join('\n')}`;
 }
 
+// ── HOUSEHOLD ACTIVITY INSPIRATION LIBRARY ─────────────────────────────────────
+// Additional narrative-style patterns for common household activities.
+// These are inspiration examples ONLY — the generator must expand them into
+// complete character-specific narrative beats, never copy verbatim.
+// Treated exactly like NEED_NARRATIVE_EXAMPLES: additional options, not scripts.
+const HOUSEHOLD_ACTIVITY_EXAMPLES = {
+  cooking_meal: [
+    "They spend time in the kitchen preparing food, moving between ingredients, cookware, and the stove until the meal comes together.",
+  ],
+  preparing_breakfast: [
+    "They start the morning by preparing breakfast, taking a few quiet moments to make something to eat before beginning the day.",
+  ],
+  preparing_lunch: [
+    "They put together lunch, taking a break from whatever they were doing before sitting down to eat.",
+  ],
+  preparing_dinner: [
+    "They prepare dinner, taking their time in the kitchen before enjoying the meal they made.",
+  ],
+  making_coffee: [
+    "They make a fresh cup of coffee, taking a moment to enjoy the familiar routine before continuing with the day.",
+  ],
+  making_tea: [
+    "They prepare a cup of tea, letting the quiet routine help them slow down for a few moments.",
+  ],
+  putting_away_groceries: [
+    "After returning from the store, they unpack the groceries and organize the food, household items, and supplies where they belong.",
+  ],
+  meal_prepping: [
+    "They prepare food ahead of time, portioning and organizing meals to make the coming days easier.",
+  ],
+  cleaning_bathroom: [
+    "They clean the bathroom, working through the sink, mirror, shower, and surfaces until everything feels fresh again.",
+  ],
+  cleaning_kitchen: [
+    "They clear the counters, deal with dishes, wipe down the kitchen, and put everything back where it belongs.",
+  ],
+  cleaning_bedroom: [
+    "They straighten the bedroom, organize their belongings, and leave the room noticeably cleaner and more comfortable.",
+  ],
+  doing_laundry: [
+    "They gather dirty clothes, start or finish a load of laundry, and later put everything away once it is clean.",
+  ],
+  folding_laundry: [
+    "They fold clean laundry, organizing everything before putting it away where it belongs.",
+  ],
+  doing_dishes: [
+    "They wash or load the dishes, clean the sink, and leave the kitchen ready to use again.",
+  ],
+  vacuuming: [
+    "They vacuum around the house, moving from room to room until the floors feel noticeably cleaner.",
+  ],
+  sweeping_mopping: [
+    "They spend some time sweeping or mopping the floors, freshening up the house one room at a time.",
+  ],
+  taking_out_trash: [
+    "They gather the household trash and take it outside before replacing the bags and returning inside.",
+  ],
+  making_bed: [
+    "They straighten the bed, smooth the bedding, and leave the room looking more organized.",
+  ],
+  organizing_closet: [
+    "They organize the closet, straightening shelves, hanging clothes, and putting stored items back into order.",
+  ],
+  organizing_paperwork: [
+    "They sort through paperwork, organizing important documents and clearing away unnecessary clutter.",
+  ],
+  checking_mail: [
+    "They check the mailbox, sort through what arrived, and bring everything inside.",
+  ],
+  watching_television: [
+    "They settle in and watch television for a while, taking a chance to relax and unwind.",
+  ],
+  playing_video_games: [
+    "They spend some time playing a video game, focusing on the experience before eventually stepping away.",
+  ],
+  reading_book: [
+    "They settle into a comfortable place and spend some quiet time reading.",
+  ],
+  listening_to_music: [
+    "They turn on some music and let it play while they relax or move through the house.",
+  ],
+  browsing_internet: [
+    "They spend some time browsing the internet, catching up on things that interest them before moving on.",
+  ],
+  using_computer: [
+    "They sit down at the computer for a while, taking care of whatever they wanted to work on.",
+  ],
+  doing_homework: [
+    "They sit down with homework, making steady progress before moving on with the rest of their day.",
+  ],
+  studying: [
+    "They spend time studying, reviewing information and working toward a better understanding of the material.",
+  ],
+  writing_journal: [
+    "They spend a few quiet moments writing in a journal, reflecting on their thoughts before continuing with the day.",
+  ],
+  exercising_home: [
+    "They complete a workout or exercise session at home before cooling down.",
+  ],
+  stretching: [
+    "They spend a few minutes stretching, loosening up and helping themselves feel more comfortable.",
+  ],
+  meditating: [
+    "They take a few quiet moments to meditate, slowing their breathing and clearing their mind.",
+  ],
+  relaxing_home: [
+    "They spend some quiet time relaxing at home before continuing with the rest of their day.",
+  ],
+  brushing_teeth: [
+    "They brush their teeth and freshen up before continuing with the day or preparing for the night.",
+  ],
+  taking_shower: [
+    "They take a shower, cleaning up and giving themselves a chance to reset before moving on.",
+  ],
+  washing_face: [
+    "They wash their face and freshen up before returning to the rest of their routine.",
+  ],
+  grooming_hair: [
+    "They spend a few moments fixing and grooming their hair before continuing with the day.",
+  ],
+  getting_dressed: [
+    "They get dressed for the day or for their next activity, choosing clothing that matches their plans.",
+  ],
+  choosing_outfit: [
+    "They spend a few moments deciding what to wear before settling on an outfit appropriate for the day.",
+  ],
+  getting_ready_bed: [
+    "They begin winding down for the night, finishing the last parts of their evening routine before settling in to sleep.",
+  ],
+  taking_bath: [
+    "They spend some quiet time soaking in a warm bath, using the opportunity to relax and unwind before continuing with the rest of their day or evening.",
+  ],
+  washing_hair: [
+    "They spend a little extra time washing and caring for their hair as part of their normal grooming routine.",
+  ],
+  front_porch: [
+    "They spend some time sitting on the front porch, enjoying the fresh air and watching the neighborhood as the day quietly passes by.",
+  ],
+  backyard: [
+    "They head out into the backyard for a while, enjoying the outdoors and taking a peaceful break from being inside.",
+  ],
+  playing_solitaire: [
+    "They sit down for a quiet game of solitaire, passing the time while enjoying a few moments to themselves.",
+  ],
+};
+
+// ── SEASONAL / HOLIDAY ACTIVITY INSPIRATION ────────────────────────────────────
+// Eligibility is gated by the authoritative date / season. These examples must
+// NEVER be selected outside of their applicable seasonal or holiday context.
+// The generator continues using the existing expansion process — never copy verbatim.
+const SEASONAL_ACTIVITY_EXAMPLES = {
+  // New Year's (Dec 31 – Jan 1)
+  new_year: [
+    "They spend a quiet New Year's evening at home, letting the night settle in without needing much else.",
+    "They prepare a simple New Year's meal, taking their time before the night begins.",
+  ],
+  // Valentine's Day (Feb 14)
+  valentines: [
+    "They put together something small for Valentine's Day, keeping it low-key but intentional.",
+  ],
+  // Spring / Easter (March – April)
+  spring: [
+    "They open the windows to let the spring air in, taking a moment before getting back to the day.",
+  ],
+  // Summer (June – August) — includes July 4 fireworks window
+  summer: [
+    "They step outside to watch the fireworks in the night sky, letting the sound carry over the neighborhood.",
+    "They watch the holiday fireworks from home, settled somewhere comfortable with a clear view.",
+    "They enjoy the warm evening out in the yard, taking a break from being inside.",
+  ],
+  // Halloween (Oct 31)
+  halloween: [
+    "They sort through a few Halloween decorations, deciding what to put out this year.",
+  ],
+  // Thanksgiving (November)
+  thanksgiving: [
+    "They start prepping for Thanksgiving dinner early, moving through the kitchen at their own pace.",
+  ],
+  // Winter holidays (December) — Christmas, Hanukkah, Kwanzaa, general holiday season
+  winter_holidays: [
+    "They decorate the home for the holidays, working through the familiar pieces one at a time.",
+    "They take down the holiday decorations, packing everything away now that the celebration has ended.",
+    "They wrap gifts before the holiday, taking their time with each one.",
+    "They prepare gifts for family or friends, keeping the details small and thoughtful.",
+    "They spend a quiet holiday evening at home, letting the night come on its own terms.",
+    "They bake seasonal treats, filling the kitchen with the smell of it for a while.",
+    "They put on holiday music in the background while they move through the house.",
+    "They settle in to watch a holiday movie, letting the evening slow down around it.",
+  ],
+};
+
+// Map month + day → seasonal keys that are currently eligible.
+// Returns an empty array outside of any seasonal window.
+function getEligibleSeasonalKeys(etDate) {
+  const month = etDate.getMonth() + 1; // 1–12
+  const day = etDate.getDate();
+  const keys = [];
+  if ((month === 12 && day >= 30) || (month === 1 && day <= 2)) keys.push('new_year');
+  if (month === 2 && day >= 12 && day <= 16) keys.push('valentines');
+  if ((month === 3) || (month === 4)) keys.push('spring');
+  if (month >= 6 && month <= 8) keys.push('summer');
+  if (month === 10 && day >= 28) keys.push('halloween');
+  if (month === 11) keys.push('thanksgiving');
+  if (month === 12) keys.push('winter_holidays');
+  return keys;
+}
+
+// Build the household + seasonal inspiration block.
+// This is purely additive — it extends the existing need-driven examples with
+// additional household and seasonal options. Clothing data is injected separately
+// (see CLOTHING-AWARE NOTE below) so wardrobe narratives respect Outfit Rotation
+// and Character Closet authoritative data.
+function getHouseholdActivityExamples(character) {
+  const et = getEasternTime();
+  const allKeys = Object.keys(HOUSEHOLD_ACTIVITY_EXAMPLES);
+  // Pick up to 3 distinct household activities at random for this run.
+  const shuffled = allKeys.sort(() => Math.random() - 0.5).slice(0, 3);
+  const householdExamples = shuffled
+    .flatMap(k => (HOUSEHOLD_ACTIVITY_EXAMPLES[k] || []).slice(0, 1))
+    .slice(0, 3);
+
+  const seasonalKeys = getEligibleSeasonalKeys(et);
+  const seasonalExamples = seasonalKeys
+    .flatMap(k => (SEASONAL_ACTIVITY_EXAMPLES[k] || []).slice(0, 1))
+    .slice(0, 2);
+
+  const combined = [...householdExamples, ...seasonalExamples];
+  if (!combined.length) return '';
+
+  let block = `\n\nHOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (use these as inspiration — generate a NEW variation, never copy verbatim):\n${combined.map(e => `- ${e}`).join('\n')}`;
+
+  // CLOTHING-AWARE NOTE — wardrobe narratives must respect authoritative clothing data
+  block += `\n\nCLOTHING-AWARE NOTE: For any narrative involving getting dressed, choosing an outfit, changing clothes, preparing for work/school/an event, or similar wardrobe activities:
+- If Outfit Rotation is enabled and today's outfit is available, use the current scheduled outfit.
+- If Character Closet data exists, use the appropriate clothing from the character's closet.
+- If neither is available, keep the narrative general — do NOT invent clothing items, outfits, or wardrobe details not supported by authoritative character data.`;
+
+  // MUSIC PREFERENCE NOTE — music narratives should respect authoritative music data
+  block += `\n\nMUSIC PREFERENCE NOTE: When authoritative music preference data exists for the character, naturally incorporate their favorite artists, genres, styles, or playlists into any music-related narrative. If no authoritative music preference data exists, keep music narratives general — do NOT invent favorite artists, genres, or musical tastes.`;
+
+  return block;
+}
+
 async function generateProactiveMessage(base44, character, user, recentContext) {
   const et = getEasternTime();
   const hour = et.getHours();
@@ -255,6 +498,7 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
 
   const locationAffinityNote = buildLocationAffinityContext(character);
   const needExamples = getNeedExamples(character);
+  const householdActivityExamples = getHouseholdActivityExamples(character);
 
   // Determine emotional tone directive based on current state
   const emotionalState = character.emotional_state || 'calm';
@@ -270,7 +514,7 @@ ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
-Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}
+Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}${householdActivityExamples}
 ${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
 
 ${emotionalBalanceDirective}
