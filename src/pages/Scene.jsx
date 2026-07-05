@@ -1595,7 +1595,7 @@ Return JSON:
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
       {/* Scene media area — switches between Watch Video player and Scene Image */}
-      <div className="relative flex-shrink-0" style={{ zIndex: 0, height: watchVideoActive ? "40dvh" : "8rem" }}>
+      <div className="relative flex-shrink-0" style={{ zIndex: 0, height: "40dvh" }}>
         {watchVideoActive ? (
           <WatchVideoPanel
             onClose={() => {

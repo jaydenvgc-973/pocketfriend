@@ -76,7 +76,7 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
           <div className="text-center space-y-1">
             <p className="text-sm text-white/90 font-medium">Watch something together</p>
             <p className="text-[11px] text-white/50">
-              Paste a YouTube, Vimeo, or Dailymotion link, or a direct HTTPS MP4/WebM link.
+              Paste a YouTube, Vimeo, Dailymotion, X (Twitter), Instagram, or Facebook video link, or a direct HTTPS MP4/WebM link.
               The link is not saved permanently.
             </p>
           </div>
@@ -85,7 +85,7 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
             type="url"
             value={rawInput}
             onChange={(e) => setRawInput(e.target.value)}
-            placeholder="https://youtube.com/watch?v=..."
+            placeholder="Paste a YouTube, Vimeo, X, Instagram, or Facebook video link…"
             className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm placeholder:text-zinc-500 focus:outline-none focus:border-primary"
           />
 

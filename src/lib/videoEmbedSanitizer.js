@@ -35,6 +35,33 @@ const ALLOWED_PROVIDERS = [
     ],
     buildEmbed: (id) => `https://www.dailymotion.com/embed/video/${id}`,
   },
+  {
+    name: "x",
+    patterns: [
+      /(?:twitter\.com|x\.com)\/[^/]+\/status\/(\d+)/,
+    ],
+    buildEmbed: (id) => `https://platform.twitter.com/embed/Tweet.html?id=${id}`,
+  },
+  {
+    name: "instagram",
+    patterns: [
+      /instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)/,
+    ],
+    buildEmbed: (id) => `https://www.instagram.com/p/${id}/embed/`,
+  },
+  {
+    name: "facebook",
+    patterns: [
+      /facebook\.com\/[^/]+\/videos\/(\d+)/,
+      /facebook\.com\/watch\/?\?.*v=(\d+)/,
+      /fb\.watch\/([A-Za-z0-9_-]+)/,
+    ],
+    buildEmbed: (id, originalUrl) => {
+      // Facebook embeds require the full permalink encoded as the href param
+      const href = originalUrl || `https://www.facebook.com/watch?v=${id}`;
+      return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(href)}&show_text=false&width=560&t=0`;
+    },
+  },
 ];
 
 const ALLOWED_DIRECT_EXTENSIONS = [".mp4", ".webm", ".ogv"];
@@ -137,8 +164,13 @@ export function sanitizeVideoInput(rawInput) {
       "www.youtube-nocookie.com", "youtube-nocookie.com",
       "player.vimeo.com", "vimeo.com",
       "www.dailymotion.com", "dailymotion.com",
+      "platform.twitter.com", "www.instagram.com", "instagram.com",
+      "www.facebook.com", "facebook.com",
     ];
-    if (allowedEmbedHosts.includes(parsed.hostname) && parsed.pathname.includes("/embed/")) {
+    const isEmbedPath = parsed.pathname.includes("/embed/") ||
+                       parsed.hostname === "platform.twitter.com" ||
+                       parsed.pathname.includes("/plugins/video.php");
+    if (allowedEmbedHosts.includes(parsed.hostname) && isEmbedPath) {
       return {
         valid: true,
         provider: "embed",
@@ -153,7 +185,7 @@ export function sanitizeVideoInput(rawInput) {
 
   return {
     valid: false,
-    error: "Unsupported source. Use a YouTube, Vimeo, or Dailymotion link, or a direct HTTPS MP4/WebM link.",
+    error: "Unsupported source. Use a YouTube, Vimeo, Dailymotion, X, Instagram, or Facebook video link, or a direct HTTPS MP4/WebM link.",
   };
 }
 
