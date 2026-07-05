@@ -242,6 +242,14 @@ function getNeedExamples(character) {
 // These are inspiration examples ONLY — the generator must expand them into
 // complete character-specific narrative beats, never copy verbatim.
 // Treated exactly like NEED_NARRATIVE_EXAMPLES: additional options, not scripts.
+//
+// AVAILABILITY VS STEERING:
+// This library is exposed to the generator as AVAILABLE inspiration patterns.
+// It is NEVER randomly sampled, shuffled, or force-injected. The generator may
+// draw from a pattern ONLY when the character is already doing, eligible to do,
+// or contextually likely to do that kind of activity based on existing state,
+// location, time, recent activity, needs, schedule, or narrative selection.
+// No Math.random, no shuffle, no .slice(0, N) activity steering is used here.
 const HOUSEHOLD_ACTIVITY_EXAMPLES = {
   cooking_meal: [
     "They spend time in the kitchen preparing food, moving between ingredients, cookware, and the stove until the meal comes together.",
@@ -259,7 +267,7 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
     "They make a fresh cup of coffee, taking a moment to enjoy the familiar routine before continuing with the day.",
   ],
   making_tea: [
-    "They prepare a cup of tea, letting the quiet routine help them slow down for a few moments.",
+    "They prepare a cup of tea and take their time enjoying it, letting the quiet routine become part of a relaxing moment.",
   ],
   putting_away_groceries: [
     "After returning from the store, they unpack the groceries and organize the food, household items, and supplies where they belong.",
@@ -283,7 +291,7 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
     "They fold clean laundry, organizing everything before putting it away where it belongs.",
   ],
   doing_dishes: [
-    "They wash or load the dishes, clean the sink, and leave the kitchen ready to use again.",
+    "They spend some time washing dishes and tidying up the kitchen before putting everything back where it belongs.",
   ],
   vacuuming: [
     "They vacuum around the house, moving from room to room until the floors feel noticeably cleaner.",
@@ -292,7 +300,7 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
     "They spend some time sweeping or mopping the floors, freshening up the house one room at a time.",
   ],
   taking_out_trash: [
-    "They gather the household trash and take it outside before replacing the bags and returning inside.",
+    "They gather the household trash, carry it outside, and replace anything that needs replacing before heading back inside.",
   ],
   making_bed: [
     "They straighten the bed, smooth the bedding, and leave the room looking more organized.",
@@ -316,7 +324,7 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
     "They settle into a comfortable place and spend some quiet time reading.",
   ],
   listening_to_music: [
-    "They turn on some music and let it play while they relax or move through the house.",
+    "They put on some music and spend a while listening, letting it become part of the atmosphere as they relax or move through their day.",
   ],
   browsing_internet: [
     "They spend some time browsing the internet, catching up on things that interest them before moving on.",
@@ -351,8 +359,17 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
   taking_shower: [
     "They take a shower, cleaning up and giving themselves a chance to reset before moving on.",
   ],
+  taking_bath: [
+    "They spend some quiet time soaking in a warm bath, using the opportunity to relax and unwind before continuing with the rest of their day or evening.",
+  ],
+  relaxing_in_bath: [
+    "They settle into a warm bath for a while, slowing down and letting themselves fully relax before returning to their normal routine.",
+  ],
   washing_face: [
     "They wash their face and freshen up before returning to the rest of their routine.",
+  ],
+  washing_hair: [
+    "They spend a little extra time washing and caring for their hair as part of their normal grooming routine.",
   ],
   grooming_hair: [
     "They spend a few moments fixing and grooming their hair before continuing with the day.",
@@ -366,32 +383,42 @@ const HOUSEHOLD_ACTIVITY_EXAMPLES = {
   getting_ready_bed: [
     "They begin winding down for the night, finishing the last parts of their evening routine before settling in to sleep.",
   ],
-  taking_bath: [
-    "They spend some quiet time soaking in a warm bath, using the opportunity to relax and unwind before continuing with the rest of their day or evening.",
+  playing_solitaire: [
+    "They sit down for a quiet game of solitaire, passing the time while enjoying a few moments to themselves.",
   ],
-  washing_hair: [
-    "They spend a little extra time washing and caring for their hair as part of their normal grooming routine.",
-  ],
+};
+
+// ── EXTERIOR ACTIVITY EXAMPLES — LOCATION-GATED ──────────────────────────────
+// These exterior-only examples are NOT part of the default household pool.
+// They are included ONLY when authoritative location/home/zone data proves the
+// exterior space exists for this character. If the generator cannot verify the
+// space, these examples are omitted entirely. They are never invented.
+const EXTERIOR_ACTIVITY_EXAMPLES = {
   front_porch: [
     "They spend some time sitting on the front porch, enjoying the fresh air and watching the neighborhood as the day quietly passes by.",
   ],
   backyard: [
     "They head out into the backyard for a while, enjoying the outdoors and taking a peaceful break from being inside.",
   ],
-  playing_solitaire: [
-    "They sit down for a quiet game of solitaire, passing the time while enjoying a few moments to themselves.",
-  ],
 };
+
+// Terms in a location's canonical zone list that prove an exterior space exists.
+const EXTERIOR_ZONE_TERMS = [
+  'porch', 'front porch', 'stoop', 'balcony', 'patio', 'deck', 'terrace',
+  'backyard', 'yard', 'garden', 'courtyard',
+];
 
 // ── SEASONAL / HOLIDAY ACTIVITY INSPIRATION ────────────────────────────────────
 // Eligibility is gated by the authoritative date / season. These examples must
 // NEVER be selected outside of their applicable seasonal or holiday context.
 // The generator continues using the existing expansion process — never copy verbatim.
 const SEASONAL_ACTIVITY_EXAMPLES = {
-  // New Year's (Dec 31 – Jan 1)
+  // New Year's Eve / New Year's Day (Dec 30 – Jan 2) — fireworks-eligible
   new_year: [
     "They spend a quiet New Year's evening at home, letting the night settle in without needing much else.",
     "They prepare a simple New Year's meal, taking their time before the night begins.",
+    "They step outside to watch the fireworks in the night sky, letting the sound carry over the neighborhood.",
+    "They watch the holiday fireworks from home, settled somewhere comfortable with a clear view.",
   ],
   // Valentine's Day (Feb 14)
   valentines: [
@@ -401,11 +428,14 @@ const SEASONAL_ACTIVITY_EXAMPLES = {
   spring: [
     "They open the windows to let the spring air in, taking a moment before getting back to the day.",
   ],
-  // Summer (June – August) — includes July 4 fireworks window
+  // Summer (June – August) — GENERAL SUMMER ONLY. No fireworks here.
   summer: [
+    "They enjoy the warm evening out in the yard, taking a break from being inside.",
+  ],
+  // Independence Day (July 4) — fireworks eligible evening/night only
+  independence_day: [
     "They step outside to watch the fireworks in the night sky, letting the sound carry over the neighborhood.",
     "They watch the holiday fireworks from home, settled somewhere comfortable with a clear view.",
-    "They enjoy the warm evening out in the yard, taking a break from being inside.",
   ],
   // Halloween (Oct 31)
   halloween: [
@@ -433,11 +463,16 @@ const SEASONAL_ACTIVITY_EXAMPLES = {
 function getEligibleSeasonalKeys(etDate) {
   const month = etDate.getMonth() + 1; // 1–12
   const day = etDate.getDate();
+  const hour = etDate.getHours();
   const keys = [];
+  // New Year's Eve / Day window (Dec 30 – Jan 2) — fireworks eligible
   if ((month === 12 && day >= 30) || (month === 1 && day <= 2)) keys.push('new_year');
   if (month === 2 && day >= 12 && day <= 16) keys.push('valentines');
-  if ((month === 3) || (month === 4)) keys.push('spring');
+  if (month === 3 || month === 4) keys.push('spring');
+  // General summer (June – August) — NO fireworks under this key
   if (month >= 6 && month <= 8) keys.push('summer');
+  // Independence Day — July 4 only, fireworks eligible evening/night (>= 6 PM)
+  if (month === 7 && day === 4 && hour >= 18) keys.push('independence_day');
   if (month === 10 && day >= 28) keys.push('halloween');
   if (month === 11) keys.push('thanksgiving');
   if (month === 12) keys.push('winter_holidays');
@@ -449,33 +484,62 @@ function getEligibleSeasonalKeys(etDate) {
 // additional household and seasonal options. Clothing data is injected separately
 // (see CLOTHING-AWARE NOTE below) so wardrobe narratives respect Outfit Rotation
 // and Character Closet authoritative data.
-function getHouseholdActivityExamples(character) {
+//
+// NO RANDOM STEERING:
+// This function exposes the full household + eligible seasonal libraries as
+// AVAILABLE inspiration patterns. It does NOT use Math.random, shuffle, or
+// .slice(0, N) to pick activities. The generator may draw from a pattern ONLY
+// when the character is already doing, eligible to do, or contextually likely
+// to do that activity based on existing state, location, time, needs, schedule,
+// or narrative selection. Exterior (porch/backyard) examples are included ONLY
+// when authoritative location zone data proves the space exists.
+async function getHouseholdActivityExamples(base44, character) {
   const et = getEasternTime();
-  const allKeys = Object.keys(HOUSEHOLD_ACTIVITY_EXAMPLES);
-  // Pick up to 3 distinct household activities at random for this run.
-  const shuffled = allKeys.sort(() => Math.random() - 0.5).slice(0, 3);
-  const householdExamples = shuffled
-    .flatMap(k => (HOUSEHOLD_ACTIVITY_EXAMPLES[k] || []).slice(0, 1))
-    .slice(0, 3);
 
+  // Household pool — full library, exposed as available patterns (no sampling).
+  const householdExamples = Object.values(HOUSEHOLD_ACTIVITY_EXAMPLES)
+    .flat();
+
+  // Seasonal pool — only keys eligible for the authoritative date/time.
   const seasonalKeys = getEligibleSeasonalKeys(et);
   const seasonalExamples = seasonalKeys
-    .flatMap(k => (SEASONAL_ACTIVITY_EXAMPLES[k] || []).slice(0, 1))
-    .slice(0, 2);
+    .flatMap(k => SEASONAL_ACTIVITY_EXAMPLES[k] || []);
 
-  const combined = [...householdExamples, ...seasonalExamples];
+  // Exterior pool — LOCATION-GATED. Only include porch/backyard examples if the
+  // character's authoritative home location has a matching exterior zone.
+  let exteriorExamples = [];
+  try {
+    const homeLocId = character.resolved_current_location_id || character.current_home_location_id || null;
+    if (homeLocId) {
+      const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: homeLocId }, null, 1).catch(() => []);
+      const loc = locList?.[0];
+      const zoneNames = (loc?.zones || []).map(z => (z.zone_name || '').toLowerCase()).filter(Boolean);
+      if (zoneNames.length > 0) {
+        const hasExterior = EXTERIOR_ZONE_TERMS.some(term =>
+          zoneNames.some(zn => zn.includes(term) || term.includes(zn))
+        );
+        if (hasExterior) {
+          exteriorExamples = Object.values(EXTERIOR_ACTIVITY_EXAMPLES).flat();
+        }
+      }
+    }
+  } catch (_) {
+    // If location data cannot be verified, exterior examples are omitted.
+  }
+
+  const combined = [...householdExamples, ...seasonalExamples, ...exteriorExamples];
   if (!combined.length) return '';
 
-  let block = `\n\nHOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (use these as inspiration — generate a NEW variation, never copy verbatim):\n${combined.map(e => `- ${e}`).join('\n')}`;
+  let block = `\n\nHOUSEHOLD & SEASONAL ACTIVITY INSPIRATION — AVAILABLE PATTERNS ONLY:\nThese are available inspiration patterns. Use one ONLY if it fits what the character is already doing or is contextually likely to do based on their current state, location, time, needs, and schedule. Do NOT steer the character into a random unrelated activity. Generate a NEW variation — never copy verbatim.\n${combined.map(e => `- ${e}`).join('\n')}`;
 
   // CLOTHING-AWARE NOTE — wardrobe narratives must respect authoritative clothing data
   block += `\n\nCLOTHING-AWARE NOTE: For any narrative involving getting dressed, choosing an outfit, changing clothes, preparing for work/school/an event, or similar wardrobe activities:
 - If Outfit Rotation is enabled and today's outfit is available, use the current scheduled outfit.
 - If Character Closet data exists, use the appropriate clothing from the character's closet.
-- If neither is available, keep the narrative general — do NOT invent clothing items, outfits, or wardrobe details not supported by authoritative character data.`;
+- If neither is available, keep the narrative general — do NOT invent clothing items, outfits, brands, colors, or wardrobe details not supported by authoritative character data.`;
 
   // MUSIC PREFERENCE NOTE — music narratives should respect authoritative music data
-  block += `\n\nMUSIC PREFERENCE NOTE: When authoritative music preference data exists for the character, naturally incorporate their favorite artists, genres, styles, or playlists into any music-related narrative. If no authoritative music preference data exists, keep music narratives general — do NOT invent favorite artists, genres, or musical tastes.`;
+  block += `\n\nMUSIC PREFERENCE NOTE: Music narratives should use general safe wording (e.g. "turned on some music", "put music on in the background") unless the character already has authoritative music details through character context, memory, songs heard, or conversation history. Only mention a specific artist, genre, song, playlist, or favorite if it already exists in authoritative character data. Do NOT invent artists, genres, songs, playlists, or musical tastes.`;
 
   return block;
 }
@@ -498,7 +562,7 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
 
   const locationAffinityNote = buildLocationAffinityContext(character);
   const needExamples = getNeedExamples(character);
-  const householdActivityExamples = getHouseholdActivityExamples(character);
+  const householdActivityExamples = await getHouseholdActivityExamples(base44, character);
 
   // Determine emotional tone directive based on current state
   const emotionalState = character.emotional_state || 'calm';
