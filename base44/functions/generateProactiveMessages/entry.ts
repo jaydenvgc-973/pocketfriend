@@ -296,10 +296,8 @@ Be authentic and varied. Just a natural message someone would send.`;
     prompt: systemPrompt,
   });
   
-  // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+  // Whitespace normalization only — no lexical replacement.
   return (content || '')
-    .replace(/\bchaotic\b/gi, 'hectic')
-    .replace(/\bchaos\b/gi, 'turmoil')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }

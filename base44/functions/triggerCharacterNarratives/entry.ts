@@ -227,10 +227,8 @@ Return ONLY the narrative text, nothing else.`;
       continue;
     }
 
-    // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
+    // Whitespace normalization only — no lexical replacement.
     narrativeContent = (narrativeContent || '')
-      .replace(/\bchaotic\b/gi, 'hectic')
-      .replace(/\bchaos\b/gi, 'turmoil')
       .replace(/\s{2,}/g, ' ')
       .trim();
 

@@ -348,33 +348,41 @@ Pronouns: ${charPronouns} | Subject: ${subjectPronoun} | Object: ${objectPronoun
 • No pronoun inference from name or appearance
 
 ════════════════════════════════════
-LEXICAL DISCIPLINE AND MEANING PRESERVATION — MANDATORY
+SCENE DESCRIPTION AND SEMANTIC INTERPRETATION — MANDATORY
 ════════════════════════════════════
 
-The objective is to faithfully represent the character's lived experience using precise, downstream-safe language.
+The objective is to faithfully represent the character's lived experience using accurate, context-grounded language.
 
-Generated narrative text may become memory, journal history, emotional context, activity context, image-prompt context, or future character grounding. Therefore, recurring abstract labels must not distort the event or become false identity reinforcement.
+Generated narrative text may become memory, journal history, emotional context, activity context, image-prompt context, or future character grounding. Therefore, descriptions must accurately reflect what is actually happening rather than imposing a fixed emotional framing on environmental state.
 
-1. BANNED TERMS
-Do not use: "chaos" or "chaotic."
+1. NEUTRAL DESCRIPTOR PRINCIPLE
+Complex, dense, busy, chaotic, crowded, high-energy, or multi-person environments are NOT inherently negative.
 
-These terms are banned in generated narrative, memory-facing summaries, emotional notes, scene summaries, journal text, chat descriptions, and image-prompt descriptions.
+These words are neutral descriptors of environmental state. They describe what is happening. They do not prescribe emotional meaning.
 
-Do not describe positive, busy, crowded, celebratory, emotional, complex, energetic, or multi-person scenes with these terms.
+Interpret each scene according to the actual evidence:
+- character state
+- traits
+- relationships
+- current circumstances
+- event facts
+- outcome
 
-Instead, describe the actual mechanics of the scene in concrete language:
-- who was present
-- what was happening
-- what was overlapping
-- what changed
-- what the character noticed
-- how the character responded
+A busy Saturday night crowd may be vibrant, exciting, lucrative, stressful, overwhelming, or joyful — depending on what is actually happening and who the character is.
+A chaotic moment may be playful, dangerous, creative, disorganized, stressful, or joyful — depending on context.
+A complex situation may be enriching, challenging, confusing, layered, or growth-producing — depending on the character and events.
 
-Use specific descriptors only when accurate, such as lively, bustling, crowded, fast-moving, high-energy, layered, noisy, warm, emotional, tense, disorganized, or unstable.
+2. ACCURATE VOCABULARY
+Choose words because they accurately describe reality — not because particular words are discouraged.
 
-Do not replace one banned crutch with another repeated crutch.
+The model is free to describe environments as:
+- chaotic, orderly, busy, quiet, vibrant, crowded, complex, peaceful, stressful, joyful, dangerous, playful
+- or any other accurate descriptor when supported by the scene.
 
-2. RESTRICTED CRUTCH
+Do not avoid a word because it sounds intense. Do not prefer a word because it sounds soft.
+Use the word that fits.
+
+3. RESTRICTED CRUTCH
 "Heavy" is restricted as emotional shorthand.
 
 Do not use "heavy" to vaguely mean important, emotional, stressful, meaningful, complicated, sad, or serious.
@@ -389,7 +397,7 @@ For emotional or narrative significance, describe the specific reality instead:
 - what made it painful
 - what made it worth remembering
 
-3. MEANING PRESERVATION
+4. MEANING PRESERVATION
 Do not overwrite the accurate meaning of an event with vague negative language.
 
 If an event is joyful, proud, loving, intimate, successful, healing, funny, exciting, or growth-producing, preserve that meaning unless the grounded character context clearly changes it.
@@ -401,7 +409,7 @@ Do not force negativity.
 Do not "balance" a positive event by injecting destabilizing language.
 Do not let unrelated past negativity bleed into a new positive event unless canonically relevant.
 
-4. IDENTITY PROTECTION
+5. IDENTITY PROTECTION
 Do not promote situational descriptors into identity labels.
 
 A busy event does not mean the character creates disorder.
@@ -411,7 +419,7 @@ A mistake does not become a permanent personality trait unless canon and repeate
 
 Do not write recurring identity claims such as "he creates chaos," "she is chaotic," or equivalent labels unless explicitly supported by canonical character data.
 
-5. GROUNDED EMOTIONAL COLORING
+6. GROUNDED EMOTIONAL COLORING
 Emotional tone must emerge from the full grounded context:
 - character type
 - traits
@@ -426,7 +434,7 @@ Emotional tone must emerge from the full grounded context:
 
 Narrative must describe what happened and how the character experienced it. It must not prescribe a false emotional meaning through vague labels.
 
-6. REINFORCEMENT FAIRNESS
+7. REINFORCEMENT FAIRNESS
 Characters are designed to learn from repeated narrative and memory context.
 
 Do not over-reinforce negative interpretations by mislabeling positive or meaningful experiences with destabilizing language.
@@ -545,13 +553,8 @@ If no actions occur, return empty action_effects array.`;
 
     let narrativeText = narrativeRes?.narrative_text?.trim() ||
       `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
-    // HARD BAN — "chaos"/"chaotic" must never appear in narrative output.
-    // Prompt-level bans exist below but the LLM occasionally ignores them; this strip
-    // enforces the ban regardless. Removes the token and any dangling article, then
-    // cleans whitespace/punctuation so the sentence still reads naturally.
+    // Whitespace normalization only — no lexical replacement.
     narrativeText = narrativeText
-      .replace(/\bchaotic\b/gi, 'hectic')
-      .replace(/\bchaos\b/gi, 'turmoil')
       .replace(/\s{2,}/g, ' ')
       .trim();
     
