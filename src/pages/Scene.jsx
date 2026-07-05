@@ -1146,7 +1146,7 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
       }).filter(Boolean).join('\n');
 
       const watchContextBlock = watchContext
-        ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\nWATCH PARTY RULES:\n- You know you are watching something together. You may react to the shared activity, the mood, the setting, or the title/type/source if provided.\n- You MUST NOT pretend to know the video's contents, plot, dialogue, score, or specific scenes. You cannot see the video.\n- Do NOT laugh at jokes, react to specific moments, summarize the story, claim a team scored, or describe events unless ${displayName} tells you what happened.\n- Permitted: commenting on the shared experience, asking what ${displayName} thinks, responding to descriptions ${displayName} gives you, reacting to the title/type/source.\n- If asked about the video content, say you can only know what ${displayName} shares.\n===\n`
+        ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together. You may react to the shared activity, the mood, the setting, or the title/type/source if provided.\n- You MUST NOT pretend to know the video's contents, plot, dialogue, score, or specific scenes until the analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n`
         : "";
 
       const responses = await base44.integrations.Core.InvokeLLM({
@@ -1610,6 +1610,24 @@ Return JSON:
                 content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`,
                 timestamp: new Date().toISOString()
               }]);
+            }}
+            onAnalysisComplete={({ linkAnalysisContext, linkData, title }) => {
+              // Update watchContext with the real analysis from the existing
+              // Chat/Text shared-link pipeline. Characters now receive the same
+              // structured understanding they would in Chat — no duplicate system.
+              setWatchContext((prev) => ({
+                ...prev,
+                linkAnalysisContext,
+                title: title || prev?.title,
+              }));
+              if (linkData?.title && !title) {
+                setMessages((prev) => [...prev, {
+                  id: Date.now().toString(),
+                  sender: "narrative",
+                  content: `Now playing: ${linkData.title}.`,
+                  timestamp: new Date().toISOString()
+                }]);
+              }
             }}
             onStopped={() => {
               setWatchContext(null);

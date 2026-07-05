@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { X, Play, AlertTriangle, Tv } from "lucide-react";
+import { X, Play, AlertTriangle, Tv, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sanitizeVideoInput } from "@/lib/videoEmbedSanitizer";
+import { analyzeSharedLinkForCharacter } from "@/lib/analyzeLinkForCharacterContext";
 
 /**
  * WatchVideoPanel
@@ -18,14 +19,15 @@ import { sanitizeVideoInput } from "@/lib/videoEmbedSanitizer";
  *                 (used to add a lightweight scene activity entry)
  *   onStopped — optional callback when the user closes the panel
  */
-export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
+export default function WatchVideoPanel({ onClose, onStarted, onStopped, onAnalysisComplete }) {
   const [rawInput, setRawInput] = useState("");
   const [sanitized, setSanitized] = useState(null); // { valid, provider, embedUrl, type }
   const [error, setError] = useState(null);
   const [title, setTitle] = useState("");
   const [videoType, setVideoType] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const handleLoad = () => {
+  const handleLoad = async () => {
     const result = sanitizeVideoInput(rawInput);
     if (!result.valid) {
       setError(result.error);
@@ -34,12 +36,37 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
     }
     setError(null);
     setSanitized(result);
+
+    // Immediately notify Scene so the video starts playing and the watch party begins.
     if (onStarted) {
       onStarted({
         provider: result.provider,
         title: title.trim() || null,
         videoType: videoType.trim() || null,
+        linkAnalysisContext: null, // updated when analysis completes
       });
+    }
+
+    // Route through the EXISTING Chat/Text shared-link analysis pipeline.
+    // This is the same analyzeSharedLinkForCharacter() used by Chat/Text —
+    // not a Scene-specific duplicate. Characters receive the same structured
+    // understanding (title, transcript, captions, metadata) they would in Chat.
+    setIsAnalyzing(true);
+    try {
+      const { linkAnalysisContext, linkData } = await analyzeSharedLinkForCharacter({
+        url: result.originalUrl,
+      });
+      if (onAnalysisComplete) {
+        onAnalysisComplete({
+          linkAnalysisContext,
+          linkData,
+          title: linkData?.title || title.trim() || null,
+        });
+      }
+    } catch (err) {
+      console.warn("[WatchVideoPanel] Link analysis failed:", err?.message);
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -124,9 +151,17 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped }) {
           </Button>
 
           <p className="text-[10px] text-white/40 text-center leading-relaxed">
-            Characters can see you're watching together but cannot see the video
-            content. They'll react to the shared activity, not unseen scenes.
+            Characters will understand the video through the same link analysis
+            used in Chat — they can discuss what they genuinely learn from it.
           </p>
+        </div>
+      )}
+
+      {/* Analyzing indicator */}
+      {isAnalyzing && sanitized && (
+        <div className="px-3 py-1.5 bg-primary/10 border-b border-primary/20 flex items-center gap-2 flex-shrink-0">
+          <Loader2 className="w-3 h-3 text-primary animate-spin" />
+          <span className="text-[11px] text-primary/80">Analyzing video so characters can discuss it…</span>
         </div>
       )}
 
