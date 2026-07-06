@@ -1384,7 +1384,9 @@ Return JSON:
             mealSize,
             foodDescription: action.label,
             locationName: location?.name
-          }).catch(() => {});
+          }).catch(err => {
+            console.error(`[Scene] recordEatingEvent FAILED — char="${char.name}" (id=${char.id}) action_id="${action.id}" mealSize="${mealSize}" error="${err?.message || err}"`);
+          });
         });
         queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       }

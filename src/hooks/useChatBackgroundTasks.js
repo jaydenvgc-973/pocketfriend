@@ -220,7 +220,19 @@ export function useChatBackgroundTasks({
         }));
       }
 
-      if (!isOnCooldown(characterId, 'classifyConvo', 60000)) {
+      // ── EATING COOLDOWN BYPASS ─────────────────────────────────────────────
+      // classifyConvo has a 60s cooldown to prevent LLM spam. But eating_event is a
+      // STATE-CHANGE event (hunger update), not narrative flavor. If the character's
+      // reply contains eating language, we must call classifyConversationEvent even
+      // if on cooldown — the LLM still decides whether actual consumption occurred
+      // (no duplicate parser). recordEatingEvent remains the sole hunger writer.
+      const eatingKeywordCheck = /\b(ate|eating|eat|bit\b|bite|chew|swallow|finished|munch|devour|gobble|snack|meal|nibble|consume|fed\b|feeding|drank|drinking|sipped|sip\b|gulped|chug|scarf|wolf)\b/i;
+      const hasEatingLanguage = responseText && eatingKeywordCheck.test(responseText);
+      const classifyOnCooldown = isOnCooldown(characterId, 'classifyConvo', 60000);
+      if (!classifyOnCooldown || hasEatingLanguage) {
+        if (classifyOnCooldown && hasEatingLanguage) {
+          console.log(`[Governor] COOLDOWN BYPASS classifyConvo for char="${character?.name}" — eating language detected, hunger update cannot be skipped`);
+        }
         // Pass characterState so the classifier can see known people (fictional_relationships)
         // Without this, knownPeopleStr is always 'none listed' and social events are missed
         safeInvoke('classifyConversationEvent', {
