@@ -388,13 +388,19 @@ If nothing meaningful happened, return: { "events": [] }`;
       // When the LLM classifies an eating_event, the character actually consumed
       // food in this turn. Route through recordEatingEvent — the canonical hunger
       // writer. Vick Servicio exclusion and hunger_lock are enforced server-side.
+      // AWAITED (not fire-and-forget): hunger is a state-change, not narrative.
+      // The isolate can tear down before un-awaited promises resolve.
       if (event.event_type === 'eating_event') {
-        base44.asServiceRole.functions.invoke('recordEatingEvent', {
-          characterId,
-          mealSize: event.meal_size || 'meal',
-          foodDescription: event.title,
-          locationName: character?.resolved_current_location_name || null,
-        }).catch(() => {});
+        try {
+          await base44.asServiceRole.functions.invoke('recordEatingEvent', {
+            characterId,
+            mealSize: event.meal_size || 'meal',
+            foodDescription: event.title,
+            locationName: character?.resolved_current_location_name || null,
+          });
+        } catch (err) {
+          console.error(`[classifyConversationEvent] recordEatingEvent FAILED — char="${characterName}" (id=${characterId}) mealSize="${event.meal_size || 'meal'}" error="${err?.message || err}"`);
+        }
         audit.systems.push('hunger');
       }
 
