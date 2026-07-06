@@ -231,13 +231,19 @@ export function useChatLoadConvo({
             try { lfcWrite(currentUser.email, `chat_msgs:${chatType}:${characterId}`, []); } catch {}
           }
 
-          // CRITICAL: Sort ALL candidates by last activity (most recent first).
-          // Conversations with last_message_date are ALWAYS more recent than empty ones.
-          const allSorted = [...candidatePool].sort((a, b) => {
-            const aTime = a.last_message_date ? new Date(a.last_message_date) : new Date(a.created_date);
-            const bTime = b.last_message_date ? new Date(b.last_message_date) : new Date(b.created_date);
-            return bTime - aTime; // descending: newest first
-          });
+          // CRITICAL: Sort candidates — prefer conversations with message history.
+          // Conversations with last_message_date have actual messages and are preferred
+          // over empty duplicates (which may have been created by a race condition).
+          // Among conversations with messages, pick the most recently active.
+          // Empty conversations (no last_message_date) are only selected as a last resort.
+          const withMsgs = candidatePool.filter(c => c.last_message_date);
+          const withoutMsgs = candidatePool.filter(c => !c.last_message_date);
+          const sortByRecency = (a, b) => {
+            const aTime = new Date(a.last_message_date || a.created_date);
+            const bTime = new Date(b.last_message_date || b.created_date);
+            return bTime - aTime;
+          };
+          const allSorted = [...withMsgs.sort(sortByRecency), ...withoutMsgs.sort(sortByRecency)];
           const selectedConvo = allSorted[0];
           if (!selectedConvo) {
             // No valid direct conversation — fall through to creation block below

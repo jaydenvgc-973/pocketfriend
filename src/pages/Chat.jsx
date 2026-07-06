@@ -29,6 +29,7 @@ import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
+import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog, containsFamilyDenial } from "@/lib/promptContextBuilders";
 import { buildClothingAwarenessContext, buildSelfClothingAwareness } from "@/lib/clothingAwarenessContext";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
@@ -523,13 +524,9 @@ export default function Chat({ chatTypeOverride } = {}) {
 
     let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
-      const convo = await base44.entities.Conversation.create({
-        title: `${chatType} with ${character.name}`,
-        type: chatType,
-        character_ids: [characterId],
-        owner_email: currentUser.email,
+      convoId = await resolveOrCreateConversation({
+        characterId, characterName: character.name, chatType, ownerEmail: currentUser.email
       });
-      convoId = convo.id;
       setConversationId(convoId);
     }
 
