@@ -2245,11 +2245,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     const previewText = responseText || "(image sent)";
-    await base44.entities.Conversation.update(convoId, {
+    base44.entities.Conversation.update(convoId, {
       last_message_preview: previewText.substring(0, 100),
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
-    });
+    }).catch(err => console.warn('[Chat] Conversation.update failed (non-blocking):', err?.message));
   };
 
   return (

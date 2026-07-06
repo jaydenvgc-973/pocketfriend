@@ -19,7 +19,7 @@ const createRetryableClient = (baseClient) => {
 
           return async function(...args) {
             let attempt = 0;
-            const maxRetries = 3;
+            const maxRetries = 5;
             while (attempt < maxRetries) {
               try {
                 return await fn.apply(t, args);
@@ -29,11 +29,11 @@ const createRetryableClient = (baseClient) => {
                   baseClient.auth.redirectToLogin(window.location.href);
                   throw err;
                 }
-                const isRateLimit = err?.message?.includes('Rate limit') || err?.code === 429;
+                const isRateLimit = err?.message?.includes('Rate limit') || err?.code === 429 || status === 429;
                 if (!isRateLimit) throw err;
                 attempt++;
                 if (attempt >= maxRetries) throw err;
-                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+                const delay = Math.pow(2, attempt + 1) * 1000 + Math.random() * 1000;
                 await new Promise(r => setTimeout(r, delay));
               }
             }
