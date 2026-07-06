@@ -384,22 +384,54 @@ If nothing meaningful happened, return: { "events": [] }`;
         audit.systems.push('life_context');
       }
 
-      // ── 7. Eating Event → Hunger Update ──────────────────────────────
+      // ── 7. Eating Event → Hunger Update (INLINED) ─────────────────────
       // When the LLM classifies an eating_event, the character actually consumed
-      // food in this turn. Route through recordEatingEvent — the canonical hunger
-      // writer. Vick Servicio exclusion and hunger_lock are enforced server-side.
-      // AWAITED (not fire-and-forget): hunger is a state-change, not narrative.
-      // The isolate can tear down before un-awaited promises resolve.
+      // food in this turn. We inline the recordEatingEvent logic here because
+      // function-to-function invocation via asServiceRole fails with 403.
+      // recordEatingEvent remains the canonical writer for direct calls (Scene).
       if (event.event_type === 'eating_event') {
         try {
-          await base44.asServiceRole.functions.invoke('recordEatingEvent', {
-            characterId,
-            mealSize: event.meal_size || 'meal',
-            foodDescription: event.title,
-            locationName: character?.resolved_current_location_name || null,
-          });
+          const _clamp = (v) => Math.max(0, Math.min(100, v));
+          const _RECOVERY = {
+            snack:      { hunger: 20, energy: 3,  comfort: 2 },
+            meal:       { hunger: 40, energy: 5,  comfort: 4 },
+            large_meal: { hunger: 60, energy: 7,  comfort: 6 },
+          };
+          const _mealSize = event.meal_size || 'meal';
+          const _recovery = _RECOVERY[_mealSize] || _RECOVERY.meal;
+
+          // Vick / world-service exclusion — same logic as recordEatingEvent
+          const _isWorldService = (c) => {
+            if (!c) return false;
+            if (c.character_type === 'npc_world_service') return true;
+            if (c.is_world_service === true) return true;
+            if (c.diagnostic_only === true) return true;
+            const _names = [c.name, c.display_name, c.primary_name].filter(Boolean).map(n => n.toLowerCase());
+            return _names.some(n => n.includes('vick servicio'));
+          };
+
+          if (character && !_isWorldService(character) && character.hunger_lock !== true && character.needs_locks?.hunger !== true) {
+            const _curHunger = character.hunger_value ?? 70;
+            const _curEnergy = character.energy_value ?? 75;
+            const _curComfort = character.comfort_value ?? 70;
+            const _effGain = _curHunger >= 85 ? Math.min(_recovery.hunger, 5) : _recovery.hunger;
+            const _newHunger = _clamp(_curHunger + _effGain);
+            const _newEnergy = _clamp(_curEnergy + _recovery.energy);
+            const _newComfort = _clamp(_curComfort + _recovery.comfort);
+
+            await base44.asServiceRole.entities.Character.update(characterId, {
+              hunger_value: _newHunger,
+              energy_value: _newEnergy,
+              comfort_value: _newComfort,
+              last_need_simulated_at: new Date().toISOString(),
+            });
+
+            console.log(`[EATING_EVENT] ${characterName} | size=${_mealSize} | hunger: ${Math.round(_curHunger)} → ${_newHunger}`);
+          } else if (character && _isWorldService(character)) {
+            console.log(`[EATING_EVENT] ${characterName} | SKIPPED — world_service_character_excluded`);
+          }
         } catch (err) {
-          console.error(`[classifyConversationEvent] recordEatingEvent FAILED — char="${characterName}" (id=${characterId}) mealSize="${event.meal_size || 'meal'}" error="${err?.message || err}"`);
+          console.error(`[classifyConversationEvent] hunger update FAILED — char="${characterName}" (id=${characterId}) error="${err?.message || err}"`);
         }
         audit.systems.push('hunger');
       }
