@@ -29,7 +29,7 @@ import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
 import { callLLMWithRetry } from "@/lib/llmUtils";
-import { resolveOrCreateConversation } from "@/lib/conversationResolver";
+import { resolveOrCreateConversation, waitForConversationReady } from "@/lib/conversationResolver";
 import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog, containsFamilyDenial } from "@/lib/promptContextBuilders";
 import { buildClothingAwarenessContext, buildSelfClothingAwareness } from "@/lib/clothingAwarenessContext";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
@@ -522,6 +522,9 @@ export default function Chat({ chatTypeOverride } = {}) {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
+    // SEND GATE: wait for conversation load to complete before resolving convoId.
+    // Prevents duplicate conversation creation when user sends before page fully loads.
+    await waitForConversationReady({ conversationIdRef, isLoadingConvoRef });
     let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
       convoId = await resolveOrCreateConversation({
@@ -2393,7 +2396,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         />
       ) : (
         <>
-          <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} />
+          <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} disabled={isLoadingConvo && !conversationId} />
           {isVickChat && <VickCharacterSpeechToggle enabled={characterSpeechMode} onToggle={toggleCharacterSpeechMode} />}
         </>
       )}

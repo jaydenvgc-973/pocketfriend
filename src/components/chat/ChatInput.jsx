@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 
-export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
+export default function ChatInput({ onSend, draftKey = "chat_draft_default", disabled = false }) {
   const storageKey = `chat_draft_${draftKey}`;
   const [text, setText] = useState(() => localStorage.getItem(storageKey) || "");
   const [isRecording, setIsRecording] = useState(false);
@@ -14,6 +14,7 @@ export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
   const fileInputRef = useRef(null);
 
   const handleSend = () => {
+    if (disabled) return;
     if (!text.trim() && !pendingImage) return;
     onSend(text.trim(), pendingImage);
     setText("");
@@ -44,7 +45,7 @@ export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!disabled) handleSend();
     }
   };
 
@@ -97,9 +98,10 @@ export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          placeholder="Say something..."
+          placeholder={disabled ? "Loading conversation…" : "Say something..."}
           rows={1}
-          className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground"
+          disabled={disabled}
+          className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground disabled:opacity-50"
           style={{ minHeight: "40px" }}
         />
         <div className="flex items-center gap-1 pb-1">
@@ -115,7 +117,7 @@ export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
             <Button
               size="icon"
               onClick={handleSend}
-              disabled={!text.trim() && !pendingImage}
+              disabled={disabled || (!text.trim() && !pendingImage)}
               className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90"
             >
               <Send className="w-4 h-4" />
