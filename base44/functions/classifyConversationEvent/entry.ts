@@ -155,7 +155,7 @@ CURRENT TURN:
 User: ${userMessage}
 ${characterName}: ${characterReply}
 
-POSITIVE event types: supportive_event, bonding_event, healthy_choice_event, growth_event, emotional_exchange, reconciliation_event, celebration_event, life_milestone_event, recovery_event, routine_positive_event
+POSITIVE event types: supportive_event, bonding_event, healthy_choice_event, growth_event, emotional_exchange, reconciliation_event, celebration_event, life_milestone_event, recovery_event, routine_positive_event, eating_event
 NEGATIVE event types: conflict_event, fight_event, risky_decision_event, impulsive_decision_event, substance_use_event, grief_event, medical_event, accident_event, betrayal_event, legal_or_social_consequence_event, setback_event, emotional_outburst_event, routine_negative_event
 
 RULES:
@@ -163,6 +163,19 @@ RULES:
 2. A single turn can have multiple events
 3. Most turns are normal chat — return empty array if nothing meaningful happened
 4. Negative events need clear evidence, not just vague mentions
+5. eating_event is a STATE-TRACKING event, not a narrative event. It must be flagged whenever ${characterName} actually consumes food or drink in this turn, even if the moment is otherwise ordinary. Always set eating_event severity to "moderate".
+
+EATING EVENT RULES — READ CAREFULLY:
+eating_event must ONLY be assigned if ${characterName} ACTUALLY CONSUMED food or drink in THIS turn.
+Do NOT flag as eating_event if:
+  - ${characterName} merely mentions a past meal ("I ate earlier", "I had breakfast this morning")
+  - ${characterName} talks about future eating ("I should eat", "I'll eat later", "I need to eat")
+  - ${characterName} refuses or is unable to eat ("I'm not hungry", "I can't eat", "too tired to eat")
+  - Food was ordered, arrived, or is present but NOT consumed ("I ordered food", "the tacos arrived")
+  - ${characterName} is saving food for later or giving it to someone else
+  - The eating is hypothetical ("I would eat that", "if I ate that")
+ONLY flag eating_event when ${characterName} clearly took a bite, ate, finished, was fed, or is actively eating in this turn.
+When flagging eating_event, set meal_size to "snack" for small items/drinks, "meal" for regular meals, or "large_meal" for feasts/large quantities.
 
 STRICT GRIEF RULE — READ CAREFULLY:
 grief_event must ONLY be assigned if ALL of the following are true:
@@ -183,7 +196,8 @@ Return JSON:
       "title": string,
       "description": string,
       "emotional_impact": string,
-      "context_tags": string[]
+      "context_tags": string[],
+      "meal_size": "snack" | "meal" | "large_meal"
     }
   ]
 }
@@ -207,6 +221,7 @@ If nothing meaningful happened, return: { "events": [] }`;
                 description: { type: 'string' },
                 emotional_impact: { type: 'string' },
                 context_tags: { type: 'array', items: { type: 'string' } },
+                meal_size: { type: 'string' },
               },
               required: ['event_type', 'valence', 'severity', 'title', 'description'],
             },
@@ -247,7 +262,9 @@ If nothing meaningful happened, return: { "events": [] }`;
 
     for (const event of events) {
       if (!event.event_type || !event.title || !event.description) continue;
-      if (['minor'].includes(event.severity)) continue; // skip minor — just noise
+      // Eating events are state-change events (hunger update) — allow through even at minor severity.
+      // All other minor events are just narrative noise.
+      if (['minor'].includes(event.severity) && event.event_type !== 'eating_event') continue;
 
       const audit = { event_type: event.event_type, valence: event.valence, severity: event.severity, systems: [] };
 
@@ -367,7 +384,21 @@ If nothing meaningful happened, return: { "events": [] }`;
         audit.systems.push('life_context');
       }
 
-      // ── 7. Update LifeEvent systems_updated ──────────────────────────
+      // ── 7. Eating Event → Hunger Update ──────────────────────────────
+      // When the LLM classifies an eating_event, the character actually consumed
+      // food in this turn. Route through recordEatingEvent — the canonical hunger
+      // writer. Vick Servicio exclusion and hunger_lock are enforced server-side.
+      if (event.event_type === 'eating_event') {
+        base44.asServiceRole.functions.invoke('recordEatingEvent', {
+          characterId,
+          mealSize: event.meal_size || 'meal',
+          foodDescription: event.title,
+          locationName: character?.resolved_current_location_name || null,
+        }).catch(() => {});
+        audit.systems.push('hunger');
+      }
+
+      // ── 8. Update LifeEvent systems_updated ──────────────────────────
       await base44.asServiceRole.entities.LifeEvent.update(lifeEvent.id, {
         systems_updated: audit.systems,
       });
