@@ -9,12 +9,14 @@ const createRetryableClient = (baseClient) => {
     get(target, prop) {
       const original = target[prop];
       if (typeof original !== 'object' || original === null) return original;
-      
+
+      const isAuthNamespace = prop === 'auth';
+
       return new Proxy(original, {
         get(t, p) {
           const fn = t[p];
           if (typeof fn !== 'function') return fn;
-          
+
           return async function(...args) {
             let attempt = 0;
             const maxRetries = 3;
@@ -22,6 +24,11 @@ const createRetryableClient = (baseClient) => {
               try {
                 return await fn.apply(t, args);
               } catch (err) {
+                const status = err?.status || err?.response?.status;
+                if (!isAuthNamespace && status === 401) {
+                  baseClient.auth.redirectToLogin(window.location.href);
+                  throw err;
+                }
                 const isRateLimit = err?.message?.includes('Rate limit') || err?.code === 429;
                 if (!isRateLimit) throw err;
                 attempt++;
