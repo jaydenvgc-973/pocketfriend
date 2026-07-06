@@ -3,11 +3,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * recordEatingEvent
  *
- * Called whenever eating is confirmed — from chat dialogue, scene actions,
- * or image generation showing food consumption.
+ * Canonical hunger writer. Called whenever eating is confirmed — from chat
+ * dialogue, scene actions, or narrative events.
  *
  * Immediately updates hunger (and related needs) so the state reflects reality
  * before the next simulation tick. Narrative truth must equal system truth.
+ *
+ * VICK EXCLUSION: Vick Servicio (npc_world_service) characters are NEVER
+ * updated by this function. Vick is a world-service character with locked needs.
  *
  * Payload:
  *   characterId    — required
@@ -24,30 +27,19 @@ const HUNGER_RECOVERY = {
   large_meal: { hunger: 60, energy: 7,  comfort: 6 },
 };
 
-// Keywords that indicate eating in dialogue/text
-export const EATING_KEYWORDS = [
-  'i ate', "i'm eating", 'i just ate', 'i finished eating', 'i had', 'i grabbed',
-  'eating', 'had a meal', 'had breakfast', 'had lunch', 'had dinner', 'had a snack',
-  'just finished a meal', 'just ate', 'grabbed food', 'ordered food', 'got food',
-  'ate a', 'eating a', 'eating some', 'had some food', 'had something to eat',
-  'i cooked', 'made food', 'made a meal', 'heated up', 'takeout arrived',
-  'delivery came', 'got takeout', 'ordered takeout', 'picked up food',
-];
-
-// Detect if text implies eating
-export function detectsEating(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  return EATING_KEYWORDS.some(kw => lower.includes(kw));
-}
-
-// Estimate meal size from text
-function estimateMealSize(text) {
-  if (!text) return 'meal';
-  const lower = text.toLowerCase();
-  if (lower.includes('snack') || lower.includes('bite') || lower.includes('chip') || lower.includes('cracker') || lower.includes('handful')) return 'snack';
-  if (lower.includes('large') || lower.includes('feast') || lower.includes('full meal') || lower.includes('big meal') || lower.includes('thanksgiving') || lower.includes('thanksgiving')) return 'large_meal';
-  return 'meal';
+/**
+ * Check if a character is Vick Servicio (world-service character).
+ * These characters have locked needs and must never receive hunger updates.
+ */
+function isWorldServiceCharacter(char) {
+  if (!char) return false;
+  if (char.character_type === 'npc_world_service') return true;
+  if (char.is_world_service === true) return true;
+  if (char.diagnostic_only === true) return true;
+  const names = [char.name, char.display_name, char.primary_name]
+    .filter(Boolean)
+    .map(n => n.toLowerCase());
+  return names.some(n => n.includes('vick servicio'));
 }
 
 Deno.serve(async (req) => {
@@ -77,16 +69,43 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
+    // ── VICK EXCLUSION ──────────────────────────────────────────────────────
+    // Vick Servicio and other world-service characters have locked needs.
+    // They must never receive hunger updates from eating events.
+    if (isWorldServiceCharacter(char)) {
+      return Response.json({
+        success: false,
+        skipped: true,
+        reason: 'world_service_character_excluded',
+        characterName: char.name,
+      });
+    }
+
+    // ── HUNGER LOCK CHECK ──────────────────────────────────────────────────
+    // If hunger_lock or needs_locks.hunger is true, skip the update.
+    if (char.hunger_lock === true) {
+      return Response.json({
+        success: false,
+        skipped: true,
+        reason: 'hunger_lock_active',
+        characterName: char.name,
+      });
+    }
+    if (char.needs_locks?.hunger === true) {
+      return Response.json({
+        success: false,
+        skipped: true,
+        reason: 'hunger_needs_lock_active',
+        characterName: char.name,
+      });
+    }
+
     const currentHunger = char.hunger_value ?? 70;
     const currentEnergy = char.energy_value ?? 75;
     const currentComfort = char.comfort_value ?? 70;
 
-    const resolvedSize = mealSize || estimateMealSize(foodDescription || '');
+    const resolvedSize = mealSize || 'meal';
     const recovery = HUNGER_RECOVERY[resolvedSize] || HUNGER_RECOVERY.meal;
-
-    const newHunger  = clamp(currentHunger  + recovery.hunger);
-    const newEnergy  = clamp(currentEnergy  + recovery.energy);
-    const newComfort = clamp(currentComfort + recovery.comfort);
 
     const wasStarving = currentHunger < 15;
     const wasCritical = currentHunger < 30;
@@ -94,8 +113,10 @@ Deno.serve(async (req) => {
     // Validate: if hunger was already high (>= 85), eating barely moves it (satiated)
     const effectiveHungerGain = currentHunger >= 85 ? Math.min(recovery.hunger, 5) : recovery.hunger;
     const clampedHunger = clamp(currentHunger + effectiveHungerGain);
+    const newEnergy = clamp(currentEnergy + recovery.energy);
+    const newComfort = clamp(currentComfort + recovery.comfort);
 
-    // ── STATE SYNC WRITE ────────────────────────────────────────────────────────
+    // ── STATE SYNC WRITE ────────────────────────────────────────────────────
     await sdk.entities.Character.update(characterId, {
       hunger_value: clampedHunger,
       energy_value: newEnergy,
@@ -103,7 +124,7 @@ Deno.serve(async (req) => {
       last_need_simulated_at: new Date().toISOString(),
     });
 
-    // ── MEMORY CREATION ──────────────────────────────────────────────────────────
+    // ── MEMORY CREATION ──────────────────────────────────────────────────────
     const memoryDescription = foodDescription
       ? `${char.name} ate: ${foodDescription}${locationName ? ` at ${locationName}` : ''}.`
       : `${char.name} had a ${resolvedSize === 'snack' ? 'snack' : resolvedSize === 'large_meal' ? 'large meal' : 'meal'}${locationName ? ` at ${locationName}` : ''}.`;
@@ -128,11 +149,11 @@ Deno.serve(async (req) => {
       characterName: char.name,
       mealSize: resolvedSize,
       hungerBefore: Math.round(currentHunger),
-      hungerAfter: clampedHunger,
+      hungerAfter: Math.round(clampedHunger),
       wasStarving,
       wasCritical,
-      energyAfter: newEnergy,
-      comfortAfter: newComfort,
+      energyAfter: Math.round(newEnergy),
+      comfortAfter: Math.round(newComfort),
     });
 
   } catch (error) {

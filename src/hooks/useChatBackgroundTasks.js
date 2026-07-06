@@ -18,6 +18,8 @@ import { traceRequest, traceRateLimit as traceRL } from "@/lib/chatLoadTrace";
 import { isForegroundActive, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
 import { filterDetectedMentions } from "@/lib/entityDetectionFilter";
+import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
+import { detectAndRecordEating } from "@/lib/eatingEventDetector";
 
 // Per-session cooldown state — keyed by `${characterId}:${taskName}`
 const sessionCooldowns = {};
@@ -291,6 +293,33 @@ Return ONLY valid JSON, nothing else.`,
         }
       }
     }, 2000);
+
+    // ── TIER 2.5 — 3s: EATING EVENT DETECTION (hunger sync) ──────────────────
+    // Detects actual food consumption in the current chat turn and updates
+    // hunger through the canonical recordEatingEvent writer.
+    // Only fires when eating is a current action with high confidence.
+    // Past/future/negated/hypothetical/possession-only mentions are blocked.
+    // Vick Servicio (world-service) characters are excluded by the backend.
+    setTimeout(() => {
+      if (isGloballyRateLimited()) return;
+      if (!responseText || !character) return;
+      if (isVickServicioCharacter(character)) return;
+
+      detectAndRecordEating({
+        userMessage: text,
+        characterResponse: responseText,
+        characterId,
+        characterName: character?.name,
+        locationName: character?.resolved_current_location_name,
+      }).then(({ recorded, event }) => {
+        if (recorded) {
+          console.log(`[EATING_DETECTED] ${character?.name} | context=${event?.event_time_context} | food=${event?.food_consumed} | evidence="${event?.evidence_text}"`);
+          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        } else if (event) {
+          console.log(`[EATING_BLOCKED] ${character?.name} | context=${event.event_time_context} | evidence="${event.evidence_text}"`);
+        }
+      }).catch((err) => console.warn('[Governor] Eating detection failed:', err?.message));
+    }, 3000);
 
     // ── TIER 3 — 4s: memory extraction + birthday capture + world phone sync ──
     setTimeout(() => {

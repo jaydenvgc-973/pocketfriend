@@ -48,6 +48,8 @@ import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
+import { detectSceneEatingEvent } from "@/lib/eatingEventDetector";
+import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -1371,17 +1373,36 @@ Return JSON:
 
       // EATING EVENT RECORDING (need-system side-effect, not a commerce event)
       // action.id is now the stable catalog ID (sceneInteractionEngine no longer mutates it).
+      // Scene food actions are consumption by default — the detector checks for
+      // explicit non-consumption language ("for later", "saving", "for someone else").
+      // Vick Servicio (world-service) characters are excluded by the backend.
       const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch'];
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
         const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' :
           action.id === 'check' || action.id === 'order' ? 'meal' : 'meal';
-        broughtCharacters.forEach((char) => {
+        const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c));
+        eatingChars.forEach((char) => {
+          const eatingEvent = detectSceneEatingEvent({
+            actionId: action.id,
+            actionLabel: action.label,
+            characterId: char.id,
+            characterName: char.name,
+            locationName: location?.name,
+          });
+          if (!eatingEvent || !eatingEvent.isEating || eatingEvent.event_time_context !== 'current_action') {
+            console.log(`[SCENE_EATING_BLOCKED] ${char.name} | context=${eatingEvent?.event_time_context || 'no_event'} | action=${action.id}`);
+            return;
+          }
           base44.functions.invoke('recordEatingEvent', {
             characterId: char.id,
             mealSize,
             foodDescription: action.label,
             locationName: location?.name
-          }).catch(() => {});
+          }).then(() => {
+            console.log(`[SCENE_EATING_RECORDED] ${char.name} | action=${action.id} | mealSize=${mealSize}`);
+          }).catch((err) => {
+            console.warn(`[SCENE_EATING_FAILED] ${char.name} | action=${action.id} | error=${err?.message}`);
+          });
         });
         queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       }
