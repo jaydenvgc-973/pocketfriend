@@ -15,6 +15,7 @@ import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
+import LocationImageUploader from "@/components/profile/LocationImageUploader";
 import { useUserActiveOutfit } from "@/lib/activeOutfitResolver";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
@@ -59,6 +60,15 @@ export default function MyProfile() {
     queryKey: ["userResidentLocations", user?.id],
     queryFn: () => base44.entities.LocationReference.filter({ resident_character_ids: [user.id] }),
     enabled: !!user?.id,
+  });
+
+  // Resolve the user's home/current residence location from settings.user_current_location_id.
+  // Falls back to residentLocations[0] when no explicit current location is set.
+  const homeLocationId = settings.user_current_location_id || residentLocations[0]?.id || null;
+  const { data: homeLocation = null } = useQuery({
+    queryKey: ["userHomeLocation", homeLocationId],
+    queryFn: () => base44.entities.LocationReference.get(homeLocationId),
+    enabled: !!homeLocationId,
   });
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
@@ -361,6 +371,11 @@ export default function MyProfile() {
                   <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold uppercase mb-2">Owner</span>
                   <p className="text-[10px] text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
                   {loc.owner_role && <p className="text-[10px] text-muted-foreground/60 mt-0.5">{loc.owner_role}</p>}
+                  {!loc.image_urls?.[0] && (
+                    <div className="mt-2">
+                      <LocationImageUploader locationId={loc.id} ownerUserId={user?.id} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
@@ -380,11 +395,27 @@ export default function MyProfile() {
             <div className="p-4 pb-2">
               <ProfileSectionHeader icon={Home} title="Where You Live" />
             </div>
-            {residentLocations.length > 0 ? (
+            {homeLocation ? (
+              <>
+                <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
+                  {homeLocation.image_urls?.[0] ? (
+                    <img src={homeLocation.image_urls[0]} alt={homeLocation.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Home className="w-8 h-8 text-primary/40" />
+                    </div>
+                  )}
+                </div>
+                <div className="p-4 pt-2">
+                  <p className="text-sm font-semibold text-foreground truncate">{homeLocation.name}</p>
+                  <p className="text-[10px] text-muted-foreground capitalize mt-0.5">{homeLocation.category || homeLocation.location_type}</p>
+                </div>
+              </>
+            ) : residentLocations.length > 0 ? (
               <>
                 <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
                   {residentLocations[0].image_urls?.[0] ? (
-                    <img src={residentLocations[0].image_urls[0]} alt="" className="w-full h-full object-cover" />
+                    <img src={residentLocations[0].image_urls[0]} alt={residentLocations[0].name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <Home className="w-8 h-8 text-primary/40" />
