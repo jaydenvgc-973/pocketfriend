@@ -1105,7 +1105,6 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
-      const outfitHint = buildOutfitNarrativeHint(resolveCharacterOutfit(character, {}), character);
 
       // World-state reconciliation — resolves current location, co-presence, elapsed time
       const allCachedCharsForWorldState = queryClient.getQueryData(["characters", currentUser?.email]) || [];
@@ -1132,13 +1131,15 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         userSettings,
         new Date()
       );
-      // Inject accurate elapsed time from actual last user message timestamp
       if (lastUserMsgForElapsed?.timestamp || lastUserMsgForElapsed?.created_date) {
-        const lastTs = lastUserMsgForElapsed.timestamp || lastUserMsgForElapsed.created_date;
-        const elapsedMs = Date.now() - new Date(lastTs).getTime();
-        const elapsedMinutes = Math.max(0, Math.floor(elapsedMs / 60000));
-        worldStateReconciliation.elapsed_time_minutes = elapsedMinutes;
+        const _lTs = lastUserMsgForElapsed.timestamp || lastUserMsgForElapsed.created_date;
+        worldStateReconciliation.elapsed_time_minutes = Math.max(0, Math.floor((Date.now() - new Date(_lTs).getTime()) / 60000));
       }
+      // OUTFIT HINT: closet-authoritative, location-aware (resolved after worldStateLocationMap)
+      const _locForOutfit = worldStateLocationMap[character.resolved_current_location_id] || null;
+      const _resolvedOutfit = resolveCharacterOutfit(character, worldStateLocationMap || {});
+      const outfitHint = buildOutfitNarrativeHint(_resolvedOutfit, character, userSettings?.daily_weather_cache || null, _locForOutfit);
+      console.log(`[Chat] outfit_hint|char=${character.name}|src=${_resolvedOutfit?.source}|cat=${_resolvedOutfit?.category}|hint=${!!outfitHint}|closet=${(character.character_closet||[]).filter(o=>o.outfit_id).length}`);
 
       // ── CANONICAL CONTEXT — identity/memory/relationship source of truth (co-presence is LIVE, never cached) ──
       let canonicalPrompt = null;
