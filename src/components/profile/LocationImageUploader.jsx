@@ -6,15 +6,15 @@ import { Camera, Loader2 } from "lucide-react";
 /**
  * LocationImageUploader
  *
- * Allows the user to upload/set a reference image for a LocationReference
- * that has no image_urls[0]. Writes the uploaded image back to the
- * LocationReference.image_urls field — the same authoritative field
- * read elsewhere in the app. No parallel image system.
+ * Upload fallback for a LocationReference that has NO existing authoritative
+ * image (no zone images, no top-level image_urls). Writes the uploaded image
+ * to LocationReference.image_urls — the same field TravelLocationGrid falls
+ * back to. No parallel image system.
  *
- * After upload, invalidates the owned/resident location queries so the
- * card immediately reflects the new image.
+ * After upload, invalidates the shared ["locationReferences", ownerEmail]
+ * cache key used by Travel, Places, Home, and MyProfile.
  */
-export default function LocationImageUploader({ locationId, ownerUserId, onUploaded }) {
+export default function LocationImageUploader({ locationId, ownerEmail, onUploaded }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
@@ -31,10 +31,8 @@ export default function LocationImageUploader({ locationId, ownerUserId, onUploa
       await base44.entities.LocationReference.update(locationId, {
         image_urls: [file_url],
       });
-      // Invalidate all location queries used by MyProfile so cards refresh immediately
-      queryClient.invalidateQueries({ queryKey: ["userOwnedLocations", ownerUserId] });
-      queryClient.invalidateQueries({ queryKey: ["userResidentLocations", ownerUserId] });
-      queryClient.invalidateQueries({ queryKey: ["userHomeLocation", locationId] });
+      // Invalidate the shared location cache key — same key used by Travel, Places, Home, and MyProfile.
+      queryClient.invalidateQueries({ queryKey: ["locationReferences", ownerEmail] });
       if (onUploaded) onUploaded(file_url);
     } catch (err) {
       setError(err?.message || "Upload failed.");

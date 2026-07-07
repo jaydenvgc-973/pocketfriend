@@ -17,7 +17,21 @@ import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
 import LocationImageUploader from "@/components/profile/LocationImageUploader";
 import { useUserActiveOutfit } from "@/lib/activeOutfitResolver";
+import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
+
+/**
+ * resolveLocationImage — EXACT same resolution as TravelLocationGrid.jsx.
+ * Zone images first, then top-level image_urls. This is the authoritative
+ * image source used by Travel/Places. MyProfile must use the same path.
+ */
+function resolveLocationImage(loc) {
+  if (!loc) return null;
+  const zoneImage = loc.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0];
+  if (zoneImage) return zoneImage;
+  if (loc.image_urls?.[0]) return loc.image_urls[0];
+  return null;
+}
 
 export default function MyProfile() {
   const queryClient = useQueryClient();
@@ -50,26 +64,28 @@ export default function MyProfile() {
     enabled: !!user?.email,
   });
 
-  const { data: ownedLocations = [] } = useQuery({
-    queryKey: ["userOwnedLocations", user?.id],
-    queryFn: () => base44.entities.LocationReference.filter({ owner_character_id: user.id }),
-    enabled: !!user?.id,
-  });
+  // SINGLE SOURCE OF TRUTH: same hook as Travel and Places pages.
+  // useStableLocationReferences fetches ALL locations for this user account
+  // via fetchAllLocationsForUser (owner_email scoped). This returns the exact
+  // same records Travel/Places display — including their zone images.
+  const { locationsData: allLocations = [], isLoading: isLocationsLoading } = useStableLocationReferences(user?.email);
 
-  const { data: residentLocations = [] } = useQuery({
-    queryKey: ["userResidentLocations", user?.id],
-    queryFn: () => base44.entities.LocationReference.filter({ resident_character_ids: [user.id] }),
-    enabled: !!user?.id,
-  });
+  // Business & Locations = locations where this user is the owner (owner_character_id === user.id
+  // OR owner_email === user.email OR no owner set but created by this user).
+  // This matches the same records visible in Travel/Places.
+  const ownedLocations = allLocations.filter(loc =>
+    loc.owner_character_id === user?.id ||
+    loc.owner_email === user?.email ||
+    (!loc.owner_character_id && !loc.owner_email && loc.created_by === user?.email)
+  );
 
-  // Resolve the user's home/current residence location from settings.user_current_location_id.
-  // Falls back to residentLocations[0] when no explicit current location is set.
-  const homeLocationId = settings.user_current_location_id || residentLocations[0]?.id || null;
-  const { data: homeLocation = null } = useQuery({
-    queryKey: ["userHomeLocation", homeLocationId],
-    queryFn: () => base44.entities.LocationReference.get(homeLocationId),
-    enabled: !!homeLocationId,
-  });
+  // Where You Live = the user's home/current residence.
+  // Resolve from the same shared location list — find by settings.user_current_location_id,
+  // then by any location where the user is listed as a resident.
+  const homeLocation = allLocations.find(loc => loc.id === settings.user_current_location_id) ||
+    allLocations.find(loc => (loc.resident_character_ids || []).includes(user?.id)) ||
+    null;
+  const residentLocations = allLocations.filter(loc => (loc.resident_character_ids || []).includes(user?.id));
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
@@ -353,11 +369,13 @@ export default function MyProfile() {
                 <p className="text-[10px] text-muted-foreground/60 mt-1">Monthly billing</p>
               </div>
             </div>
-            {ownedLocations.map(loc => (
+            {ownedLocations.map(loc => {
+              const locImage = resolveLocationImage(loc);
+              return (
               <div key={loc.id} className="flex-shrink-0 w-40 bg-secondary/40 border border-border/60 rounded-xl overflow-hidden hover:border-primary/20 transition-colors">
                 <div className="h-24 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden">
-                  {loc.image_urls?.[0] ? (
-                    <img src={loc.image_urls[0]} alt={loc.name} className="w-full h-full object-cover" />
+                  {locImage ? (
+                    <img src={locImage} alt={loc.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <MapPin className="w-8 h-8 text-primary/40" />
@@ -371,14 +389,15 @@ export default function MyProfile() {
                   <span className="inline-block text-[9px] px-1.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold uppercase mb-2">Owner</span>
                   <p className="text-[10px] text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
                   {loc.owner_role && <p className="text-[10px] text-muted-foreground/60 mt-0.5">{loc.owner_role}</p>}
-                  {!loc.image_urls?.[0] && (
+                  {!locImage && (
                     <div className="mt-2">
-                      <LocationImageUploader locationId={loc.id} ownerUserId={user?.id} />
+                      <LocationImageUploader locationId={loc.id} ownerEmail={user?.email} />
                     </div>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {ownedLocations.length === 0 && (
               <p className="text-xs text-muted-foreground py-4">No additional locations owned.</p>
             )}
@@ -395,11 +414,13 @@ export default function MyProfile() {
             <div className="p-4 pb-2">
               <ProfileSectionHeader icon={Home} title="Where You Live" />
             </div>
-            {homeLocation ? (
+            {homeLocation ? (() => {
+              const homeImg = resolveLocationImage(homeLocation);
+              return (
               <>
                 <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
-                  {homeLocation.image_urls?.[0] ? (
-                    <img src={homeLocation.image_urls[0]} alt={homeLocation.name} className="w-full h-full object-cover" />
+                  {homeImg ? (
+                    <img src={homeImg} alt={homeLocation.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <Home className="w-8 h-8 text-primary/40" />
@@ -409,13 +430,21 @@ export default function MyProfile() {
                 <div className="p-4 pt-2">
                   <p className="text-sm font-semibold text-foreground truncate">{homeLocation.name}</p>
                   <p className="text-[10px] text-muted-foreground capitalize mt-0.5">{homeLocation.category || homeLocation.location_type}</p>
+                  {!homeImg && (
+                    <div className="mt-2">
+                      <LocationImageUploader locationId={homeLocation.id} ownerEmail={user?.email} />
+                    </div>
+                  )}
                 </div>
               </>
-            ) : residentLocations.length > 0 ? (
+              );
+            })() : residentLocations.length > 0 ? (() => {
+              const resImg = resolveLocationImage(residentLocations[0]);
+              return (
               <>
                 <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
-                  {residentLocations[0].image_urls?.[0] ? (
-                    <img src={residentLocations[0].image_urls[0]} alt={residentLocations[0].name} className="w-full h-full object-cover" />
+                  {resImg ? (
+                    <img src={resImg} alt={residentLocations[0].name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
                       <Home className="w-8 h-8 text-primary/40" />
@@ -428,9 +457,15 @@ export default function MyProfile() {
                   {residentLocations.length > 1 && (
                     <p className="text-[10px] text-muted-foreground/60 mt-1">+{residentLocations.length - 1} more</p>
                   )}
+                  {!resImg && (
+                    <div className="mt-2">
+                      <LocationImageUploader locationId={residentLocations[0].id} ownerEmail={user?.email} />
+                    </div>
+                  )}
                 </div>
               </>
-            ) : (
+              );
+            })() : (
               <div className="px-4 pb-4">
                 <p className="text-xs text-muted-foreground italic">No residence assigned.</p>
               </div>
