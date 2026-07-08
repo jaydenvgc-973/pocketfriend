@@ -15,6 +15,7 @@ import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
+import LocationImage from "@/components/profile/LocationImage";
 import { useUserActiveOutfit } from "@/lib/activeOutfitResolver";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
@@ -346,13 +347,7 @@ export default function MyProfile() {
             {ownedLocations.map(loc => (
               <div key={loc.id} className="flex-shrink-0 w-40 bg-secondary/40 border border-border/60 rounded-xl overflow-hidden hover:border-primary/20 transition-colors">
                 <div className="h-24 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden">
-                  {loc.image_urls?.[0] ? (
-                    <img src={loc.image_urls[0]} alt={loc.name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <MapPin className="w-8 h-8 text-primary/40" />
-                    </div>
-                  )}
+                  <LocationImage location={loc} fallbackIcon={MapPin} iconClass="w-8 h-8 text-primary/40" />
                 </div>
                 <div className="p-3">
                   <div className="flex items-center gap-1.5 mb-1">
@@ -383,13 +378,7 @@ export default function MyProfile() {
             {residentLocations.length > 0 ? (
               <>
                 <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
-                  {residentLocations[0].image_urls?.[0] ? (
-                    <img src={residentLocations[0].image_urls[0]} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Home className="w-8 h-8 text-primary/40" />
-                    </div>
-                  )}
+                  <LocationImage location={residentLocations[0]} fallbackIcon={Home} iconClass="w-8 h-8 text-primary/40" />
                 </div>
                 <div className="p-4 pt-2">
                   <p className="text-sm font-semibold text-foreground truncate">{residentLocations[0].name}</p>

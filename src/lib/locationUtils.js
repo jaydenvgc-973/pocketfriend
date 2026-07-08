@@ -93,6 +93,27 @@ const ZONE_HINTS = {
 };
 
 /**
+ * Resolve the best available display image URL for a location.
+ *
+ * CANONICAL RESOLVER — matches TravelLocationGrid exactly:
+ *   1. First zone with image_urls → that zone's first image
+ *   2. Top-level image_urls[0]
+ *   3. null (no image exists)
+ *
+ * Every surface that displays a location image must use this function
+ * so the same location shows the same image everywhere.
+ *
+ * @param {object} location - A LocationReference record
+ * @returns {string|null} image URL or null
+ */
+export function resolveLocationImageUrl(location) {
+  if (!location) return null;
+  return location.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
+    || location.image_urls?.[0]
+    || null;
+}
+
+/**
  * Find the best matching zone within a single location record.
  * Returns the zone's image_urls or [] if no zone matches.
  *
