@@ -64,28 +64,41 @@ export default function MyProfile() {
     enabled: !!user?.email,
   });
 
-  // SINGLE SOURCE OF TRUTH: same hook as Travel and Places pages.
+  // ═══ DATA ACCESS — ACCOUNT SCOPE ═══
   // useStableLocationReferences fetches ALL locations for this user account
-  // via fetchAllLocationsForUser (owner_email scoped). This returns the exact
-  // same records Travel/Places display — including their zone images.
+  // via fetchAllLocationsForUser (owner_email scoped). This is DATA ACCESS ONLY —
+  // it determines which records the app may READ, not who owns them in-world.
+  // Same hook as Travel and Places pages — same records, same images.
   const { locationsData: allLocations = [], isLoading: isLocationsLoading } = useStableLocationReferences(user?.email);
 
-  // Business & Locations = locations where this user is the owner (owner_character_id === user.id
-  // OR owner_email === user.email OR no owner set but created by this user).
-  // This matches the same records visible in Travel/Places.
-  const ownedLocations = allLocations.filter(loc =>
-    loc.owner_character_id === user?.id ||
-    loc.owner_email === user?.email ||
-    (!loc.owner_character_id && !loc.owner_email && loc.created_by === user?.email)
-  );
+  // ═══ FICTIONAL OWNERSHIP — IN-WORLD ═══
+  // Business & Locations = locations where the USER is the fictional/in-world owner.
+  // The user is NOT a character — locations with owner_character_id set are owned
+  // by CHARACTERS (Jayden, Ethan, Andre, etc.) and must NOT appear as user-owned.
+  //
+  // Fictional ownership fields (LocationReference schema):
+  //   owner_character_id   → which CHARACTER owns it in-world (null = not character-owned)
+  //   owner_character_name → display name of character owner
+  //   owner_role           → owner's role ("owner", "landlord", "operator", etc.)
+  //   owner_is_npc         → whether the owner is an NPC
+  //
+  // Account scope field (DATA ACCESS ONLY — never used for fictional ownership):
+  //   owner_email → which user account owns the database record
+  //
+  // Filter: include only locations with NO character owner + explicit owner_role +
+  // not system-managed. This excludes Jayden's Place, Estrellas boutique, etc.
+  const ownedLocations = allLocations.filter(loc => {
+    if (loc.owner_character_id) return false;    // Character owns it — not user's
+    if (!loc.owner_role) return false;            // No owner set — public/unowned
+    if (loc.is_system_managed) return false;      // System-managed (VGC Recovery Yard, etc.)
+    if (loc.system_location_role) return false;    // Temporary hotel/shelter
+    return true;
+  });
 
-  // Where You Live = the user's home/current residence.
-  // Resolve from the same shared location list — find by settings.user_current_location_id,
-  // then by any location where the user is listed as a resident.
-  const homeLocation = allLocations.find(loc => loc.id === settings.user_current_location_id) ||
-    allLocations.find(loc => (loc.resident_character_ids || []).includes(user?.id)) ||
-    null;
-  const residentLocations = allLocations.filter(loc => (loc.resident_character_ids || []).includes(user?.id));
+  // ═══ WHERE YOU LIVE — IN-WORLD RESIDENCE ═══
+  // Uses the user's saved home location from settings — NOT account ownership.
+  // The user is not a character, so resident_character_ids does not apply.
+  const homeLocation = allLocations.find(loc => loc.id === settings.user_current_location_id) || null;
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
@@ -433,33 +446,6 @@ export default function MyProfile() {
                   {!homeImg && (
                     <div className="mt-2">
                       <LocationImageUploader locationId={homeLocation.id} ownerEmail={user?.email} />
-                    </div>
-                  )}
-                </div>
-              </>
-              );
-            })() : residentLocations.length > 0 ? (() => {
-              const resImg = resolveLocationImage(residentLocations[0]);
-              return (
-              <>
-                <div className="h-28 bg-gradient-to-br from-primary/15 to-accent/5 overflow-hidden mx-4 rounded-xl">
-                  {resImg ? (
-                    <img src={resImg} alt={residentLocations[0].name} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Home className="w-8 h-8 text-primary/40" />
-                    </div>
-                  )}
-                </div>
-                <div className="p-4 pt-2">
-                  <p className="text-sm font-semibold text-foreground truncate">{residentLocations[0].name}</p>
-                  <p className="text-[10px] text-muted-foreground capitalize mt-0.5">{residentLocations[0].category || residentLocations[0].location_type}</p>
-                  {residentLocations.length > 1 && (
-                    <p className="text-[10px] text-muted-foreground/60 mt-1">+{residentLocations.length - 1} more</p>
-                  )}
-                  {!resImg && (
-                    <div className="mt-2">
-                      <LocationImageUploader locationId={residentLocations[0].id} ownerEmail={user?.email} />
                     </div>
                   )}
                 </div>
