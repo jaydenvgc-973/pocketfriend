@@ -156,37 +156,40 @@ export default function ProfileAnalytics({ userSettings }) {
 
   return (
     <>
-      {/* ═══ REVENUE DASHBOARD — STACKED ═══ */}
+      {/* ═══ REVENUE DASHBOARD — 2-COLUMN ═══ */}
       <section className="bg-card border border-border rounded-2xl p-5">
         <ProfileSectionHeader icon={Phone} title="Revenue Dashboard" />
-        {/* Summary cards on top — 2x2 grid */}
-        <div className="grid grid-cols-2 gap-2.5 mb-3">
-          <StatCard icon={DollarSign} label="Balance" value={`$${userBalance.toLocaleString()}`} sub="current" color="text-green-400" />
-          <StatCard icon={Phone} label="VGC Revenue" value={`$${Math.round(totalVGCRevenue).toLocaleString()}`} sub="all time" color="text-primary" />
-          <StatCard icon={TrendingUp} label="Char. Expenses" value={`$${Math.round(totalCharExp).toLocaleString()}`} sub="tracked" color="text-amber-400" />
-          <StatCard icon={Users} label="Active Accounts" value={activeCharCount} sub="characters" color="text-blue-400" />
-        </div>
-        {/* Revenue vs Expenses graph — full width below */}
-        <div className="bg-secondary/30 border border-border/50 rounded-xl p-3 flex flex-col">
-          <p className="text-[9px] font-semibold text-foreground uppercase tracking-wider mb-1">Revenue vs Expenses</p>
-          <p className="text-[8px] text-muted-foreground mb-2">Last {months} months</p>
-          {chartData.every(d => d.vgcRevenue === 0 && d.charExpenses === 0) ? (
-            <div className="flex-1 flex items-center justify-center text-center py-4">
-              <p className="text-[10px] text-muted-foreground italic">No data yet</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: -25 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 18%)" />
-                <XAxis dataKey="label" tick={{ fill: "hsl(0 0% 55%)", fontSize: 8 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "hsl(0 0% 55%)", fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
-                <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`$${v.toLocaleString()}`, undefined]} />
-                <Line type="monotone" dataKey="vgcRevenue" name="Revenue" stroke="hsl(262 83% 68%)" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="charExpenses" name="Expenses" stroke="hsl(45 80% 60%)" strokeWidth={2} dot={false} />
-                <Legend wrapperStyle={{ fontSize: 8, color: "hsl(0 0% 55%)" }} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+        <div className="grid grid-cols-2 gap-3">
+          {/* LEFT: 2x2 stat grid */}
+          <div className="grid grid-cols-2 gap-2.5 content-start">
+            <StatCard icon={DollarSign} label="Balance" value={`$${userBalance.toLocaleString()}`} sub="current" color="text-green-400" />
+            <StatCard icon={Phone} label="VGC Revenue" value={`$${Math.round(totalVGCRevenue).toLocaleString()}`} sub="all time" color="text-primary" />
+            <StatCard icon={TrendingUp} label="Char. Expenses" value={`$${Math.round(totalCharExp).toLocaleString()}`} sub="tracked" color="text-amber-400" />
+            <StatCard icon={Users} label="Active Accounts" value={activeCharCount} sub="characters" color="text-blue-400" />
+          </div>
+
+          {/* RIGHT: Line chart */}
+          <div className="bg-secondary/30 border border-border/50 rounded-xl p-3 flex flex-col">
+            <p className="text-[9px] font-semibold text-foreground uppercase tracking-wider mb-1">Revenue vs Expenses</p>
+            <p className="text-[8px] text-muted-foreground mb-2">Last {months} months</p>
+            {chartData.every(d => d.vgcRevenue === 0 && d.charExpenses === 0) ? (
+              <div className="flex-1 flex items-center justify-center text-center py-4">
+                <p className="text-[10px] text-muted-foreground italic">No data yet</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={chartData} margin={{ top: 5, right: 5, bottom: 0, left: -25 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 18%)" />
+                  <XAxis dataKey="label" tick={{ fill: "hsl(0 0% 55%)", fontSize: 8 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "hsl(0 0% 55%)", fontSize: 8 }} axisLine={false} tickLine={false} tickFormatter={v => `$${v}`} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`$${v.toLocaleString()}`, undefined]} />
+                  <Line type="monotone" dataKey="vgcRevenue" name="Revenue" stroke="hsl(262 83% 68%)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="charExpenses" name="Expenses" stroke="hsl(45 80% 60%)" strokeWidth={2} dot={false} />
+                  <Legend wrapperStyle={{ fontSize: 8, color: "hsl(0 0% 55%)" }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
         </div>
       </section>
 
