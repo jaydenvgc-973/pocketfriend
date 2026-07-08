@@ -65,39 +65,45 @@ export default function MyProfile() {
   });
 
   // ═══ DATA ACCESS — ACCOUNT SCOPE ═══
-  // useStableLocationReferences fetches ALL locations for this user account
-  // via fetchAllLocationsForUser (owner_email scoped). This is DATA ACCESS ONLY —
-  // it determines which records the app may READ, not who owns them in-world.
-  // Same hook as Travel and Places pages — same records, same images.
+  // useStableLocationReferences fetches locations the user can READ (owner_email scoped
+  // + shared locations). Same hook as Travel and Places pages — same records, same images.
   const { locationsData: allLocations = [], isLoading: isLocationsLoading } = useStableLocationReferences(user?.email);
 
   // ═══ FICTIONAL OWNERSHIP — IN-WORLD ═══
-  // Business & Locations = locations where the USER is the fictional/in-world owner.
-  // The user is NOT a character — locations with owner_character_id set are owned
-  // by CHARACTERS (Jayden, Ethan, Andre, etc.) and must NOT appear as user-owned.
+  // Business & Locations = locations where the USER (profile subject) is the
+  // fictional/in-world owner. NOT which account owns the database record.
   //
-  // Fictional ownership fields (LocationReference schema):
-  //   owner_character_id   → which CHARACTER owns it in-world (null = not character-owned)
-  //   owner_character_name → display name of character owner
-  //   owner_role           → owner's role ("owner", "landlord", "operator", etc.)
-  //   owner_is_npc         → whether the owner is an NPC
+  // A location belongs to a CHARACTER (not the user) if ANY of these are set:
+  //   owner_character_id   → character explicitly owns it (businesses, etc.)
+  //   character_id         → character is associated as resident/owner (homes)
+  //   assigned_character_id → character is assigned to this location
   //
-  // Account scope field (DATA ACCESS ONLY — never used for fictional ownership):
-  //   owner_email → which user account owns the database record
-  //
-  // Filter: include only locations with NO character owner + explicit owner_role +
-  // not system-managed. This excludes Jayden's Place, Estrellas boutique, etc.
+  // A location belongs to the USER only when:
+  //   - No character fields are set (no character owns or occupies it)
+  //   - owner_role is set (someone is marked as owner — since no character, it's the user)
+  //   - It's on this user's account (owner_email matches — DATA SCOPE, not fictional ownership)
+  //   - Not system-managed
   const ownedLocations = allLocations.filter(loc => {
-    if (loc.owner_character_id) return false;    // Character owns it — not user's
-    if (!loc.owner_role) return false;            // No owner set — public/unowned
-    if (loc.is_system_managed) return false;      // System-managed (VGC Recovery Yard, etc.)
-    if (loc.system_location_role) return false;    // Temporary hotel/shelter
+    // DATA SCOPE: only locations on this user's account (not shared from other accounts)
+    if (loc.owner_email !== user?.email) return false;
+
+    // FICTIONAL OWNERSHIP: exclude any location tied to a character
+    if (loc.owner_character_id) return false;       // Character explicitly owns it
+    if (loc.character_id) return false;              // Character is associated (home/residence)
+    if (loc.assigned_character_id) return false;     // Character is assigned to it
+
+    // Must have explicit owner_role (user is marked as owner in-world)
+    if (!loc.owner_role) return false;
+
+    // System-managed exclusions
+    if (loc.is_system_managed) return false;
+    if (loc.system_location_role) return false;
+
     return true;
   });
 
   // ═══ WHERE YOU LIVE — IN-WORLD RESIDENCE ═══
-  // Uses the user's saved home location from settings — NOT account ownership.
-  // The user is not a character, so resident_character_ids does not apply.
+  // Resolved from the user's saved current location in settings.
   const homeLocation = allLocations.find(loc => loc.id === settings.user_current_location_id) || null;
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
