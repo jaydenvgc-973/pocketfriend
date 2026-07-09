@@ -69,13 +69,32 @@ export default function VickDiagnosticProof() {
       };
 
       // ── STEP 3: Find or verify Vick's conversation ──────────────────────
+      // Vick is a world-service NPC — his conversation may be typed "direct"
+      // or "npc" depending on how it was created. Query without the type
+      // filter so we find it regardless, then match by character_ids.
       setPhase("finding_conversation");
       const allConvos = await base44.entities.Conversation.filter(
-        { type: "direct", owner_email: ownerEmail }, "-updated_date", 100
-      );
+        { owner_email: ownerEmail }, "-updated_date", 200
+      ).catch(() => []);
       const vickConvo = allConvos.find(c =>
-        Array.isArray(c.character_ids) && c.character_ids.includes(foundVick.id)
+        Array.isArray(c.character_ids) &&
+        c.character_ids.includes(foundVick.id) &&
+        (c.type === "direct" || c.type === "npc" || c.type === "phone")
       );
+
+      // Fallback: if owner_email filter returned nothing (legacy conversation
+      // may be missing owner_email), try without the filter and match by
+      // character_ids only.
+      if (!vickConvo) {
+        const allConvosNoFilter = await base44.entities.Conversation.list(
+          "-updated_date", 200
+        ).catch(() => []);
+        vickConvo = allConvosNoFilter.find(c =>
+          Array.isArray(c.character_ids) &&
+          c.character_ids.includes(foundVick.id) &&
+          (c.type === "direct" || c.type === "npc" || c.type === "phone")
+        );
+      }
 
       if (!vickConvo) throw new Error("No Vick conversation found");
       const conversationId = vickConvo.id;
