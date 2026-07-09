@@ -28,6 +28,7 @@ import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { useHomeConversations } from "@/hooks/useHomeConversations";
 import { useHomeUnreadCounts } from "@/hooks/useHomeUnreadCounts";
+import { useHomeInvitations } from "@/hooks/useHomeInvitations";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -234,6 +235,11 @@ export default function Home() {
   // CharacterCard receives its pre-computed badge counts as props — zero independent queries.
   const { allConversations: homeConversations, getConversationsForCharacter } = useHomeConversations(currentUser?.email);
   const { getUnreadForCharacter } = useHomeUnreadCounts(currentUser?.email, homeConversations);
+
+  // Restore character-initiated invitations on the homepage.
+  // Characters invite the user without being prompted first.
+  const settingsLoaded = !isSettingsLoading && !isSettingsError && userSettings?.id;
+  useHomeInvitations({ settingsLoaded, userSettings, setInvitations });
 
   // Auto-sanitize stale default_character_id:
   // If UserSettings.default_character_id points to a character not in the loaded list,
