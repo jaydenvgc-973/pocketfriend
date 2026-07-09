@@ -5,6 +5,7 @@
  */
 
 import { base44 } from "@/api/base44Client";
+import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 
 /**
  * Build user reference images with strict identity preservation
@@ -105,8 +106,8 @@ export async function generateImageWithUserIdentity(
   const userName = currentUser.fictional_world_name || currentUser.full_name || 'User';
   const outfitLock = buildUserOutfitLockBlock(userOutfit, userName);
   
-  // Enhance prompt with identity constraints + outfit lock
-  const enhancedPrompt = `${prompt}${identityLockNote}${outfitLock}`;
+  // Enhance prompt with identity constraints + outfit lock + diversity directive
+  const enhancedPrompt = `${prompt}${identityLockNote}${outfitLock}${getBackgroundPopulationDiversityDirective()}`;
   
   try {
     const response = await base44.integrations.Core.GenerateImage({

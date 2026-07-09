@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Wand2, Loader, AlertCircle } from "lucide-react";
+import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 
 export default function ZoneImageGenerator({
   zoneName,
@@ -60,7 +61,7 @@ Do NOT create fantasy, abstract, or stylized art. Make it look like a real space
         console.log(`[ZONE-IMG-GEN] reference_urls=[${existingZoneImageUrls.join(", ")}]`);
       }
 
-      const generateParams = { prompt };
+      const generateParams = { prompt: `${prompt}${getBackgroundPopulationDiversityDirective()}` };
       if (existingZoneImageUrls && existingZoneImageUrls.length > 0) {
         generateParams.existing_image_urls = existingZoneImageUrls;
         console.log(`[ZONE-IMG-GEN] passing_existing_images_as_references`);

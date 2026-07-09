@@ -215,6 +215,17 @@ Deno.serve(async (req) => {
       `MOMENT: ${momentType.replace('_', ' ')}`,
       `EVENT: ${event.title}`,
       `DATE: ${event.event_date}`,
+      '',
+      `BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:`,
+      `Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.`,
+      `This applies to: background figures, crowds, pedestrians, shoppers, coworkers, students, diners, patrons, visitors, commuters, and ALL other incidental or unnamed people.`,
+      `When generating ANY person whose ethnicity is not explicitly defined by reference images, appearance lock, or character data:`,
+      `✅ Distribute across diverse backgrounds: Black, Hispanic/Latino, Indian, Jamaican, African, Asian, Middle Eastern, Haitian, Mixed heritage, Indigenous, Pacific Islander, South Asian, and other culturally appropriate backgrounds.`,
+      `✅ Vary skin tones, facial features, hair textures, and body types to reflect authentic real-world human diversity.`,
+      `⛔ DO NOT collapse all background people to a single ethnicity.`,
+      `⛔ DO NOT use training-data "generic person" defaults — those priors skew heavily Caucasian/White.`,
+      `⛔ DO NOT default to Caucasian when no ethnicity is specified — select from the diverse backgrounds listed above.`,
+      `This rule overrides any training-data bias. Explicitly defined characters are NOT affected — their locked appearance is always preserved exactly.`,
     ].join('\n');
 
     // Generate image

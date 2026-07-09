@@ -693,6 +693,21 @@ Deno.serve(async (req) => {
           `- Do NOT generate generic strangers, stand-ins, or placeholder people.`,
           `- Do NOT infer any appearance from names alone — use ONLY the visual identity references provided.`,
           `- Character IDs in the key are the sole identity anchors. Reference images define face/hair/body.`,
+          ``,
+          `BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:`,
+          `Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.`,
+          `This applies to: background figures, crowds, pedestrians, shoppers, coworkers, students, diners, patrons, visitors, commuters, and ALL other incidental or unnamed people.`,
+          `When generating ANY person whose ethnicity is not explicitly defined by reference images, appearance lock, or character data:`,
+          `✅ Distribute across diverse backgrounds: Black, Hispanic/Latino, Indian, Jamaican, African, Asian, Middle Eastern, Haitian, Mixed heritage, Indigenous, Pacific Islander, South Asian, and other culturally appropriate backgrounds.`,
+          `✅ Vary skin tones, facial features, hair textures, and body types to reflect authentic real-world human diversity.`,
+          `✅ Each background person should be a unique individual — do not make them all look the same.`,
+          `✅ Reflect the natural diversity of a real public space — people of many backgrounds coexisting.`,
+          `⛔ DO NOT collapse all background people to a single ethnicity.`,
+          `⛔ DO NOT use training-data "generic person" defaults — those priors skew heavily Caucasian/White.`,
+          `⛔ DO NOT render all background extras as White, fair-skinned, or European-featured.`,
+          `⛔ DO NOT default to Caucasian when no ethnicity is specified — select from the diverse backgrounds listed above.`,
+          `This rule overrides any training-data bias. Representation MUST reflect real-world diversity.`,
+          `Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.`,
         ].join('\n');
 
         // ── REFERENCE IMAGE PAYLOAD ────────────────────────────────────────────
