@@ -11,18 +11,25 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *   - Location has less than 30 minutes before closing
  */
 
-function isInviteStale(invite, now) {
+// ── EASTERN TIME ──────────────────────────────────────────────────────────
+// UTC is forbidden for app logic. All schedule comparisons are evaluated in
+// America/New_York. Location closing hours are stored in Eastern Time.
+function getEasternTime() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+
+function isInviteStale(invite, easternNow) {
   // Expire invites older than 45 minutes
   if (invite.inviteIssuedAt) {
     const issuedAt = new Date(invite.inviteIssuedAt);
-    const ageMinutes = (now - issuedAt) / 1000 / 60;
+    const ageMinutes = (easternNow - issuedAt) / 1000 / 60;
     if (ageMinutes > 45) return true;
   }
 
   // Check if the location's closing time has passed or is too soon
   if (invite.locationClosesAt) {
     const [closeHour, closeMin] = invite.locationClosesAt.split(':').map(Number);
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const currentMinutes = easternNow.getHours() * 60 + easternNow.getMinutes();
     const closeMinutes = closeHour * 60 + closeMin;
     // Stale if location has less than 30 min left or is already closed
     if (currentMinutes >= closeMinutes - 30) return true;
@@ -47,11 +54,12 @@ Deno.serve(async (req) => {
     const userSettings = await base44.entities.UserSettings.filter({ owner_email: user.email });
     const settings = userSettings[0] || {};
 
-    const now = new Date();
+    const now = new Date(); // UTC for storage timestamps
+    const easternNow = getEasternTime(); // Eastern for schedule comparisons
 
     // ── CLEAN UP ANY STALE PENDING INVITES FIRST ─────────────────────────────
     const pendingInvites = settings.pending_character_invites || [];
-    const freshPendingInvites = pendingInvites.filter(inv => !isInviteStale(inv, now));
+    const freshPendingInvites = pendingInvites.filter(inv => !isInviteStale(inv, easternNow));
 
     // If some invites became stale, clear them from settings
     if (freshPendingInvites.length < pendingInvites.length && settings.id) {
@@ -86,7 +94,7 @@ Deno.serve(async (req) => {
       let newInvitations = invitationResponse.data?.invitations || [];
 
       // Filter out any stale invitations before delivering
-      newInvitations = newInvitations.filter(inv => !isInviteStale(inv, now));
+      newInvitations = newInvitations.filter(inv => !isInviteStale(inv, easternNow));
 
       // Cap at 2 per trigger
       newInvitations = newInvitations.slice(0, 2);
@@ -97,16 +105,26 @@ Deno.serve(async (req) => {
           ...newInvitations.map(inv => ({ character_id: inv.characterId, timestamp: now.toISOString() })),
         ];
 
+        // MERGE: combine existing fresh invites with new ones so the user sees
+        // all pending invitations, not just the latest batch.
+        // Deduplicate by characterId — a character can only have one active invite.
+        const mergedInvites = [...freshPendingInvites];
+        for (const newInv of newInvitations) {
+          const dupIdx = mergedInvites.findIndex(e => e.characterId === newInv.characterId);
+          if (dupIdx >= 0) mergedInvites[dupIdx] = newInv;
+          else mergedInvites.push(newInv);
+        }
+
         if (settings.id) {
           await base44.entities.UserSettings.update(settings.id, {
-            pending_character_invites: newInvitations,
+            pending_character_invites: mergedInvites,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [...inviteHistory, now.toISOString()],
             recently_invited_character_ids: updatedInvitedList,
           });
         } else {
           await base44.entities.UserSettings.create({
-            pending_character_invites: newInvitations,
+            pending_character_invites: mergedInvites,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [now.toISOString()],
             recently_invited_character_ids: updatedInvitedList,
@@ -115,7 +133,7 @@ Deno.serve(async (req) => {
 
         return Response.json({
           shouldShow: true,
-          invitations: newInvitations,
+          invitations: mergedInvites,
           triggeredAt: now.toISOString(),
         });
       }

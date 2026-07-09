@@ -121,6 +121,13 @@ async function evaluateAndSendProactiveMessage(sr, characterId) {
   const charList = await sr.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
   const char = charList?.[0];
   if (!char || !char.owner_email) return { success: false, reason: 'character_not_found' };
+  // Exclude deleted/moved_away/merged and NPC/service characters from proactive messaging.
+  if (['deleted', 'moved_away', 'soft_deleted', 'merged'].includes(char.status)) {
+    return { success: false, reason: 'character_inactive' };
+  }
+  if (['npc_fictitious', 'npc_family_member', 'npc_world_service', 'npc_regular'].includes(char.character_type) || char.is_test_character || char.diagnostic_only) {
+    return { success: false, reason: 'character_not_eligible_type' };
+  }
 
   const now = new Date();
   const today = now.toISOString().split('T')[0];
@@ -154,7 +161,11 @@ async function evaluateAndSendProactiveMessage(sr, characterId) {
   const highUrgency = pressure >= 80 || !!pendingCommitment;
   if (!highUrgency && !timingAllows(char, friendship)) return { success: false, reason: 'not_the_right_time', pressure };
 
-  if (pressure < 40 && !pendingCommitment && Math.random() > (pressure - 25) / 75) {
+  // Random pressure gate — relaxed so ordinary active characters actually message.
+  // Previously: pressure=30 → 80% skip, pressure=35 → 81% skip. Far too aggressive.
+  // Now: pressure=30 → 40% skip, pressure=35 → 20% skip, pressure=39 → 4% skip.
+  // Characters with moderate relationship pressure now have a fair chance per cycle.
+  if (pressure < 40 && !pendingCommitment && Math.random() > (pressure - 20) / 60) {
     return { success: false, reason: 'random_pressure_gate', pressure };
   }
 
@@ -297,16 +308,33 @@ Deno.serve(async (req) => {
 
     // We need to know which owner accounts exist. Fetch distinct owner_emails
     // from a small sample of active characters. This is a tiny read.
+    // Fetch a broad sample — legacy characters may not have status:'active' set,
+    // so we fetch without that filter and apply eligibility logic in-code.
     const sampleChars = await sr.entities.Character.filter(
-      { status: 'active' },
+      {},
       'owner_email',
-      50
+      100
     );
 
-    // Collect unique owner emails from the sample
+    // Collect unique owner emails from the sample.
+    // LEGACY COMPATIBILITY: include characters with no status field (treated as active).
+    // Exclude deleted/moved_away/merged, NPCs, service characters, test characters.
     const ownerEmails = [...new Set(
       sampleChars
-        .filter(c => c.owner_email && ELIGIBLE_CHARACTER_TYPES.includes(c.character_type || 'active_created_character'))
+        .filter(c =>
+          c.owner_email &&
+          ELIGIBLE_CHARACTER_TYPES.includes(c.character_type || 'active_created_character') &&
+          c.status !== 'deleted' &&
+          c.status !== 'moved_away' &&
+          c.status !== 'soft_deleted' &&
+          c.status !== 'merged' &&
+          c.character_type !== 'npc_fictitious' &&
+          c.character_type !== 'npc_family_member' &&
+          c.character_type !== 'npc_world_service' &&
+          c.character_type !== 'npc_regular' &&
+          !c.is_test_character &&
+          !c.diagnostic_only
+        )
         .map(c => c.owner_email)
     )];
 
@@ -321,17 +349,28 @@ Deno.serve(async (req) => {
     // ── 2. PER-OWNER BATCH PROCESSING ────────────────────────────────────
     for (const ownerEmail of ownerEmails) {
       try {
-        // Fetch all eligible active_created_character IDs for this owner.
+        // Fetch all eligible character IDs for this owner.
+        // LEGACY COMPATIBILITY: no status filter — legacy chars without status:'active'
+        // are included. Deleted/moved_away/merged and NPCs are filtered in-code.
         // Sorted by id (stable sort) so the cursor offset is deterministic.
-        // Fetch only id + name to minimize payload.
-        const eligibleChars = await sr.entities.Character.filter(
-          {
-            status: 'active',
-            owner_email: ownerEmail,
-            character_type: { $in: ELIGIBLE_CHARACTER_TYPES },
-          },
+        const ownerChars = await sr.entities.Character.filter(
+          { owner_email: ownerEmail },
           'id',
           200
+        );
+
+        const eligibleChars = ownerChars.filter(c =>
+          ELIGIBLE_CHARACTER_TYPES.includes(c.character_type || 'active_created_character') &&
+          c.status !== 'deleted' &&
+          c.status !== 'moved_away' &&
+          c.status !== 'soft_deleted' &&
+          c.status !== 'merged' &&
+          c.character_type !== 'npc_fictitious' &&
+          c.character_type !== 'npc_family_member' &&
+          c.character_type !== 'npc_world_service' &&
+          c.character_type !== 'npc_regular' &&
+          !c.is_test_character &&
+          !c.diagnostic_only
         );
 
         if (eligibleChars.length === 0) continue;

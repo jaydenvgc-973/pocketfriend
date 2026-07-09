@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 
 /**
@@ -20,6 +21,7 @@ import { base44 } from "@/api/base44Client";
  */
 export function useHomeInvitations({ settingsLoaded, userSettings, setInvitations }) {
   const triggerFiredRef = useRef(false);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!settingsLoaded || !userSettings?.id || triggerFiredRef.current) return;
@@ -43,6 +45,9 @@ export function useHomeInvitations({ settingsLoaded, userSettings, setInvitation
         const data = res?.data;
         if (data?.shouldShow && Array.isArray(data.invitations) && data.invitations.length > 0) {
           setInvitations(data.invitations);
+          // Invalidate settings cache so the next Home mount reads the updated
+          // pending_character_invites from the server, not stale cache.
+          queryClient.invalidateQueries({ queryKey: ["userSettings"] });
         }
       } catch (err) {
         // Silently fail — invitations are non-critical enrichment

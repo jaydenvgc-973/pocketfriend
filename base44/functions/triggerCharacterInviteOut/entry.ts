@@ -19,13 +19,29 @@ Deno.serve(async (req) => {
     const payload = await req.json().catch(() => ({}));
     const excludeCharacterIds = payload.excludeCharacterIds || [];
 
-    // owner_email is the sole ownership source of truth — created_by is permanently forbidden
+    // owner_email is the sole ownership source of truth — created_by is permanently forbidden.
+    // LEGACY COMPATIBILITY: status filter includes null/missing — legacy characters without
+    // a status field are still valid and must remain eligible for invitations.
     const allCharacters = await base44.entities.Character.filter({
       owner_email: user.email,
-      status: 'active',
     });
 
-    const characters = allCharacters.filter(c => !excludeCharacterIds.includes(c.id));
+    // Exclude deleted/moved_away characters, but INCLUDE legacy chars with no status field.
+    // Also exclude NPCs, service characters, test characters, and diagnostic-only records.
+    const characters = allCharacters.filter(c =>
+      !excludeCharacterIds.includes(c.id) &&
+      c.status !== 'deleted' &&
+      c.status !== 'moved_away' &&
+      c.status !== 'soft_deleted' &&
+      c.status !== 'merged' &&
+      c.character_type !== 'npc_fictitious' &&
+      c.character_type !== 'npc_family_member' &&
+      c.character_type !== 'npc_world_service' &&
+      c.character_type !== 'npc_regular' &&
+      !c.is_test_character &&
+      !c.diagnostic_only &&
+      !c.exclude_from_roster
+    );
     if (characters.length === 0) return Response.json({ invitations: [] });
 
     // Fetch only user-accessible locations
@@ -46,7 +62,10 @@ Deno.serve(async (req) => {
 
     const eligibleLocMap = Object.fromEntries(eligibleLocations.map(l => [l.id, l]));
 
-    const now = new Date();
+    // ── EASTERN TIME ──────────────────────────────────────────────────────
+    // UTC is forbidden for app logic. All schedule comparisons (location hours,
+    // sleep checks, time-of-day venue selection) are evaluated in America/New_York.
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const currentHour = now.getHours();
     const currentDayMinutes = now.getHours() * 60 + now.getMinutes();
 
