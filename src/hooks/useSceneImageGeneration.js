@@ -5,6 +5,7 @@ import { prioritizeAvatarReferences } from '@/lib/characterIdentityLock';
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from '@/lib/residentialSceneFiltering';
 import { buildIdentityLockBlock } from '@/lib/characterIdentityLock';
 import { resolveCurrentOutfit, buildOutfitPromptText } from '@/lib/outfitRotationEngine';
+import { getBackgroundPopulationDiversityDirective } from '@/lib/imageDiversityConstraints';
 
 /**
  * Normalize outfit field values — mirrors the exact logic in generateImageAsync/regenerateImageWithReason.
@@ -190,7 +191,8 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
             [...visiblePeople, ...(taggedUser ? [taggedUser] : [])],
             locationCategory
           );
-          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitBlock}. Photorealistic.`;
+          const diversityDirective = getBackgroundPopulationDiversityDirective();
+          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitBlock}.${diversityDirective} Photorealistic.`;
         } else {
           const physicallyPresent = resolvedWhosHereList.slice(0, 3);
           const peopleDesc = physicallyPresent.length > 0

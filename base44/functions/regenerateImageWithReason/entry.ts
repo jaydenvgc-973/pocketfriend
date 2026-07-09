@@ -692,6 +692,22 @@ UNKNOWN IDENTITY ≠ CAUCASIAN / WHITE.
 ✅ Use ONLY: reference images, skin_tone, ethnicities field, appearance lock, avatar description.
 ✅ If ethnicities are specified, render EXACTLY those — no whitewashing, no lightening, no softening.
 This applies to all subjects. No exceptions.
+
+BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:
+Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.
+This applies to: background figures, crowds, pedestrians, shoppers, coworkers, students, diners, patrons, visitors, commuters, and ALL other incidental or unnamed people.
+When generating ANY person whose ethnicity is not explicitly defined by reference images, appearance lock, or character data:
+✅ Distribute across diverse backgrounds: Black, Hispanic/Latino, Indian, Jamaican, African, Asian, Middle Eastern, Haitian, Mixed heritage, Indigenous, Pacific Islander, South Asian, and other culturally appropriate backgrounds.
+✅ Vary skin tones, facial features, hair textures, and body types to reflect authentic real-world human diversity.
+✅ Each background person should be a unique individual — do not make them all look the same.
+✅ Reflect the natural diversity of a real public space — people of many backgrounds coexisting.
+⛔ DO NOT collapse all background people to a single ethnicity.
+⛔ DO NOT use training-data "generic person" defaults — those priors skew heavily Caucasian/White.
+⛔ DO NOT render all background extras as White, fair-skinned, or European-featured.
+⛔ DO NOT make every crowd member the same race.
+⛔ DO NOT default to Caucasian when no ethnicity is specified — select from the diverse backgrounds listed above.
+This rule overrides any training-data bias. Representation MUST reflect real-world diversity.
+Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
   return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}`;

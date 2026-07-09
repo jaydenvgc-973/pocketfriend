@@ -613,6 +613,22 @@ DO: move camera | change angle | apply time-of-day lighting | reframe from new c
 
 INTENSITY BALANCING:
 When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
+
+BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:
+Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.
+This applies to: background figures, crowds, pedestrians, shoppers, coworkers, students, diners, patrons, visitors, commuters, and ALL other incidental or unnamed people.
+When generating ANY person whose ethnicity is not explicitly defined by reference images, appearance lock, or character data:
+✅ Distribute across diverse backgrounds: Black, Hispanic/Latino, Indian, Jamaican, African, Asian, Middle Eastern, Haitian, Mixed heritage, Indigenous, Pacific Islander, South Asian, and other culturally appropriate backgrounds.
+✅ Vary skin tones, facial features, hair textures, and body types to reflect authentic real-world human diversity.
+✅ Each background person should be a unique individual — do not make them all look the same.
+✅ Reflect the natural diversity of a real public space — people of many backgrounds coexisting.
+⛔ DO NOT collapse all background people to a single ethnicity.
+⛔ DO NOT use training-data "generic person" defaults — those priors skew heavily Caucasian/White.
+⛔ DO NOT render all background extras as White, fair-skinned, or European-featured.
+⛔ DO NOT make every crowd member the same race.
+⛔ DO NOT default to Caucasian when no ethnicity is specified — select from the diverse backgrounds listed above.
+This rule overrides any training-data bias. Representation MUST reflect real-world diversity.
+Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 `;
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
@@ -804,6 +820,19 @@ IMPORTANT: This image does NOT require a specific named character to appear.
 Generate exactly what the prompt describes — object, document, location, crowd, scenery, or atmosphere.
 Do NOT insert a random person or generic individual as a visual filler.
 If the prompt mentions a crowd or background people, render them as generic, indistinct background figures only.
+
+BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:
+Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.
+This applies to: background figures, crowds, pedestrians, shoppers, coworkers, students, diners, patrons, visitors, commuters, and ALL other incidental or unnamed people.
+When generating ANY person whose ethnicity is not explicitly defined by reference images, appearance lock, or character data:
+✅ Distribute across diverse backgrounds: Black, Hispanic/Latino, Indian, Jamaican, African, Asian, Middle Eastern, Haitian, Mixed heritage, Indigenous, Pacific Islander, South Asian, and other culturally appropriate backgrounds.
+✅ Vary skin tones, facial features, hair textures, and body types to reflect authentic real-world human diversity.
+✅ Each background person should be a unique individual — do not make them all look the same.
+⛔ DO NOT collapse all background people to a single ethnicity.
+⛔ DO NOT use training-data "generic person" defaults — those priors skew heavily Caucasian/White.
+⛔ DO NOT render all background extras as White, fair-skinned, or European-featured.
+⛔ DO NOT default to Caucasian when no ethnicity is specified — select from the diverse backgrounds listed above.
+This rule overrides any training-data bias. Representation MUST reflect real-world diversity.
 `;
 
       try {

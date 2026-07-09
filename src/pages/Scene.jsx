@@ -49,6 +49,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
+import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -1003,7 +1004,8 @@ export default function Scene() {
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const charIdentityLocks = buildIdentityLockBlock(sceneCharacters.slice(0, 3), currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(sceneCharacters.slice(0, 3));
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+        const _diversityDirective = getBackgroundPopulationDiversityDirective();
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix}${_diversityDirective} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
