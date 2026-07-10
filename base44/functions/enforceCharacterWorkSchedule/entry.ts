@@ -27,6 +27,92 @@ function isLocationShiftActiveNow(shift, nowET) {
 }
 
 /**
+ * Evaluate the COMPLETE SET of a character's employment assignments.
+ * Every assignment is independently evaluated against the current day and time.
+ * Returns ALL active assignments — never breaks on the first match.
+ * Multiple active assignments = genuine shift overlap (a conflict the caller
+ * resolves only between those active assignments, never by discarding others).
+ */
+function resolveWorkAssignments(character, locMap, clock, characterId) {
+  // Build the complete set of employment assignments in priority order:
+  // additional_occupation_locations → current_work_location_id → occupation_location_id
+  const workEntries = [];
+  if (Array.isArray(character.additional_occupation_locations)) {
+    for (const entry of character.additional_occupation_locations) {
+      if (entry.location_id && !workEntries.find(e => e.locId === entry.location_id)) {
+        workEntries.push({ locId: entry.location_id, hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
+      }
+    }
+  }
+  if (character.current_work_location_id && !workEntries.find(e => e.locId === character.current_work_location_id)) {
+    workEntries.push({ locId: character.current_work_location_id, hasCharShiftData: false, charShift: null });
+  }
+  if (character.occupation_location_id && !workEntries.find(e => e.locId === character.occupation_location_id)) {
+    workEntries.push({ locId: character.occupation_location_id, hasCharShiftData: false, charShift: null });
+  }
+
+  const allWorkLocIds = new Set(workEntries.map(e => e.locId));
+
+  // Evaluate EVERY assignment independently — collect ALL active, never break
+  const activeAssignments = [];
+  for (const entry of workEntries) {
+    const loc = locMap[entry.locId];
+    if (!loc) continue;
+
+    // If an explicit shift is defined for this assignment, it is the authority.
+    // An inactive explicit shift does NOT fall back to the character schedule.
+    const locationShift = loc.worker_shifts?.[characterId];
+    if (locationShift) {
+      if (isLocationShiftActiveNow(locationShift, clock)) {
+        activeAssignments.push({ locId: entry.locId });
+      }
+      continue;
+    }
+    if (entry.hasCharShiftData) {
+      const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+      if (isLocationShiftActiveNow(charShift, clock)) {
+        activeAssignments.push({ locId: entry.locId });
+      }
+      continue;
+    }
+
+    // No explicit shift on this assignment — use character schedule fallback
+    if (character.work_start_time && character.work_end_time && character.work_days) {
+      const nowMin = clock.getHours() * 60 + clock.getMinutes();
+      const [sh, sm] = character.work_start_time.split(':').map(Number);
+      const [eh, em] = character.work_end_time.split(':').map(Number);
+      const startMin = sh * 60 + sm;
+      const endMin = eh * 60 + em;
+      const isCross = endMin < startMin;
+      const today = clock.getDay();
+      const yesterday = (today + 6) % 7;
+      const onSchedule = isCross
+        ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
+        : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
+      if (onSchedule) {
+        activeAssignments.push({ locId: entry.locId });
+      }
+    }
+  }
+
+  return { allWorkLocIds, activeAssignments };
+}
+
+/**
+ * Select the active work location from active assignments.
+ * If multiple shifts genuinely overlap, resolve the conflict ONLY between
+ * those active assignments: prefer the location the character is already at,
+ * otherwise the first by priority order. Never discards remaining assignments.
+ */
+function selectActiveWorkLocId(activeAssignments, resolvedLocId) {
+  if (activeAssignments.length === 0) return null;
+  if (activeAssignments.length === 1) return activeAssignments[0].locId;
+  // Genuine overlap — conflict resolution between active assignments only
+  const alreadyAt = activeAssignments.find(a => a.locId === resolvedLocId);
+  return (alreadyAt || activeAssignments[0]).locId;
+}
+
+/**
  * OWNERSHIP-ISOLATED SCHEDULER
  * 
  * AUTHORITY: owner_email ONLY
@@ -113,70 +199,29 @@ Deno.serve(async (req) => {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
 
-      // TWO-PASS RESOLUTION — additional_occupation_locations first, occupation last
-      const singleWorkEntries = [];
+      // Extract all configured work-location IDs to load their LocationReference records
+      const singleWorkLocIds = [];
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
-          if (entry.location_id && !singleWorkEntries.find(e => e.locId === entry.location_id)) {
-            singleWorkEntries.push({ locId: entry.location_id, source: 'additional', hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
-          }
+          if (entry.location_id && !singleWorkLocIds.includes(entry.location_id)) singleWorkLocIds.push(entry.location_id);
         }
       }
-      if (character.current_work_location_id && !singleWorkEntries.find(e => e.locId === character.current_work_location_id)) {
-        singleWorkEntries.push({ locId: character.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
-      }
-      if (character.occupation_location_id && !singleWorkEntries.find(e => e.locId === character.occupation_location_id)) {
-        singleWorkEntries.push({ locId: character.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
-      }
+      if (character.current_work_location_id && !singleWorkLocIds.includes(character.current_work_location_id)) singleWorkLocIds.push(character.current_work_location_id);
+      if (character.occupation_location_id && !singleWorkLocIds.includes(character.occupation_location_id)) singleWorkLocIds.push(character.occupation_location_id);
 
       const singleLocMap = {};
-      for (const entry of singleWorkEntries) {
-        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: entry.locId });
-        if (locs?.[0]) singleLocMap[entry.locId] = locs[0];
+      for (const locId of singleWorkLocIds) {
+        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: locId });
+        if (locs?.[0]) singleLocMap[locId] = locs[0];
       }
 
-      // PASS 1: Check ALL locations for active explicit shifts
-      let singleActiveWorkLocId = null;
-      for (const entry of singleWorkEntries) {
-        const loc = singleLocMap[entry.locId];
-        if (!loc) continue;
-        const locationShift = loc.worker_shifts?.[characterId];
-        if (locationShift) {
-          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = entry.locId; break; }
-          continue;
-        }
-        if (entry.hasCharShiftData) {
-          const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
-          if (isLocationShiftActiveNow(charShift, singleClock)) { singleActiveWorkLocId = entry.locId; break; }
-          continue;
-        }
-      }
+      // Evaluate EVERY assignment independently — collect ALL active assignments
+      const { allWorkLocIds: singleAllWorkLocIds, activeAssignments: singleActiveAssignments } =
+        resolveWorkAssignments(character, singleLocMap, singleClock, characterId);
 
-      // PASS 2: Character schedule fallback in priority order
-      if (!singleActiveWorkLocId) {
-        for (const entry of singleWorkEntries) {
-          const loc = singleLocMap[entry.locId];
-          if (!loc) continue;
-          if (loc.worker_shifts?.[characterId]) continue;
-          if (entry.hasCharShiftData) continue;
-          if (character.work_start_time && character.work_end_time && character.work_days) {
-            const nowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
-            const [sh, sm] = character.work_start_time.split(':').map(Number);
-            const [eh, em] = character.work_end_time.split(':').map(Number);
-            const startMin = sh * 60 + sm;
-            const endMin = eh * 60 + em;
-            const isCross = endMin < startMin;
-            const today = singleClock.getDay();
-            const yesterday = (today + 6) % 7;
-            const active = isCross
-              ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
-              : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-            if (active) { singleActiveWorkLocId = entry.locId; break; }
-          }
-        }
-      }
-
-      const primaryWorkLocId = singleWorkEntries.map(e => e.locId).find(id => singleLocMap[id]) || null;
+      // Select the active shift. If multiple shifts overlap, resolve the conflict
+      // ONLY between those active assignments.
+      const singleActiveWorkLocId = selectActiveWorkLocId(singleActiveAssignments, resolvedLocId);
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -291,9 +336,8 @@ Deno.serve(async (req) => {
         return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: singleActiveWorkLocId, reason: 'On shift — moved to work' });
       }
 
-      // Not on any active shift — if still showing at a work location, send home
-      const effectiveWorkLocId = primaryWorkLocId;
-      if (effectiveWorkLocId && resolvedLocId === effectiveWorkLocId) {
+      // Not on any active shift — if still at ANY configured work location, send home
+      if (singleAllWorkLocIds.has(resolvedLocId)) {
         if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
@@ -452,71 +496,15 @@ Deno.serve(async (req) => {
         if (['passed_out', 'sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
         if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
 
-        // TWO-PASS RESOLUTION — additional_occupation_locations first, occupation last
-        const workEntries = [];
-        if (Array.isArray(char.additional_occupation_locations)) {
-          for (const entry of char.additional_occupation_locations) {
-            if (entry.location_id && !workEntries.find(e => e.locId === entry.location_id)) {
-              workEntries.push({ locId: entry.location_id, source: 'additional', hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
-            }
-          }
-        }
-        if (char.current_work_location_id && !workEntries.find(e => e.locId === char.current_work_location_id)) {
-          workEntries.push({ locId: char.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
-        }
-        if (char.occupation_location_id && !workEntries.find(e => e.locId === char.occupation_location_id)) {
-          workEntries.push({ locId: char.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
-        }
+        // Evaluate EVERY assignment independently — collect ALL active assignments
+        const { allWorkLocIds, activeAssignments } =
+          resolveWorkAssignments(char, locMap, globalClock, char.id);
 
-        if (workEntries.length === 0) continue;
+        if (allWorkLocIds.size === 0) continue;
 
-        // PASS 1: Check ALL locations for active explicit shifts
-        let activeWorkLocId = null;
-        for (const entry of workEntries) {
-          const loc = locMap[entry.locId];
-          if (!loc) continue;
-          const locationShift = loc.worker_shifts?.[char.id];
-          if (locationShift) {
-            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = entry.locId; break; }
-            continue;
-          }
-          if (entry.hasCharShiftData) {
-            const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
-            if (isLocationShiftActiveNow(charShift, globalClock)) { activeWorkLocId = entry.locId; break; }
-            continue;
-          }
-        }
-
-        // PASS 2: Character schedule fallback in priority order
-        if (!activeWorkLocId) {
-          for (const entry of workEntries) {
-            const loc = locMap[entry.locId];
-            if (!loc) continue;
-            if (loc.worker_shifts?.[char.id]) continue;
-            if (entry.hasCharShiftData) continue;
-            if (char.work_start_time && char.work_end_time && char.work_days) {
-              const nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
-              const [sh, sm] = char.work_start_time.split(':').map(Number);
-              const [eh, em] = char.work_end_time.split(':').map(Number);
-              const startMin = sh * 60 + sm;
-              const endMin = eh * 60 + em;
-              const isCross = endMin < startMin;
-              const today = globalClock.getDay();
-              const yesterday = (today + 6) % 7;
-              const onCharSchedule = isCross
-                ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)
-                : char.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-              if (onCharSchedule) { activeWorkLocId = entry.locId; break; }
-            }
-          }
-        }
-
-        // Also determine what the "primary" work location is for post-shift return logic
-        // (the first location in allWorkLocIds that is in scope)
-        const primaryWorkLocId = workEntries.map(e => e.locId).find(id => locMap[id]) || null;
-
+        // Select the active shift. If multiple overlap, resolve only between them.
+        const activeWorkLocId = selectActiveWorkLocId(activeAssignments, resolvedLocId);
         const onShift = !!activeWorkLocId;
-        const workLocId = activeWorkLocId || primaryWorkLocId;
 
         if (onShift && activeWorkLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope
@@ -591,7 +579,7 @@ Deno.serve(async (req) => {
               issues_found.push(`${char.name}: UNVERIFIED_STATE_WRITE — work-location proof failed (${proofError.message}), reverted (revert_error=${revertError})`);
             }
           }
-        } else if (!onShift && workLocId && resolvedLocId === workLocId) {
+        } else if (!onShift && allWorkLocIds.has(resolvedLocId)) {
           // Character is at work but shift ended
           const homeLocId = char.current_home_location_id;
           if (!homeLocId) {
