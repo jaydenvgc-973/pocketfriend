@@ -1,115 +1,93 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Check if a location-specific shift for this character is active right now (ET)
-// Handles cross-midnight shifts correctly — e.g. 17:00→01:00 spanning two calendar days.
-function isLocationShiftActiveNow(shift, nowET) {
+// ── INLINE RESOLVER (identical logic to returnActiveCharactersHome / scheduledLocationEnforcement) ──
+
+function isShiftActiveNow(shift, nowET) {
   if (!shift?.start || !shift?.end) return false;
-  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  if (shift.days && shift.days.length > 0) {
+    if (!shift.days.includes(nowET.getDay())) return false;
+  }
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
   const [sh, sm] = shift.start.split(':').map(Number);
   const [eh, em] = shift.end.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
-  const isCrossMidnight = endMin < startMin;
-  const today = nowET.getDay();
-  const yesterday = (today + 6) % 7;
-  const hasDays = shift.days && shift.days.length > 0;
-
-  if (isCrossMidnight) {
-    // On shift if: today is a shift day AND time >= start (e.g. 17:00→23:59 window)
-    //           OR yesterday was a shift day AND time < end (e.g. 00:00→01:00 overnight window)
-    const afterStartToday = (!hasDays || shift.days.includes(today)) && nowMin >= startMin;
-    const beforeEndYesterday = (!hasDays || shift.days.includes(yesterday)) && nowMin < endMin;
-    return afterStartToday || beforeEndYesterday;
-  } else {
-    if (hasDays && !shift.days.includes(today)) return false;
-    return nowMin >= startMin && nowMin < endMin;
-  }
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
 }
 
-/**
- * Evaluate the COMPLETE SET of a character's employment assignments.
- * Every assignment is independently evaluated against the current day and time.
- * Returns ALL active assignments — never breaks on the first match.
- * Multiple active assignments = genuine shift overlap (a conflict the caller
- * resolves only between those active assignments, never by discarding others).
- */
-function resolveWorkAssignments(character, locMap, clock, characterId) {
-  // Build the complete set of employment assignments in priority order:
-  // additional_occupation_locations → current_work_location_id → occupation_location_id
-  const workEntries = [];
-  if (Array.isArray(character.additional_occupation_locations)) {
-    for (const entry of character.additional_occupation_locations) {
-      if (entry.location_id && !workEntries.find(e => e.locId === entry.location_id)) {
-        workEntries.push({ locId: entry.location_id, hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
+function isWorkScheduleActive(char, nowET) {
+  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
+  const dayOfWeek = nowET.getDay();
+  if (!char.work_days.includes(dayOfWeek)) return false;
+  const [sh, sm] = char.work_start_time.split(':').map(Number);
+  const [eh, em] = char.work_end_time.split(':').map(Number);
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
+}
+
+// TWO-PASS RESOLUTION — matches returnActiveCharactersHome exactly.
+// Returns a single active work location or null. Does NOT collect all active
+// assignments into a set. Each job's schedule is evaluated independently in
+// priority order; the first active match wins.
+function getCharacterWorkLocation(char, locMap, nowET) {
+  const workLocEntries = [];
+  if (char.additional_occupation_locations?.length > 0) {
+    for (const entry of char.additional_occupation_locations) {
+      if (entry.location_id && !workLocEntries.find(e => e.locId === entry.location_id)) {
+        workLocEntries.push({
+          locId: entry.location_id,
+          source: 'additional_occupation',
+          hasCharShiftData: !!(entry.shift_start && entry.shift_end),
+          charShift: entry,
+        });
       }
     }
   }
-  if (character.current_work_location_id && !workEntries.find(e => e.locId === character.current_work_location_id)) {
-    workEntries.push({ locId: character.current_work_location_id, hasCharShiftData: false, charShift: null });
+  if (char.current_work_location_id && !workLocEntries.find(e => e.locId === char.current_work_location_id)) {
+    workLocEntries.push({ locId: char.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
   }
-  if (character.occupation_location_id && !workEntries.find(e => e.locId === character.occupation_location_id)) {
-    workEntries.push({ locId: character.occupation_location_id, hasCharShiftData: false, charShift: null });
+  if (char.occupation_location_id && !workLocEntries.find(e => e.locId === char.occupation_location_id)) {
+    workLocEntries.push({ locId: char.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
   }
 
-  const allWorkLocIds = new Set(workEntries.map(e => e.locId));
-
-  // Evaluate EVERY assignment independently — collect ALL active, never break
-  const activeAssignments = [];
-  for (const entry of workEntries) {
+  // PASS 1: Check ALL locations for active explicit shifts
+  for (const entry of workLocEntries) {
     const loc = locMap[entry.locId];
     if (!loc) continue;
 
-    // If an explicit shift is defined for this assignment, it is the authority.
-    // An inactive explicit shift does NOT fall back to the character schedule.
-    const locationShift = loc.worker_shifts?.[characterId];
+    const locationShift = loc.worker_shifts?.[char.id];
     if (locationShift) {
-      if (isLocationShiftActiveNow(locationShift, clock)) {
-        activeAssignments.push({ locId: entry.locId });
-      }
-      continue;
-    }
-    if (entry.hasCharShiftData) {
-      const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
-      if (isLocationShiftActiveNow(charShift, clock)) {
-        activeAssignments.push({ locId: entry.locId });
+      if (isShiftActiveNow(locationShift, nowET)) {
+        return { id: loc.id, name: loc.name };
       }
       continue;
     }
 
-    // No explicit shift on this assignment — use character schedule fallback
-    if (character.work_start_time && character.work_end_time && character.work_days) {
-      const nowMin = clock.getHours() * 60 + clock.getMinutes();
-      const [sh, sm] = character.work_start_time.split(':').map(Number);
-      const [eh, em] = character.work_end_time.split(':').map(Number);
-      const startMin = sh * 60 + sm;
-      const endMin = eh * 60 + em;
-      const isCross = endMin < startMin;
-      const today = clock.getDay();
-      const yesterday = (today + 6) % 7;
-      const onSchedule = isCross
-        ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
-        : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-      if (onSchedule) {
-        activeAssignments.push({ locId: entry.locId });
+    if (entry.hasCharShiftData) {
+      const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+      if (isShiftActiveNow(charShift, nowET)) {
+        return { id: loc.id, name: loc.name || entry.charShift.location_name };
       }
+      continue;
     }
   }
 
-  return { allWorkLocIds, activeAssignments };
-}
+  // PASS 2: Character schedule fallback in priority order
+  for (const entry of workLocEntries) {
+    const loc = locMap[entry.locId];
+    if (!loc) continue;
+    if (loc.worker_shifts?.[char.id]) continue;
+    if (entry.hasCharShiftData) continue;
+    if (isWorkScheduleActive(char, nowET)) {
+      return { id: loc.id, name: loc.name };
+    }
+  }
 
-/**
- * Select the active work location from active assignments.
- * If multiple shifts genuinely overlap, resolve the conflict ONLY between
- * those active assignments: prefer the location the character is already at,
- * otherwise the first by priority order. Never discards remaining assignments.
- */
-function selectActiveWorkLocId(activeAssignments, resolvedLocId) {
-  if (activeAssignments.length === 0) return null;
-  if (activeAssignments.length === 1) return activeAssignments[0].locId;
-  // Genuine overlap — conflict resolution between active assignments only
-  const alreadyAt = activeAssignments.find(a => a.locId === resolvedLocId);
-  return (alreadyAt || activeAssignments[0]).locId;
+  return null;
 }
 
 /**
@@ -215,13 +193,9 @@ Deno.serve(async (req) => {
         if (locs?.[0]) singleLocMap[locId] = locs[0];
       }
 
-      // Evaluate EVERY assignment independently — collect ALL active assignments
-      const { allWorkLocIds: singleAllWorkLocIds, activeAssignments: singleActiveAssignments } =
-        resolveWorkAssignments(character, singleLocMap, singleClock, characterId);
-
-      // Select the active shift. If multiple shifts overlap, resolve the conflict
-      // ONLY between those active assignments.
-      const singleActiveWorkLocId = selectActiveWorkLocId(singleActiveAssignments, resolvedLocId);
+      // Two-pass work location resolution (matches returnActiveCharactersHome)
+      const singleWorkResult = getCharacterWorkLocation(character, singleLocMap, singleClock);
+      const singleActiveWorkLocId = singleWorkResult?.id || null;
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -337,7 +311,7 @@ Deno.serve(async (req) => {
       }
 
       // Not on any active shift — if still at ANY configured work location, send home
-      if (singleAllWorkLocIds.has(resolvedLocId)) {
+      if (singleWorkLocIds.includes(resolvedLocId)) {
         if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
@@ -496,15 +470,21 @@ Deno.serve(async (req) => {
         if (['passed_out', 'sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
         if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
 
-        // Evaluate EVERY assignment independently — collect ALL active assignments
-        const { allWorkLocIds, activeAssignments } =
-          resolveWorkAssignments(char, locMap, globalClock, char.id);
-
-        if (allWorkLocIds.size === 0) continue;
-
-        // Select the active shift. If multiple overlap, resolve only between them.
-        const activeWorkLocId = selectActiveWorkLocId(activeAssignments, resolvedLocId);
+        // Two-pass work location resolution (matches returnActiveCharactersHome)
+        const workResult = getCharacterWorkLocation(char, locMap, globalClock);
+        const activeWorkLocId = workResult?.id || null;
         const onShift = !!activeWorkLocId;
+
+        // Build work location ID set for stranded-at-work check
+        const allWorkLocIds = new Set();
+        if (Array.isArray(char.additional_occupation_locations)) {
+          for (const entry of char.additional_occupation_locations) {
+            if (entry.location_id) allWorkLocIds.add(entry.location_id);
+          }
+        }
+        if (char.current_work_location_id) allWorkLocIds.add(char.current_work_location_id);
+        if (char.occupation_location_id) allWorkLocIds.add(char.occupation_location_id);
+        if (allWorkLocIds.size === 0) continue;
 
         if (onShift && activeWorkLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope
