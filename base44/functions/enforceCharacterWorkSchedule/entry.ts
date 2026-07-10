@@ -176,7 +176,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const primaryWorkLocId = singleAllWorkLocIds.find(id => singleLocMap[id]) || null;
+      const primaryWorkLocId = singleWorkEntries.map(e => e.locId).find(id => singleLocMap[id]) || null;
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -513,7 +513,7 @@ Deno.serve(async (req) => {
 
         // Also determine what the "primary" work location is for post-shift return logic
         // (the first location in allWorkLocIds that is in scope)
-        const primaryWorkLocId = allWorkLocIds.find(id => locMap[id]) || null;
+        const primaryWorkLocId = workEntries.map(e => e.locId).find(id => locMap[id]) || null;
 
         const onShift = !!activeWorkLocId;
         const workLocId = activeWorkLocId || primaryWorkLocId;
