@@ -1180,11 +1180,20 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
 
             timelineEntries.sort((a, b) => { try { return new Date(b.time) - new Date(a.time); } catch { return 0; } });
 
-      // REMOVED: Live status injection into Recent Activity timeline.
-      // A computed current status is NOT a historical event. Injecting it using
-      // resolved_last_updated_at as the timestamp fabricated a past work event
-      // from a live (possibly stale) presence computation.
-      // Current status belongs only in the dedicated live-status display.
+      // Add character's current live status to the timeline if it provides new information.
+      const cardStatusText = livePresence.sublabel ? `${livePresence.label} · ${livePresence.sublabel}` : livePresence.label;
+      const mostRecentText = timelineEntries[0]?.text;
+
+      // Only add the current status if it's different from the most recent historical event.
+      if (cardStatusText && cardStatusText !== '—' && cardStatusText !== mostRecentText) {
+        const statusIconMap = { at_work: "briefcase", at_school: "book", home: "home", sleeping: "moon", napping: "moon", visiting: "mappin", traveling: "mappin", under_supervision: "activity" };
+        timelineEntries.unshift({ // Add to the beginning of the already-sorted array
+            time: character.resolved_last_updated_at || character.updated_date,
+            icon: statusIconMap[liveStatus] || "activity",
+            text: cardStatusText,
+            emotion: character.emotional_state || "calm",
+        });
+      }
 
 
 

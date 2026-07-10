@@ -109,136 +109,54 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
-  // PASSED_OUT / PASS_OUT_RECOVERY GUARD: A character in passed_out state, or one with
-  // an active pass_out_recovery stay lock (even if resolved_presence_status was externally
-  // cleared to 'home'), must NEVER be forced to work by schedule enforcement.
-  const hasPassOutRecoveryLock = character.presence_stay_lock === true &&
-    character.presence_stay_lock_reason === 'pass_out_recovery';
-
-  if (!hasValidCallout && !isCharacterAsleepFromUtils(character) && !hasPassOutRecoveryLock) {
-    // LAYER 1: Work schedule — TWO-PASS RESOLUTION
-    //
-    // AUTHORITY ORDER (highest first):
-    //   Pass 1: Any location with an ACTIVE explicit shift (LocationReference.worker_shifts
-    //           OR character-stored shift data from additional_occupation_locations)
-    //   Pass 2: Character schedule fallback in priority order:
-    //     a. additional_occupation_locations (shift-specific assignments)
-    //     b. current_work_location_id
-    //     c. occupation_location_id (default, LOWEST priority)
-    //
-    // This prevents occupation_location_id (e.g. Anderson's Bar) from overriding
-    // a shift-specific location (e.g. VGC Recovery Yard) merely because it appears
-    // first in the iteration order.
-
-    // Build work location entries in CORRECT priority order (additional first, occupation last)
-    const workLocEntries = [];
-
-    // Highest priority: additional_occupation_locations (may have character-stored shift data)
-    if (character.additional_occupation_locations?.length > 0) {
-      character.additional_occupation_locations.forEach(loc => {
-        if (loc.location_id && !workLocEntries.find(e => e.locId === loc.location_id)) {
-          workLocEntries.push({
-            locId: loc.location_id,
-            source: 'additional_occupation',
-            hasCharShiftData: !!(loc.shift_start && loc.shift_end),
-            charShift: loc,
-          });
-        }
-      });
-    }
-
-    // Medium priority: current_work_location_id
-    if (character.current_work_location_id && !workLocEntries.find(e => e.locId === character.current_work_location_id)) {
-      workLocEntries.push({ locId: character.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
-    }
-
-    // Lowest priority: occupation_location_id (default occupation — never overrides shift-specific)
-    if (character.occupation_location_id && !workLocEntries.find(e => e.locId === character.occupation_location_id)) {
-      workLocEntries.push({ locId: character.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
-    }
-
-    // PASS 1: Check ALL locations for active explicit shifts
-    // This ensures a shift-specific location (VGC Recovery Yard) is found even if
-    // occupation_location_id (Anderson's Bar) also has a shift that might match.
-    for (const entry of workLocEntries) {
-      const workLocation = locationMap[entry.locId];
-
-      // LAST-KNOWN-GOOD PROTECTION: location missing from map but DB says at_work here
-      if (!workLocation) {
-        const dbSaysAtWorkHere =
-          character.resolved_presence_status === 'at_work' &&
-          character.resolved_current_location_id === entry.locId;
-        if (dbSaysAtWorkHere) {
-          return {
-            resolved_current_location_id: entry.locId,
-            resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work',
-            resolved_location_type: 'work',
-            resolved_presence_status: 'at_work',
-            resolved_source_reason: 'work_schedule_location_temporarily_unavailable',
-            resolved_zone: null,
-            location_temporarily_unavailable: true,
-          };
-        }
-        continue;
+  if (!hasValidCallout && !isCharacterAsleepFromUtils(character)) {
+  // LAYER 1: Work schedule — SLEEP GUARD: asleep/napping characters must not be forced to work
+  // Collect every location this character is linked to as a worker
+  const allWorkLocIds = [];
+  if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
+  if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
+  if (character.additional_occupation_locations?.length > 0) {
+    character.additional_occupation_locations.forEach(loc => {
+      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
+        allWorkLocIds.push(loc.location_id);
       }
+    });
+  }
 
-      if (isLocationOpen(workLocation, currentTime) === false) continue;
+  // For each work location, check if character is on shift right now
+  for (const workLocId of allWorkLocIds) {
+    const workLocation = locationMap[workLocId];
 
-      // Check 1a: LocationReference.worker_shifts (explicit shift on the location record)
-      const locationShift = workLocation.worker_shifts?.[character.id];
-      if (locationShift) {
-        if (isOnShiftNow(locationShift, currentTime)) {
-          return {
-            resolved_current_location_id: entry.locId,
-            resolved_current_location_name: workLocation.name || 'Work',
-            resolved_location_type: 'work',
-            resolved_presence_status: 'at_work',
-            resolved_source_reason: 'work_schedule',
-            resolved_zone: null,
-          };
-        }
-        continue; // Shift defined but not active — skip to next location
-      }
-
-      // Check 1b: Character-stored shift data from additional_occupation_locations
-      // This entry has shift_start/shift_end/work_days stored on the CHARACTER record,
-      // not on the LocationReference. This is the authoritative shift for this assignment.
-      if (entry.hasCharShiftData) {
-        const charShift = {
-          start: entry.charShift.shift_start,
-          end: entry.charShift.shift_end,
-          days: entry.charShift.work_days,
-        };
-        if (isOnShiftNow(charShift, currentTime)) {
-          return {
-            resolved_current_location_id: entry.locId,
-            resolved_current_location_name: workLocation.name || entry.charShift.location_name || 'Work',
-            resolved_location_type: 'work',
-            resolved_presence_status: 'at_work',
-            resolved_source_reason: 'work_schedule',
-            resolved_zone: null,
-          };
-        }
-        continue; // Shift defined but not active — skip to next location
-      }
-    }
-
-    // PASS 2: Character schedule fallback — check in priority order
-    // Only reached if NO explicit shift was active on ANY location.
-    // Locations that had explicit shifts (but weren't active) are SKIPPED here.
-    for (const entry of workLocEntries) {
-      const workLocation = locationMap[entry.locId];
-      if (!workLocation) continue;
-      if (isLocationOpen(workLocation, currentTime) === false) continue;
-
-      // Skip locations that had explicit shifts — they were already checked in Pass 1
-      if (workLocation.worker_shifts?.[character.id]) continue;
-      if (entry.hasCharShiftData) continue;
-
-      // Character schedule fallback (character's own work_start/end/days)
-      if (isCharacterOnWorkSchedule(character, currentTime)) {
+    // LAST-KNOWN-GOOD PROTECTION: If work location is missing from map but character's DB
+    // state says at_work at this exact location, preserve DB state instead of falling home.
+    // A temporarily unavailable location record must NOT move a working character home.
+    if (!workLocation) {
+      const dbSaysAtWorkHere =
+        character.resolved_presence_status === 'at_work' &&
+        character.resolved_current_location_id === workLocId;
+      const scheduleSaysAtWork = isCharacterOnWorkSchedule(character, currentTime);
+      if (dbSaysAtWorkHere || scheduleSaysAtWork) {
         return {
-          resolved_current_location_id: entry.locId,
+          resolved_current_location_id: workLocId,
+          resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule_location_temporarily_unavailable',
+          resolved_zone: null,
+          location_temporarily_unavailable: true,
+        };
+      }
+      continue; // location not in map and not on schedule — skip
+    }
+
+    if (isLocationOpen(workLocation, currentTime) === false) continue;
+
+    // Check 1: Location has an explicit shift for this character → use it
+    const locationShift = workLocation.worker_shifts?.[character.id];
+    if (locationShift) {
+      if (isOnShiftNow(locationShift, currentTime)) {
+        return {
+          resolved_current_location_id: workLocId,
           resolved_current_location_name: workLocation.name || 'Work',
           resolved_location_type: 'work',
           resolved_presence_status: 'at_work',
@@ -246,7 +164,23 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
           resolved_zone: null,
         };
       }
+      // Shift defined but not active — don't fall through to character schedule for this location
+      continue;
     }
+
+    // Check 2: No explicit shift saved — fall back to character's own work_start/end/days
+    // This handles characters who are on the roster but their shift hasn't been explicitly saved
+    if (isCharacterOnWorkSchedule(character, currentTime)) {
+      return {
+        resolved_current_location_id: workLocId,
+        resolved_current_location_name: workLocation.name || 'Work',
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: 'work_schedule',
+        resolved_zone: null,
+      };
+    }
+  }
 
   } // end if (!hasValidCallout) — work schedule block
 
@@ -945,32 +879,30 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
   }
 
-  // ── PRIORITY 1.6: PASSED OUT / HOSPITALIZED ───────────────────────────────
-  // These are involuntary physical states that must NEVER be overridden by
-  // the live schedule pre-check. A passed-out character at their occupation
-  // location must show "Passed out", not "At work".
-  // Also check the pass_out_recovery stay lock — even if resolved_presence_status
-  // was externally cleared to 'home', the stay lock proves the character is still
-  // in forced recovery and must display as passed_out.
-  if (presenceStatus === 'passed_out' ||
-      (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery')) {
-    return { status: 'passed_out', label: 'Passed out', sublabel: locName, isTransit: false, isSleeping: true };
-  }
-  if (presenceStatus === 'hospitalized') {
-    return { status: 'hospitalized', label: 'Hospitalized', sublabel: locName, isTransit: false, isSleeping: true };
-  }
-
   // ── PRIORITY 2: TRANSIT STATE — DEPRECATED ────────────────────────────────
   // TravelSession is no longer authoritative. Characters teleport at scheduled time.
   // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
   // If presence_status is 'traveling', it is stale — fall through to current location display.
 
-  // ── PRIORITY 2.5: REMOVED — Live schedule pre-check was inventing at_work status ──
-  // This block previously called resolveCharacterLocation() and if it returned at_work,
-  // displayed "At work" even when the DB said 'home'. This caused false work status on
-  // days off when the schedule check was incorrect or stale. Work status must come from
-  // PRIORITY 3 below, which requires BOTH resolved_presence_status='at_work' AND a
-  // verified schedule source reason AND a valid work-day check.
+  // ── PRIORITY 2.5: LIVE SCHEDULE PRE-CHECK ─────────────────────────────────
+  // Run the live schedule check BEFORE trusting stored presence status.
+  // This ensures that when the DB says 'home' but the work schedule is currently active,
+  // we surface the real state immediately — matching Travel, Map, Scenes, and Chat.
+  // This is the canonical fix for homepage cards showing "home" while all other surfaces
+  // show "at work". The check is identical to resolveCharacterLocation Layer 1.
+  {
+    const liveScheduleCheck = resolveCharacterLocation(character, locationMap);
+    if (liveScheduleCheck.resolved_presence_status === 'at_work') {
+      const workLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
+        || liveScheduleCheck.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
+    }
+    if (liveScheduleCheck.resolved_presence_status === 'at_school') {
+      const schoolLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
+        || liveScheduleCheck.resolved_current_location_name || 'School';
+      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
+    }
+  }
 
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
@@ -978,18 +910,18 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     const hasResolvedLocation = !!character.resolved_current_location_id;
     const isScheduleSource = sourceReason === 'work_schedule' || sourceReason === 'work_schedule_enforced';
     if (isScheduleSource && hasResolvedLocation) {
-      // DAY VERIFICATION: Before trusting a DB-stored at_work status, verify that
-      // today is actually a work day. A stale at_work on a day off must NOT display
-      // as "At work". Location identity must use exact IDs, not display names.
-      const workStatus = getWorkScheduleStatus(character, new Date());
-      if (workStatus.onSchedule) {
-        const locName = loc?.name || character.resolved_current_location_name || 'Work';
-        return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
-      }
-      // Not on schedule today — fall through to location name fallback below
+      const locName = loc?.name || character.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
     }
-    // DB says at_work but source_reason is stale/non-standard OR not on schedule today —
-    // do NOT display as at_work. Fall through to location name fallback.
+    // DB says at_work but source_reason is stale/non-standard — verify via live schedule
+    // This ensures CharacterCard matches Map/Travel which use resolveCharacterLocation()
+    const liveWorkCheck = resolveCharacterLocation(character, locationMap);
+    if (liveWorkCheck.resolved_presence_status === 'at_work') {
+      const locName = locationMap[liveWorkCheck.resolved_current_location_id]?.name
+        || liveWorkCheck.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
+    }
+    // Genuinely stale — fall through to location name fallback below
   }
   if (presenceStatus === 'at_school') {
     const schoolLoc = locationMap[character.education_location_id];
@@ -1007,11 +939,22 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     }
   }
 
-  // ── PRIORITY 3.9: REMOVED — Live schedule check was inventing at_work/at_school ──
-  // This block previously called resolveCharacterLocation() to override the DB-stored
-  // presence status. This caused false work status on days off. Work/school status
-  // must only come from PRIORITY 3 above, which requires a verified schedule source
-  // AND a valid work-day check.
+  // ── PRIORITY 3.9: LIVE SCHEDULE CHECK — catches stale DB state ────────────
+  // If DB presence status is not at_work/at_school but live schedule says otherwise,
+  // trust the live schedule (same source of truth as Map and Travel pages).
+  if (presenceStatus !== 'at_work' && presenceStatus !== 'at_school') {
+    const liveResolved = resolveCharacterLocation(character, locationMap);
+    if (liveResolved.resolved_presence_status === 'at_work') {
+      const workLocName = locationMap[liveResolved.resolved_current_location_id]?.name
+        || liveResolved.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
+    }
+    if (liveResolved.resolved_presence_status === 'at_school') {
+      const schoolLocName = locationMap[liveResolved.resolved_current_location_id]?.name
+        || liveResolved.resolved_current_location_name || 'School';
+      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
+    }
+  }
 
   // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
   // RULE: Only display a location name if resolved_current_location_id exists AND a name is available.

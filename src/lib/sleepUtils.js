@@ -647,11 +647,6 @@ export function isCharacterAsleep(character, locationMap) {
     // passed_out is a medical consequence state, not ordinary sleep. Always trust it.
     if (status === 'passed_out') return true;
 
-    // PASS_OUT_RECOVERY STAY LOCK: Even if resolved_presence_status was externally
-    // cleared to 'home' by another writer, an active pass_out_recovery stay lock
-    // proves the character is still in forced recovery — treat as asleep.
-    if (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery') return true;
-
     // Only evaluate ordinary sleep/napping
     if (status !== 'sleeping' && status !== 'napping') return false;
 

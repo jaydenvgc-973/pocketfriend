@@ -80,58 +80,38 @@ function getCharacterWorkLocation(char, locationsByUser, nowET) {
   const email = char.owner_email;
   const locations = locationsByUser[email] || [];
 
-  // TWO-PASS RESOLUTION — prevents occupation_location_id from overriding shift-specific locations
-  // Build entries in priority order: additional_occupation_locations first, occupation last
-  const workLocEntries = [];
+  // Collect ALL work location IDs for this character
+  const allWorkLocIds = [];
+  if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
+  if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
+    allWorkLocIds.push(char.current_work_location_id);
+  }
   if (char.additional_occupation_locations?.length > 0) {
     for (const entry of char.additional_occupation_locations) {
-      if (entry.location_id && !workLocEntries.find(e => e.locId === entry.location_id)) {
-        workLocEntries.push({
-          locId: entry.location_id,
-          source: 'additional_occupation',
-          hasCharShiftData: !!(entry.shift_start && entry.shift_end),
-          charShift: entry,
-        });
+      if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
+        allWorkLocIds.push(entry.location_id);
       }
     }
   }
-  if (char.current_work_location_id && !workLocEntries.find(e => e.locId === char.current_work_location_id)) {
-    workLocEntries.push({ locId: char.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
-  }
-  if (char.occupation_location_id && !workLocEntries.find(e => e.locId === char.occupation_location_id)) {
-    workLocEntries.push({ locId: char.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
-  }
 
-  // PASS 1: Check ALL locations for active explicit shifts
-  for (const entry of workLocEntries) {
-    const loc = locations.find(l => l.id === entry.locId);
+  // For each location, check if character has an active shift there RIGHT NOW.
+  // If a location-specific shift exists for this character, it is AUTHORITATIVE —
+  // the character-level work_days/start/end do NOT apply for that location.
+  for (const locId of allWorkLocIds) {
+    const loc = locations.find(l => l.id === locId);
     if (!loc) continue;
 
-    // Check 1a: LocationReference.worker_shifts
     const locationShift = loc.worker_shifts?.[char.id];
     if (locationShift) {
+      // Location has an explicit shift for this character — use it as sole authority
       if (isShiftActiveNow(locationShift, nowET)) {
         return { id: loc.id, name: loc.name };
       }
+      // Shift defined but not active — skip character-level fallback for this location
       continue;
     }
 
-    // Check 1b: Character-stored shift data from additional_occupation_locations
-    if (entry.hasCharShiftData) {
-      const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
-      if (isShiftActiveNow(charShift, nowET)) {
-        return { id: loc.id, name: loc.name || entry.charShift.location_name };
-      }
-      continue;
-    }
-  }
-
-  // PASS 2: Character schedule fallback in priority order
-  for (const entry of workLocEntries) {
-    const loc = locations.find(l => l.id === entry.locId);
-    if (!loc) continue;
-    if (loc.worker_shifts?.[char.id]) continue;
-    if (entry.hasCharShiftData) continue;
+    // No location-specific shift — fall back to character's own work_days/start/end
     if (isWorkScheduleActive(char, nowET)) {
       return { id: loc.id, name: loc.name };
     }
@@ -167,11 +147,7 @@ function shouldProtectFromHomeReturn(char) {
   if (isWorkScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (isSchoolScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (hasValidActiveTravel(char)) return true;
-  // PROTECTED STATES: passed_out, sleeping, napping, hospitalized must NEVER be overridden.
-  // Also check presence_stay_lock_reason — even if resolved_presence_status was externally
-  // cleared to 'home', a pass_out_recovery stay lock proves the character is still in recovery.
-  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
-  if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }
@@ -255,11 +231,8 @@ Deno.serve(async (req) => {
         const destLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.travel_destination_location_id);
         if (destLoc) continue; // Valid travel — skip
       }
-      // Skip hard blocks — passed_out is a protected recovery state that must NEVER
-      // be overridden by return-home dispatch. Also check pass_out_recovery stay lock
-      // in case resolved_presence_status was externally cleared to 'home'.
-      if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) continue;
-      if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
+      // Skip hard blocks
+      if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
       if (char.is_jailed) continue;
 
       const currentLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.resolved_current_location_id);

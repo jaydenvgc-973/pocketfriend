@@ -1203,8 +1203,6 @@ function resolveNextActivity(needs, character) {
 function resolveStaleCorrectiveActivities(character, needs) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
-  // PROTECTED: pass_out_recovery stay lock — canonical recovery path is the ONLY writer that may clear it.
-  if (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery') return null;
 
   const correctivePatterns = [
     'eating — hunger drove them to food',
@@ -1977,8 +1975,7 @@ Deno.serve(async (req) => {
         // authoritative awake timer. All wake sources now correctly update
         // last_wake_time — no secondary guard needed.
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
-            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock
-            && !(char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery')) {
+            && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
           // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
           // Use the MOST RECENT of last_wake_time and last_nap_time.
           // A completed nap is a restorative boundary that resets the awake timer.
