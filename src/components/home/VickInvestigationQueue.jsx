@@ -29,28 +29,44 @@ const PRIORITY_DOT = {
   low:      "bg-muted-foreground/40",
 };
 
-// Active queue: only show these statuses
-const ACTIVE_STATUSES = new Set(["queued", "investigating", "awaiting_evidence", "monitoring", "findings_ready", "delivered"]);
+// Active queue: only genuinely in-progress investigations.
+// Terminal states (delivered, archived) belong in history, not the active queue.
+const ACTIVE_STATUSES = new Set(["queued", "investigating", "monitoring", "findings_ready", "awaiting_evidence"]);
+
+// Staleness threshold for awaiting_evidence without user input requirement.
+// Transient failures must retry or expire — they cannot occupy the queue indefinitely.
+const STALE_AWAITING_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function isStaleAwaitingEvidence(inv) {
+  if (inv.status !== "awaiting_evidence") return false;
+  if (inv.requires_user_input) return false; // legitimately awaiting user action
+  const ref = inv.updated_date || inv.created_date;
+  if (!ref) return true; // no timestamp = cannot verify age = treat as stale
+  return Date.now() - new Date(ref).getTime() > STALE_AWAITING_MS;
+}
+
+function isTerminal(inv) {
+  if (inv.status === "delivered" || inv.status === "archived") return true;
+  // findings_ready + already delivered = data inconsistency, treat as terminal
+  if (inv.status === "findings_ready" && inv.findings_delivered) return true;
+  // findings_ready + already read = effectively complete
+  if (inv.status === "findings_ready" && inv.findings_read) return true;
+  return false;
+}
 
 export default function VickInvestigationQueue({ investigations, onMarkRead, onDismiss }) {
   if (!investigations || investigations.length === 0) return null;
 
-  // Active: in-progress + critical delivered (not yet dismissed)
-  const active = investigations.filter(inv =>
-    ACTIVE_STATUSES.has(inv.status) &&
-    !(inv.status === "delivered" && inv.priority !== "critical") &&
-    !inv.dismissed
-  );
-
-  // Critical delivered but not dismissed — always show
-  const criticalPending = investigations.filter(inv =>
-    inv.status === "delivered" && inv.priority === "critical" && !inv.dismissed
-  );
-
-  // Combine without duplicates
-  const activeSet = new Map();
-  [...active, ...criticalPending].forEach(inv => activeSet.set(inv.id, inv));
-  const display = [...activeSet.values()].slice(0, 8);
+  // Active queue: only investigations in a genuinely active execution state.
+  // Terminal and stale records are excluded automatically — no manual dismissal required.
+  const display = investigations
+    .filter(inv =>
+      ACTIVE_STATUSES.has(inv.status) &&
+      !inv.dismissed &&
+      !isTerminal(inv) &&
+      !isStaleAwaitingEvidence(inv)
+    )
+    .slice(0, 8);
 
   if (display.length === 0) return null;
 
@@ -63,8 +79,6 @@ export default function VickInvestigationQueue({ investigations, onMarkRead, onD
         const cfg = STATUS_CONFIG[inv.status] || STATUS_CONFIG.queued;
         const Icon = cfg.icon;
         const isUnread = inv.status === "findings_ready" && !inv.findings_read;
-        const isCriticalDelivered = inv.priority === "critical" && inv.status === "delivered" && !inv.dismissed;
-        const showDismiss = isCriticalDelivered && onDismiss;
 
         return (
           <div
@@ -73,7 +87,6 @@ export default function VickInvestigationQueue({ investigations, onMarkRead, onD
             className={[
               "flex items-start gap-2 px-3 py-2 rounded-xl text-xs transition-colors",
               isUnread ? "bg-primary/10 border border-primary/20 cursor-pointer" : "bg-secondary/50",
-              isCriticalDelivered ? "bg-red-500/10 border border-red-500/20" : "",
             ].join(" ")}
           >
             {/* Priority dot */}
@@ -81,7 +94,7 @@ export default function VickInvestigationQueue({ investigations, onMarkRead, onD
 
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-1">
-                <span className={`font-medium truncate ${isUnread || isCriticalDelivered ? "text-foreground" : "text-muted-foreground"}`}>
+                <span className={`font-medium truncate ${isUnread ? "text-foreground" : "text-muted-foreground"}`}>
                   {inv.title}
                 </span>
                 <span className={`flex items-center gap-1 flex-shrink-0 ${cfg.color}`}>
@@ -89,13 +102,6 @@ export default function VickInvestigationQueue({ investigations, onMarkRead, onD
                   <span className="hidden sm:inline">{cfg.label}</span>
                 </span>
               </div>
-
-              {/* Resolution label for delivered items */}
-              {inv.resolution && inv.status === "delivered" && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {RESOLUTION_LABEL[inv.resolution] || inv.resolution}
-                </p>
-              )}
 
               {isUnread && inv.findings && (
                 <p className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px]">
@@ -107,17 +113,6 @@ export default function VickInvestigationQueue({ investigations, onMarkRead, onD
                 <p className="text-amber-400 mt-0.5 text-[11px] line-clamp-1">
                   ⚠ {inv.user_input_prompt}
                 </p>
-              )}
-
-              {/* Dismiss button for critical delivered items */}
-              {showDismiss && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); onDismiss(inv.id); }}
-                  className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground hover:text-red-400 transition-colors"
-                >
-                  <XCircle className="w-3 h-3" />
-                  Dismiss
-                </button>
               )}
             </div>
 
