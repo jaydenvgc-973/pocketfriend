@@ -116,53 +116,129 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.presence_stay_lock_reason === 'pass_out_recovery';
 
   if (!hasValidCallout && !isCharacterAsleepFromUtils(character) && !hasPassOutRecoveryLock) {
-  // LAYER 1: Work schedule — SLEEP GUARD: asleep/napping characters must not be forced to work
-  // Collect every location this character is linked to as a worker
-  const allWorkLocIds = [];
-  if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
-  if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
-  if (character.additional_occupation_locations?.length > 0) {
-    character.additional_occupation_locations.forEach(loc => {
-      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
-        allWorkLocIds.push(loc.location_id);
-      }
-    });
-  }
+    // LAYER 1: Work schedule — TWO-PASS RESOLUTION
+    //
+    // AUTHORITY ORDER (highest first):
+    //   Pass 1: Any location with an ACTIVE explicit shift (LocationReference.worker_shifts
+    //           OR character-stored shift data from additional_occupation_locations)
+    //   Pass 2: Character schedule fallback in priority order:
+    //     a. additional_occupation_locations (shift-specific assignments)
+    //     b. current_work_location_id
+    //     c. occupation_location_id (default, LOWEST priority)
+    //
+    // This prevents occupation_location_id (e.g. Anderson's Bar) from overriding
+    // a shift-specific location (e.g. VGC Recovery Yard) merely because it appears
+    // first in the iteration order.
 
-  // For each work location, check if character is on shift right now
-  for (const workLocId of allWorkLocIds) {
-    const workLocation = locationMap[workLocId];
+    // Build work location entries in CORRECT priority order (additional first, occupation last)
+    const workLocEntries = [];
 
-    // LAST-KNOWN-GOOD PROTECTION: If work location is missing from map but character's DB
-    // state says at_work at this exact location, preserve DB state instead of falling home.
-    // A temporarily unavailable location record must NOT move a working character home.
-    if (!workLocation) {
-      const dbSaysAtWorkHere =
-        character.resolved_presence_status === 'at_work' &&
-        character.resolved_current_location_id === workLocId;
-      const scheduleSaysAtWork = isCharacterOnWorkSchedule(character, currentTime);
-      if (dbSaysAtWorkHere || scheduleSaysAtWork) {
-        return {
-          resolved_current_location_id: workLocId,
-          resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work',
-          resolved_location_type: 'work',
-          resolved_presence_status: 'at_work',
-          resolved_source_reason: 'work_schedule_location_temporarily_unavailable',
-          resolved_zone: null,
-          location_temporarily_unavailable: true,
-        };
-      }
-      continue; // location not in map and not on schedule — skip
+    // Highest priority: additional_occupation_locations (may have character-stored shift data)
+    if (character.additional_occupation_locations?.length > 0) {
+      character.additional_occupation_locations.forEach(loc => {
+        if (loc.location_id && !workLocEntries.find(e => e.locId === loc.location_id)) {
+          workLocEntries.push({
+            locId: loc.location_id,
+            source: 'additional_occupation',
+            hasCharShiftData: !!(loc.shift_start && loc.shift_end),
+            charShift: loc,
+          });
+        }
+      });
     }
 
-    if (isLocationOpen(workLocation, currentTime) === false) continue;
+    // Medium priority: current_work_location_id
+    if (character.current_work_location_id && !workLocEntries.find(e => e.locId === character.current_work_location_id)) {
+      workLocEntries.push({ locId: character.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
+    }
 
-    // Check 1: Location has an explicit shift for this character → use it
-    const locationShift = workLocation.worker_shifts?.[character.id];
-    if (locationShift) {
-      if (isOnShiftNow(locationShift, currentTime)) {
+    // Lowest priority: occupation_location_id (default occupation — never overrides shift-specific)
+    if (character.occupation_location_id && !workLocEntries.find(e => e.locId === character.occupation_location_id)) {
+      workLocEntries.push({ locId: character.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
+    }
+
+    // PASS 1: Check ALL locations for active explicit shifts
+    // This ensures a shift-specific location (VGC Recovery Yard) is found even if
+    // occupation_location_id (Anderson's Bar) also has a shift that might match.
+    for (const entry of workLocEntries) {
+      const workLocation = locationMap[entry.locId];
+
+      // LAST-KNOWN-GOOD PROTECTION: location missing from map but DB says at_work here
+      if (!workLocation) {
+        const dbSaysAtWorkHere =
+          character.resolved_presence_status === 'at_work' &&
+          character.resolved_current_location_id === entry.locId;
+        if (dbSaysAtWorkHere) {
+          return {
+            resolved_current_location_id: entry.locId,
+            resolved_current_location_name: character.resolved_current_location_name || character.occupation_location_name || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule_location_temporarily_unavailable',
+            resolved_zone: null,
+            location_temporarily_unavailable: true,
+          };
+        }
+        continue;
+      }
+
+      if (isLocationOpen(workLocation, currentTime) === false) continue;
+
+      // Check 1a: LocationReference.worker_shifts (explicit shift on the location record)
+      const locationShift = workLocation.worker_shifts?.[character.id];
+      if (locationShift) {
+        if (isOnShiftNow(locationShift, currentTime)) {
+          return {
+            resolved_current_location_id: entry.locId,
+            resolved_current_location_name: workLocation.name || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+            resolved_zone: null,
+          };
+        }
+        continue; // Shift defined but not active — skip to next location
+      }
+
+      // Check 1b: Character-stored shift data from additional_occupation_locations
+      // This entry has shift_start/shift_end/work_days stored on the CHARACTER record,
+      // not on the LocationReference. This is the authoritative shift for this assignment.
+      if (entry.hasCharShiftData) {
+        const charShift = {
+          start: entry.charShift.shift_start,
+          end: entry.charShift.shift_end,
+          days: entry.charShift.work_days,
+        };
+        if (isOnShiftNow(charShift, currentTime)) {
+          return {
+            resolved_current_location_id: entry.locId,
+            resolved_current_location_name: workLocation.name || entry.charShift.location_name || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+            resolved_zone: null,
+          };
+        }
+        continue; // Shift defined but not active — skip to next location
+      }
+    }
+
+    // PASS 2: Character schedule fallback — check in priority order
+    // Only reached if NO explicit shift was active on ANY location.
+    // Locations that had explicit shifts (but weren't active) are SKIPPED here.
+    for (const entry of workLocEntries) {
+      const workLocation = locationMap[entry.locId];
+      if (!workLocation) continue;
+      if (isLocationOpen(workLocation, currentTime) === false) continue;
+
+      // Skip locations that had explicit shifts — they were already checked in Pass 1
+      if (workLocation.worker_shifts?.[character.id]) continue;
+      if (entry.hasCharShiftData) continue;
+
+      // Character schedule fallback (character's own work_start/end/days)
+      if (isCharacterOnWorkSchedule(character, currentTime)) {
         return {
-          resolved_current_location_id: workLocId,
+          resolved_current_location_id: entry.locId,
           resolved_current_location_name: workLocation.name || 'Work',
           resolved_location_type: 'work',
           resolved_presence_status: 'at_work',
@@ -170,23 +246,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
           resolved_zone: null,
         };
       }
-      // Shift defined but not active — don't fall through to character schedule for this location
-      continue;
     }
-
-    // Check 2: No explicit shift saved — fall back to character's own work_start/end/days
-    // This handles characters who are on the roster but their shift hasn't been explicitly saved
-    if (isCharacterOnWorkSchedule(character, currentTime)) {
-      return {
-        resolved_current_location_id: workLocId,
-        resolved_current_location_name: workLocation.name || 'Work',
-        resolved_location_type: 'work',
-        resolved_presence_status: 'at_work',
-        resolved_source_reason: 'work_schedule',
-        resolved_zone: null,
-      };
-    }
-  }
 
   } // end if (!hasValidCallout) — work schedule block
 

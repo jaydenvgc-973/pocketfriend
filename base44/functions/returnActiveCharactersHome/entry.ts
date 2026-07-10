@@ -80,38 +80,58 @@ function getCharacterWorkLocation(char, locationsByUser, nowET) {
   const email = char.owner_email;
   const locations = locationsByUser[email] || [];
 
-  // Collect ALL work location IDs for this character
-  const allWorkLocIds = [];
-  if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
-  if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
-    allWorkLocIds.push(char.current_work_location_id);
-  }
+  // TWO-PASS RESOLUTION — prevents occupation_location_id from overriding shift-specific locations
+  // Build entries in priority order: additional_occupation_locations first, occupation last
+  const workLocEntries = [];
   if (char.additional_occupation_locations?.length > 0) {
     for (const entry of char.additional_occupation_locations) {
-      if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
-        allWorkLocIds.push(entry.location_id);
+      if (entry.location_id && !workLocEntries.find(e => e.locId === entry.location_id)) {
+        workLocEntries.push({
+          locId: entry.location_id,
+          source: 'additional_occupation',
+          hasCharShiftData: !!(entry.shift_start && entry.shift_end),
+          charShift: entry,
+        });
       }
     }
   }
+  if (char.current_work_location_id && !workLocEntries.find(e => e.locId === char.current_work_location_id)) {
+    workLocEntries.push({ locId: char.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
+  }
+  if (char.occupation_location_id && !workLocEntries.find(e => e.locId === char.occupation_location_id)) {
+    workLocEntries.push({ locId: char.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
+  }
 
-  // For each location, check if character has an active shift there RIGHT NOW.
-  // If a location-specific shift exists for this character, it is AUTHORITATIVE —
-  // the character-level work_days/start/end do NOT apply for that location.
-  for (const locId of allWorkLocIds) {
-    const loc = locations.find(l => l.id === locId);
+  // PASS 1: Check ALL locations for active explicit shifts
+  for (const entry of workLocEntries) {
+    const loc = locations.find(l => l.id === entry.locId);
     if (!loc) continue;
 
+    // Check 1a: LocationReference.worker_shifts
     const locationShift = loc.worker_shifts?.[char.id];
     if (locationShift) {
-      // Location has an explicit shift for this character — use it as sole authority
       if (isShiftActiveNow(locationShift, nowET)) {
         return { id: loc.id, name: loc.name };
       }
-      // Shift defined but not active — skip character-level fallback for this location
       continue;
     }
 
-    // No location-specific shift — fall back to character's own work_days/start/end
+    // Check 1b: Character-stored shift data from additional_occupation_locations
+    if (entry.hasCharShiftData) {
+      const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+      if (isShiftActiveNow(charShift, nowET)) {
+        return { id: loc.id, name: loc.name || entry.charShift.location_name };
+      }
+      continue;
+    }
+  }
+
+  // PASS 2: Character schedule fallback in priority order
+  for (const entry of workLocEntries) {
+    const loc = locations.find(l => l.id === entry.locId);
+    if (!loc) continue;
+    if (loc.worker_shifts?.[char.id]) continue;
+    if (entry.hasCharShiftData) continue;
     if (isWorkScheduleActive(char, nowET)) {
       return { id: loc.id, name: loc.name };
     }

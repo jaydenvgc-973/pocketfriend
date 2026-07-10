@@ -113,54 +113,66 @@ Deno.serve(async (req) => {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
 
-      // Load all work locations for this character (ownership-scoped)
-      const singleAllWorkLocIds = [];
-      if (character.occupation_location_id) singleAllWorkLocIds.push(character.occupation_location_id);
-      if (character.current_work_location_id && !singleAllWorkLocIds.includes(character.current_work_location_id)) {
-        singleAllWorkLocIds.push(character.current_work_location_id);
-      }
+      // TWO-PASS RESOLUTION — additional_occupation_locations first, occupation last
+      const singleWorkEntries = [];
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
-          if (entry.location_id && !singleAllWorkLocIds.includes(entry.location_id)) {
-            singleAllWorkLocIds.push(entry.location_id);
+          if (entry.location_id && !singleWorkEntries.find(e => e.locId === entry.location_id)) {
+            singleWorkEntries.push({ locId: entry.location_id, source: 'additional', hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
           }
         }
       }
-
-      // Build location map for this character's work locations (ownership-scoped)
-      const singleLocMap = {};
-      for (const locId of singleAllWorkLocIds) {
-        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: locId });
-        if (locs?.[0]) singleLocMap[locId] = locs[0];
+      if (character.current_work_location_id && !singleWorkEntries.find(e => e.locId === character.current_work_location_id)) {
+        singleWorkEntries.push({ locId: character.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
+      }
+      if (character.occupation_location_id && !singleWorkEntries.find(e => e.locId === character.occupation_location_id)) {
+        singleWorkEntries.push({ locId: character.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
       }
 
-      // Find which work location has an active shift right now (worker_shifts authoritative)
+      const singleLocMap = {};
+      for (const entry of singleWorkEntries) {
+        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: entry.locId });
+        if (locs?.[0]) singleLocMap[entry.locId] = locs[0];
+      }
+
+      // PASS 1: Check ALL locations for active explicit shifts
       let singleActiveWorkLocId = null;
-      for (const locId of singleAllWorkLocIds) {
-        const loc = singleLocMap[locId];
+      for (const entry of singleWorkEntries) {
+        const loc = singleLocMap[entry.locId];
         if (!loc) continue;
         const locationShift = loc.worker_shifts?.[characterId];
         if (locationShift) {
-          if (isLocationShiftActiveNow(locationShift, singleClock)) {
-            singleActiveWorkLocId = locId;
-            break;
-          }
-          continue; // Shift defined but not active — do not fall back to character schedule
+          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = entry.locId; break; }
+          continue;
         }
-        // No location-specific shift — use character-level schedule
-        if (character.work_start_time && character.work_end_time && character.work_days) {
-          const nowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
-          const [sh, sm] = character.work_start_time.split(':').map(Number);
-          const [eh, em] = character.work_end_time.split(':').map(Number);
-          const startMin = sh * 60 + sm;
-          const endMin = eh * 60 + em;
-          const isCross = endMin < startMin;
-          const today = singleClock.getDay();
-          const yesterday = (today + 6) % 7;
-          const active = isCross
-            ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
-            : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-          if (active) { singleActiveWorkLocId = locId; break; }
+        if (entry.hasCharShiftData) {
+          const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+          if (isLocationShiftActiveNow(charShift, singleClock)) { singleActiveWorkLocId = entry.locId; break; }
+          continue;
+        }
+      }
+
+      // PASS 2: Character schedule fallback in priority order
+      if (!singleActiveWorkLocId) {
+        for (const entry of singleWorkEntries) {
+          const loc = singleLocMap[entry.locId];
+          if (!loc) continue;
+          if (loc.worker_shifts?.[characterId]) continue;
+          if (entry.hasCharShiftData) continue;
+          if (character.work_start_time && character.work_end_time && character.work_days) {
+            const nowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
+            const [sh, sm] = character.work_start_time.split(':').map(Number);
+            const [eh, em] = character.work_end_time.split(':').map(Number);
+            const startMin = sh * 60 + sm;
+            const endMin = eh * 60 + em;
+            const isCross = endMin < startMin;
+            const today = singleClock.getDay();
+            const yesterday = (today + 6) % 7;
+            const active = isCross
+              ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
+              : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
+            if (active) { singleActiveWorkLocId = entry.locId; break; }
+          }
         }
       }
 
@@ -440,54 +452,61 @@ Deno.serve(async (req) => {
         if (['passed_out', 'sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
         if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
 
-        // Collect ALL work location IDs for this character
-        const allWorkLocIds = [];
-        if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
-        if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
-          allWorkLocIds.push(char.current_work_location_id);
-        }
+        // TWO-PASS RESOLUTION — additional_occupation_locations first, occupation last
+        const workEntries = [];
         if (Array.isArray(char.additional_occupation_locations)) {
           for (const entry of char.additional_occupation_locations) {
-            if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
-              allWorkLocIds.push(entry.location_id);
+            if (entry.location_id && !workEntries.find(e => e.locId === entry.location_id)) {
+              workEntries.push({ locId: entry.location_id, source: 'additional', hasCharShiftData: !!(entry.shift_start && entry.shift_end), charShift: entry });
             }
           }
         }
+        if (char.current_work_location_id && !workEntries.find(e => e.locId === char.current_work_location_id)) {
+          workEntries.push({ locId: char.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
+        }
+        if (char.occupation_location_id && !workEntries.find(e => e.locId === char.occupation_location_id)) {
+          workEntries.push({ locId: char.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
+        }
 
-        if (allWorkLocIds.length === 0) continue;
+        if (workEntries.length === 0) continue;
 
-        // Determine which work location (if any) has an active shift right now.
-        // worker_shifts[char.id] is authoritative for that location.
-        // If no location-specific shift exists, fall back to character-level schedule.
+        // PASS 1: Check ALL locations for active explicit shifts
         let activeWorkLocId = null;
-        for (const locId of allWorkLocIds) {
-          const loc = locMap[locId];
+        for (const entry of workEntries) {
+          const loc = locMap[entry.locId];
           if (!loc) continue;
           const locationShift = loc.worker_shifts?.[char.id];
           if (locationShift) {
-            if (isLocationShiftActiveNow(locationShift, globalClock)) {
-              activeWorkLocId = locId;
-              break;
-            }
-            // Shift defined but not active for this location — do NOT fall back to character schedule
+            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = entry.locId; break; }
             continue;
           }
-          // No location-specific shift — use character-level schedule
-          if (char.work_start_time && char.work_end_time && char.work_days) {
-            const nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
-            const [sh, sm] = char.work_start_time.split(':').map(Number);
-            const [eh, em] = char.work_end_time.split(':').map(Number);
-            const startMin = sh * 60 + sm;
-            const endMin = eh * 60 + em;
-            const isCross = endMin < startMin;
-            const today = globalClock.getDay();
-            const yesterday = (today + 6) % 7;
-            const onCharSchedule = isCross
-              ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)
-              : char.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-            if (onCharSchedule) {
-              activeWorkLocId = locId;
-              break;
+          if (entry.hasCharShiftData) {
+            const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+            if (isLocationShiftActiveNow(charShift, globalClock)) { activeWorkLocId = entry.locId; break; }
+            continue;
+          }
+        }
+
+        // PASS 2: Character schedule fallback in priority order
+        if (!activeWorkLocId) {
+          for (const entry of workEntries) {
+            const loc = locMap[entry.locId];
+            if (!loc) continue;
+            if (loc.worker_shifts?.[char.id]) continue;
+            if (entry.hasCharShiftData) continue;
+            if (char.work_start_time && char.work_end_time && char.work_days) {
+              const nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
+              const [sh, sm] = char.work_start_time.split(':').map(Number);
+              const [eh, em] = char.work_end_time.split(':').map(Number);
+              const startMin = sh * 60 + sm;
+              const endMin = eh * 60 + em;
+              const isCross = endMin < startMin;
+              const today = globalClock.getDay();
+              const yesterday = (today + 6) % 7;
+              const onCharSchedule = isCross
+                ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)
+                : char.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
+              if (onCharSchedule) { activeWorkLocId = entry.locId; break; }
             }
           }
         }

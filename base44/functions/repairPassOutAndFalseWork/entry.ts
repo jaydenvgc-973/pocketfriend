@@ -134,8 +134,26 @@ Deno.serve(async (req) => {
       }
 
       // ── FALSE WORK LOCATION HISTORY CLEANUP ─────────────────────────
-      // Delete work_start LocationHistory records on non-work days
-      if (char.work_days && Array.isArray(char.work_days) && char.work_days.length > 0) {
+      // Delete work_start LocationHistory records on non-work days.
+      // CRITICAL: Must check ALL work schedule sources, not just character-level work_days.
+      const allValidWorkDays = new Set(char.work_days || []);
+      const locationSpecificWorkDays = {};
+      if (Array.isArray(char.additional_occupation_locations)) {
+        for (const entry of char.additional_occupation_locations) {
+          if (entry.location_id && Array.isArray(entry.work_days)) {
+            if (!locationSpecificWorkDays[entry.location_id]) locationSpecificWorkDays[entry.location_id] = new Set();
+            entry.work_days.forEach(d => locationSpecificWorkDays[entry.location_id].add(d));
+          }
+        }
+      }
+      for (const locId of Object.keys(locationMap)) {
+        const shift = locationMap[locId]?.worker_shifts?.[char.id];
+        if (shift?.days && Array.isArray(shift.days)) {
+          if (!locationSpecificWorkDays[locId]) locationSpecificWorkDays[locId] = new Set();
+          shift.days.forEach(d => locationSpecificWorkDays[locId].add(d));
+        }
+      }
+      if (allValidWorkDays.size > 0 || Object.keys(locationSpecificWorkDays).length > 0) {
         const locHistory = await base44.asServiceRole.entities.LocationHistory.filter(
           { character_id: char.id, owner_email: char.owner_email, event_type: 'work_start' },
           '-arrival_time', 30
@@ -146,10 +164,13 @@ Deno.serve(async (req) => {
           const arrivalET = new Date(new Date(rec.arrival_time).toLocaleString('en-US', { timeZone: 'America/New_York' }));
           const arrivalDay = arrivalET.getDay();
 
-          // Check if this is a non-work day
-          if (!char.work_days.includes(arrivalDay)) {
-            // Also check if the location is NOT the character's occupation location
-            // (work_start at a non-occupation location on a non-work day is definitely false)
+          // Check if this day is valid for THIS SPECIFIC location
+          const locSpecificDays = locationSpecificWorkDays[rec.location_id];
+          const isValidForThisLocation = locSpecificDays ? locSpecificDays.has(arrivalDay) : false;
+          const isValidForCharacterSchedule = allValidWorkDays.has(arrivalDay);
+
+          // Only delete if NOT valid for this specific location AND NOT valid for character schedule
+          if (!isValidForThisLocation && !isValidForCharacterSchedule) {
             const isOccupationLoc = rec.location_id === char.occupation_location_id;
             if (!isOccupationLoc) {
               await base44.asServiceRole.entities.LocationHistory.delete(rec.id);

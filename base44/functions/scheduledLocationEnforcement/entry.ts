@@ -436,29 +436,45 @@ function computeResolved(character, locationMap, etTime) {
   // Checks ALL work locations: primary + current + additional jobs.
   // Per location: uses location.worker_shifts[character.id] first; falls back to character's own schedule.
   if (!hasValidCallout) {
-    const allWorkLocIds = [];
-    if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
-    if (character.current_work_location_id && !allWorkLocIds.includes(character.current_work_location_id)) {
-      allWorkLocIds.push(character.current_work_location_id);
-    }
+    // TWO-PASS WORK LOCATION RESOLUTION
+    // Pass 1: Check ALL locations for active explicit shifts (LocationReference.worker_shifts
+    //         OR character-stored shift data from additional_occupation_locations)
+    // Pass 2: Character schedule fallback in priority order:
+    //   a. additional_occupation_locations, b. current_work_location_id, c. occupation_location_id
+    // This prevents occupation_location_id from overriding a shift-specific location.
+
+    // Build entries in CORRECT priority order (additional first, occupation last)
+    const workLocEntries = [];
     if (Array.isArray(character.additional_occupation_locations)) {
       for (const loc of character.additional_occupation_locations) {
-        if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
-          allWorkLocIds.push(loc.location_id);
+        if (loc.location_id && !workLocEntries.find(e => e.locId === loc.location_id)) {
+          workLocEntries.push({
+            locId: loc.location_id,
+            source: 'additional_occupation',
+            hasCharShiftData: !!(loc.shift_start && loc.shift_end),
+            charShift: loc,
+          });
         }
       }
     }
+    if (character.current_work_location_id && !workLocEntries.find(e => e.locId === character.current_work_location_id)) {
+      workLocEntries.push({ locId: character.current_work_location_id, source: 'current_work', hasCharShiftData: false, charShift: null });
+    }
+    if (character.occupation_location_id && !workLocEntries.find(e => e.locId === character.occupation_location_id)) {
+      workLocEntries.push({ locId: character.occupation_location_id, source: 'occupation', hasCharShiftData: false, charShift: null });
+    }
 
-    for (const workLocId of allWorkLocIds) {
-      const workLoc = locationMap[workLocId];
+    // PASS 1: Check ALL locations for active explicit shifts
+    for (const entry of workLocEntries) {
+      const workLoc = locationMap[entry.locId];
       if (!workLoc) continue;
 
-      // Check location-specific shift for this character first
+      // Check 1a: LocationReference.worker_shifts
       const locationShift = workLoc.worker_shifts?.[character.id];
       if (locationShift) {
         if (isOnShiftNow(locationShift, etTime)) {
           return {
-            resolved_current_location_id: workLocId,
+            resolved_current_location_id: entry.locId,
             resolved_current_location_name: workLoc.name || 'Work',
             resolved_location_type: 'work',
             resolved_presence_status: 'at_work',
@@ -467,14 +483,36 @@ function computeResolved(character, locationMap, etTime) {
             home_resolution_failed: false,
           };
         }
-        // Shift defined but not active — skip character's own schedule for this location
         continue;
       }
 
-      // No location-specific shift — fall back to character's own work_days/start/end
+      // Check 1b: Character-stored shift data from additional_occupation_locations
+      if (entry.hasCharShiftData) {
+        const charShift = { start: entry.charShift.shift_start, end: entry.charShift.shift_end, days: entry.charShift.work_days };
+        if (isOnShiftNow(charShift, etTime)) {
+          return {
+            resolved_current_location_id: entry.locId,
+            resolved_current_location_name: workLoc.name || entry.charShift.location_name || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+            resolved_zone: null,
+            home_resolution_failed: false,
+          };
+        }
+        continue;
+      }
+    }
+
+    // PASS 2: Character schedule fallback in priority order
+    for (const entry of workLocEntries) {
+      const workLoc = locationMap[entry.locId];
+      if (!workLoc) continue;
+      if (workLoc.worker_shifts?.[character.id]) continue;
+      if (entry.hasCharShiftData) continue;
       if (isOnWorkSchedule(character, etTime)) {
         return {
-          resolved_current_location_id: workLocId,
+          resolved_current_location_id: entry.locId,
           resolved_current_location_name: workLoc.name || 'Work',
           resolved_location_type: 'work',
           resolved_presence_status: 'at_work',
@@ -483,20 +521,6 @@ function computeResolved(character, locationMap, etTime) {
           home_resolution_failed: false,
         };
       }
-    }
-
-    // Also check additional_occupation_locations for location-side shifts not in allWorkLocIds
-    const locationSideShift = isOnLocationSideShift(character, locationMap, etTime);
-    if (locationSideShift && !hasValidCallout) {
-      return {
-        resolved_current_location_id: locationSideShift.locationId,
-        resolved_current_location_name: locationSideShift.locationName,
-        resolved_location_type: 'work',
-        resolved_presence_status: 'at_work',
-        resolved_source_reason: 'work_schedule',
-        resolved_zone: null,
-        home_resolution_failed: false,
-      };
     }
   }
 
