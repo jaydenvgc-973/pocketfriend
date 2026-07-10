@@ -349,6 +349,12 @@ function computeResolved(character, locationMap, etTime) {
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
 
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  // PASSED_OUT PROTECTION: passed_out is an involuntary recovery state that must NEVER
+  // be overridden by schedule/location enforcement. Also check the pass_out_recovery
+  // stay lock — even if resolved_presence_status was externally cleared to 'home',
+  // the stay lock proves the character is still in forced recovery.
+  const dbIsPassedOut = character.resolved_presence_status === 'passed_out' ||
+    (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery');
 
   // ── ACTIVE_CREATED_CHARACTER: sleep state is DB truth, not clock window ──────
   // For active_created_characters, sleep is driven by the energy/needs system
@@ -357,6 +363,32 @@ function computeResolved(character, locationMap, etTime) {
   // If DB says sleeping → preserve at valid sleep location (protect the state the energy system wrote).
   // If DB says awake   → do NOT force sleep based on any clock window.
   if (!isNPCChar) {
+    // PASSED_OUT PRESERVATION: A passed_out character (or one with an active
+    // pass_out_recovery stay lock) must NEVER be moved or have their status
+    // overwritten by schedule enforcement. Preserve at their current location.
+    if (dbIsPassedOut) {
+      if (sleepHomeId) {
+        return {
+          resolved_current_location_id: sleepHomeId,
+          resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+          resolved_location_type: 'home',
+          resolved_presence_status: 'passed_out',
+          resolved_source_reason: 'pass_out_recovery_preserved',
+          resolved_zone: null,
+          home_resolution_failed: !sleepHomeLoc,
+        };
+      }
+      // No valid sleep location — preserve at current location
+      return {
+        resolved_current_location_id: character.resolved_current_location_id || null,
+        resolved_current_location_name: character.resolved_current_location_name || 'Home',
+        resolved_location_type: character.resolved_location_type || 'home',
+        resolved_presence_status: 'passed_out',
+        resolved_source_reason: 'pass_out_recovery_preserved_no_home',
+        resolved_zone: null,
+        home_resolution_failed: true,
+      };
+    }
     if (dbSleeping) {
       // DB says sleeping — preserve the state at a valid sleep location.
       // This protects what the energy system already wrote. Do not clear it via schedule.

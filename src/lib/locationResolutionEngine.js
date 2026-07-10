@@ -109,7 +109,13 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
-  if (!hasValidCallout && !isCharacterAsleepFromUtils(character)) {
+  // PASSED_OUT / PASS_OUT_RECOVERY GUARD: A character in passed_out state, or one with
+  // an active pass_out_recovery stay lock (even if resolved_presence_status was externally
+  // cleared to 'home'), must NEVER be forced to work by schedule enforcement.
+  const hasPassOutRecoveryLock = character.presence_stay_lock === true &&
+    character.presence_stay_lock_reason === 'pass_out_recovery';
+
+  if (!hasValidCallout && !isCharacterAsleepFromUtils(character) && !hasPassOutRecoveryLock) {
   // LAYER 1: Work schedule — SLEEP GUARD: asleep/napping characters must not be forced to work
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
@@ -883,7 +889,11 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // These are involuntary physical states that must NEVER be overridden by
   // the live schedule pre-check. A passed-out character at their occupation
   // location must show "Passed out", not "At work".
-  if (presenceStatus === 'passed_out') {
+  // Also check the pass_out_recovery stay lock — even if resolved_presence_status
+  // was externally cleared to 'home', the stay lock proves the character is still
+  // in forced recovery and must display as passed_out.
+  if (presenceStatus === 'passed_out' ||
+      (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery')) {
     return { status: 'passed_out', label: 'Passed out', sublabel: locName, isTransit: false, isSleeping: true };
   }
   if (presenceStatus === 'hospitalized') {
@@ -895,25 +905,12 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
   // If presence_status is 'traveling', it is stale — fall through to current location display.
 
-  // ── PRIORITY 2.5: LIVE SCHEDULE PRE-CHECK ─────────────────────────────────
-  // Run the live schedule check BEFORE trusting stored presence status.
-  // This ensures that when the DB says 'home' but the work schedule is currently active,
-  // we surface the real state immediately — matching Travel, Map, Scenes, and Chat.
-  // This is the canonical fix for homepage cards showing "home" while all other surfaces
-  // show "at work". The check is identical to resolveCharacterLocation Layer 1.
-  {
-    const liveScheduleCheck = resolveCharacterLocation(character, locationMap);
-    if (liveScheduleCheck.resolved_presence_status === 'at_work') {
-      const workLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
-        || liveScheduleCheck.resolved_current_location_name || 'Work';
-      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
-    }
-    if (liveScheduleCheck.resolved_presence_status === 'at_school') {
-      const schoolLocName = locationMap[liveScheduleCheck.resolved_current_location_id]?.name
-        || liveScheduleCheck.resolved_current_location_name || 'School';
-      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
-    }
-  }
+  // ── PRIORITY 2.5: REMOVED — Live schedule pre-check was inventing at_work status ──
+  // This block previously called resolveCharacterLocation() and if it returned at_work,
+  // displayed "At work" even when the DB said 'home'. This caused false work status on
+  // days off when the schedule check was incorrect or stale. Work status must come from
+  // PRIORITY 3 below, which requires BOTH resolved_presence_status='at_work' AND a
+  // verified schedule source reason AND a valid work-day check.
 
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
@@ -921,18 +918,18 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     const hasResolvedLocation = !!character.resolved_current_location_id;
     const isScheduleSource = sourceReason === 'work_schedule' || sourceReason === 'work_schedule_enforced';
     if (isScheduleSource && hasResolvedLocation) {
-      const locName = loc?.name || character.resolved_current_location_name || 'Work';
-      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
+      // DAY VERIFICATION: Before trusting a DB-stored at_work status, verify that
+      // today is actually a work day. A stale at_work on a day off must NOT display
+      // as "At work". Location identity must use exact IDs, not display names.
+      const workStatus = getWorkScheduleStatus(character, new Date());
+      if (workStatus.onSchedule) {
+        const locName = loc?.name || character.resolved_current_location_name || 'Work';
+        return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
+      }
+      // Not on schedule today — fall through to location name fallback below
     }
-    // DB says at_work but source_reason is stale/non-standard — verify via live schedule
-    // This ensures CharacterCard matches Map/Travel which use resolveCharacterLocation()
-    const liveWorkCheck = resolveCharacterLocation(character, locationMap);
-    if (liveWorkCheck.resolved_presence_status === 'at_work') {
-      const locName = locationMap[liveWorkCheck.resolved_current_location_id]?.name
-        || liveWorkCheck.resolved_current_location_name || 'Work';
-      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
-    }
-    // Genuinely stale — fall through to location name fallback below
+    // DB says at_work but source_reason is stale/non-standard OR not on schedule today —
+    // do NOT display as at_work. Fall through to location name fallback.
   }
   if (presenceStatus === 'at_school') {
     const schoolLoc = locationMap[character.education_location_id];
@@ -950,22 +947,11 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     }
   }
 
-  // ── PRIORITY 3.9: LIVE SCHEDULE CHECK — catches stale DB state ────────────
-  // If DB presence status is not at_work/at_school but live schedule says otherwise,
-  // trust the live schedule (same source of truth as Map and Travel pages).
-  if (presenceStatus !== 'at_work' && presenceStatus !== 'at_school') {
-    const liveResolved = resolveCharacterLocation(character, locationMap);
-    if (liveResolved.resolved_presence_status === 'at_work') {
-      const workLocName = locationMap[liveResolved.resolved_current_location_id]?.name
-        || liveResolved.resolved_current_location_name || 'Work';
-      return { status: 'at_work', label: 'At work', sublabel: workLocName, isTransit: false, isSleeping: false };
-    }
-    if (liveResolved.resolved_presence_status === 'at_school') {
-      const schoolLocName = locationMap[liveResolved.resolved_current_location_id]?.name
-        || liveResolved.resolved_current_location_name || 'School';
-      return { status: 'at_school', label: 'At school', sublabel: schoolLocName, isTransit: false, isSleeping: false };
-    }
-  }
+  // ── PRIORITY 3.9: REMOVED — Live schedule check was inventing at_work/at_school ──
+  // This block previously called resolveCharacterLocation() to override the DB-stored
+  // presence status. This caused false work status on days off. Work/school status
+  // must only come from PRIORITY 3 above, which requires a verified schedule source
+  // AND a valid work-day check.
 
   // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
   // RULE: Only display a location name if resolved_current_location_id exists AND a name is available.

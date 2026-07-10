@@ -242,7 +242,11 @@ export function getCharacterSleepState(character, locationMap) {
     // displayLabel must NEVER be 'sleeping'. It is 'passed_out'.
     // Cap: 12h (not 8h). Timestamp: last_pass_out_at (not last_sleep_start).
     // Release: energy > 35 OR 12h → home (awake). NEVER transitions to 'sleeping'.
-    if (status === 'passed_out') {
+    // PASS_OUT_RECOVERY STAY LOCK: Even if resolved_presence_status was externally
+    // cleared to 'home' by another writer, an active pass_out_recovery stay lock
+    // proves the character is still in forced recovery — treat as passed_out.
+    if (status === 'passed_out' ||
+        (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery')) {
       // Check 12-hour pass-out cap
       if (character.last_pass_out_at) {
         const nowET_inner = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));

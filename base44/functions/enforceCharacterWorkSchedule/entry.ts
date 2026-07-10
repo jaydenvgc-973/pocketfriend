@@ -76,7 +76,16 @@ Deno.serve(async (req) => {
       };
 
       if (isBlockedFromWork(character)) {
-        return Response.json({ updated: false, reason: 'Character blocked from work (sick/emergency)' });
+       return Response.json({ updated: false, reason: 'Character blocked from work (sick/emergency)' });
+      }
+
+      // PROTECTED STATE GUARD: passed_out, sleeping, napping, hospitalized characters
+      // and characters with an active pass_out_recovery stay lock must NEVER be overridden.
+      if (['passed_out', 'sleeping', 'napping', 'hospitalized'].includes(character.resolved_presence_status)) {
+       return Response.json({ updated: false, reason: 'Character in protected state — work enforcement skipped' });
+      }
+      if (character.presence_stay_lock === true && character.presence_stay_lock_reason === 'pass_out_recovery') {
+       return Response.json({ updated: false, reason: 'Character in pass_out_recovery — work enforcement skipped' });
       }
 
       // Work is an authorized wake source. Track if character was sleeping so the
@@ -423,6 +432,13 @@ Deno.serve(async (req) => {
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
         }
+
+        // PROTECTED STATE GUARD: passed_out, sleeping, napping, hospitalized characters
+        // must NEVER be overridden by work enforcement. Also check pass_out_recovery stay
+        // lock — even if resolved_presence_status was externally cleared to 'home',
+        // the stay lock proves the character is still in forced recovery.
+        if (['passed_out', 'sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
+        if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
 
         // Collect ALL work location IDs for this character
         const allWorkLocIds = [];

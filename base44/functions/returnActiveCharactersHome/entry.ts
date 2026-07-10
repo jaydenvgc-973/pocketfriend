@@ -147,7 +147,11 @@ function shouldProtectFromHomeReturn(char) {
   if (isWorkScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (isSchoolScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  // PROTECTED STATES: passed_out, sleeping, napping, hospitalized must NEVER be overridden.
+  // Also check presence_stay_lock_reason — even if resolved_presence_status was externally
+  // cleared to 'home', a pass_out_recovery stay lock proves the character is still in recovery.
+  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
+  if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }
@@ -231,8 +235,11 @@ Deno.serve(async (req) => {
         const destLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.travel_destination_location_id);
         if (destLoc) continue; // Valid travel — skip
       }
-      // Skip hard blocks
-      if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
+      // Skip hard blocks — passed_out is a protected recovery state that must NEVER
+      // be overridden by return-home dispatch. Also check pass_out_recovery stay lock
+      // in case resolved_presence_status was externally cleared to 'home'.
+      if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) continue;
+      if (char.presence_stay_lock === true && char.presence_stay_lock_reason === 'pass_out_recovery') continue;
       if (char.is_jailed) continue;
 
       const currentLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.resolved_current_location_id);
