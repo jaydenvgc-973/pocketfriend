@@ -109,10 +109,27 @@ export default function VickServiceCard({ ownerEmail }) {
     if (!ownerEmail) return;
     base44.entities.VickInvestigation.filter({ owner_email: ownerEmail }, "-created_date", 20)
       .then(invs => {
+        const STALE_AWAITING_MS = 2 * 60 * 60 * 1000; // 2 hours — transient failures must retry or expire
+        const isStaleAwaiting = (i) => {
+          if (i.status !== "awaiting_evidence") return false;
+          if (i.requires_user_input) return false; // legitimately awaiting user action
+          const ref = i.updated_date || i.created_date;
+          if (!ref) return true;
+          return Date.now() - new Date(ref).getTime() > STALE_AWAITING_MS;
+        };
+
         const meaningful = invs.filter(i => {
+          // Terminal states never appear in the active queue — they belong in history.
+          if (i.status === "delivered" || i.status === "archived") return false;
+          if (i.dismissed) return false;
+          // findings_ready only if not yet read/delivered
+          if (i.status === "findings_ready" && !i.findings_read && !i.findings_delivered) return true;
+          // Stale awaiting_evidence without user input = expired, not active
+          if (isStaleAwaiting(i)) return false;
+          // Genuinely active execution states
           if (["queued", "investigating", "awaiting_evidence", "monitoring"].includes(i.status)) return true;
-          if (i.status === "findings_ready" && !i.findings_read) return true;
-          if (i.priority === "critical" && !i.dismissed && !i.findings_read) return true;
+          // Critical unread findings — but only if not already delivered
+          if (i.priority === "critical" && !i.findings_read && !i.findings_delivered && i.status === "findings_ready") return true;
           return false;
         });
         setInvestigations(meaningful);
