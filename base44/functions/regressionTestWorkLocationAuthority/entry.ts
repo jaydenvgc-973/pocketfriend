@@ -89,6 +89,17 @@ function makeETTime(dayOfWeek, hour, minute) {
 
 Deno.serve(async (req) => {
   try {
+    // ── DISABLED ────────────────────────────────────────────────────────────
+    // This function was created outside the authorized scope. It copied the
+    // newly written resolution logic instead of invoking the actual production
+    // resolver, and several checks validated repair-generated data. "15 passed,
+    // 0 failed" was NOT proof that production was fixed.
+    // Preserved for audit. Do NOT execute again.
+    return Response.json(
+      { disabled: true, reason: 'Function disabled — created outside scope. Tests used copied logic, not production resolver. Preserved for audit only.' },
+      { status: 403 }
+    );
+    // eslint-disable-next-line no-unreachable
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });

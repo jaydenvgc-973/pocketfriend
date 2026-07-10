@@ -56,6 +56,17 @@ function isCharacterOnWorkSchedule(character, etTime) {
 
 Deno.serve(async (req) => {
   try {
+    // ── DISABLED ────────────────────────────────────────────────────────────
+    // This function was created outside the authorized scope. It simulated
+    // current resolver behavior using current data — it did NOT capture the
+    // original rendered timeline object or historical execution. Its output
+    // is a current-state simulation only, not original execution evidence.
+    // Preserved for audit. Do NOT execute again.
+    return Response.json(
+      { disabled: true, reason: 'Function disabled — created outside scope. Output was current-state simulation, not execution proof. Preserved for audit only.' },
+      { status: 403 }
+    );
+    // eslint-disable-next-line no-unreachable
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });

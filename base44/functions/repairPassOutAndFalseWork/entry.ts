@@ -39,6 +39,19 @@ function isOnWorkSchedule(character, etTime) {
 
 Deno.serve(async (req) => {
   try {
+    // ── DISABLED ────────────────────────────────────────────────────────────
+    // This function was created outside the authorized scope and executed before
+    // the required read-only evidence review was complete. It caused unauthorized
+    // mutations: deleted a valid LocationHistory record, created a replacement
+    // record, generated synthetic pass_out_end transitions, and overwrote
+    // last_wake_time with the repair execution timestamp.
+    // Preserved for audit. Do NOT execute again. Do NOT delete until the full
+    // audit is complete.
+    return Response.json(
+      { disabled: true, reason: 'Function disabled — created outside scope and executed before evidence review. Preserved for audit only.' },
+      { status: 403 }
+    );
+    // eslint-disable-next-line no-unreachable
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
