@@ -1590,12 +1590,7 @@ Deno.serve(async (req) => {
         if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
         if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
 
-        // SOCIAL FULFILLMENT MODEL: Social measures fulfillment, not current activity.
-        // A bartender who worked 8h with customers is socially fulfilled (+3/hr → +24/shift).
-        // A character resting at home after a social day does NOT lose social (rate=0).
-        // Social only decays during genuine isolation — extended solitude with zero interaction.
-        // Being home ≠ antisocial. Being in public ≠ automatically social.
-        // Social and Energy are independent: a character can be fulfilled AND tired.
+        // SOCIAL FULFILLMENT: Social measures fulfillment, not activity. Being home ≠ antisocial.
 
         // ── RC5: CASCADE INFECTION ────────────────────────────────────────
         newNeeds = applyStatInfection(newNeeds, elapsedHours);
@@ -1985,6 +1980,15 @@ Deno.serve(async (req) => {
           if (awakeTimerCandidates.length > 0) {
             const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
+            // STALE TIMER GUARD: sleep resets awake timer; high energy = rested; >30h = stale
+            const sleptAfterWake = char.last_sleep_start && new Date(char.last_sleep_start).getTime() > awakeTimerStartMs;
+            if (sleptAfterWake || (newNeeds.energy ?? 75) > 50 || awakeHours > 30) {
+              await base44.entities.Character.update(char.id, { last_wake_time: nowIso, last_need_simulated_at: nowIso,
+                hunger_value: Math.round(newNeeds.hunger), energy_value: Math.round(newNeeds.energy), social_value: Math.round(newNeeds.social),
+                health_value: Math.round(newNeeds.health), mental_value: Math.round(newNeeds.mental), hygiene_value: Math.round(newNeeds.hygiene), comfort_value: Math.round(newNeeds.comfort) });
+              results.push({ character: charName, context, event: '19h_skipped_stale_timer', reason: sleptAfterWake ? 'Sleep after wake — timer stale' : (newNeeds.energy ?? 75) > 50 ? 'Energy too high' : 'Timer >30h stale', awake_hours: Math.round(awakeHours*100)/100, energy: Math.round(newNeeds.energy ?? 75) });
+              continue;
+            }
             if (awakeHours >= 19) {
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.

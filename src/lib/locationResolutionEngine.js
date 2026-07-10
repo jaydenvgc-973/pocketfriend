@@ -879,6 +879,17 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
   }
 
+  // ── PRIORITY 1.6: PASSED OUT / HOSPITALIZED ───────────────────────────────
+  // These are involuntary physical states that must NEVER be overridden by
+  // the live schedule pre-check. A passed-out character at their occupation
+  // location must show "Passed out", not "At work".
+  if (presenceStatus === 'passed_out') {
+    return { status: 'passed_out', label: 'Passed out', sublabel: locName, isTransit: false, isSleeping: true };
+  }
+  if (presenceStatus === 'hospitalized') {
+    return { status: 'hospitalized', label: 'Hospitalized', sublabel: locName, isTransit: false, isSleeping: true };
+  }
+
   // ── PRIORITY 2: TRANSIT STATE — DEPRECATED ────────────────────────────────
   // TravelSession is no longer authoritative. Characters teleport at scheduled time.
   // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
