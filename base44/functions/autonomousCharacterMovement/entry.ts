@@ -1402,10 +1402,13 @@ Deno.serve(async (req) => {
         if (energyUrgency >= 4) {
           if (status !== 'passed_out') {
             const passOutPayload = {
-              resolved_presence_status:   'passed_out',
-              resolved_source_reason:     'energy_depleted_pass_out',
-              energy_value:               0,
-              last_arrived_time:          new Date().toISOString(),
+              resolved_presence_status: 'passed_out', resolved_source_reason: 'energy_depleted_pass_out',
+              current_activity: 'passed out from exhaustion — critical energy depletion', energy_value: 0,
+              last_pass_out_at: new Date().toISOString(), pass_out_count: (char.pass_out_count ?? 0) + 1,
+              presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
+              presence_stay_lock_authority: 'autonomousCharacterMovement', presence_stay_lock_set_at: new Date().toISOString(),
+              presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35',
+              last_arrived_time: new Date().toISOString(),
             };
             try {
               await base44.entities.Character.update(char.id, passOutPayload);

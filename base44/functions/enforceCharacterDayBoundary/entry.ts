@@ -103,6 +103,11 @@ Deno.serve(async (req) => {
       // Skip if hospitalized (valid medical state)
       if (char.resolved_presence_status === 'hospitalized') continue;
 
+      // Skip if passed_out — protected recovery state. Only the authorized
+      // recovery path in simulateActiveCharacterNeeds/autonomousCharacterMovement
+      // may end a pass-out occurrence. Day-boundary must not clear it.
+      if (char.resolved_presence_status === 'passed_out') continue;
+
       // Stale sleep: if sleeping/napping but past wake_up_time, WAKE and return home
       if (['sleeping', 'napping'].includes(char.resolved_presence_status)) {
         const wakeTime = char.wake_up_time || '07:00';

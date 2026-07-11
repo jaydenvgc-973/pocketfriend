@@ -1470,14 +1470,9 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
-          // ── PASS-OUT STATE: INVOLUNTARY PHYSICAL COLLAPSE ─────────────
-          // This is NOT sleep. The character did not choose this.
-          // Status: 'passed_out' (never 'sleeping').
-          // Recovery rate: RATES.passed_out = +8/hr energy (NOT +12.5/hr sleeping rate).
-          // Cap: 12-hour hard cap (NOT the 8-hour sleep cap).
-          // Release: energy > 35 OR 12h → transitions to 'home' (awake). NEVER to 'sleeping'.
-          // Timestamp: last_pass_out_at (NOT last_sleep_start — that field is for voluntary sleep only).
-          // Stay lock: prevents other automations from clearing recovery before it completes.
+          // PASS-OUT: involuntary collapse. Rate +8/hr, cap 12h, release energy>35 OR 12h→home. Uses last_pass_out_at + stay_lock.
+          // AUTHORITATIVE RE-READ: skip if concurrent execution already established a recovery state.
+          {let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,status:'skipped',reason:'concurrent_pass_out_rc2'});continue;}}
           const passOutCount = (char.pass_out_count ?? 0) + 1;
           // Snapshot for atomic revert if the proof record below fails — a state
           // change may never outlive its SleepTransition proof (State-Proof Atomicity).
@@ -1990,6 +1985,8 @@ Deno.serve(async (req) => {
             if (!char.last_pass_out_at || new Date(char.last_pass_out_at).getTime() <= awakeTimerStartMs) {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
+              // AUTHORITATIVE RE-READ: skip if concurrent execution already established a recovery state.
+              {let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,context,status:'skipped',reason:'concurrent_pass_out_19h'});continue;}}
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.
               // This is NOT a chosen sleep — it is the same consequence as pass-out.
@@ -2309,6 +2306,8 @@ Deno.serve(async (req) => {
         let selectedTransition = null;
         if (transitionCandidates.length > 0) {
           selectedTransition = transitionCandidates.reduce((best, c) => (c.priority < best.priority ? c : best));
+          // AUTHORITATIVE RE-READ: if selected transition writes passed_out, verify no concurrent execution already did.
+          if(selectedTransition.payload?.resolved_presence_status === 'passed_out'){let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,context,status:'skipped',reason:'concurrent_pass_out_candidate'});continue;}}
           Object.assign(updatePayload, selectedTransition.payload);
           sleepTransitionsToRecord.push(selectedTransition.transition);
           if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);

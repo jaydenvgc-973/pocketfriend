@@ -123,7 +123,7 @@ function shouldProtectFromHomeReturn(char, locationMap) {
   if (isWorkScheduleActive(char, locationMap)) return true;
   if (isSchoolScheduleActive(char)) return true;
   if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }

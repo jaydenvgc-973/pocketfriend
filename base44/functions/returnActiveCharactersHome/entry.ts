@@ -147,7 +147,7 @@ function shouldProtectFromHomeReturn(char) {
   if (isWorkScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (isSchoolScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }
@@ -232,7 +232,7 @@ Deno.serve(async (req) => {
         if (destLoc) continue; // Valid travel — skip
       }
       // Skip hard blocks
-      if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
+      if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) continue;
       if (char.is_jailed) continue;
 
       const currentLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.resolved_current_location_id);
