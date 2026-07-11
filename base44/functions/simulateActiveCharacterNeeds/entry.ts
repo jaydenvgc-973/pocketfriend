@@ -1230,7 +1230,7 @@ function resolveStaleCorrectiveActivities(character, needs) {
     if (presence !== 'sleeping' && presence !== 'napping' && presence !== 'passed_out') {
       // Already awake somehow — allow the corrective to clear
       if (needs.energy > 50) {
-        return { current_activity: '', resolved_presence_status: 'home' };
+        return { current_activity: '', resolved_presence_status: 'home', last_wake_time: new Date().toISOString() };
       }
     }
     // Character is still asleep — enforce 6h minimum before clearing
@@ -1243,8 +1243,11 @@ function resolveStaleCorrectiveActivities(character, needs) {
       }
     }
     // 6h has elapsed (or no timestamp to verify) — allow clearing
+    // CRITICAL: Set last_wake_time so the 19h awake timer starts fresh.
+    // Without this, the old awake period is reused and a consecutive
+    // pass-out can fire immediately from the 19h enforcement.
     if (needs.energy > 50) {
-      return { current_activity: '', resolved_presence_status: 'home' };
+      return { current_activity: '', resolved_presence_status: 'home', last_wake_time: new Date().toISOString() };
     }
     return null;
   }
@@ -1984,6 +1987,7 @@ Deno.serve(async (req) => {
           if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
           if (awakeTimerCandidates.length > 0) {
             const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
+            if (!char.last_pass_out_at || new Date(char.last_pass_out_at).getTime() <= awakeTimerStartMs) {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
@@ -2106,6 +2110,7 @@ Deno.serve(async (req) => {
                 },
               });
               continue;
+            }
             }
           } else {
             // MISSING TIMESTAMP: Reconstruct from most recent wake/end record,
