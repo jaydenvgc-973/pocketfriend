@@ -1960,21 +1960,19 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── 19-HOUR AWAKE ENFORCEMENT ─────────────────────────────────────
-        // Uses last_wake_time (and last_nap_time as secondary boundary) as the
-        // authoritative awake timer. All wake sources now correctly update
-        // last_wake_time — no secondary guard needed.
+        // ── 19-HOUR AWAKE ENFORCEMENT — PERMANENT INVARIANT ─────────────
+        // Each awake period produces at most ONE 19h exhaustion. The timer is
+        // consumed after firing — a new authoritative wake (last_wake_time) is
+        // required before another can occur. last_nap_time is NEVER used.
         if (!dbIsSleeping && !dbIsNapping && char.resolved_presence_status !== 'passed_out'
             && char.resolved_presence_status !== 'hospitalized' && !sleepLocked && !hasStayLock) {
-          // ── AUTHORITATIVE AWAKE-TIMER START ──────────────────────────────
-          // Use the MOST RECENT of last_wake_time and last_nap_time.
-          // A completed nap is a restorative boundary that resets the awake timer.
-          const awakeTimerCandidates = [];
-          if (char.last_wake_time) awakeTimerCandidates.push(new Date(char.last_wake_time).getTime());
-          if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
-          if (awakeTimerCandidates.length > 0) {
-            const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
-            if (!char.last_pass_out_at || new Date(char.last_pass_out_at).getTime() <= awakeTimerStartMs) {
+          // AUTHORITATIVE AWAKE-TIMER: last_wake_time ONLY.
+          if (char.last_wake_time) {
+            const awakeTimerStartMs = new Date(char.last_wake_time).getTime();
+            // Refuse if a 19h pass-out already occurred during this awake period.
+            const passOutConsumed = char.last_pass_out_at &&
+              new Date(char.last_pass_out_at).getTime() > awakeTimerStartMs;
+            if (!passOutConsumed) {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
