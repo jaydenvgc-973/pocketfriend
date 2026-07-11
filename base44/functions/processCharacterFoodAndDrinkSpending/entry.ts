@@ -643,7 +643,38 @@ Deno.serve(async (req) => {
             }
           }
         }
-        return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, log });
+
+        // ── $0 HOME MEAL TRANSACTION ───────────────────────────────────────
+        // $0 is not null. Eating at home is an eating event — it must be
+        // recorded as a FinancialTransaction with amount=0. The transaction
+        // is proof the activity occurred, not a dollar charge.
+        try {
+          const homeTx = await base44.asServiceRole.entities.FinancialTransaction.create({
+            owner_email,
+            character_id,
+            character_name:   char.name,
+            sender_id:        character_id,
+            sender_type:      'character',
+            sender_name:      char.name,
+            receiver_type:    'system',
+            receiver_name:    destination_location_name || 'Home',
+            amount:           0,
+            direction:        'expense',
+            transaction_type: 'groceries',
+            description:      `Home meal at ${destination_location_name || 'Home'} (pantry — $0.00)`,
+            location_id:      destination_location_id,
+            location_name:    destination_location_name || 'Home',
+            balance_after:    balance,
+            timestamp:        nowISO,
+          });
+          log.push(`home_meal_tx_created id=${homeTx.id} amount=$0.00 (proof transaction)`);
+          console.log(`[HOME_FOOD_TX] ${char.name} | home_meal | $0.00 | tx=${homeTx.id}`);
+        } catch (txErr) {
+          log.push(`home_meal_tx_FAILED: ${txErr.message}`);
+          console.error(`[HOME_FOOD_TX] FAILED for ${char.name}: ${txErr.message}`);
+        }
+
+        return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, amount: 0, is_zero_amount: true, log });
       }
 
       log.push('at_home_food_related_but_no_inventory — no_charge');
