@@ -1481,6 +1481,7 @@ Deno.serve(async (req) => {
           const passOutRevertPayload = {
             resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
             last_pass_out_at: char.last_pass_out_at, pass_out_count: char.pass_out_count,
+            last_wake_time: char.last_wake_time,
             presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
             presence_stay_lock_authority: char.presence_stay_lock_authority, presence_stay_lock_set_at: char.presence_stay_lock_set_at,
             presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
@@ -1492,6 +1493,7 @@ Deno.serve(async (req) => {
             resolved_presence_status: 'passed_out',
             current_activity: 'passed out from exhaustion — critical energy depletion',
             last_pass_out_at: nowIso,
+            last_wake_time: nowIso,
             last_need_simulated_at: nowIso,
             pass_out_count: passOutCount,
             presence_stay_lock: true,
@@ -1982,6 +1984,7 @@ Deno.serve(async (req) => {
           const awakeTimerCandidates = [];
           if (char.last_wake_time) awakeTimerCandidates.push(new Date(char.last_wake_time).getTime());
           if (char.last_nap_time) awakeTimerCandidates.push(new Date(char.last_nap_time).getTime());
+          if (char.last_pass_out_at) awakeTimerCandidates.push(new Date(char.last_pass_out_at).getTime());
           if (awakeTimerCandidates.length > 0) {
             const awakeTimerStartMs = Math.max(...awakeTimerCandidates);
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
@@ -2014,6 +2017,7 @@ Deno.serve(async (req) => {
                 resolved_presence_status: 'passed_out',
                 current_activity: 'passed out from forced exhaustion — 19-hour limit',
                 last_pass_out_at: nowIso,
+                last_wake_time: nowIso,
                 pass_out_count: passOutCount19h,
                 // Stay lock: prevent other automations from clearing recovery
                 presence_stay_lock: true,
@@ -2035,6 +2039,7 @@ Deno.serve(async (req) => {
               const awakeLimitRevertPayload = {
                 resolved_presence_status: char.resolved_presence_status, current_activity: char.current_activity,
                 last_pass_out_at: char.last_pass_out_at, pass_out_count: char.pass_out_count,
+                last_wake_time: char.last_wake_time,
                 presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason,
                 presence_stay_lock_authority: char.presence_stay_lock_authority, presence_stay_lock_set_at: char.presence_stay_lock_set_at,
                 presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
@@ -2206,7 +2211,7 @@ Deno.serve(async (req) => {
           } else if (cs === 'passed_out') {
             transitionCandidates.push({
               priority: 2,
-              payload: { ...corrective, last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
+              payload: { ...corrective, last_pass_out_at: nowIso, last_wake_time: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
                 presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
                 presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso,
                 presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35' },
@@ -2226,7 +2231,7 @@ Deno.serve(async (req) => {
             priority: 2,
             payload: { resolved_presence_status: 'passed_out',
               current_activity: 'passed out from exhaustion — critical energy depletion',
-              last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
+              last_pass_out_at: nowIso, last_wake_time: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
               presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
               presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso,
               presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35' },
@@ -2267,7 +2272,7 @@ Deno.serve(async (req) => {
             priority: 2,
             payload: { resolved_presence_status: 'passed_out',
               current_activity: 'passed out from compound crisis — forced recovery',
-              last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1 },
+              last_pass_out_at: nowIso, last_wake_time: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1 },
             transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown',
               to_status: 'passed_out', authority: 'compound_crisis',
               reason: `Compound crisis: ${criticalNeeds} needs below critical threshold.` },
