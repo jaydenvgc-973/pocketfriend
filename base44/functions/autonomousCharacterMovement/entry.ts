@@ -1401,19 +1401,20 @@ Deno.serve(async (req) => {
         // except hospitalization/jail.
         if (energyUrgency >= 4) {
           if (status !== 'passed_out') {
-            const passOutPayload = {
-              resolved_presence_status: 'passed_out', resolved_source_reason: 'energy_depleted_pass_out',
-              current_activity: 'passed out from exhaustion — critical energy depletion', energy_value: 0,
-              last_pass_out_at: new Date().toISOString(), pass_out_count: (char.pass_out_count ?? 0) + 1,
-              presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
-              presence_stay_lock_authority: 'autonomousCharacterMovement', presence_stay_lock_set_at: new Date().toISOString(),
-              presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35',
-              last_arrived_time: new Date().toISOString(),
-            };
-            try {
-              await base44.entities.Character.update(char.id, passOutPayload);
-            } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, passOutPayload);
+            const _poTs = new Date().toISOString();
+            await base44.asServiceRole.entities.Character.updateMany(
+              { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+              { $set: { resolved_presence_status: 'passed_out', resolved_source_reason: 'energy_depleted_pass_out',
+                current_activity: 'passed out from exhaustion — critical energy depletion', energy_value: 0,
+                last_pass_out_at: _poTs, presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
+                presence_stay_lock_authority: 'autonomousCharacterMovement', presence_stay_lock_set_at: _poTs,
+                presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35',
+                last_arrived_time: _poTs }, $inc: { pass_out_count: 1 } }
+            );
+            const _pov = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
+            if (!_pov || _pov.last_pass_out_at !== _poTs) {
+              moveLog.push(`${char.name}: pass-out already claimed by concurrent execution — skipped`);
+              continue;
             }
             moveLog.push(`${char.name}: PASSED OUT at ${char.resolved_current_location_name || 'current location'} [energy depleted]`);
             console.log(`[autonomousMovement] ⚠️ ${char.name}: PASSED OUT`);

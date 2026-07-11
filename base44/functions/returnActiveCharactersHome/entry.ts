@@ -363,11 +363,10 @@ Deno.serve(async (req) => {
              updatePayload.current_activity = null;
            }
 
-          if (useServiceRole) {
-            await base44.asServiceRole.entities.Character.update(cand.id, updatePayload);
-          } else {
-            await base44.entities.Character.update(cand.id, updatePayload);
-          }
+          await base44.asServiceRole.entities.Character.updateMany(
+            { id: cand.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+            { $set: updatePayload }
+          );
 
           if (cand.category === 'work_active' || cand.category === 'school_active') {
             batchResult.characters.push({

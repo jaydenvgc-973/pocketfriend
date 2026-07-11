@@ -1470,9 +1470,7 @@ Deno.serve(async (req) => {
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
             && !sleepLocked) {
-          // PASS-OUT: involuntary collapse. Rate +8/hr, cap 12h, release energy>35 OR 12h→home. Uses last_pass_out_at + stay_lock.
-          // AUTHORITATIVE RE-READ: skip if concurrent execution already established a recovery state.
-          {let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,status:'skipped',reason:'concurrent_pass_out_rc2'});continue;}}
+          // PASS-OUT: ATOMIC CONDITIONAL CLAIM — updateMany with $nin filter.
           const passOutCount = (char.pass_out_count ?? 0) + 1;
           // Snapshot for atomic revert if the proof record below fails — a state
           // change may never outlive its SleepTransition proof (State-Proof Atomicity).
@@ -1486,26 +1484,20 @@ Deno.serve(async (req) => {
             health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
             comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
           };
-          await base44.entities.Character.update(char.id, {
-            resolved_presence_status: 'passed_out',
-            current_activity: 'passed out from exhaustion — critical energy depletion',
-            last_pass_out_at: nowIso,
-            last_need_simulated_at: nowIso,
-            pass_out_count: passOutCount,
-            presence_stay_lock: true,
-            presence_stay_lock_reason: 'pass_out_recovery',
-            presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
-            presence_stay_lock_set_at: nowIso,
-            presence_stay_lock_created_by: 'system_automation',
-            presence_stay_lock_release_condition: 'energy_above_35',
-            hunger_value:  Math.round(needs.hunger ?? 70),
-            energy_value:  Math.round(energyBefore),
-            social_value:  Math.round(needs.social ?? 65),
-            health_value:  Math.round(needs.health ?? 80),
-            mental_value:  Math.round(needs.mental ?? 70),
-            hygiene_value: Math.round(needs.hygiene ?? 75),
-            comfort_value: Math.round(needs.comfort ?? 70),
-          });
+          await base44.asServiceRole.entities.Character.updateMany(
+            { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+            { $set: { resolved_presence_status: 'passed_out', current_activity: 'passed out from exhaustion — critical energy depletion',
+              last_pass_out_at: nowIso, last_need_simulated_at: nowIso, presence_stay_lock: true,
+              presence_stay_lock_reason: 'pass_out_recovery', presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
+              presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation',
+              presence_stay_lock_release_condition: 'energy_above_35',
+              hunger_value: Math.round(needs.hunger ?? 70), energy_value: Math.round(energyBefore),
+              social_value: Math.round(needs.social ?? 65), health_value: Math.round(needs.health ?? 80),
+              mental_value: Math.round(needs.mental ?? 70), hygiene_value: Math.round(needs.hygiene ?? 75),
+              comfort_value: Math.round(needs.comfort ?? 70) }, $inc: { pass_out_count: 1 } }
+          );
+          const _rc2v = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
+          if (!_rc2v || _rc2v.last_pass_out_at !== nowIso) { results.push({ character: charName, status: 'skipped', reason: 'pass_out_claimed_by_concurrent_rc2' }); continue; }
 
           // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────
           // If this write fails, the Character write above is reverted immediately.
@@ -1985,8 +1977,6 @@ Deno.serve(async (req) => {
             if (!char.last_pass_out_at || new Date(char.last_pass_out_at).getTime() <= awakeTimerStartMs) {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
-              // AUTHORITATIVE RE-READ: skip if concurrent execution already established a recovery state.
-              {let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,context,status:'skipped',reason:'concurrent_pass_out_19h'});continue;}}
               // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.
               // This is NOT a chosen sleep — it is the same consequence as pass-out.
@@ -2015,7 +2005,6 @@ Deno.serve(async (req) => {
                 resolved_presence_status: 'passed_out',
                 current_activity: 'passed out from forced exhaustion — 19-hour limit',
                 last_pass_out_at: nowIso,
-                pass_out_count: passOutCount19h,
                 // Stay lock: prevent other automations from clearing recovery
                 presence_stay_lock: true,
                 presence_stay_lock_reason: 'pass_out_recovery',
@@ -2044,7 +2033,12 @@ Deno.serve(async (req) => {
                 health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
                 comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
               };
-              await base44.entities.Character.update(char.id, awakeLimitPayload);
+              await base44.asServiceRole.entities.Character.updateMany(
+                { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+                { $set: awakeLimitPayload, $inc: { pass_out_count: 1 } }
+              );
+              const _19hv = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
+              if (!_19hv || _19hv.last_pass_out_at !== nowIso) { results.push({ character: charName, context, status: 'skipped', reason: 'pass_out_claimed_by_concurrent_19h' }); continue; }
 
               // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────
               try {
@@ -2306,8 +2300,6 @@ Deno.serve(async (req) => {
         let selectedTransition = null;
         if (transitionCandidates.length > 0) {
           selectedTransition = transitionCandidates.reduce((best, c) => (c.priority < best.priority ? c : best));
-          // AUTHORITATIVE RE-READ: if selected transition writes passed_out, verify no concurrent execution already did.
-          if(selectedTransition.payload?.resolved_presence_status === 'passed_out'){let _f;try{_f=(await base44.entities.Character.filter({id:char.id},null,1))[0]}catch{try{_f=(await base44.asServiceRole.entities.Character.filter({id:char.id},null,1))[0]}catch{}};if(_f&&['passed_out','sleeping','napping','hospitalized'].includes(_f.resolved_presence_status)){results.push({character:charName,context,status:'skipped',reason:'concurrent_pass_out_candidate'});continue;}}
           Object.assign(updatePayload, selectedTransition.payload);
           sleepTransitionsToRecord.push(selectedTransition.transition);
           if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
@@ -2345,8 +2337,14 @@ Deno.serve(async (req) => {
           presence_stay_lock_created_by: char.presence_stay_lock_created_by, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
         };
 
-        // ── RC6: ALWAYS USE asServiceRole FOR WRITES ──────────────────────
-        await base44.entities.Character.update(char.id, updatePayload);
+        // ── RC6: CONDITIONAL WRITE — protects active passed_out/sleeping/napping/hospitalized ──
+        let _rc6F = updatePayload.resolved_presence_status === 'passed_out'
+          ? { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } }
+          : (updatePayload.resolved_presence_status === 'home' && char.resolved_presence_status === 'passed_out')
+          ? { id: char.id, resolved_presence_status: 'passed_out' }
+          : { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } };
+        await base44.asServiceRole.entities.Character.updateMany(_rc6F, { $set: updatePayload });
+        if (updatePayload.resolved_presence_status === 'passed_out') { const _rc6v = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0]; if (!_rc6v || _rc6v.last_pass_out_at !== updatePayload.last_pass_out_at) { results.push({ character: charName, context, status: 'skipped', reason: 'pass_out_claimed_by_concurrent_rc6' }); continue; } }
 
         // ── AUTHORITATIVE TRANSITION RECORDS — hard gate, atomic. Revert on failure.
         let rc6TransitionsVerified = true;

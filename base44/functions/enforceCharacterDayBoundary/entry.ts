@@ -218,11 +218,10 @@ Deno.serve(async (req) => {
            ...activityClear,
          };
 
-         try {
-           await base44.entities.Character.update(item.id, payload);
-         } catch {
-           await base44.asServiceRole.entities.Character.update(item.id, payload);
-         }
+         await base44.asServiceRole.entities.Character.updateMany(
+           { id: item.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+           { $set: payload }
+         );
 
         log.push(`${item.name}: ${item.from} → Home (${item.reason})`);
         returnedCount++;

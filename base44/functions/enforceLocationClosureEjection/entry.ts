@@ -154,6 +154,7 @@ Deno.serve(async (req) => {
 
     for (const char of allCharacters) {
       if (!char.resolved_current_location_id) continue;
+      if (['passed_out','sleeping','napping','hospitalized'].includes(char.resolved_presence_status)) continue;
 
       const currentLoc = locationMap[char.resolved_current_location_id];
       if (!currentLoc) continue;
@@ -206,11 +207,10 @@ Deno.serve(async (req) => {
       };
 
       const updateFn = async () => {
-        try {
-          await base44.entities.Character.update(char.id, payload);
-        } catch {
-          await base44.asServiceRole.entities.Character.update(char.id, payload);
-        }
+        await base44.asServiceRole.entities.Character.updateMany(
+          { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
+          { $set: payload }
+        );
       };
 
       updatePromises.push(updateFn());
