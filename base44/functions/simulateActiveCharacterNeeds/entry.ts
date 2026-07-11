@@ -729,7 +729,7 @@ function detectCriticalEscalations(oldNeeds, newNeeds, characterName) {
   if (oldNeeds.hunger >= 10 && newNeeds.hunger < 10) events.push({ title: 'Severe hunger — near collapse', description: `${characterName} was extremely hungry, feeling dizzy and unable to focus.`, memory_tag: 'hunger_severe' });
   if (newNeeds.hunger <= 0 && oldNeeds.hunger > 0) events.push({ title: 'Hunger at zero — survival mode', description: `${characterName} had no food energy at all.`, memory_tag: 'hunger_zero' });
   if (oldNeeds.energy >= 25 && newNeeds.energy < 25) events.push({ title: 'Running on empty', description: `${characterName} was exhausted and struggling to stay awake.`, memory_tag: 'energy_critical' });
-  if (newNeeds.energy <= 0 && oldNeeds.energy > 0) events.push({ title: 'Passed out from exhaustion', description: `${characterName} collapsed from complete energy depletion.`, memory_tag: 'energy_zero' });
+  if (newNeeds.energy <= 0 && oldNeeds.energy > 0) events.push({ title: 'Passed out from critical energy', description: `${characterName} collapsed from critical energy depletion.`, memory_tag: 'energy_zero' });
   if (oldNeeds.health >= 20 && newNeeds.health < 20) events.push({ title: 'Health reached critical level', description: `${characterName}'s health deteriorated to a critical state.`, memory_tag: 'health_critical' });
   if (oldNeeds.social >= 15 && newNeeds.social < 15) events.push({ title: 'Deep social isolation', description: `${characterName} felt completely alone and isolated.`, memory_tag: 'social_critical' });
   if (oldNeeds.mental >= 50 && newNeeds.mental < 50) events.push({ title: 'Mental health declining', description: `${characterName}'s mental wellbeing dropped to a concerning level.`, memory_tag: 'mental_critical' });
@@ -769,13 +769,16 @@ function computeCorrectiveState(needs, character, locationMap) {
     presence === 'passed_out' || presence === 'hospitalized';
 
   // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse. NOT sleeping.
+  // COOLDOWN: prevent chaining — require 1h awake after any pass-out recovery.
   if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
+    if (character.last_pass_out_at && character.last_wake_time) {
+      const _poMs = new Date(character.last_pass_out_at).getTime();
+      const _wkMs = new Date(character.last_wake_time).getTime();
+      if (_wkMs > _poMs && (Date.now() - _wkMs) < 3_600_000) return null;
+    }
     return {
       resolved_presence_status: 'passed_out',
-      // TRUTHFUL: energy reached critical threshold (≤10%) — NOT "19 hours awake".
-      // The 19-hour rule is a separate enforcement path with its own current_activity string.
-      // These two must never be mixed. If energy caused the pass-out, say so.
-      current_activity: 'passed out from exhaustion — critical energy depletion',
+      current_activity: 'Passed out from critical energy',
     };
   }
 
@@ -1466,10 +1469,13 @@ Deno.serve(async (req) => {
         // Character collapses from exhaustion. Written BEFORE the normal
         // rate application so the NEXT tick uses passed_out rates (+8/hr).
         const energyBefore = char.energy_value ?? 75;
+        const _poCooldown = char.last_pass_out_at && char.last_wake_time &&
+          new Date(char.last_wake_time).getTime() > new Date(char.last_pass_out_at).getTime() &&
+          (Date.now() - new Date(char.last_wake_time).getTime()) < 3_600_000;
         if (energyBefore <= T.ENERGY_PASSOUT && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
             && char.resolved_presence_status !== 'passed_out'
-            && !sleepLocked) {
+            && !sleepLocked && !_poCooldown) {
           // PASS-OUT: ATOMIC CONDITIONAL CLAIM — updateMany with $nin filter.
           const passOutCount = (char.pass_out_count ?? 0) + 1;
           // Snapshot for atomic revert if the proof record below fails — a state
@@ -1486,7 +1492,7 @@ Deno.serve(async (req) => {
           };
           await base44.asServiceRole.entities.Character.updateMany(
             { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
-            { $set: { resolved_presence_status: 'passed_out', current_activity: 'passed out from exhaustion — critical energy depletion',
+            { $set: { resolved_presence_status: 'passed_out', current_activity: 'Passed out from critical energy',
               last_pass_out_at: nowIso, last_need_simulated_at: nowIso, presence_stay_lock: true,
               presence_stay_lock_reason: 'pass_out_recovery', presence_stay_lock_authority: 'simulateActiveCharacterNeeds',
               presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation',
@@ -1525,16 +1531,16 @@ Deno.serve(async (req) => {
             await base44.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
               event_type: 'medical_event', valence: 'negative', severity: 'major',
-              title: 'Passed out from exhaustion',
-              description: `${charName} collapsed from complete energy depletion. Energy was at ${Math.round(energyBefore)} when their body forced sleep. They will wake groggy, embarrassed, and with lowered comfort. This is their ${passOutCount === 1 ? 'first' : passOutCount === 2 ? 'second' : `${passOutCount}rd`} pass-out event — each one makes future exhaustion feel more threatening.`,
+              title: 'Passed out from critical energy',
+              description: `${charName} passed out from critical energy. Energy was at ${Math.round(energyBefore)} when their body forced sleep. They will wake groggy, embarrassed, and with lowered comfort. This is their ${passOutCount === 1 ? 'first' : passOutCount === 2 ? 'second' : `${passOutCount}rd`} pass-out event — each one makes future exhaustion feel more threatening.`,
               emotional_impact: 'physical collapse, embarrassment, loss of control',
               triggered_by: 'life_simulation', timestamp: nowIso,
               context_tags: ['passed_out', 'forced_sleep', passOutCount > 1 ? 'repeat_pass_out' : 'first_pass_out'],
             });
             await base44.entities.CharacterMemory.create({
               character_id: char.id, memory_type: 'event',
-              memory_text: `${charName} passed out from exhaustion when their energy dropped to ${Math.round(energyBefore)}. They collapsed involuntarily — their body forced sleep because they ignored exhaustion too long. The experience was physically draining, embarrassing, and emotionally stressful. They remember how bad it felt and do not want to repeat it.`,
-              memory_summary: `Passed out at energy ${Math.round(energyBefore)} — body forced sleep. Unpleasant, embarrassing, physically draining.`,
+              memory_text: `${charName} passed out from critical energy when their energy dropped to ${Math.round(energyBefore)}. They collapsed involuntarily — their body forced sleep because they ignored exhaustion too long. The experience was physically draining, embarrassing, and emotionally stressful. They remember how bad it felt and do not want to repeat it.`,
+              memory_summary: `Passed out from critical energy at energy ${Math.round(energyBefore)} — body forced sleep. Unpleasant, embarrassing, physically draining.`,
               importance_score: 8, permanence: 'long_term', related_character_id: char.id,
             });
           } catch (consequenceError) {
@@ -2001,7 +2007,7 @@ Deno.serve(async (req) => {
               const awakeLimitPayload = {
                 ...homeRedirectFields,
                 resolved_presence_status: 'passed_out',
-                current_activity: 'passed out from forced exhaustion — 19-hour limit',
+                current_activity: 'Passed out from 19-hour exhaustion',
                 last_pass_out_at: nowIso,
                 // Stay lock: prevent other automations from clearing recovery
                 presence_stay_lock: true,
@@ -2065,15 +2071,15 @@ Deno.serve(async (req) => {
                 await base44.entities.LifeEvent.create({
                   character_id: char.id, character_name: charName,
                   event_type: 'sleep_deprivation_event', valence: 'negative', severity: 'significant',
-                  title: 'Passed out — 19-hour forced exhaustion',
-                  description: `${charName} was awake for ${Math.round(awakeHours)} hours and collapsed from exhaustion. Their body forced sleep — this was not a choice. This is their ${passOutCount19h === 1 ? 'first' : passOutCount19h === 2 ? 'second' : `${passOutCount19h}th`} pass-out event.${homeLocId && !isAlreadyAtHome ? ' Returned to assigned home for recovery.' : ''}`,
+                  title: 'Passed out from 19-hour exhaustion',
+                  description: `${charName} passed out from 19-hour exhaustion after being awake for ${Math.round(awakeHours)} hours. Their body forced sleep — this was not a choice. This is their ${passOutCount19h === 1 ? 'first' : passOutCount19h === 2 ? 'second' : `${passOutCount19h}th`} pass-out event.${homeLocId && !isAlreadyAtHome ? ' Returned to assigned home for recovery.' : ''}`,
                   emotional_impact: 'forced collapse, embarrassment, loss of control', triggered_by: 'life_simulation',
                   timestamp: nowIso, context_tags: ['awake_limit', 'passed_out', 'forced_exhaustion', passOutCount19h > 1 ? 'repeat_pass_out' : 'first_pass_out'],
                 });
                 await base44.entities.CharacterMemory.create({
                   character_id: char.id, memory_type: 'event',
-                  memory_text: `${charName} stayed awake for over ${Math.round(awakeHours)} hours and collapsed from exhaustion — their body forced sleep. This was not voluntary. The experience was draining, embarrassing, and physically difficult. They do not want to repeat it. They should sleep earlier when tired rather than pushing past their limit.`,
-                  memory_summary: `Passed out at ${Math.round(awakeHours)}h awake — forced exhaustion, not voluntary sleep.`,
+                  memory_text: `${charName} passed out from 19-hour exhaustion after staying awake for over ${Math.round(awakeHours)} hours — their body forced sleep. This was not voluntary. The experience was draining, embarrassing, and physically difficult. They do not want to repeat it. They should sleep earlier when tired rather than pushing past their limit.`,
+                  memory_summary: `Passed out from 19-hour exhaustion at ${Math.round(awakeHours)}h awake — not voluntary sleep.`,
                   importance_score: 8, permanence: 'long_term', related_character_id: char.id,
                 });
               } catch (consequenceError) {
@@ -2213,13 +2219,17 @@ Deno.serve(async (req) => {
         }
 
         // RC2 (continued): energy reached zero this tick
+        const _poCooldownB = char.last_pass_out_at && char.last_wake_time &&
+          new Date(char.last_wake_time).getTime() > new Date(char.last_pass_out_at).getTime() &&
+          (Date.now() - new Date(char.last_wake_time).getTime()) < 3_600_000;
         if (newNeeds.energy <= 0 && !sleepLocked && char.resolved_presence_status !== 'sleeping'
             && char.resolved_presence_status !== 'napping'
-            && char.resolved_presence_status !== 'passed_out') {
+            && char.resolved_presence_status !== 'passed_out'
+            && !_poCooldownB) {
           transitionCandidates.push({
             priority: 2,
             payload: { resolved_presence_status: 'passed_out',
-              current_activity: 'passed out from exhaustion — critical energy depletion',
+              current_activity: 'Passed out from critical energy',
               last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1,
               presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery',
               presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso,
