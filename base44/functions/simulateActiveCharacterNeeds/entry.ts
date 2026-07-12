@@ -1641,7 +1641,16 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.entities.Character.update(char.id, wakePayload);
+              // CONDITIONAL CLAIM: only wake if character is still sleeping
+              await base44.asServiceRole.entities.Character.updateMany(
+                { id: char.id, resolved_presence_status: 'sleeping' },
+                { $set: wakePayload }
+              );
+              const _sleepCapVerify = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
+              if (!_sleepCapVerify || _sleepCapVerify.last_wake_time !== nowIso) {
+                results.push({ character: charName, context, status: 'skipped', reason: 'sleep_cap_claim_lost_to_concurrent_writer' });
+                continue;
+              }
               try {
                 await base44.entities.SleepTransition.create({
                   character_id: char.id, character_name: charName, owner_email: ownerEmail,
@@ -1870,7 +1879,16 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.entities.Character.update(char.id, napWakePayload);
+              // CONDITIONAL CLAIM: only wake if character is still napping
+              await base44.asServiceRole.entities.Character.updateMany(
+                { id: char.id, resolved_presence_status: 'napping' },
+                { $set: napWakePayload }
+              );
+              const _napCapVerify = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
+              if (!_napCapVerify || _napCapVerify.last_wake_time !== nowIso) {
+                results.push({ character: charName, context, status: 'skipped', reason: 'nap_cap_claim_lost_to_concurrent_writer' });
+                continue;
+              }
               try {
                 await base44.entities.SleepTransition.create({
                   character_id: char.id, character_name: charName, owner_email: ownerEmail,

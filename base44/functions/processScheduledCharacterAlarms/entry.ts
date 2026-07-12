@@ -229,7 +229,23 @@ Deno.serve(async (req) => {
       }
 
       try {
-        await base44.asServiceRole.entities.Character.update(character.id, updatePayload);
+        if (isAsleep) {
+          // CONDITIONAL CLAIM: only wake if character is still sleeping/napping
+          const _claimState = presenceStatus === 'napping' ? 'napping' : 'sleeping';
+          await base44.asServiceRole.entities.Character.updateMany(
+            { id: character.id, resolved_presence_status: _claimState },
+            { $set: updatePayload }
+          );
+          // Read-back verification: confirm this invocation won the claim
+          const _wakeVerify = (await base44.asServiceRole.entities.Character.filter({ id: character.id }, null, 1))?.[0];
+          if (!_wakeVerify || _wakeVerify.last_wake_time !== nowIso) {
+            console.log(`[processScheduledCharacterAlarms]   CLAIM_LOST: concurrent writer already woke ${character.name}`);
+            skipped.push({ character_id: character.id, reason: 'wake_claim_lost_to_concurrent_writer' });
+            continue;
+          }
+        } else {
+          await base44.asServiceRole.entities.Character.update(character.id, updatePayload);
+        }
 
         const woke = isAsleep;
         console.log(`[processScheduledCharacterAlarms]   woke_up:              ${woke}`);
