@@ -113,10 +113,21 @@ Deno.serve(async (req) => {
 
     const destLocId = destLocation.id;
 
-    // Step 3: Save pending scheduled relocation on character
-    // The user owns this character (they are in the chat) — use user-scoped write first.
-    // User-scoped write passes Character RLS (data.owner_email === user.email).
-    // Service-role fallback handles edge cases (protected characters, session issues).
+    // Step 2.5: Expire any existing active commitments for this character BEFORE
+    // overwriting pending fields. Without this, old commitments are orphaned —
+    // their destination_location_id no longer matches next_location_id, so
+    // processScheduledRelocations never marks them 'arrived'. They remain
+    // permanently stuck in status: 'active'.
+    const existingCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
+      { character_id, status: 'active' }, null, 20
+    ).catch(() => []);
+    for (const ec of existingCommitments) {
+      await base44.asServiceRole.entities.CharacterCommitment.update(ec.id, {
+        status: 'cancelled',
+        completed_at: nowIso,
+      }).catch(() => {});
+    }
+
     const nowIso = new Date().toISOString();
     const relocationFields = {
       next_location_id: destLocId,
