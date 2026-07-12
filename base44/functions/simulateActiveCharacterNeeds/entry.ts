@@ -1763,8 +1763,17 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              await base44.asServiceRole.entities.Character.updateMany({ id: char.id, resolved_presence_status: 'passed_out' }, { $set: passOutWakePayload }); const _12hv = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0]; if (!_12hv || _12hv.last_wake_time !== nowIso) { results.push({ character: charName, context, status: 'skipped', reason: 'pass_out_cap_12h_claimed_by_concurrent' }); continue; }
-              try { await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home', authority: 'pass_out_cap_12h', reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`, timestamp: nowIso, state_start_ref: passOutStart || null, elapsed_hours: Math.round(passOutDurationHours * 100) / 100 });
+              await base44.entities.Character.update(char.id, passOutWakePayload);
+              try {
+                await base44.entities.SleepTransition.create({
+                  character_id: char.id, character_name: charName, owner_email: ownerEmail,
+                  transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home',
+                  authority: 'pass_out_cap_12h',
+                  reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`,
+                  timestamp: nowIso,
+                  state_start_ref: passOutStart || null,
+                  elapsed_hours: Math.round(passOutDurationHours * 100) / 100,
+                });
               } catch (transitionError) {
                 let revertError = null;
                 try {
