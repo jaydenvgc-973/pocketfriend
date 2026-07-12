@@ -9,17 +9,11 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
 const clamp = (v) => Math.max(0, Math.min(100, v));
 
 // ── RATES ──────────────────────────────────────────────────────────────────
-// sleeping +12.5/hr (voluntary, 8h cap) vs passed_out +8/hr (involuntary
-// collapse, 12h cap, never becomes 'sleeping') vs hospitalized +4/hr.
-// Awake contexts never restore energy. Social measures fulfillment, not
-// activity — it gains from interaction and only decays during isolation.
+// sleeping +12.5/hr (voluntary, 8h cap) vs passed_out +8/hr (involuntary, 12h cap) vs hospitalized +4/hr.
 const RATES = {
-  // VOLUNTARY sleep: chosen rest, full restorative rate, normal sleep cap (8h), normal wake logic.
   sleeping:        { hunger: -1,   energy: +12.5, social:  0,   health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
-  // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
-  // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  hospitalized:    { hunger: -0.5, energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
+  hospitalized:    { hunger: +2,   energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
@@ -2303,6 +2297,7 @@ Deno.serve(async (req) => {
           }
           // Under 6h without medical emergency: keep passed_out — 12h hard cap will eventually fire
         }
+        if (char.resolved_presence_status === 'hospitalized' && (newNeeds.health ?? 0) >= 60) { transitionCandidates.push({ priority: 5, payload: { resolved_presence_status: 'home', current_activity: '', last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null }, transition: { transition_type: 'hospitalized_end', from_status: 'hospitalized', to_status: 'home', authority: 'health_recovered', reason: `Health recovered to ${Math.round(newNeeds.health)} — discharged.` }, consequence: { type: 'hospital_discharge', healthValue: Math.round(newNeeds.health) } }); }
 
         // ── SELECT EXACTLY ONE CANDIDATE — lowest priority wins, others re-evaluated next tick
         let selectedTransition = null;
@@ -2423,7 +2418,7 @@ Deno.serve(async (req) => {
             } else if (c.type === 'pass_out_end_recovery') {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${c.elapsedHours}h of recovery. Energy at ${c.energyValue}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
               await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${c.elapsedHours}h of recovery from passing out. Groggy and embarrassed. Energy at ${c.energyValue}.`, memory_summary: `Recovered from pass-out after ${c.elapsedHours}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id });
-            } else if (c.type === 'stale_wake') {
+            } else if (c.type === 'hospital_discharge') { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Discharged from hospital', description: `${charName} was discharged — health recovered to ${c.healthValue}.`, emotional_impact: 'relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['hospital_discharge', 'recovery'] }); await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} was discharged from the hospital. Health at ${c.healthValue}.`, memory_summary: `Discharged from hospital — health ${c.healthValue}.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id }); } else if (c.type === 'stale_wake') {
               const _wTitle = c.wakeType === 'pass_out_end' ? 'Recovered from pass-out' : c.wakeType === 'nap_end' ? 'Woke up from a nap' : 'Woke up';
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'minor', title: _wTitle, description: `${charName} woke up. Energy at ${c.energyValue}.`, emotional_impact: c.wakeType === 'pass_out_end' ? 'groggy' : 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: [c.wakeType, 'woke_up', 'stale_cleanup'] });
               await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke up. Energy at ${c.energyValue}.`, memory_summary: `Woke up at energy ${c.energyValue}.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id });

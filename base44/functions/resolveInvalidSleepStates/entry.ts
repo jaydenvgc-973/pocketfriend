@@ -96,14 +96,16 @@ Deno.serve(async (req) => {
           sleepDurationH = (now.getTime() - new Date(c.last_sleep_start).getTime()) / 3600000;
         }
 
-        // VALID sleep — preserve
-        if (insideWindow && sleepDurationH !== null && sleepDurationH < 8 && !workBlocker && !schoolBlocker) {
-          preserved.push({ id: c.id, name: c.name, reason: 'valid_in_window_under_cap' });
+        // VALID sleep — preserve if last_sleep_start proves recent sleep onset (< 8h)
+        // regardless of whether sleep_start_time/wake_up_time metadata is set.
+        // last_sleep_start is the authoritative sleep timer; schedule metadata is secondary.
+        if (sleepDurationH !== null && sleepDurationH < 8 && !workBlocker && !schoolBlocker) {
+          preserved.push({ id: c.id, name: c.name, reason: insideWindow ? 'valid_in_window_under_cap' : 'valid_last_sleep_start_under_cap_no_schedule' });
           continue;
         }
 
         // 8h cap exceeded — legitimate wake with real sleep_end record
-        if (insideWindow && sleepDurationH !== null && sleepDurationH >= 8) {
+        if (sleepDurationH !== null && sleepDurationH >= 8) {
           const update: any = {
             resolved_presence_status: 'home',
             current_activity: null,
