@@ -1405,8 +1405,6 @@ Deno.serve(async (req) => {
         // RC5: Cap elapsed time at 8 hours
         const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), 8);
 
-        // Skip rest-state chars far from cap/wake (recovery computed on next run)
-        const _rs=char.resolved_presence_status;if((_rs==='sleeping'||_rs==='napping'||_rs==='passed_out')&&elapsedHours>=0.05&&elapsedHours<2){const _nowET=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));const _wtS=char.wake_up_time||'07:00';const[_wHS,_wMS]=_wtS.split(':').map(Number);const _wMinS=(!isNaN(_wHS)&&!isNaN(_wMS))?_wHS*60+_wMS:null;const _cMinS=_nowET.getHours()*60+_nowET.getMinutes();const _nearWake=_wMinS!==null&&_cMinS>=_wMinS-15&&_cMinS<=_wMinS+30;if(!_nearWake&&(char.health_value??80)>20){await base44.entities.Character.update(char.id,{last_need_simulated_at:nowIso});results.push({character:charName,status:'skipped_rest_state'});continue;}}
         // Skip if too recent (less than ~3 minutes)
         if (elapsedHours < 0.05) {
           results.push({ character: charName, status: 'skipped', reason: 'too_recent', elapsed_minutes: Math.round(elapsedHours * 60) });
@@ -1635,48 +1633,55 @@ Deno.serve(async (req) => {
           if (char.last_sleep_start) {
             const sleepStartMs = new Date(char.last_sleep_start).getTime();
             const sleepDurationHours = (Date.now() - sleepStartMs) / 3_600_000;
-            // Merged: scheduled wake-time boundary (from enforceWakeTimeBoundary) + 8h cap.
-            // Wake-time wins if both true (scheduled wake is the meaningful reason).
-            const _wt = char.wake_up_time || '07:00';
-            const [_wh, _wm] = _wt.split(':').map(Number);
-            const _wMin = (!isNaN(_wh) && !isNaN(_wm)) ? _wh * 60 + _wm : null;
-            const _cMin = nowET.getHours() * 60 + nowET.getMinutes();
-            const _EXC = ['hospitalized','incarcerated','confined','house_arrest'];
-            const _isWT = _wMin !== null && _cMin >= _wMin + 15 && sleepDurationHours >= 6
-              && !_EXC.includes(char.resolved_presence_status) && !char.is_jailed
-              && !char.house_arrest_active && char.sleep_lock !== true;
-            if (_isWT || sleepDurationHours >= 8) {
-              const _auth = _isWT ? 'wake_time_boundary' : 'sleep_cap_8h';
-              const _reason = _isWT
-                ? `Scheduled wake time (${_wt}) reached — slept ${Math.round(sleepDurationHours*100)/100}h.`
-                : `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`;
+            if (sleepDurationHours >= 8) {
               const wakePayload = {
-                resolved_presence_status: 'home', current_activity: '',
+                resolved_presence_status: 'home',
+                current_activity: '',
                 last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
-                hunger_value: Math.round(newNeeds.hunger), energy_value: Math.round(newNeeds.energy),
-                social_value: Math.round(newNeeds.social), health_value: Math.round(newNeeds.health),
-                mental_value: Math.round(newNeeds.mental), hygiene_value: Math.round(newNeeds.hygiene),
-                comfort_value: Math.round(newNeeds.comfort), last_need_simulated_at: nowIso,
+                hunger_value:  Math.round(newNeeds.hunger),
+                energy_value:  Math.round(newNeeds.energy),
+                social_value:  Math.round(newNeeds.social),
+                health_value:  Math.round(newNeeds.health),
+                mental_value:  Math.round(newNeeds.mental),
+                hygiene_value: Math.round(newNeeds.hygiene),
+                comfort_value: Math.round(newNeeds.comfort),
+                last_need_simulated_at: nowIso,
               };
               await base44.entities.Character.update(char.id, wakePayload);
               try {
                 await base44.entities.SleepTransition.create({
                   character_id: char.id, character_name: charName, owner_email: ownerEmail,
                   transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home',
-                  authority: _auth, reason: _reason, timestamp: nowIso,
-                  state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100,
+                  authority: 'sleep_cap_8h',
+                  reason: `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`,
+                  timestamp: nowIso,
+                  state_start_ref: char.last_sleep_start || null,
+                  elapsed_hours: Math.round(sleepDurationHours * 100) / 100,
                 });
               } catch (transitionError) {
-                let _revertErr = null;
-                try { await base44.entities.Character.update(char.id, { resolved_presence_status: 'sleeping', current_activity: char.current_activity, last_wake_time: char.last_wake_time, hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value, health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value, comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at }); } catch (e) { _revertErr = e.message; }
-                results.push({ character: charName, context, event: 'unverified_state_write', reason: `sleep_end SleepTransition failed — reverted (${_auth})`, transition_error: transitionError.message, revert_error: _revertErr });
+                // Atomic revert: proof record failed — undo the Character write above.
+                let revertError = null;
+                try {
+                  await base44.entities.Character.update(char.id, {
+                    resolved_presence_status: 'sleeping', current_activity: char.current_activity,
+                    last_wake_time: char.last_wake_time,
+                    hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value,
+                    health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value,
+                    comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at,
+                  });
+                } catch (e) { revertError = e.message; }
+                results.push({
+                  character: charName, context, event: 'unverified_state_write',
+                  reason: 'sleep_end SleepTransition write failed — Character state reverted, event is UNVERIFIED',
+                  transition_error: transitionError.message, revert_error: revertError,
+                });
                 continue;
               }
-              try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up', description: `${charName} woke up. Slept ${Math.round(sleepDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['sleep_end', 'woke_up', _isWT ? 'wake_time_boundary' : 'sleep_cap_8h'] });
-                await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke up. Slept ${Math.round(sleepDurationHours * 100) / 100}h.`, memory_summary: `Woke up — slept ${Math.round(sleepDurationHours * 100) / 100}h.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
+              try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up after full sleep', description: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['sleep_end', 'woke_up'] });
+                await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h and woke rested.`, memory_summary: `Slept ${Math.round(sleepDurationHours * 100) / 100}h — woke rested.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
               results.push({
                 character: charName, context,
-                event: _isWT ? 'wake_time_boundary' : 'hard_8h_sleep_wake',
+                event: 'hard_8h_sleep_wake',
                 sleep_duration_hours: Math.round(sleepDurationHours * 100) / 100,
                 needs: {
                   hunger: Math.round(newNeeds.hunger), energy: Math.round(newNeeds.energy),
