@@ -1513,6 +1513,13 @@ Deno.serve(async (req) => {
     // ── Step 9: World-State Reconciliation (BEFORE recent message context) ───
     // This is CRITICAL: reconciles world state as the authoritative truth source
     // before any recent chat context is consulted.
+    //
+    // ONE TRUTH: Resolve authoritative presence/location using the same precedence
+    // as the frontend resolveCharacterLocation() resolver (work > school > sleep).
+    // The backend cannot import the frontend resolver, so the key schedule checks
+    // are inlined here. This prevents stale or competing DB states from reaching
+    // the AI prompt. If work/school schedule is active but DB says sleeping, the
+    // resolved value is at_work/at_school — not the stale sleeping field.
     let worldStateContext = '';
     try {
       const now = new Date();
@@ -1520,9 +1527,51 @@ Deno.serve(async (req) => {
         ? new Date(recentMessages[0].timestamp || recentMessages[0].created_date)
         : null;
 
-      // Build world-state reconciliation summary
-      const charResolved = character.resolved_presence_status || 'unknown';
-      const charLocName = character.resolved_current_location_name || 'Unknown location';
+      // ── INLINE RESOLUTION (mirrors resolveCharacterLocation Layer 1 + Layer 2) ──
+      const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+      const dayOfWeek = nowET.getDay();
+      const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+      const todayET = nowET.toISOString().slice(0, 10);
+
+      // Check if work schedule is active right now
+      let workShiftActive = false;
+      const hasCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
+      if (!hasCallout && character.work_start_time && character.work_end_time &&
+          Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
+        const s = toMinLocal(character.work_start_time);
+        const e = toMinLocal(character.work_end_time);
+        if (s !== null && e !== null) {
+          workShiftActive = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+        }
+      }
+
+      // Check if school window is active right now
+      let schoolWindowActive = false;
+      if (character.student_status === 'enrolled' && character.education_location_id && [1,2,3,4,5].includes(dayOfWeek)) {
+        const enrollments = character.education_enrollments;
+        if (Array.isArray(enrollments) && enrollments.length > 0) {
+          const activeE = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+          if (activeE) {
+            const s = toMinLocal(activeE.start_time);
+            const e = toMinLocal(activeE.end_time);
+            if (s !== null && e !== null) {
+              schoolWindowActive = nowMin >= s && nowMin < e;
+            }
+          }
+        }
+      }
+
+      // Apply resolver precedence: work/school overrides stale sleeping/napping
+      let charResolved = character.resolved_presence_status || 'unknown';
+      let charLocName = character.resolved_current_location_name || 'Unknown location';
+      if (workShiftActive && (charResolved === 'sleeping' || charResolved === 'napping' || charResolved === 'passed_out')) {
+        charResolved = 'at_work';
+        charLocName = character.occupation_location_name || charLocName;
+      } else if (schoolWindowActive && (charResolved === 'sleeping' || charResolved === 'napping' || charResolved === 'passed_out')) {
+        charResolved = 'at_school';
+        charLocName = character.education_location_name || charLocName;
+      }
       
       // Elapsed time since last interaction
       let elapsedMinutes = 0;

@@ -982,9 +982,15 @@ export function getCharacterLivePresence(character, locationMap = {}) {
 export function buildLiveLocationContext(character, locationMap = {}, imageMode = false) {
   if (!character) return '';
 
-  const presence = character.resolved_presence_status;
-  const locId = character.resolved_current_location_id;
-  const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
+  // ONE TRUTH: Use the resolver, not raw DB fields. This prevents stale or
+  // competing committed states from reaching the LLM prompt. The resolver
+  // applies the same precedence (work > school > sleep > visit > home) that
+  // every other consumer uses. If locationMap is empty, the resolver preserves
+  // DB state as-is (its built-in guard), so this is always safe.
+  const resolved = resolveCharacterLocation(character, locationMap);
+  const presence = resolved.resolved_presence_status;
+  const locId = resolved.resolved_current_location_id;
+  const locName = resolved.resolved_current_location_name || (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
