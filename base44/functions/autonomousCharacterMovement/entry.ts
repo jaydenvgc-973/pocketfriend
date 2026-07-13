@@ -1396,10 +1396,13 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 1: ZERO ENERGY — PASS OUT ──────────────────────────────────
-        // energy < 10 → character passes out at current location regardless of
-        // toggle, stay-lock, schedule, or personality. Overrides everything
-        // except hospitalization/jail.
-        if (energyUrgency >= 4) {
+        // ── DISABLED: Exhaustion-threshold pass-out is blocked per mandatory
+        // temporary shutdown. Energy may reach any value without triggering
+        // pass-out. The threshold definition is retained for future restoration
+        // but the execution path is blocked. Energy and awake-time values
+        // continue to calculate and display normally.
+        const PASSOUT_EXHAUSTION_DISABLED = true;
+        if (!PASSOUT_EXHAUSTION_DISABLED && energyUrgency >= 4) {
           if (status !== 'passed_out') {
             const passOutPayload = {
               resolved_presence_status:   'passed_out',
