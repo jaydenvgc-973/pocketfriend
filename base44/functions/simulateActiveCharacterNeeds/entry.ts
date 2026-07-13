@@ -524,6 +524,70 @@ function computeCorrectiveState(needs, character, locationMap) {
     };
   }
 
+  // ── OVERNIGHT SLEEP WINDOW (schedule-driven, NOT energy-driven) ──────────
+  // A character at home during their defined sleep window goes to sleep
+  // regardless of energy level. Sleep is a daily rhythm, not only a
+  // crash-recovery mechanism. This block fires independently of the
+  // energy-pressure pipeline below.
+  //
+  // Guards:
+  //   - Not already in a rest state (sleeping/napping/passed_out/hospitalized)
+  //   - Not sleep-locked
+  //   - No meaningful overnight activity (party, emergency, child care, etc.)
+  //   - Not in an obligation (work shift, school, jail, house arrest)
+  //   - At home (resolved_current_location_id === current_home_location_id)
+  //   - Inside the character's [sleep_start_time, wake_up_time] window
+  //
+  // Only an alarm, work shift start, or school start may interrupt this sleep
+  // — enforced by the 8-hour cap and the wake-time boundary system.
+  if (!isInRestState && !character.sleep_lock) {
+    const hasOvernightReason = hasMeaningfulOvernightActivity(character);
+    if (!hasOvernightReason) {
+      const inObligation = isOnShift(character, locationMap) ||
+        presence === 'at_school' ||
+        character.is_jailed ||
+        character.house_arrest_active;
+      if (!inObligation) {
+        const atHome = character.resolved_current_location_id === character.current_home_location_id ||
+          presence === 'home' ||
+          (character.resolved_location_type || '').toLowerCase() === 'home';
+        if (atHome) {
+          const nowETSW = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+          const nowMinSW = nowETSW.getHours() * 60 + nowETSW.getMinutes();
+          const toMinSW = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+          let sleepStartMinSW = null;
+          if (character.sleep_start_time) sleepStartMinSW = toMinSW(character.sleep_start_time);
+          else if (character.work_start_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
+            const workStart = toMinSW(character.work_start_time);
+            if (workStart !== null) { const wakeMin = (workStart - 60 + 1440) % 1440; sleepStartMinSW = (wakeMin - 7 * 60 + 1440) % 1440; }
+          }
+          if (sleepStartMinSW === null) sleepStartMinSW = 23 * 60; // 11 PM default
+
+          let wakeMinSW = null;
+          if (character.wake_up_time) wakeMinSW = toMinSW(character.wake_up_time);
+          else if (character.work_start_time) wakeMinSW = (toMinSW(character.work_start_time) - 60 + 1440) % 1440;
+          else wakeMinSW = 7 * 60; // 7 AM default
+
+          let insideSleepWindow = false;
+          if (sleepStartMinSW !== null && wakeMinSW !== null) {
+            insideSleepWindow = sleepStartMinSW > wakeMinSW
+              ? (nowMinSW >= sleepStartMinSW || nowMinSW < wakeMinSW)
+              : (nowMinSW >= sleepStartMinSW && nowMinSW < wakeMinSW);
+          }
+
+          if (insideSleepWindow) {
+            return {
+              resolved_presence_status: 'sleeping',
+              current_activity: 'sleeping — overnight sleep window',
+              last_sleep_start: new Date().toISOString(),
+            };
+          }
+        }
+      }
+    }
+  }
+
   // ENERGY 25-50%: DECISION PIPELINE REQUIRED — state only if at home + no obligations
   if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
