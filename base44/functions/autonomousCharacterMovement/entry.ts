@@ -1395,25 +1395,28 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 1: CRITICAL ENERGY — DEFER TO CANONICAL PASS-OUT AUTHORITY ──
-        // SINGLE CANONICAL AUTHORITY RULE (permanent):
-        // simulateActiveCharacterNeeds is the ONLY production function permitted to
-        // initiate, claim, record, or count a pass-out occurrence. It owns the atomic
-        // conditional claim that prevents duplicate pass-outs under concurrent execution.
-        //
-        // autonomousCharacterMovement must NOT write:
-        //   resolved_presence_status = 'passed_out'
-        //   last_pass_out_at
-        //   pass_out_count
-        //   pass-out recovery locks
-        //   pass-out SleepTransition / LifeEvent / CharacterMemory records
-        //
-        // When energy is critically low (< 10), this function simply skips movement.
-        // The canonical authority will atomically claim the pass-out on its next tick.
-        // If the character is ALREADY passed_out, fall through to Tier 2 (6-hour guard).
-        if (energyUrgency >= 4 && status !== 'passed_out') {
-          console.log(`[autonomousMovement] ${char.name}: critical energy (${Math.round(vals.energy)}) — deferring to canonical pass-out authority (simulateActiveCharacterNeeds)`);
-          skippedLog.push(`${char.name}: critical energy — deferred to canonical pass-out authority`);
+        // ── TIER 1: ZERO ENERGY — PASS OUT ──────────────────────────────────
+        // energy < 10 → character passes out at current location regardless of
+        // toggle, stay-lock, schedule, or personality. Overrides everything
+        // except hospitalization/jail.
+        if (energyUrgency >= 4) {
+          if (status !== 'passed_out') {
+            const passOutPayload = {
+              resolved_presence_status:   'passed_out',
+              resolved_source_reason:     'energy_depleted_pass_out',
+              energy_value:               0,
+              last_arrived_time:          new Date().toISOString(),
+            };
+            try {
+              await base44.entities.Character.update(char.id, passOutPayload);
+            } catch {
+              await base44.asServiceRole.entities.Character.update(char.id, passOutPayload);
+            }
+            moveLog.push(`${char.name}: PASSED OUT at ${char.resolved_current_location_name || 'current location'} [energy depleted]`);
+            console.log(`[autonomousMovement] ⚠️ ${char.name}: PASSED OUT`);
+          } else {
+            console.log(`[autonomousMovement] ${char.name}: already passed_out — no change`);
+          }
           continue;
         }
 

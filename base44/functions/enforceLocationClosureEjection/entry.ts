@@ -123,7 +123,7 @@ function shouldProtectFromHomeReturn(char, locationMap) {
   if (isWorkScheduleActive(char, locationMap)) return true;
   if (isSchoolScheduleActive(char)) return true;
   if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }
@@ -154,7 +154,6 @@ Deno.serve(async (req) => {
 
     for (const char of allCharacters) {
       if (!char.resolved_current_location_id) continue;
-      if (['passed_out','sleeping','napping','hospitalized'].includes(char.resolved_presence_status)) continue;
 
       const currentLoc = locationMap[char.resolved_current_location_id];
       if (!currentLoc) continue;
@@ -207,10 +206,11 @@ Deno.serve(async (req) => {
       };
 
       const updateFn = async () => {
-        await base44.asServiceRole.entities.Character.updateMany(
-          { id: char.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
-          { $set: payload }
-        );
+        try {
+          await base44.entities.Character.update(char.id, payload);
+        } catch {
+          await base44.asServiceRole.entities.Character.update(char.id, payload);
+        }
       };
 
       updatePromises.push(updateFn());

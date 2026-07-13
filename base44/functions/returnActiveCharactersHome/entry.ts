@@ -16,8 +16,9 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * 
  * Processing order:
  * 1. Characters at closed locations
- * 2. Characters with work/school soon
- * 3. Remaining non-home characters
+ * 2. Characters past 2.5 hour non-home limit
+ * 3. Characters with work/school soon
+ * 4. Remaining non-home characters
  */
 
 function getNowET() {
@@ -146,7 +147,7 @@ function shouldProtectFromHomeReturn(char) {
   if (isWorkScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (isSchoolScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
   if (hasValidActiveTravel(char)) return true;
-  if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
   return false;
 }
@@ -231,13 +232,17 @@ Deno.serve(async (req) => {
         if (destLoc) continue; // Valid travel — skip
       }
       // Skip hard blocks
-      if (['sleeping', 'napping', 'hospitalized', 'passed_out'].includes(char.resolved_presence_status)) continue;
+      if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
       if (char.is_jailed) continue;
 
       const currentLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.resolved_current_location_id);
       const isClosed = currentLoc && !isLocationOpen(currentLoc, nowET);
       const isWorkActive = isWorkScheduleActive(char, nowET);
       const isWorkSoon = isWorkScheduleSoon(char, nowET, 120);
+      const nonHomeDurationMin = char.last_arrived_time 
+        ? Math.floor((nowET.getTime() - new Date(char.last_arrived_time).getTime()) / 60000)
+        : null;
+      const pastLimit = nonHomeDurationMin && nonHomeDurationMin > 150; // 2.5 hours (non-home leisure only)
       const isAtHome = char.resolved_current_location_id === char.current_home_location_id;
 
       // CALLOUT GUARD: skip work dispatch if character has a valid callout for today
@@ -259,7 +264,8 @@ Deno.serve(async (req) => {
              category: 'work_active',
              isWorkActive: true,
              isClosed: false,
-             });
+             pastLimit: false,
+           });
          }
          continue; // Process work dispatch, don't check other conditions
       }
@@ -279,7 +285,8 @@ Deno.serve(async (req) => {
              category: 'school_active',
              isWorkActive: false,
              isClosed: false,
-             });
+             pastLimit: false,
+           });
          }
          continue; // Process school dispatch, don't check other conditions
       }
@@ -288,7 +295,7 @@ Deno.serve(async (req) => {
       // GUARD: DO NOT force home if character has active obligations
       // Also: if called out, 'work_soon' no longer applies
       const effectiveWorkSoon = isWorkSoon && !hasValidCallout;
-      if ((isClosed || effectiveWorkSoon) && !shouldProtectFromHomeReturn(char)) {
+      if ((isClosed || pastLimit || effectiveWorkSoon) && !shouldProtectFromHomeReturn(char)) {
         candidates.push({
           id: char.id,
           name: char.name,
@@ -296,15 +303,16 @@ Deno.serve(async (req) => {
           currentLocName: char.resolved_current_location_name,
           destLocId: char.current_home_location_id,
           destLocName: locationsByUser[char.owner_email]?.find(l => l.id === char.current_home_location_id)?.name || 'Home',
-          category: isClosed ? 'closed_location' : 'work_soon',
+          category: isClosed ? 'closed_location' : pastLimit ? 'time_limit' : 'work_soon',
           isWorkActive: false,
           isClosed,
+          pastLimit,
         });
       }
     }
 
-    // Sort by category priority: work_active and school_active first (priority 0), then closed, work_soon
-    const categoryOrder = { work_active: 0, school_active: 0, closed_location: 1, work_soon: 3 };
+    // Sort by category priority: work_active and school_active first (priority 0), then closed, time_limit, work_soon
+    const categoryOrder = { work_active: 0, school_active: 0, closed_location: 1, time_limit: 2, work_soon: 3 };
     candidates.sort((a, b) => categoryOrder[a.category] - categoryOrder[b.category]);
 
     // Process in batches of 5
@@ -355,10 +363,11 @@ Deno.serve(async (req) => {
              updatePayload.current_activity = null;
            }
 
-          await base44.asServiceRole.entities.Character.updateMany(
-            { id: cand.id, resolved_presence_status: { $nin: ['passed_out','sleeping','napping','hospitalized'] } },
-            { $set: updatePayload }
-          );
+          if (useServiceRole) {
+            await base44.asServiceRole.entities.Character.update(cand.id, updatePayload);
+          } else {
+            await base44.entities.Character.update(cand.id, updatePayload);
+          }
 
           if (cand.category === 'work_active' || cand.category === 'school_active') {
             batchResult.characters.push({

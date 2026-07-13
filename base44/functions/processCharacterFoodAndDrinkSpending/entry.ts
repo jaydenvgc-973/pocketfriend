@@ -621,60 +621,8 @@ Deno.serve(async (req) => {
         });
         if (consumeOk) {
           log.push(`home_food_consumed=$${consumed} remaining=$${newFoodVal}`);
-          // Immediate hunger recovery — mirrors recordEatingEvent snack/meal logic.
-          // Without this, the character eats home food but the bar doesn't move
-          // until the next simulateActiveCharacterNeeds tick (5-10 min delay).
-          if (char.hunger_lock !== true && char.needs_locks?.hunger !== true) {
-            const _cH = (v) => Math.max(0, Math.min(100, v));
-            const isHomeMeal = (char.hunger_value ?? 70) < 30;
-            const homeRecovery = isHomeMeal ? 33 : 16.5;
-            const curH = char.hunger_value ?? 70;
-            const effH = curH >= 85 ? Math.min(homeRecovery, 5) : homeRecovery;
-            const newH = _cH(curH + effH);
-            try {
-              await base44.asServiceRole.entities.Character.update(character_id, {
-                hunger_value: newH,
-                last_need_simulated_at: nowISO,
-              });
-              log.push(`home_hunger_recovery: ${Math.round(curH)}→${Math.round(newH)} (+${Math.round(effH)})`);
-              console.log(`[HOME_FOOD] ${char.name} | home_meal=${isHomeMeal} | hunger: ${Math.round(curH)}→${Math.round(newH)}`);
-            } catch (hErr) {
-              log.push(`home_hunger_update_FAILED: ${hErr.message}`);
-            }
-          }
         }
-
-        // ── $0 HOME MEAL TRANSACTION ───────────────────────────────────────
-        // $0 is not null. Eating at home is an eating event — it must be
-        // recorded as a FinancialTransaction with amount=0. The transaction
-        // is proof the activity occurred, not a dollar charge.
-        try {
-          const homeTx = await base44.asServiceRole.entities.FinancialTransaction.create({
-            owner_email,
-            character_id,
-            character_name:   char.name,
-            sender_id:        character_id,
-            sender_type:      'character',
-            sender_name:      char.name,
-            receiver_type:    'system',
-            receiver_name:    destination_location_name || 'Home',
-            amount:           0,
-            direction:        'expense',
-            transaction_type: 'groceries',
-            description:      `Home meal at ${destination_location_name || 'Home'} (pantry — $0.00)`,
-            location_id:      destination_location_id,
-            location_name:    destination_location_name || 'Home',
-            balance_after:    balance,
-            timestamp:        nowISO,
-          });
-          log.push(`home_meal_tx_created id=${homeTx.id} amount=$0.00 (proof transaction)`);
-          console.log(`[HOME_FOOD_TX] ${char.name} | home_meal | $0.00 | tx=${homeTx.id}`);
-        } catch (txErr) {
-          log.push(`home_meal_tx_FAILED: ${txErr.message}`);
-          console.error(`[HOME_FOOD_TX] FAILED for ${char.name}: ${txErr.message}`);
-        }
-
-        return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, amount: 0, is_zero_amount: true, log });
+        return Response.json({ success: true, outcome: 'home_food_consumed', consumed, remaining_food_value: newFoodVal, log });
       }
 
       log.push('at_home_food_related_but_no_inventory — no_charge');
@@ -849,47 +797,6 @@ Deno.serve(async (req) => {
       log.push(`balance $${balance} → $${newBalance}`);
     } else {
       log.push(`balance unchanged — $0 transaction`);
-    }
-
-    // ── HUNGER RECOVERY: restaurant/fast_food/bar/club eating ──────────────
-    // The character paid for food/drink — they get immediate hunger recovery.
-    // Mirrors recordEatingEvent logic. Without this, the character pays for a meal
-    // but their hunger bar never increases (the +15/hr simulation rate is too slow
-    // and requires the character to remain at the food_drink location).
-    if (spendCategory === 'restaurant' || spendCategory === 'fast_food' ||
-        spendCategory === 'bar_lounge' || spendCategory === 'club_nightlife') {
-      if (char.hunger_lock === true || char.needs_locks?.hunger === true) {
-        log.push('hunger_locked — no recovery applied');
-      } else {
-        const RECOVERY_BY_CATEGORY = {
-          restaurant:     { hunger: 40, energy: 5, comfort: 4 },
-          fast_food:      { hunger: 25, energy: 3, comfort: 2 },
-          bar_lounge:     { hunger: 20, energy: 2, comfort: 3 },
-          club_nightlife: { hunger: 15, energy: 0, comfort: 2 },
-        };
-        const recovery = RECOVERY_BY_CATEGORY[spendCategory];
-        const _cN = (v) => Math.max(0, Math.min(100, v));
-        const curHunger = char.hunger_value ?? 70;
-        const curEnergy = char.energy_value ?? 75;
-        const curComfort = char.comfort_value ?? 70;
-        const effGain = curHunger >= 85 ? Math.min(recovery.hunger, 5) : recovery.hunger;
-        const newHunger = _cN(curHunger + effGain);
-        const newEnergy = _cN(curEnergy + recovery.energy);
-        const newComfort = _cN(curComfort + recovery.comfort);
-        try {
-          await base44.asServiceRole.entities.Character.update(character_id, {
-            hunger_value: newHunger,
-            energy_value: newEnergy,
-            comfort_value: newComfort,
-            last_need_simulated_at: nowISO,
-          });
-          log.push(`hunger_recovery: ${Math.round(curHunger)}→${Math.round(newHunger)} (+${Math.round(effGain)}) energy: ${Math.round(curEnergy)}→${Math.round(newEnergy)} comfort: ${Math.round(curComfort)}→${Math.round(newComfort)}`);
-          console.log(`[FOOD_SPENDING] ${char.name} | category=${spendCategory} | hunger: ${Math.round(curHunger)}→${Math.round(newHunger)} | amount=$${effectiveAmount}`);
-        } catch (hungerErr) {
-          log.push(`hunger_update_FAILED: ${hungerErr.message}`);
-          console.error(`[FOOD_SPENDING] hunger update FAILED for ${char.name}: ${hungerErr.message}`);
-        }
-      }
     }
 
     // ── GROCERY: create or update HouseholdResource ───────────────────────────

@@ -166,18 +166,15 @@ RULES:
 5. eating_event is a STATE-TRACKING event, not a narrative event. It must be flagged whenever ${characterName} actually consumes food or drink in this turn, even if the moment is otherwise ordinary. Always set eating_event severity to "moderate".
 
 EATING EVENT RULES — READ CAREFULLY:
-eating_event must be assigned if ${characterName} ACTUALLY CONSUMED food or drink in THIS turn, OR if the conversation confirms that ${characterName} has recently eaten (even if the eating happened in a prior turn).
-Flag as eating_event when:
-  - ${characterName} clearly took a bite, ate, finished, was fed, or is actively eating in this turn
-  - The user confirms ${characterName} already ate ("you've had two bowls", "you already ate", "you just ate")
-  - ${characterName} references having just eaten ("I just had soup", "I ate that", "I finished it")
-  - ${characterName} asks for MORE food, implying they already ate some ("bring me another bowl", "give me more")
+eating_event must ONLY be assigned if ${characterName} ACTUALLY CONSUMED food or drink in THIS turn.
 Do NOT flag as eating_event if:
-  - ${characterName} talks about future eating without having eaten ("I should eat", "I'll eat later", "I need to eat")
+  - ${characterName} merely mentions a past meal ("I ate earlier", "I had breakfast this morning")
+  - ${characterName} talks about future eating ("I should eat", "I'll eat later", "I need to eat")
   - ${characterName} refuses or is unable to eat ("I'm not hungry", "I can't eat", "too tired to eat")
-  - Food was ordered, arrived, or is present but NOT consumed AND no prior eating is referenced ("I ordered food", "the tacos arrived")
+  - Food was ordered, arrived, or is present but NOT consumed ("I ordered food", "the tacos arrived")
   - ${characterName} is saving food for later or giving it to someone else
   - The eating is hypothetical ("I would eat that", "if I ate that")
+ONLY flag eating_event when ${characterName} clearly took a bite, ate, finished, was fed, or is actively eating in this turn.
 When flagging eating_event, set meal_size to "snack" for small items/drinks, "meal" for regular meals, or "large_meal" for feasts/large quantities.
 
 STRICT GRIEF RULE — READ CAREFULLY:
@@ -259,11 +256,8 @@ If nothing meaningful happened, return: { "events": [] }`;
     // Pre-fetch data needed for all events
     const [existingAchievements, character] = await Promise.all([
       base44.entities.UserAchievement.filter({ owner_email: user.email }),
-      base44.asServiceRole.entities.Character.get(characterId).catch(() => null),
+      base44.asServiceRole.entities.Character.filter({ id: characterId }).then(r => r[0]),
     ]);
-    if (!character) {
-      console.error(`[classifyConversationEvent] CHARACTER NOT FOUND — charId=${characterId} — all state updates (hunger, mood, relationship) will be skipped`);
-    }
     const existingAchievementIds = new Set(existingAchievements.map(a => a.achievement_id));
 
     for (const event of events) {
@@ -432,15 +426,9 @@ If nothing meaningful happened, return: { "events": [] }`;
               last_need_simulated_at: new Date().toISOString(),
             });
 
-            console.log(`[EATING_EVENT] ${characterName} | size=${_mealSize} | hunger: ${Math.round(_curHunger)} → ${Math.round(_newHunger)} | charId=${characterId}`);
-          } else if (!character) {
-            console.error(`[EATING_EVENT] ${characterName} | SKIPPED — character object is null (fetch failed) | charId=${characterId}`);
-          } else if (_isWorldService(character)) {
+            console.log(`[EATING_EVENT] ${characterName} | size=${_mealSize} | hunger: ${Math.round(_curHunger)} → ${_newHunger}`);
+          } else if (character && _isWorldService(character)) {
             console.log(`[EATING_EVENT] ${characterName} | SKIPPED — world_service_character_excluded`);
-          } else if (character.hunger_lock === true) {
-            console.log(`[EATING_EVENT] ${characterName} | SKIPPED — hunger_lock active`);
-          } else if (character.needs_locks?.hunger === true) {
-            console.log(`[EATING_EVENT] ${characterName} | SKIPPED — needs_locks.hunger active`);
           }
         } catch (err) {
           console.error(`[classifyConversationEvent] hunger update FAILED — char="${characterName}" (id=${characterId}) error="${err?.message || err}"`);
