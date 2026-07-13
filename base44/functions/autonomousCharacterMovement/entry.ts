@@ -36,7 +36,6 @@ const QUIRK_COMMITMENT_MODIFIERS = {
   thrill_seeker:   -1,
   drinker:         -0.5,
 };
-
 /**
  * Compute commitment reliability score for a character from canonical traits/quirks.
  * Returns a numeric delta. 0 = average. Positive = more reliable. Negative = less reliable.
@@ -56,25 +55,20 @@ function computeCommitmentReliabilityScore(char) {
   return score;
 }
 
-// ── INLINE PRESENCE STAY LOCK VALIDATOR ──────────────────────────────────────
 // No network call. Observes authoritative state. Does NOT duplicate sleep/work/school logic.
 function validateStayLock(char, nowET) {
   if (!char || char.presence_stay_lock !== true) {
     return { shouldRespectLock: false, shouldReleaseLock: false, reason: 'no_lock_active', authority: null, lockReason: null, proof: 'Lock not active' };
   }
-
   const lockReason = char.presence_stay_lock_reason || null;
   const lockAuthority = char.presence_stay_lock_authority || null;
   const lockExpiresAt = char.presence_stay_lock_expires_at || null;
-
   // Legacy lock detection
   const isLegacy = !lockReason && !lockAuthority && !lockExpiresAt && !char.presence_stay_lock_release_condition;
-
   if (isLegacy) {
     const lockSetAt = char.presence_stay_lock_set_at ? new Date(char.presence_stay_lock_set_at).getTime() : null;
     const lockLocId = char.presence_stay_lock_location_id || null;
     const curLocId = char.resolved_current_location_id || null;
-
     if (!lockSetAt) {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'orphaned_legacy_lock_no_timestamp', authority: lockAuthority, lockReason: lockReason, proof: 'Legacy lock missing set_at' };
     }
@@ -85,21 +79,15 @@ function validateStayLock(char, nowET) {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'stale_legacy_lock', authority: lockAuthority, lockReason: lockReason, proof: 'Legacy lock > 12 hours old' };
     }
   }
-
-  // Expiration
   if (lockExpiresAt && nowET > new Date(lockExpiresAt)) {
     return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'expired', authority: lockAuthority, lockReason: lockReason, proof: `Expired at ${lockExpiresAt}` };
   }
-
-  // Emergency override
   if ((char.energy_value ?? 75) < 10 || (char.health_value ?? 80) < 25) {
     return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'emergency_need_override', authority: 'needs_system', lockReason: lockReason, proof: `Energy: ${char.energy_value}, Health: ${char.health_value}` };
   }
-
   // Observe authoritative state — do NOT duplicate sleep/work/school logic
   const status = char.resolved_presence_status || '';
   const sourceReason = char.resolved_source_reason || '';
-
   if (lockReason === 'sleep_state') {
     if (status !== 'sleeping' && status !== 'napping') {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'sleep_obligation_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer sleeping (status=${status})` };
@@ -115,22 +103,17 @@ function validateStayLock(char, nowET) {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'school_schedule_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer at school (status=${status})` };
     }
   }
-
-  // Scene end release
   if (char.presence_stay_lock_release_condition === 'scene_end' && lockReason === 'user_scene_stay') {
     if (char.resolved_current_location_id !== char.presence_stay_lock_location_id) {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'scene_ended_user_left', authority: lockAuthority, lockReason: lockReason, proof: 'User left scene location' };
     }
   }
-
   return { shouldRespectLock: true, shouldReleaseLock: false, reason: isLegacy ? 'valid_legacy_lock' : 'valid_active_lock', authority: lockAuthority, lockReason: lockReason, proof: isLegacy ? 'Legacy lock respected' : `Lock '${lockReason}' still active` };
 }
 
-// ── SHARED TIME HELPER ────────────────────────────────────────────────────────
 // Used by multiple helpers throughout this file (orphaned travel guard, work schedule check, etc.)
 function toMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); }
 
-// ── FINANCIAL CONSEQUENCE TRIGGER ───────────────────────────────────────────────
 async function triggerSpendingForDestination(base44, char, destLocId, destLocName, destCategory, sourceReason, needType) {
   try {
     // PRE-DEPARTURE CHILDCARE CHECK: only when departing FROM home
@@ -166,13 +149,10 @@ async function triggerSpendingForDestination(base44, char, destLocId, destLocNam
     // Use invoke and wait for the result to log it
     const result = await base44.asServiceRole.functions.invoke('processCharacterFoodAndDrinkSpending', payload);
     console.log(`[triggerSpending] char=${char.name} dest=${destLocName} result: ${JSON.stringify(result.data)}`);
-
   } catch (err) {
     console.error(`[triggerSpending] FAILED for ${char.name} at ${destLocName}: ${err.message}`);
   }
 }
-
-// Check if location is currently open based on operating hours
 function toMinutes(timeStr) {
   if (!timeStr) return null;
   const [h, m] = timeStr.split(':').map(Number);
@@ -210,7 +190,6 @@ function isLocationOpen(location) {
   }
   return true;
 }
-
 /**
  * AUTONOMOUS CHARACTER MOVEMENT — NEEDS-DRIVEN
  *
@@ -230,13 +209,10 @@ function isLocationOpen(location) {
  * OWNER_EMAIL ISOLATION: character may only move to locations where
  *   destination.owner_email === character.owner_email
  */
-
 // sleep_start_time and wake_up_time are METADATA only.
 // They are NOT used to enforce sleep or wake for active_created_characters.
 // Sleep onset is driven by energy levels. Wake is driven by energy recovery and real obligations.
 
-// ── CURRENT-LOCATION SATISFACTION CHECK ───────────────────────────────────────
-// Returns true if the character's urgent need can be satisfied at their current
 // location without requiring travel.
 //
 // IMPORTANT: "can satisfy here" does NOT mean "must stay here."
@@ -249,8 +225,6 @@ function isLocationOpen(location) {
 //   hygiene → can shower/groom at home or gym with showers
 //   comfort → can improve comfort at home (rest, change rooms, sit)
 //   health/mental → may require specific venues
-// ── REPAIRED: satisfactionQuality evaluates ALL urgent needs, not just top ──
-// Returns { quality: 'fully'|'partially'|'weakly'|'not', detail, per_need }
 // "fully" = need is well-handled here
 // "partially" = somewhat handled but not ideal
 // "weakly" = possible but not great (text/call for critical social)
@@ -260,14 +234,11 @@ function satisfactionQuality(char, vals, currentLoc) {
   if (!currentLoc) return { quality: 'no_location', detail: 'No current location' };
   const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
   if (urgentNeeds.length === 0) return { quality: 'no_need', detail: 'No urgent need' };
-
   const cat = (currentLoc.category || '').toLowerCase();
   const se = char.social_energy || 'ambivert';
   const qualities = [];
-
   for (const [key, val] of urgentNeeds) {
     const urg = urgencyLevel(val);
-
     if (key === 'hunger') {
       if (cat === 'home')
         qualities.push({ key, quality: 'fully', detail: 'Can cook/eat at home' });
@@ -356,7 +327,6 @@ function satisfactionQuality(char, vals, currentLoc) {
   qualities.sort((a, b) => rank[a.quality] - rank[b.quality]);
   const worst = qualities[0];
   const allDetails = qualities.map(q => `${q.key}:${q.quality}`).join(', ');
-
   return {
     quality: worst.quality,
     detail: `${worst.detail} [${allDetails}]`,
@@ -364,7 +334,6 @@ function satisfactionQuality(char, vals, currentLoc) {
   };
 }
 
-// ── STAY-VS-TRAVEL WEIGHTED DECISION ──────────────────────────────────────────
 // When the character CAN satisfy their top need at their current location,
 // this computes a probability of staying. It considers:
 //   1. How many needs are urgent (more urgent needs = more likely to travel)
@@ -372,8 +341,6 @@ function satisfactionQuality(char, vals, currentLoc) {
 //   3. Combined pressures (hunger + social = dining out more attractive than eating at home)
 //   4. Time of day (evening social hours make travel more likely)
 //
-// Returns a stay probability (0.0 to 1.0). The caller flips a weighted coin.
-// ── REPAIRED: computeStayProbability uses satisfaction QUALITY and EXACT VALUES ──
 // satQuality comes from satisfactionQuality() — per-need quality levels.
 // Severity pressure only applies for needs NOT fully satisfied at current location.
 function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
@@ -384,10 +351,8 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
   const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
   const urgentKeys = urgentNeeds.map(([k]) => k);
   const urgentCount = urgentNeeds.length;
-
   let stayProb = 0.55;
 
-  // ── SATISFACTION QUALITY WEIGHT ────────────────────────────────────────
   if (satQuality) {
     if (satQuality.quality === 'fully')  stayProb += 0.25;
     if (satQuality.quality === 'partially') stayProb += 0.05;
@@ -395,13 +360,11 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
     if (satQuality.quality === 'not')    stayProb -= 0.40;
   }
 
-  // ── LOCATION BASE ──────────────────────────────────────────────────────
   if (cat === 'home') {
     stayProb += 0.08; // reduced from 0.20 — home shouldn't dominate weakly satisfied needs
     if (char.trait_night_owl === false && char.trait_risk_taker === false) stayProb += 0.05;
   }
 
-  // ── NEED SEVERITY — only penalize for needs NOT fully satisfied here ─────
   const perNeedQuality = {};
   if (satQuality && satQuality.per_need) {
     for (const pn of satQuality.per_need) perNeedQuality[pn.key] = pn.quality;
@@ -417,7 +380,6 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
     }
   }
 
-  // ── COMBINED PRESSURES — only for needs NOT fully satisfied here ─────────
   const unmetUrgentKeys = urgentKeys.filter(k => perNeedQuality[k] !== 'fully');
   const unmetUrgentCount = unmetUrgentKeys.length;
   if (unmetUrgentCount >= 2) {
@@ -430,7 +392,6 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
       stayProb += 0.10;
   }
 
-  // ── PERSONALITY ────────────────────────────────────────────────────────
   const se = char.social_energy || 'ambivert';
   if (se === 'extrovert' || se === 'mostly_extrovert') stayProb -= 0.12;
   if (se === 'introvert' || se === 'mostly_introvert') stayProb += 0.10;
@@ -438,27 +399,22 @@ function computeStayProbability(char, vals, currentLoc, nowET, satQuality) {
   if (char.trait_stubborn) stayProb -= 0.05;
   if (char.trait_conscientious) stayProb += 0.06;
 
-  // ── EMOTIONAL STATE ────────────────────────────────────────────────────
   const emo = (char.emotional_state || 'calm').toLowerCase();
   if (['joyful', 'excited', 'bored', 'restless'].includes(emo)) stayProb -= 0.10;
   if (['sad', 'overwhelmed', 'burnt out', 'grief'].includes(emo)) stayProb += 0.12;
 
-  // ── TIME OF DAY ────────────────────────────────────────────────────────
   if (isEvening && urgentKeys.includes('social')) stayProb -= 0.10;
   if (isLate) stayProb += 0.15;
 
-  // ── QUIRKS ────────────────────────────────────────────────────────────
   const quirks = char.quirks || [];
   for (const q of quirks) {
     if (!q.active) continue;
     if (q.quirk_id === 'homebody') stayProb += q.intensity === 'strong' ? 0.15 : 0.08;
     if (q.quirk_id === 'thrill_seeker') stayProb -= 0.10;
   }
-
   return Math.max(0.05, Math.min(0.92, stayProb));
 }
 
-// ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
   const needs_locks = char.needs_locks || {};
   return {
@@ -473,7 +429,6 @@ function needValues(char) {
   };
 }
 
-// ── URGENCY LEVEL ──────────────────────────────────────────────────────────────
 // 0 = none | 1 = awareness | 2 = urgent | 3 = high | 4 = emergency
 function urgencyLevel(value) {
   if (value < 10) return 4;
@@ -483,14 +438,12 @@ function urgencyLevel(value) {
   return 0;
 }
 
-// ── LOWEST URGENCY NEED ────────────────────────────────────────────────────────
 function highestUrgencyEntry(vals) {
   return Object.entries(vals)
     .map(([k, v]) => ({ key: k, value: v, urgency: urgencyLevel(v) }))
     .sort((a, b) => b.urgency - a.urgency || a.value - b.value)[0];
 }
 
-// ── NIGHTLIFE / CLUB DETECTION ────────────────────────────────────────────────
 // A location is "nightlife" if its category is 'social' and its name/subtype
 // suggests a club, bar, lounge, or nightlife venue. food_drink (cafés, restaurants)
 // are NOT considered nightlife — only dedicated nightlife venues.
@@ -502,18 +455,14 @@ function isNightlifeVenue(location) {
   return nightlifeKeywords.some(k => name.includes(k) || subtypes.includes(k));
 }
 
-// ── NIGHTLIFE ELIGIBILITY CHECK ───────────────────────────────────────────────
-// Returns { allowed: bool, penalty: number, reason: string }
 // Penalty is subtracted from score. Allowed=false means score forced negative.
 function computeNightlifePenalty(char, nowET) {
   const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
   const dowNow = nowET.getDay(); // 0=Sun
-
   // DAYTIME BLOCK: clubs/bars don't make sense before 5pm (17:00)
   if (nowMin < 17 * 60) {
     return { allowed: false, penalty: 999, reason: 'daytime_block' };
   }
-
   // WORK/SCHOOL TOMORROW BLOCK: if character has work or school before 10am tomorrow, penalize heavily
   const tomorrowDow = (dowNow + 1) % 7;
   const hasWorkTomorrow = Array.isArray(char.work_days) &&
@@ -526,20 +475,17 @@ function computeNightlifePenalty(char, nowET) {
     char.work_days.includes(dowNow) &&
     char.work_start_time &&
     toMin(char.work_start_time) < 9 * 60;
-
   // Disciplined characters always skip nightlife before work/school
   if (char.trait_conscientious || char.trait_law_abiding || char.trait_goody_two_shoes) {
     if (hasWorkTomorrow || hasSchoolTomorrow || hasEarlyWorkToday) {
       return { allowed: false, penalty: 999, reason: 'disciplined_before_obligations' };
     }
   }
-
   // Non-disciplined characters: heavy penalty before early work/school
   let penalty = 0;
   if (hasWorkTomorrow || hasSchoolTomorrow || hasEarlyWorkToday) {
     penalty += 4; // significant penalty but not absolute block
   }
-
   // FINANCIAL PENALTY: low financial value = character is broke/anxious about money
   const financial = char.financial_need_value ?? 60;
   if (financial < 30) {
@@ -551,7 +497,6 @@ function computeNightlifePenalty(char, nowET) {
   } else if (financial < 50) {
     penalty += 2; // moderate financial concern
   }
-
   // ENERGY PENALTY: tired characters should rest, not party
   const energy = char.energy_value ?? 75;
   if (energy < 40) {
@@ -559,7 +504,6 @@ function computeNightlifePenalty(char, nowET) {
   } else if (energy < 60) {
     penalty += 1;
   }
-
   // PERSONALITY BONUSES: some traits make nightlife more appropriate
   if (char.trait_night_owl)     penalty -= 2; // Night owls naturally stay up
   if (char.trait_risk_taker)    penalty -= 1; // Risk takers embrace nightlife
@@ -567,13 +511,11 @@ function computeNightlifePenalty(char, nowET) {
   if (char.trait_uninhibited)   penalty -= 1; // Uninhibited characters enjoy parties
   if (char.trait_insatiable)    penalty -= 1; // Insatiable always wants more
   if (char.trait_philanderer)   penalty -= 1; // Philanderers frequent bars/clubs
-
   // PERSONALITY PENALTIES: some traits actively resist nightlife
   if (char.trait_conscientious) penalty += 2; // Rule-followers avoid late nights
   if (char.trait_morning_person) penalty += 2; // Morning people go to bed early
   if (char.trait_parental)      penalty += 2; // Parents don't party randomly
   if (char.trait_stubborn && char.resolved_source_reason === 'work_schedule') penalty += 1;
-
   // QUIRK MODIFIERS
   const quirks = char.quirks || [];
   for (const q of quirks) {
@@ -584,7 +526,6 @@ function computeNightlifePenalty(char, nowET) {
     if (q.quirk_id === 'thrill_seeker') penalty -= 1;
     if (q.quirk_id === 'workaholic') penalty += 1;
   }
-
   // FREQUENCY CAP: check recent_location_history for nightlife visits
   // If character went to a nightlife venue in last 2 days, add penalty
   // If 3+ times in last 7 days, add heavy penalty (cap at realistic frequency)
@@ -592,7 +533,6 @@ function computeNightlifePenalty(char, nowET) {
   const now = nowET.getTime();
   const twoDaysMs = 2 * 24 * 60 * 60 * 1000;
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-
   // Count recent nightlife visits from history (uses destination_location_name heuristic)
   const nightlifeKeywords = ['club', 'bar', 'lounge', 'nightclub', 'pub', 'tavern', 'disco'];
   const recentNightlifeVisits = history.filter(h => {
@@ -602,12 +542,10 @@ function computeNightlifePenalty(char, nowET) {
     const locName = (h.location_name || '').toLowerCase();
     return nightlifeKeywords.some(k => locName.includes(k));
   });
-
   const withinTwoDays = recentNightlifeVisits.filter(h => {
     const visitTime = new Date(h.timestamp || h.arrived_at).getTime();
     return now - visitTime <= twoDaysMs;
   });
-
   if (withinTwoDays.length >= 1) {
     penalty += 2; // went recently — not again so soon
   }
@@ -623,17 +561,14 @@ function computeNightlifePenalty(char, nowET) {
     }
     penalty += 2;
   }
-
   return { allowed: true, penalty: Math.max(0, penalty), reason: null };
 }
 
-// ── LOCATION SCORER ────────────────────────────────────────────────────────────
 // Score scales with urgency so correct category wins harder when need is worse.
 function scoreLocation(location, char, vals, nowET) {
   let score = 0;
   const cat = location.category || 'generic';
   const se = char.social_energy || 'ambivert';
-
   const hungerU  = urgencyLevel(vals.hunger);
   const energyU  = urgencyLevel(vals.energy);
   const socialU  = urgencyLevel(vals.social);
@@ -642,7 +577,6 @@ function scoreLocation(location, char, vals, nowET) {
   const hygieneU = urgencyLevel(vals.hygiene);
   const comfortU = urgencyLevel(vals.comfort);
 
-  // ── HUNGER — drives eating, NOT grocery shopping ────────────────────────
   const isIntro = ['introvert', 'mostly_introvert'].includes(se);
   if (hungerU >= 2) {
     if (cat === 'food_drink') {
@@ -657,7 +591,6 @@ function scoreLocation(location, char, vals, nowET) {
     if (cat === 'home')       score += isIntro ? (3 + hungerU * 1.5) : (1 + Math.floor(hungerU * 0.5));
   }
 
-  // ── INVENTORY-DRIVEN GROCERY — uses preloaded HouseholdResource data ────
   if (cat === 'grocery') {
     const inventoryData = char._householdInventory;
     if (inventoryData) {
@@ -679,7 +612,6 @@ function scoreLocation(location, char, vals, nowET) {
     }
   }
 
-  // ── AFFORDABILITY-AWARE SCORING ─────────────────────────────────────────
   // Penalize spending destinations when character has low funds AND food at home
   {
     const balance = char._financialBalance;
@@ -687,7 +619,6 @@ function scoreLocation(location, char, vals, nowET) {
     const hasHomeFood = inventoryData && inventoryData.homeFoodValue > 0;
     const isSpendingCat = cat === 'food_drink' || cat === 'grocery' ||
       (cat === 'social' && (location.name || '').toLowerCase().includes('bar'));
-
     if (isSpendingCat && balance !== undefined && balance !== null) {
       // Expected cost estimate
       let expectedCost = 50; // default
@@ -695,7 +626,6 @@ function scoreLocation(location, char, vals, nowET) {
       if (cat === 'grocery') expectedCost = 80;
       const isNightlife = (location.name || '').toLowerCase().includes('club') ||
         (location.name || '').toLowerCase().includes('nightclub');
-
       // If balance can't cover expected cost → heavily penalize
       if (balance < expectedCost * 0.5) {
         score -= 8;
@@ -709,20 +639,17 @@ function scoreLocation(location, char, vals, nowET) {
           score -= 3;
         }
       }
-
       // Low funds + home food → home heavily preferred for hunger
       if (hasHomeFood && balance < 50 && hungerU >= 2) {
         if (cat !== 'home') score -= 3;
       }
     }
   }
-
   // ENERGY → rest at home
   if (energyU >= 2) {
     if (cat === 'home') score += 3 + energyU * 2;
     if (cat === 'gym')  score -= energyU;
   }
-
   // SOCIAL → varies by personality
   if (socialU >= 2) {
     const intro = ['introvert', 'mostly_introvert'].includes(se);
@@ -735,7 +662,6 @@ function scoreLocation(location, char, vals, nowET) {
       if (cat === 'home')                           score -= 2 + socialU;
     }
   }
-
   // HEALTH → medical care — scales most aggressively
   if (healthU >= 2) {
     if (cat === 'medical')  score += 4 + healthU * 3;
@@ -743,14 +669,12 @@ function scoreLocation(location, char, vals, nowET) {
     if (cat === 'gym')      score -= healthU * 2;
     if (cat === 'social')   score -= healthU;
   }
-
   // MENTAL / STRESS → calm environments
   if (mentalU >= 2) {
     if (['outdoor', 'home', 'religion'].includes(cat)) score += 2 + mentalU;
     if (cat === 'gym') score += 1 + mentalU;
   }
 
-  // ── REPAIRED: HYGIENE — home/self-care only, PENALIZE food/social/outdoor ──
   if (hygieneU >= 2) {
     if (cat === 'home') score += 3 + hygieneU * 2;
     if (cat === 'gym') {
@@ -766,22 +690,18 @@ function scoreLocation(location, char, vals, nowET) {
     if (cat === 'outdoor') score -= 3;
     if (cat === 'grocery') score -= 3;
   }
-
   // COMFORT → change of scenery
   if (comfortU >= 2) {
     if (cat === 'outdoor' || cat === 'food_drink') score += 1 + comfortU;
     if (cat === 'home') score -= 1;
   }
-
   // BASE social energy preference (minor, overridden by urgent needs)
   if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
 
-  // ── REPAIRED: COMBINED PRESSURE BONUSES — boosted multipliers ───────────
   {
     const urgentCount = [hungerU, energyU, socialU, healthU, mentalU, hygieneU, comfortU]
       .filter(u => u >= 2).length;
-
     if (urgentCount >= 2) {
       // hunger + social → dining out
       if (hungerU >= 2 && socialU >= 2 && cat === 'food_drink') score += 5;
@@ -798,7 +718,6 @@ function scoreLocation(location, char, vals, nowET) {
     }
   }
 
-  // ── SOCIAL WORKPLACE RECOGNITION ──────────────────────────────────────────
   // If the character has recently completed a shift at a people-facing workplace
   // (bar, restaurant, salon, school, retail, customer service, medical, etc.),
   // their social need has already been partially met during work.
@@ -819,17 +738,14 @@ function scoreLocation(location, char, vals, nowET) {
     const justFinishedWork = presenceSource === 'work_schedule' ||
       presenceSource === 'autonomous_need' ||
       (char.resolved_location_type === 'work' && !currentlyAtWork);
-
     if (currentlyAtWork || justFinishedWork) {
       // Resolve the work location to determine if it is people-facing
       const workLocId = char.occupation_location_id || char.current_work_location_id;
       const workLoc = userLocations.find(l => l.id === workLocId);
-
       if (workLoc) {
         const wCat = (workLoc.category || '').toLowerCase();
         const wName = (workLoc.name || '').toLowerCase();
         const wSubtypes = (workLoc.subtype || []).map(s => s.toLowerCase());
-
         // People-facing workplace detection
         const isPeopleFacingWorkplace = (
           wCat === 'food_drink' ||
@@ -845,7 +761,6 @@ function scoreLocation(location, char, vals, nowET) {
           wName.includes('clinic') || wName.includes('hospital') || wName.includes('school') ||
           wName.includes('centre') || wName.includes('center') || wName.includes('service')
         );
-
         if (isPeopleFacingWorkplace) {
           // Reduce social urgency for location scoring — the character already
           // had social contact during their work shift. They should NOT be routed
@@ -869,7 +784,6 @@ function scoreLocation(location, char, vals, nowET) {
             console.log(`[autonomousMovement] ${char.name}: social workplace modifier active — social urgency downgraded for location scoring only`);
           }
 
-          // ── POST-SOCIAL-SHIFT SATURATION PENALTY ──────────────────────────
           // If the character just finished a people-facing work shift, they are
           // socially saturated. They do NOT need another crowded venue.
           // Home gets a decompression bonus. Social/nightlife venues are heavily
@@ -892,7 +806,6 @@ function scoreLocation(location, char, vals, nowET) {
     }
   }
 
-  // ── NIGHTLIFE PENALTY: applied AFTER base scoring ───────────────────────
   // Only applies to confirmed nightlife venues (clubs, bars, lounges).
   // cafés, restaurants (food_drink), parks, gyms are unaffected.
   if (nowET && isNightlifeVenue(location)) {
@@ -903,7 +816,6 @@ function scoreLocation(location, char, vals, nowET) {
     score -= penalty;
   }
 
-  // ── DECISION WEIGHT MODULATION ────────────────────────────────────────────
   // Decision weights from the character's live context modulate raw urgency scores.
   // This is the bridge between the decision engine and movement routing.
   // Characters on shift tolerate more hunger before food-seeking. Tired characters
@@ -946,7 +858,6 @@ function scoreLocation(location, char, vals, nowET) {
     }
   }
 
-  // ── PRE-SLEEP UNWIND CONTEXT ─────────────────────────────────────────────
   // If the character is within ~60 minutes of their natural sleep window,
   // gently nudge them toward quieter choices. This is CONTEXT, not authority.
   // It does NOT force sleep. It does NOT block movement. It does NOT evict visits.
@@ -974,22 +885,17 @@ function scoreLocation(location, char, vals, nowET) {
       }
     }
   }
-
   return score;
 }
 
-// ── BEST LOCATION SELECTOR ─────────────────────────────────────────────────────
 function selectBestLocation(locations, char, vals, nowET) {
   if (!locations || locations.length === 0) return null;
-
   const scored = locations
     .map(loc => ({ location: loc, score: scoreLocation(loc, char, vals, nowET) }))
     .sort((a, b) => b.score - a.score);
-
   // Must score positive — no movement just to move
   const positives = scored.filter(s => s.score > 0);
   if (positives.length === 0) return null;
-
   // Weighted random from top 3 to avoid robotic repetition
   const top = positives.slice(0, Math.min(3, positives.length));
   const weights = top.length === 1 ? [1] : top.length === 2 ? [0.65, 0.35] : [0.50, 0.30, 0.20];
@@ -1091,7 +997,6 @@ async function _ensureChildcareBeforeDeparture(base44, char, homeId, allChars, a
     return { ok: true, sitterSpawned: sitterName };
   } catch (e) { return { ok: false, error: e.message }; }
 }
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // DIRECT LOCATION WRITE — active_created_character autonomous travel does NOT use
 // TravelSession records, transit phases, ETAs, or cross-function arrival completion.
@@ -1126,20 +1031,15 @@ async function writeCharacterToDestination(base44, char, destLocationId, destLoc
   }
 }
 
-// ── REMOVED: TravelSession transit model functions ──
 // deterministicFloat, jitterMinutes, estimateTravelTime, and createAutonomousTravelSession
 // were all part of the TravelSession transit model that does not belong in
 // active_created_character autonomous travel. Characters move immediately — no transit phase.
 // Use writeCharacterToDestination() for direct location writes.
 
 
-// ── MAIN HANDLER ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
   try {
-    
-
-    // Check if user has an active foreground session
     // Frontend writes to AppWorldState.user_active_session when in Chat/Travel/Profile/etc.
     // This allows background work to yield gracefully if user is actively using the app
     let isForegroundActive = false;
@@ -1156,7 +1056,6 @@ Deno.serve(async (req) => {
       // If we can't read the flag, assume no foreground activity — proceed with background work
     }
 
-    // ── LOAD active_created_character — FILTERED, not full list ──────────────
     // Cap at 100 (was 500 via unfiltered .list()). Sorted by most-recently-updated
     // so the most active characters are processed first within the MAX_MOVES_PER_RUN cap.
     // Using a filter instead of .list() avoids loading ALL character types unnecessarily.
@@ -1178,7 +1077,6 @@ Deno.serve(async (req) => {
         return Response.json({ error: `Character load failed: ${e2.message}` }, { status: 500 });
       }
     }
-
     const eligible = characters.filter(c =>
       c.owner_email &&
       c.status !== 'deleted' &&
@@ -1190,16 +1088,13 @@ Deno.serve(async (req) => {
       // Accept home via either explicit field OR resolved location marked as home type
       (c.current_home_location_id || (c.resolved_current_location_id && c.resolved_location_type === 'home'))
     );
-
     console.log(`[autonomousMovement] Eligible: ${eligible.length}`);
 
-    // ── GROUP BY owner_email (strict isolation) ──────────────────────────────
     const byUser = {};
     for (const c of eligible) {
       if (!byUser[c.owner_email]) byUser[c.owner_email] = [];
       byUser[c.owner_email].push(c);
     }
-
     // RATE LIMIT GOVERNOR: cap total writes per run to 8 across all users.
     // This prevents burst storms when many characters all need movement simultaneously.
     // The 30-minute interval ensures all characters cycle through within 2-3 runs.
@@ -1208,7 +1103,6 @@ Deno.serve(async (req) => {
     const moveLog = [];
     const blockedLog = [];
     const skippedLog = [];
-
     for (const [userEmail, userChars] of Object.entries(byUser)) {
       // Load ONLY this user's locations (owner_email scope)
       let userLocations = [];
@@ -1227,8 +1121,6 @@ Deno.serve(async (req) => {
           continue;
         }
       }
-
-      // Check if autonomous travel is enabled for this user (default: ON)
       // owner_email is the sole ownership source of truth — created_by is permanently forbidden
       let autonomousTravelEnabled = true;
       try {
@@ -1238,7 +1130,6 @@ Deno.serve(async (req) => {
           autonomousTravelEnabled = false;
         }
       } catch { /* non-fatal — default to enabled */ }
-
       for (const char of userChars) {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
@@ -1246,7 +1137,6 @@ Deno.serve(async (req) => {
         const vals = needValues(char);
         const energyUrgency = urgencyLevel(vals.energy);
 
-        // ── DECISION WEIGHTING FOR MOVEMENT ROUTING ─────────────────────────
         // Compute inline decision weights so the location scorer can modulate
         // scores based on the character's full context (schedule, needs, traits, time).
         // Attached to char._decisionWeights for use in scoreLocation.
@@ -1255,8 +1145,6 @@ Deno.serve(async (req) => {
           const cur = nowET2.getHours() * 60 + nowET2.getMinutes();
           const dow = nowET2.getDay();
           const hour = nowET2.getHours();
-
-          // Check if currently on shift
           let onShiftNow = false;
           if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days) && char.work_days.includes(dow)) {
             const [sh, sm = 0] = char.work_start_time.split(':').map(Number);
@@ -1278,12 +1166,10 @@ Deno.serve(async (req) => {
               }
             }
           }
-
           const isStudent = char.student_status === 'enrolled';
           const isSchoolDay = isStudent && ![0, 6].includes(dow);
           const isLate = hour >= 22 || hour < 5;
 
-          // ── PRESSURE CURVES: same as simulateActiveCharacterNeeds ──────
           const pCurve = (value, curve) => {
             for (let i = 0; i < curve.length - 1; i++) {
               const [vHi, pHi] = curve[i], [vLo, pLo] = curve[i+1];
@@ -1308,7 +1194,6 @@ Deno.serve(async (req) => {
             work: 0.15, education: 0.10, rest: 0.10, eat: 0.08,
             hygiene: 0.05, social: 0.08, home: 0.05, recreation: 0.05,
           };
-
           const needsEnergy = vals.energy;
           const needsHealth = vals.health;
           const needsHunger = vals.hunger;
@@ -1331,7 +1216,6 @@ Deno.serve(async (req) => {
             if (char.is_jailed || char.house_arrest_active) { dw.work = 0; dw.education = 0; dw.recreation = 0.01; dw.social *= 0.3; }
             for (const k of Object.keys(dw)) { if (k !== 'emergency') dw[k] = Math.max(0, Math.min(0.75, dw[k])); }
           }
-
           char._decisionWeights = dw;
         }
 
@@ -1410,7 +1294,6 @@ Deno.serve(async (req) => {
           char.travel_status            = 'not_traveling';
           moveLog.push(`${char.name}: orphaned 'traveling' cleared → '${canonicalStatus}'`);
         }
-
         if (activeSession) {
           // COMMITMENT PROTECTION: sessions with interruption_allowed=false are commitment-driven
           // (character said "I'm on my way", accepted a plan, made a verbal promise).
@@ -1419,7 +1302,6 @@ Deno.serve(async (req) => {
           // Sleep, energy, hunger, boredom, and all other needs CANNOT cancel a commitment.
           const isCommitmentSession = activeSession.interruption_allowed === false ||
             activeSession.travel_source === 'promise';
-
           if (isCommitmentSession) {
             // ONLY hard confinement can interrupt a commitment session
             const confinementBlock = (
@@ -1480,7 +1362,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TIER 0: INCARCERATION / HOUSE ARREST / HOSPITALIZED — absolute hard stop ──
         // Incarcerated characters are CONFINED. They cannot autonomously travel, roam, visit,
         // go shopping, work (unless work-release is active), or relocate.
         // This is a valid life state — do NOT attempt to correct it, reroute, or "fix" it.
@@ -1544,14 +1425,12 @@ Deno.serve(async (req) => {
             passOutElapsedHours = (nowET.getTime() - new Date(passOutAt).getTime()) / 3_600_000;
           }
           const passOutProtected = passOutAt && passOutElapsedHours < 6 && !isMedicalEmergencyPassOut;
-
           if (passOutProtected) {
             // Passed out but protected — do not move, do not change state.
             // simulateActiveCharacterNeeds will handle the release at 6h or 12h hard cap.
             console.log(`[autonomousMovement] ${char.name}: PASS_OUT_PROTECTED — ${passOutElapsedHours.toFixed(2)}h elapsed < 6h minimum — no action`);
             continue;
           }
-
           // Past 6h (or no timestamp, or medical emergency) — allow home routing.
           if (energyUrgency < 4 && char.current_home_location_id) {
             const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
@@ -1580,7 +1459,6 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 3: SLEEP + NAP HANDLERS ─────────────────────────────────────
         // Two completely separate branches below: one for 'sleeping', one for 'napping'.
         // They use different timestamps, different duration rules, and different wake logic.
         // sleep uses last_sleep_start + 6–8h rules. nap uses last_nap_time + 3h cap.
@@ -1629,7 +1507,6 @@ Deno.serve(async (req) => {
           const sleepStartedAt = char.last_sleep_start ? new Date(char.last_sleep_start) : null;
           const sleepDurationHours = sleepStartedAt ? (nowET.getTime() - sleepStartedAt.getTime()) / 3600000 : 0;
           const isMedEmergency3 = (char.health_value ?? 80) <= 15;
-
           // WORK: shift must be currently active AND 6h minimum met (or medical emergency)
           const hasActiveWorkObligation = (() => {
             if (!Array.isArray(char.work_days) || !char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
@@ -1642,7 +1519,6 @@ Deno.serve(async (req) => {
             if (sleepDurationHours < 6 && !isMedEmergency3) { console.log(`[autonomousMovement] ${char.name}: work shift active but 6h minimum not met (${sleepDurationHours.toFixed(2)}h) — staying asleep`); return false; }
             return true;
           })();
-
           // SCHOOL: session must be currently active per actual school hours (not hardcoded 8–15)
           const hasActiveSchoolObligation = (() => {
             if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
@@ -1666,14 +1542,12 @@ Deno.serve(async (req) => {
             if (sleepDurationHours < 6 && !isMedEmergency3) { console.log(`[autonomousMovement] ${char.name}: school in session but 6h minimum not met (${sleepDurationHours.toFixed(2)}h) — staying asleep`); return false; }
             return true;
           })();
-
           // AUTO-SET ALARM for upcoming obligation so processScheduledCharacterAlarms handles the wake
           // Only set if no alarm already scheduled. Alarm fires PREP_MINUTES before shift start.
           // Alarm time is floored to at least 6h after sleep start (canonical minimum).
           const PREP_MINUTES = 60;
           if (!char.pending_alarm_time && sleepStartedAt) {
             let alarmTargetMs = null;
-            // Check upcoming work shift today
             if (Array.isArray(char.work_days) && char.work_days.includes(dowNow3) &&
                 char.work_start_time && char.occupation_location_id &&
                 !(char.work_exception_status === 'called_out' && char.work_exception_date === todayET3)) {
@@ -1687,7 +1561,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-            // Check upcoming school today (if no work alarm)
             if (!alarmTargetMs && char.student_status === 'enrolled' && char.education_location_id) {
               const edLoc3b = userLocations.find(l => l.id === char.education_location_id);
               let schStartMin = null;
@@ -1713,19 +1586,15 @@ Deno.serve(async (req) => {
               console.log(`[autonomousMovement] ${char.name}: AUTO-SET obligation alarm → ET ${new Date(alarmTargetMs).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })}`);
             }
           }
-
           const energyNow = char.energy_value ?? 0;
           const isHealthRecovering = (char.health_value ?? 100) < 30 || (char.mental_value ?? 100) < 25;
-
           // Wake decision: obligation (shift/session active AND 6h met) OR natural rest complete
           const shouldWake = hasActiveWorkObligation || hasActiveSchoolObligation ||
             (energyNow >= 70 && sleepDurationHours >= 6 && !isHealthRecovering);
-
           if (!shouldWake) {
             console.log(`[autonomousMovement] ${char.name}: sleeping (energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h, work=${hasActiveWorkObligation}, school=${hasActiveSchoolObligation})`);
             continue;
           }
-
           const wakeReason = hasActiveWorkObligation ? 'obligation_wake_work'
             : hasActiveSchoolObligation ? 'obligation_wake_school'
             : 'natural_wake_rested';
@@ -1754,7 +1623,6 @@ Deno.serve(async (req) => {
           // Do NOT continue — fall through to obligation dispatch (Tier 3.5+)
         }
 
-        // ── ENERGY-BASED HOME ROUTING (travel only — no direct sleep writes) ───
         // SINGLE SLEEP AUTHORITY RULE (permanent):
         //   Only simulateActiveCharacterNeeds may write resolved_presence_status = 'sleeping'.
         //   It does so at energy ≤ 20 only, at a valid sleep location, with alarm/shift guards.
@@ -1771,7 +1639,6 @@ Deno.serve(async (req) => {
           const atHome = homeId && char.resolved_current_location_id === homeId;
           const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
           const energyVal = char.energy_value ?? 75;
-
           if (!alreadySleeping && homeId) {
             // ARCHITECTURE RULE (permanent):
             // autonomousCharacterMovement MUST NOT write resolved_presence_status = 'sleeping'.
@@ -1783,7 +1650,6 @@ Deno.serve(async (req) => {
             //   4. It ignored pending_alarm_time, active commitments, and user intent
             // The location scorer already nudges home high when energy < 30, so the character
             // stays home naturally. simulateActiveCharacterNeeds writes sleep at energy ≤ 20.
-
             // Case B: not at home, critically tired — return home via TravelSession.
             // simulateActiveCharacterNeeds will write sleep once they arrive and energy ≤ 20.
             if (!atHome && energyVal < 20) {
@@ -1804,7 +1670,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TIER 3.5: ACTIVE WORK / SCHOOL DISPATCH ─────────────────────────
         // Runs immediately after sleep/wake evaluation, BEFORE energy or needs scoring.
         // If the character's actual schedule is active right now, send them to work/school.
         // This is the correct post-wake priority: schedule > needs.
@@ -1827,17 +1692,14 @@ Deno.serve(async (req) => {
           const nowMin  = nowET.getHours() * 60 + nowET.getMinutes();
           const dowNow  = nowET.getDay(); // 0=Sun, 6=Sat
 
-          // ── WORK SCHEDULE CHECK ────────────────────────────────────────────
           // Use the character's actual stored fields — do not assume any defaults.
           let workDispatchDone = false;
-
           if (
             Array.isArray(char.work_days) && char.work_days.length > 0 &&
             char.work_start_time && char.work_end_time &&
             char.occupation_location_id
           ) {
             const isWorkDay = char.work_days.includes(dowNow);
-
             if (isWorkDay) {
               const shiftStart = toMin(char.work_start_time);
               const shiftEnd   = toMin(char.work_end_time);
@@ -1846,7 +1708,6 @@ Deno.serve(async (req) => {
               const shiftActiveNow   = isOvernightShift
                 ? (nowMin >= shiftStart || nowMin < shiftEnd)
                 : (nowMin >= shiftStart && nowMin < shiftEnd);
-
               if (shiftActiveNow) {
                 // CALLOUT GUARD: skip if character has a valid callout for today
                 const hasCallout = char.work_exception_status === 'called_out' &&
@@ -1859,8 +1720,6 @@ Deno.serve(async (req) => {
                   // Primary location: occupation_location_id. Additional locations checked
                   // only if they have an active per-character shift right now.
                   let activeWorkLocId = char.occupation_location_id;
-
-                  // Check additional_occupation_locations for an alternate active shift
                   if (Array.isArray(char.additional_occupation_locations)) {
                     for (const entry of char.additional_occupation_locations) {
                       if (!entry.location_id) continue;
@@ -1887,7 +1746,6 @@ Deno.serve(async (req) => {
                       }
                     }
                   }
-
                   const workLoc = userLocations.find(l => l.id === activeWorkLocId);
                   if (!workLoc) {
                     console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH — shift active but work location id=${activeWorkLocId} not in user scope`);
@@ -1929,10 +1787,8 @@ Deno.serve(async (req) => {
               }
             }
           }
-
           if (workDispatchDone) continue;
 
-          // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
           // Only for enrolled students with an assigned education_location_id.
           // Uses the education location's operating_hours via isLocationOpen(),
           // plus a fallback to character's education_details for start/end times.
@@ -1962,7 +1818,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-
             if (schoolActiveNow) {
               const schoolLoc = userLocations.find(l => l.id === char.education_location_id);
               if (!schoolLoc) {
@@ -2003,7 +1858,6 @@ Deno.serve(async (req) => {
             }
           }
         }
-        // ── PRE-SHIFT RETURN-HOME: route home when work/school within 8 hours ──
         // A character with a shift starting within 8 hours should return home
         // so they can rest, prepare, and avoid being far from the work location.
         // This fires BEFORE Tier 4 critical energy to ensure schedule-aware routing.
@@ -2015,20 +1869,16 @@ Deno.serve(async (req) => {
           const atHome4 = homeId4 && char.resolved_current_location_id === homeId4;
           const alreadyAtWork4 = char.resolved_presence_status === 'at_work';
           const alreadySleeping4 = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
-          
           if (!atHome4 && !alreadyAtWork4 && !alreadySleeping4 && homeId4 && 
               !char.is_jailed && !char.house_arrest_active &&
               char.resolved_presence_status !== 'incarcerated' &&
               char.resolved_presence_status !== 'confined' &&
               char.resolved_presence_status !== 'house_arrest') {
             let preShiftMinutes = null; // minutes until shift start
-            
-            // Check primary work shift
             if (Array.isArray(char.work_days) && char.work_days.length > 0 &&
                 char.work_start_time && char.occupation_location_id) {
               const hasCallout4 = char.work_exception_status === 'called_out' && char.work_exception_date === todayET4;
               if (!hasCallout4) {
-                // Check today's shift
                 if (char.work_days.includes(dowNow4)) {
                   const shiftStartMin = toMin(char.work_start_time);
                   if (shiftStartMin !== null && shiftStartMin > nowMin4) {
@@ -2036,7 +1886,6 @@ Deno.serve(async (req) => {
                     if (minsToShift <= 8 * 60) preShiftMinutes = minsToShift;
                   }
                 }
-                // Check tomorrow's shift (for late-night characters)
                 if (preShiftMinutes === null) {
                   const tomorrowDow = (dowNow4 + 1) % 7;
                   if (char.work_days.includes(tomorrowDow)) {
@@ -2049,7 +1898,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-            
             // Check school — use authoritative education_location operating_hours
             // Same source as Tier 3.5 school dispatch. No heuristic fallback.
             if (preShiftMinutes === null && char.student_status === 'enrolled' &&
@@ -2087,7 +1935,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-            
             if (preShiftMinutes !== null) {
               const returnHome = userLocations.find(loc => loc.id === homeId4);
               if (returnHome && char.resolved_current_location_id !== returnHome.id) {
@@ -2140,13 +1987,11 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── TIER 5: PRESENCE STAY LOCK VALIDATION ────────────────────────────
         // Inline validator — no network call per character.
         // Observes authoritative state; does NOT duplicate sleep/work/school logic.
         if (char.presence_stay_lock === true) {
           const lockResult = validateStayLock(char, nowET);
           const { shouldRespectLock, shouldReleaseLock, releaseReason, proof } = lockResult;
-
           if (shouldReleaseLock) {
             console.log(`[autonomousMovement] ${char.name}: Releasing presence_stay_lock. Reason: ${releaseReason}. Proof: ${proof}`);
             const releasePayload = {
@@ -2172,7 +2017,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TIER 6: AUTONOMOUS TRAVEL TOGGLE + FOREGROUND YIELD ──────────────
         // When foreground is active, suppress optional needs-based wandering entirely.
         // Mandatory needs (urgency >= 2) still run — character won't starve because user is chatting.
         // When autonomous travel is OFF, same rule applies.
@@ -2196,7 +2040,6 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── COMMITMENT DESTINATION LOCK ───────────────────────────────────────
         // If character has an active commitment-driven TravelSession (interruption_allowed=false),
         // do NOT start any needs-based travel. The character has already made an autonomous decision.
         // This check covers the case where the session was created but Tier -1 did not catch it
@@ -2218,7 +2061,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TIER 6.5: ACTIVE COMMITMENT CHECK ────────────────────────────────
         // Priority order: hard obligations (work/school/jail already handled above) →
         //   active promises/directives → social context → personality → needs-based wandering.
         //
@@ -2240,7 +2082,6 @@ Deno.serve(async (req) => {
             const liveCommitments = (activeCommitments || []).filter(c =>
               c.status === 'active' || c.status === 'in_progress'
             );
-
             // Priority 0: Skip if already in transit to this destination
             const alreadyTraveling = char.resolved_presence_status === 'traveling' &&
               char.travel_destination_location_id != null;
@@ -2248,7 +2089,6 @@ Deno.serve(async (req) => {
               console.log(`[autonomousMovement] ${char.name}: already in_transit to ${char.traveling_to_location_name || char.travel_destination_location_id} — skip`);
               commitmentHandled = true;
             }
-
             // Priority 1: Travel directives — "I'm on my way" / "heading there now"
             if (!commitmentHandled) {
               const directive = liveCommitments.find(c => c.commitment_type === 'travel_directive');
@@ -2297,7 +2137,6 @@ Deno.serve(async (req) => {
                 }
               }
             }
-
             // Priority 2: Travel promises that are due within 60 minutes
             if (!commitmentHandled) {
               const nowMs = nowET.getTime();
@@ -2333,7 +2172,6 @@ Deno.serve(async (req) => {
             // Non-fatal — if commitment lookup fails, fall through to normal needs-based movement
             console.warn(`[autonomousMovement] ${char.name}: commitment check failed (non-fatal) — ${commitErr.message}`);
           }
-
           if (commitmentHandled) {
             if (totalMoved >= MAX_MOVES_PER_RUN) {
               return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
@@ -2343,7 +2181,6 @@ Deno.serve(async (req) => {
         }
         // END TIER 6.5
 
-        // ── PRELOAD HOUSEHOLD INVENTORY + FINANCIAL DATA FOR SCORING ─────────
         // These are used by scoreLocation() for inventory-driven grocery and
         // affordability-aware destination scoring.
         {
@@ -2356,7 +2193,6 @@ Deno.serve(async (req) => {
               const hr = hrArr[0];
               const hasHR = !!hr;
               const homeFoodValue = hr ? (hr.home_food_value || 0) : null; // null = no HR record
-
               // Resolve resident count from home location
               const homeLoc = userLocations.find(l => l.id === homeId);
               const residentCount = homeLoc ? ((homeLoc.residents || []).length || 1) : 1;
@@ -2370,7 +2206,6 @@ Deno.serve(async (req) => {
                 if (days < 14) return 'healthy';
                 return 'full';
               })();
-
               char._householdInventory = {
                 homeFoodValue,
                 residentCount,
@@ -2379,7 +2214,6 @@ Deno.serve(async (req) => {
               };
             } catch { char._householdInventory = null; }
           }
-
           try {
             const finArr = await base44.asServiceRole.entities.CharacterFinancial.filter(
               { character_id: char.id }, null, 1
@@ -2388,12 +2222,9 @@ Deno.serve(async (req) => {
           } catch { char._financialBalance = null; }
         }
 
-        // ── READ FULL NEEDS + DECIDE IF MOVEMENT IS REQUIRED ─────────────────
         const top = highestUrgencyEntry(vals);
-
         let shouldAttempt = false;
         let isMandatory = false;
-
         if (top.urgency >= 2) {
           shouldAttempt = true;
           isMandatory = true;
@@ -2402,14 +2233,12 @@ Deno.serve(async (req) => {
         } else {
           shouldAttempt = Math.random() < 0.25;
         }
-
         if (!shouldAttempt) {
           console.log(`[autonomousMovement] ${char.name}: needs OK, skipping`);
           skippedLog.push(`${char.name}: all needs OK`);
           continue;
         }
 
-        // ── TRAVEL DISPLAY INTEGRITY: clear orphaned travel_status ──────────────
         // If character shows travel_status but has NO valid active TravelSession,
         // the Home/Travel/Chat UI will show "Traveling to…" with no proof (no status bar,
         // no ETA, no progress, no map movement). This is a one-truth/one-presence violation.
@@ -2443,10 +2272,8 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── FILTER OUT CLOSED LOCATIONS ───────────────────────────────────────
         const openLocations = userLocations.filter(loc => isLocationOpen(loc));
 
-        // ── GROCERY ELIGIBILITY GATE ────────────────────────────────────────
         // Grocery stores, bodegas, supermarkets, convenience stores, and food
         // markets are purchase destinations, NOT social/hangout/leisure venues.
         // They are only eligible when the character has an actual grocery need
@@ -2468,7 +2295,6 @@ Deno.serve(async (req) => {
           return !!needsGroceryRun;
         });
 
-        // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
         // No teleport — initiate transit to home. processTravelArrivals delivers them.
         if (energyUrgency >= 2 && char.current_home_location_id) {
         const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
@@ -2490,13 +2316,10 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── CURRENT-LOCATION SATISFACTION CHECK (REPAIRED) ─────────────────
         // Uses satisfactionQuality() — evaluates ALL urgent needs at current loc.
-        // Returns quality level: fully/partially/weakly/not.
         // This is a FACTOR in stay-vs-travel, NOT a hard block.
         const currentLoc = userLocations.find(l => l.id === char.resolved_current_location_id);
         const sat = currentLoc ? satisfactionQuality(char, vals, currentLoc) : { quality: 'no_location', detail: 'No current location' };
-
         if (sat.quality !== 'not' && sat.quality !== 'no_need' && sat.quality !== 'no_location') {
           const stayProb = computeStayProbability(char, vals, currentLoc, nowET, sat);
           const roll = Math.random();
@@ -2508,9 +2331,7 @@ Deno.serve(async (req) => {
           console.log(`[autonomousMovement] ${char.name}: traveling — sat=${sat.quality} but stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}% — personality/combined pressures override`);
         }
 
-        // ── SELECT BEST LOCATION ──────────────────────────────────────────────
         const bestLocation = selectBestLocation(eligibleLocations, char, vals, nowET);
-
         if (!bestLocation) {
           const urgentNeeds = Object.entries(vals)
             .filter(([, v]) => urgencyLevel(v) >= 2)
@@ -2522,7 +2343,6 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── ALREADY THERE — no-op ───────────────────────────────────────────
         if (char.resolved_current_location_id === bestLocation.id) {
           console.log(`[autonomousMovement] ${char.name}: already at ${bestLocation.name}`);
           continue;
@@ -2567,7 +2387,6 @@ Deno.serve(async (req) => {
           finalLocation = homeFallback;
         }
 
-        // ── DIRECT LOCATION WRITE — no transit phase ────────────────────────
         // active_created_characters move immediately to the selected destination.
         // Need fulfillment and dwell duration are handled by simulateActiveCharacterNeeds
         // and the existing activity/dwell systems.
@@ -2577,7 +2396,6 @@ Deno.serve(async (req) => {
           resolvedSourceReason: `autonomous_needs: ${top.key}(${Math.round(top.value)})`,
           nowET,
         });
-        // ── FINANCIAL CONSEQUENCE: fire-and-forget spending trigger ──
         triggerSpendingForDestination(base44, char, finalLocation.id, finalLocation.name, finalLocation.category, `autonomous_needs: ${top.key}(${Math.round(top.value)})`, top.key);
         totalMoved++;
         const urgentList = Object.entries(vals)
@@ -2594,7 +2412,6 @@ Deno.serve(async (req) => {
         }
       }
     }
-
     return Response.json({
       success: true,
       users_processed: Object.keys(byUser).length,
@@ -2604,7 +2421,6 @@ Deno.serve(async (req) => {
       skipped: skippedLog.length,
       timestamp: new Date().toISOString(),
     });
-
   } catch (error) {
     console.error('[autonomousMovement]', error);
     return Response.json({ error: error.message }, { status: 500 });
