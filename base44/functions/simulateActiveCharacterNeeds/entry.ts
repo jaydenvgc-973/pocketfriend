@@ -1,11 +1,14 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.32';
+
 // simulateActiveCharacterNeeds — needs/sleep simulation.
 // Every state transition (sleep/nap/pass_out/hospitalized) is atomic:
 // Character write + SleepTransition proof record both succeed or the
 // Character write is reverted. Consequences (LifeEvent/CharacterMemory/
 // ScheduledEvent) only fire after the proof record is confirmed.
+
 const clamp = (v) => Math.max(0, Math.min(100, v));
 
+// ── RATES ──────────────────────────────────────────────────────────────────
 // sleeping +12.5/hr (voluntary, 8h cap) vs passed_out +8/hr (involuntary, 12h cap) vs hospitalized +4/hr.
 const RATES = {
   sleeping:        { hunger: -1,   energy: +12.5, social:  0,   health: +0.5, mental: +3,   hygiene: 0,    comfort: +4   },
@@ -34,6 +37,7 @@ const RATES = {
   default:         { hunger: -2,   energy: -4,  social:  0,   health: 0,    mental: -0.3, hygiene: -1,   comfort: -1   },
 };
 
+// ── THRESHOLDS ────────────────────────────────────────────────────────────────
 const T = {
   HUNGER_ER:         5,
   HUNGER_CRITICAL:  20,
@@ -60,12 +64,14 @@ function isOnShift(character, locationMap) {
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const cur = nowET.getHours() * 60 + nowET.getMinutes();
   const dow = nowET.getDay();
+
   // SOURCE 1: Character-level work_days/work_start_time/work_end_time (primary job fields)
   if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.includes(dow)) {
     const [sh, sm = 0] = character.work_start_time.split(':').map(Number);
     const [eh, em = 0] = character.work_end_time.split(':').map(Number);
     if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
   }
+
   // SOURCE 2: additional_occupation_locations — check location-side worker_shifts[char.id]
   // This is the fix for characters whose primary job is stored on the location record,
   // not on character-level fields (e.g. Andre's Hyacinth Foundation Mon–Fri 9–5 job).
@@ -74,6 +80,7 @@ function isOnShift(character, locationMap) {
       if (!entry.location_id) continue;
       const loc = locationMap[entry.location_id];
       if (!loc) continue;
+      // Check location-side shift for this character
       const shift = loc.worker_shifts?.[character.id];
       if (shift?.start && shift?.end) {
         const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
@@ -90,6 +97,7 @@ function isOnShift(character, locationMap) {
       }
     }
   }
+
   return false;
 }
 
@@ -98,6 +106,7 @@ function getWorkContextFromLocation(loc) {
   const name = (loc.name || '').toLowerCase();
   const subtypes = (loc.subtype || []).map(s => s.toLowerCase());
   const desc = (loc.description || '').toLowerCase();
+
   if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency') || name.includes('urgent care')) return 'at_work_medical';
   // Social/people-facing workplaces — workers get social need improvement during shift
   if (cat === 'food_drink' || cat === 'social'
@@ -123,6 +132,7 @@ function getWorkContextFromLocation(loc) {
   return 'at_work_office';
 }
 
+// ── OVERNIGHT SLEEP DRIVE ────────────────────────────────────────────────
 // From 10 PM, sleep becomes autonomously attractive (drive multiplies energy
 // thresholds so characters feel tired faster at night). Meaningful overnight
 // activities halve the drive; night owls get ~20% less drive. No fixed bedtime.
@@ -130,8 +140,10 @@ function overnightSleepDriveMultiplier(nowET, character) {
   const hour = nowET.getHours();
   const minute = nowET.getMinutes();
   const frac = hour + minute / 60;
+
   // Night owl personality reduces drive — they naturally stay up later
   const personalityMod = character.trait_night_owl ? 0.8 : 1.0;
+
   // 3 AM – 6 AM: peak drive — characters should be asleep unless meaningful reason
   if (frac >= 3 && frac < 6) return 2.5 * personalityMod;
   // 2 AM – 3 AM: strong drive
@@ -144,11 +156,14 @@ function overnightSleepDriveMultiplier(nowET, character) {
   if (frac >= 23) return 1.3 * personalityMod;
   // 10 PM – 11 PM: mild evening drive
   if (frac >= 22 && frac < 23) return 1.1 * personalityMod;
+
   return 1.0; // No drive before 10 PM
 }
+
 // Valid reasons to be awake overnight (halves the sleep drive).
 function hasMeaningfulOvernightActivity(character) {
   const activity = (character.current_activity || '').toLowerCase();
+
   const validReasons = [
     // Social/celebration
     'party', 'celebration', 'wedding', 'reception', 'gathering', 'event',
@@ -156,6 +171,7 @@ function hasMeaningfulOvernightActivity(character) {
     'romantic', 'date', 'intimate', 'lover',
     // Childcare/family
     'child', 'baby', 'nursing', 'feeding', 'care',
+    // Emergency/crisis
     'emergency', 'crisis', 'urgent', 'disaster',
     // Emotional
     'argument', 'fight', 'conflict', 'emotional', 'distress', 'grief', 'mourning',
@@ -169,15 +185,20 @@ function hasMeaningfulOvernightActivity(character) {
     // Medical
     'hospital', 'medical', 'sick', 'ill',
   ];
+
   for (const reason of validReasons) {
     if (activity.includes(reason)) return true;
   }
+
   // Hospitalized — medical override
   if (character.resolved_presence_status === 'hospitalized') return true;
+
   return false;
 }
 
+// ── STALE PRESENCE THRESHOLD ─────────────────────────────────────────────────
 const STALE_PRESENCE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
 const ENERGY_RESTORING_CONTEXTS = new Set(['sleeping', 'passed_out', 'hospitalized']);
 
 function resolvePresenceStaleness(character, now) {
@@ -193,20 +214,26 @@ function resolvePresenceStaleness(character, now) {
 function getLocationContext(character, locationMap, now) {
   const activity = (character.current_activity || '').toLowerCase();
   const presenceStatus = character.resolved_presence_status || character.location_status;
+
   if (presenceStatus === 'hospitalized') return 'hospitalized';
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
   if (activity.includes('passed out') || activity.includes('collapsed')) return 'passed_out';
   if (activity.includes('hospital') || activity.includes('er ') || activity.includes('emergency room') || activity.includes('urgent care')) return 'hospitalized';
+
   const presenceIsStale = now ? resolvePresenceStaleness(character, now) : false;
+
   if (isOnShift(character, locationMap)) {
     const workLocId = character.occupation_location_id || character.current_work_location_id;
     const workLoc = workLocId ? locationMap[workLocId] : null;
     if (workLoc) return getWorkContextFromLocation(workLoc);
     return 'at_work';
   }
+
   if (presenceStatus === 'at_school') return 'at_school';
+
   if (presenceStatus === 'at_work') return 'work_off_shift';
+
   const locId = character.resolved_current_location_id;
   if (!locId) {
     if (presenceIsStale) return 'default';
@@ -215,8 +242,10 @@ function getLocationContext(character, locationMap, now) {
   }
   const loc = locationMap[locId];
   if (!loc) return 'default';
+
   const workLocId = character.occupation_location_id || character.current_work_location_id;
   if (locId === workLocId) return 'work_off_shift';
+
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
   if (cat === 'gym') return 'gym';
@@ -230,15 +259,18 @@ function getLocationContext(character, locationMap, now) {
     if (presenceIsStale) return 'default';
     return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
   }
+
   if (!presenceIsStale) {
     if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
     if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
   }
+
   return 'default';
 }
 
 function computeComfortModifier(char, context, locationMap) {
   let modifier = 0;
+
   const presence    = char.resolved_presence_status || '';
   const activity    = (char.current_activity || '').toLowerCase();
   const locId       = char.resolved_current_location_id;
@@ -247,6 +279,7 @@ function computeComfortModifier(char, context, locationMap) {
   const locName     = (loc?.name || '').toLowerCase();
   const locDesc     = (loc?.description || '').toLowerCase();
   const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
+
   if (context === 'sleeping' && (locCat === 'home' || locCat === 'hotel' || presence === 'home')) {
     modifier += 1;
   }
@@ -259,20 +292,25 @@ function computeComfortModifier(char, context, locationMap) {
   if (context === 'resting' && locCat !== 'gym' && locCat !== 'jail_prison') {
     modifier += 0.5;
   }
+
   if (loc) {
     const isUpscale = locFeatures.some(f => f.includes('upscale') || f.includes('luxury') || f.includes('fine dining') || f.includes('high-end'))
       || locDesc.includes('upscale') || locDesc.includes('luxury') || locDesc.includes('fine dining');
     if (isUpscale) modifier += 0.75;
+
     const isPleasant = locFeatures.some(f => f.includes('clean') || f.includes('pleasant') || f.includes('beautiful') || f.includes('relaxing') || f.includes('serene') || f.includes('cozy') || f.includes('comfortable'))
       || locDesc.includes('cozy') || locDesc.includes('relaxing') || locDesc.includes('comfortable') || locDesc.includes('beautiful');
     if (isPleasant) modifier += 0.5;
+
     if (locCat === 'jail_prison' || loc.is_confinement_facility) {
       modifier -= 1.5;
     }
+
     if (locCat === 'outdoor' || locCat === 'community') {
       modifier += 0.25;
     }
   }
+
   if (context === 'food_drink' || (activity.includes('eat') && locCat === 'food_drink')) {
     modifier += 0.5;
     if (loc) {
@@ -281,10 +319,13 @@ function computeComfortModifier(char, context, locationMap) {
       if (isNiceRestaurant) modifier += 0.5;
     }
   }
+
   const relationships = char.fictional_relationships || [];
   const familyMembers = char.family_members || [];
+
   const isSocialContext = context === 'social_out' || context === 'bar_club' || context === 'food_drink';
   const isAtHome = context === 'home_resting' || context === 'home_active' || presence === 'home';
+
   if (isSocialContext || isAtHome) {
     let bestRelationshipComfort = 0;
     for (const r of relationships) {
@@ -292,6 +333,7 @@ function computeComfortModifier(char, context, locationMap) {
       const trust      = r.trust_level      ?? 50;
       const romantic   = r.romantic_level   ?? 0;
       const tension    = r.tension_level    ?? 0;
+
       if (friendship < 25 || trust < 20 || tension > 70) {
         bestRelationshipComfort = Math.min(bestRelationshipComfort, -1);
         continue;
@@ -302,18 +344,26 @@ function computeComfortModifier(char, context, locationMap) {
         bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
       }
     }
+
     if (isAtHome && familyMembers.length > 0) {
       bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
     }
+
     modifier += bestRelationshipComfort;
   }
+
+
+
   const activityLower = activity;
   const isForcedEvent = activityLower.includes('mandatory') || activityLower.includes('forced') || activityLower.includes('awkward') || activityLower.includes('uncomfortable');
   if (isForcedEvent) modifier -= 0.5;
+
   const isStressfulActivity = activityLower.includes('argument') || activityLower.includes('confrontation') || activityLower.includes('conflict') || activityLower.includes('tense') || activityLower.includes('stressed');
   if (isStressfulActivity) modifier -= 1;
+
   return Math.max(-2, Math.min(2, modifier));
 }
+
 // Maps personality traits to mental-wellbeing sensitivity scales (0.3–2.0).
 function mentalPersonalityScale(char) {
   const socialEnergy = char.social_energy || 'ambivert';
@@ -331,6 +381,7 @@ function mentalPersonalityScale(char) {
     nightOwl:        char.trait_night_owl       || false,
     leader:          char.trait_leader          || false,
   };
+
   // Base: 1.0 for all dimensions
   const scale = {
     social:           1.0,
@@ -343,6 +394,7 @@ function mentalPersonalityScale(char) {
     stability:        1.0,
     selfCare:         1.0,
   };
+
   // Social energy: extroverts care MORE about social, introverts LESS
   if (socialEnergy === 'extrovert' || socialEnergy === 'mostly_extrovert') {
     scale.social *= 1.5;
@@ -351,6 +403,7 @@ function mentalPersonalityScale(char) {
     scale.social *= 0.6;  // less sensitive to social events
     scale.rest   *= 1.3;  // more restorative from alone time
   }
+
   // Conscientious: cares about stability, routine, achievement
   if (traits.conscientious) {
     scale.stability    *= 1.5;
@@ -358,74 +411,89 @@ function mentalPersonalityScale(char) {
     scale.purpose      *= 1.2;
     scale.selfCare     *= 1.3;
   }
+
   // Loyal: values relationships, character values
   if (traits.loyal) {
     scale.social           *= 1.3;
     scale.characterValues  *= 1.5;
   }
+
   // Competitive: cares about achievement, purpose, confidence
   if (traits.competitive) {
     scale.achievement  *= 1.6;
     scale.purpose      *= 1.3;
     scale.confidence   *= 1.4;
   }
+
   // Empathetic: deeply affected by social dynamics
   if (traits.empathetic) {
     scale.social  *= 1.4;
     scale.confidence *= 1.2;
   }
+
   // Adaptable: more resilient, but less affected by stability
   if (traits.adaptable) {
     scale.resilience  *= 1.5;
     scale.stability   *= 0.7;  // doesn't need rigid structure
   }
+
   // Cynical: resistant to positive social, low resilience
   if (traits.cynical) {
     scale.social      *= 0.5;  // doesn't buy social positivity
     scale.resilience  *= 0.6;
   }
+
   // Compassionate: more affected by helping others
   if (traits.compassionate) {
     scale.characterValues  *= 1.4;
     scale.social           *= 1.2;
   }
+
   // Stubborn: high confidence but lower resilience to setbacks
   if (traits.stubborn) {
     scale.confidence   *= 1.5;
     scale.resilience   *= 0.7;  // breaks harder when broken
   }
+
   // Generous: values giving back
   if (traits.generous) {
     scale.characterValues  *= 1.3;
     scale.social           *= 1.2;
   }
+
   // Night owl: less benefit from morning routines
   if (traits.nightOwl) {
     scale.rest      *= 0.8;   // less restorative from standard sleep
     scale.stability *= 0.8;   // routines may not match standard hours
   }
+
   // Morning person: more benefit from morning routines
   if (traits.morningPerson) {
     scale.rest      *= 1.2;
     scale.stability *= 1.2;
     scale.selfCare  *= 1.1;
   }
+
   // Leader: cares about purpose, confidence, achievement
   if (traits.leader) {
     scale.purpose      *= 1.4;
     scale.confidence   *= 1.3;
     scale.achievement  *= 1.3;
   }
+
   // Clamp all scales to [0.3, 2.0]
   for (const k of Object.keys(scale)) {
     scale[k] = Math.max(0.3, Math.min(2.0, scale[k]));
   }
+
   return scale;
 }
+
 // Context/activity-driven mental wellbeing modifier, scaled by personality.
 function computeMentalModifier(char, context, locationMap) {
   let modifier = 0;
   const scale = mentalPersonalityScale(char);
+
   const activity    = (char.current_activity || '').toLowerCase();
   const presence    = char.resolved_presence_status || '';
   const locId       = char.resolved_current_location_id;
@@ -435,10 +503,13 @@ function computeMentalModifier(char, context, locationMap) {
   const locDesc     = (loc?.description || '').toLowerCase();
   const locFeatures = (loc?.features || []).map(f => (f || '').toLowerCase());
   const locSubtypes = (loc?.subtype || []).map(s => (s || '').toLowerCase());
+
   const relationships = char.fictional_relationships || [];
   const familyMembers = char.family_members || [];
+
   const isSocialContext = context === 'social_out' || context === 'bar_club' || context === 'food_drink';
   const isAtHome = context === 'home_resting' || context === 'home_active' || presence === 'home';
+
   if (isSocialContext || isAtHome) {
     let bestRelationshipComfort = 0;
     for (const r of relationships) {
@@ -446,6 +517,7 @@ function computeMentalModifier(char, context, locationMap) {
       const trust      = r.trust_level      ?? 50;
       const romantic   = r.romantic_level   ?? 0;
       const tension    = r.tension_level    ?? 0;
+
       if (friendship < 25 || trust < 20 || tension > 70) {
         bestRelationshipComfort = Math.min(bestRelationshipComfort, -1);
         continue;
@@ -456,17 +528,22 @@ function computeMentalModifier(char, context, locationMap) {
         bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
       }
     }
+
     if (isAtHome && familyMembers.length > 0) {
       bestRelationshipComfort = Math.max(bestRelationshipComfort, 0.5);
     }
+
     modifier += bestRelationshipComfort;
   }
+
   const hasJob    = !!(char.occupation || char.work_start_time || char.occupation_location_id);
   const hasHome   = !!(char.current_home_location_id || char.resolved_current_location_id);
   const atHome    = locCat === 'home' || presence === 'home';
   const atSchool  = locCat === 'school' || locCat === 'education' || presence === 'at_school';
   const onShift   = isOnShift(char, locationMap);
+
   const hasCloseRel = relationships.some(r => (r.friendship_level ?? 0) > 70 || (r.trust_level ?? 0) > 70 || (r.romantic_level ?? 0) > 50);
+
   // REST & RECOVERY + MOVEMENT & EXERCISE
   const mQualitySleep = context === 'sleeping' && (locCat === 'home' || locCat === 'hotel');
   const mNap          = presence === 'napping' || activity.includes('nap') || activity.includes('siesta');
@@ -474,6 +551,7 @@ function computeMentalModifier(char, context, locationMap) {
   const mAfterEffort  = activity.includes('after') && (activity.includes('work') || activity.includes('effort') || activity.includes('day'));
   const mGym          = context === 'gym' || activity.includes('exercise') || activity.includes('workout');
   const mWalk         = activity.includes('walk') || activity.includes('stroll') || activity.includes('jog') || activity.includes('run');
+
   if (mQualitySleep) modifier += 1.25 * scale.rest;
   if (mNap)          modifier += 0.75 * scale.rest;
   if (mRestRecover)  modifier += 0.75 * scale.rest;
@@ -482,17 +560,20 @@ function computeMentalModifier(char, context, locationMap) {
   if (context === 'eating' || context === 'food_drink') modifier += 0.75 * scale.rest;
   if (mGym)          modifier += 1.0;  // exercise is universally beneficial
   if (mWalk)         modifier += 0.75;
+
   // CHARACTER & PERSONAL VALUES
   const mHelping     = activity.includes('help') || activity.includes('volunteer') || activity.includes('donate') || activity.includes('assist');
   const mKind        = activity.includes('kind') || activity.includes('nice') || activity.includes('generous');
   const mRespectful  = activity.includes('respect') || activity.includes('pleasant') || activity.includes('polite');
   const mProud       = activity.includes('proud') || activity.includes('right decision') || activity.includes('good choice');
   const mValues      = activity.includes('values') || activity.includes('integrity') || activity.includes('principle') || activity.includes('honest');
+
   if (mHelping)    modifier += 1.25 * scale.characterValues;
   if (mKind)       modifier += 0.75 * scale.characterValues;
   if (mRespectful) modifier += 0.5 * scale.characterValues;
   if (mProud)      modifier += 1.0 * scale.characterValues;
   if (mValues)     modifier += 0.75 * scale.characterValues;
+
   // PERSONAL CONFIDENCE & SELF-WORTH
   const mPepTalk     = activity.includes('pep talk') || (activity.includes('positive') && activity.includes('self'));
   const mProgress    = activity.includes('progress') || activity.includes('better') || activity.includes('improve');
@@ -500,6 +581,7 @@ function computeMentalModifier(char, context, locationMap) {
   const mRespected   = activity.includes('respect') || activity.includes('reputation') || activity.includes('trust');
   const mAdvised     = activity.includes('advice sought') || activity.includes('come to me') || activity.includes('asked for help');
   const mUseful      = activity.includes('useful') || activity.includes('valued') || activity.includes('needed') || activity.includes('depended');
+
   if (mPepTalk)   modifier += 1.0 * scale.confidence;
   if (mProgress)  modifier += 0.75 * scale.confidence;
   if (mCapable)   modifier += 0.75 * scale.confidence;
@@ -507,17 +589,20 @@ function computeMentalModifier(char, context, locationMap) {
   if (mAdvised)   modifier += 0.75 * scale.confidence;
   if (mUseful)    modifier += 1.0 * scale.confidence;
   if (hasCloseRel) modifier += 0.2 * scale.confidence;
+
   // GOALS & PURPOSE
   const mGoals     = activity.includes('goal') || activity.includes('plan') || activity.includes('future');
   const mPurpose   = activity.includes('purpose') || activity.includes('direction') || activity.includes('meaning');
   const mWorking   = activity.includes('working toward') || activity.includes('making progress');
   const mMilestone = activity.includes('milestone') || activity.includes('achieve');
+
   if (mGoals)     modifier += 0.5 * scale.purpose;
   if (mPurpose)   modifier += 1.0 * scale.purpose;
   if (mWorking)   modifier += 0.75 * scale.purpose;
   if (mMilestone) modifier += 1.25 * scale.purpose;
   if (atSchool)   modifier += 0.4 * scale.purpose;
   if (hasJob)     modifier += 0.2 * scale.purpose;
+
   // DAILY STABILITY & ROUTINE
   const mRoutine     = activity.includes('routine') || activity.includes('habit') || activity.includes('consistent');
   const mProductive  = activity.includes('productive') || activity.includes('getting things done');
@@ -526,6 +611,7 @@ function computeMentalModifier(char, context, locationMap) {
   const mCommitment  = activity.includes('commitment') || activity.includes('responsibilit') || activity.includes('reliable');
   const mEnvOk       = locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('stable') || f.includes('safe'));
   const hasStructure = onShift || atSchool;
+
   if (mRoutine)    modifier += 0.5 * scale.stability;
   if (mProductive) modifier += 0.75 * scale.stability;
   if (mOrganized)  modifier += 0.5 * scale.stability;
@@ -534,15 +620,18 @@ function computeMentalModifier(char, context, locationMap) {
   if (mEnvOk)      modifier += 0.35 * scale.stability;
   if (hasStructure) modifier += 0.15 * scale.stability;
   if (onShift)     modifier += 0.25 * scale.stability;
+
   // HEALTHY THINKING & RESILIENCE
   const mOutlook  = activity.includes('positive outlook') || activity.includes('optimistic') || activity.includes('hopeful');
   const mHope     = activity.includes('hope') || activity.includes('better days') || activity.includes('looking forward');
   const mNotWorst = activity.includes('not assuming worst') || activity.includes('staying calm') || activity.includes('realistic');
   const mResilient = activity.includes('resilient') || activity.includes('bounce back') || activity.includes('cope');
+
   if (mOutlook)   modifier += 0.75 * scale.resilience;
   if (mHope)      modifier += 1.0 * scale.resilience;
   if (mNotWorst)  modifier += 0.5 * scale.resilience;
   if (mResilient) modifier += 1.0 * scale.resilience;
+
   // LOCATION-BASED (environmental context)
   if (locCat === 'outdoor') modifier += 0.75;
   if (atHome && (locFeatures.some(f => f.includes('clean') || f.includes('tidy') || f.includes('cozy')) || !locFeatures.length)) modifier += 0.5;
@@ -551,6 +640,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (locCat === 'religion' || locName.includes('church') || locName.includes('temple') || locName.includes('mosque') || locName.includes('synagogue') || locName.includes('worship')) modifier += 1.0;
   if (activity.includes('pray') || activity.includes('worship') || activity.includes('spiritual')) modifier += 1.25;
   if (locCat === 'community' || activity.includes('community') || activity.includes('fellowship') || activity.includes('gathering')) modifier += 0.5;
+
   // DRAINS (safety, conflict, isolation, grief)
   if (locCat === 'jail_prison' || (loc && loc.is_confinement_facility)) modifier -= 1.5;
   if (activity.includes('fear') || activity.includes('threat') || activity.includes('danger') || activity.includes('unsafe')) modifier -= 1.5;
@@ -559,6 +649,7 @@ function computeMentalModifier(char, context, locationMap) {
   if (activity.includes('isolat') || activity.includes('lonely') || activity.includes('alone')) modifier -= 1.0;
   if (activity.includes('critic') && activity.includes('self')) modifier -= 0.5;
   if (activity.includes('worst') && activity.includes('outcome')) modifier -= 0.5;
+
   // PERSONALITY-MATCHED PREFERENCES
   if (char.trait_conscientious && (mOrganized || activity.includes('clean'))) modifier += 0.75;
   if (char.social_energy === 'extrovert' || char.social_energy === 'mostly_extrovert') {
@@ -569,6 +660,7 @@ function computeMentalModifier(char, context, locationMap) {
   if ((locCat === 'grocery' || locSubtypes.includes('clothing') || locSubtypes.includes('shopping') || locName.includes('shop') || locName.includes('store') || locName.includes('mall') || locName.includes('boutique'))) modifier += 0.3;
   if ((locName.includes('cafe') || locName.includes('coffee') || activity.includes('coffee') || activity.includes('cafe')) && !char.trait_night_owl) modifier += 0.35;
   if ((char.social_energy === 'introvert' || char.social_energy === 'mostly_introvert') && atHome && context === 'home_resting') modifier += 0.35;
+
   return modifier;
 }
 
@@ -659,14 +751,17 @@ function needsAreUninitialized(needs) {
   return Object.values(needs).every(v => v === null);
 }
 
+// ── CORRECTIVE STATE RESOLVER ────────────────────────────────────────────
 // Pipeline: Need → Pressure → Decision → Action → State. Energy thresholds
 // create pressure, not direct state changes, except pass-out/medical danger
 // which bypass the pipeline as involuntary physical failure.
 function computeCorrectiveState(needs, character, locationMap) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
+
   const isInRestState = presence === 'sleeping' || presence === 'napping' ||
     presence === 'passed_out' || presence === 'hospitalized';
+
   // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse. NOT sleeping.
   // COOLDOWN: prevent chaining — require 1h awake after any pass-out recovery.
   if (needs.energy <= T.ENERGY_PASSOUT && !isInRestState && !character.sleep_lock) {
@@ -680,6 +775,7 @@ function computeCorrectiveState(needs, character, locationMap) {
       current_activity: 'Passed out from critical energy',
     };
   }
+
   // MEDICAL DANGER (≤5%): AWAKE CHARACTERS ONLY. Sleeping chars get +12.5/hr recovery.
   if (needs.energy <= T.ENERGY_MEDICAL && !isInRestState) {
     return {
@@ -687,10 +783,12 @@ function computeCorrectiveState(needs, character, locationMap) {
       current_activity: 'hospitalized — energy collapse',
     };
   }
+
   // ENERGY 25-50%: DECISION PIPELINE REQUIRED — state only if at home + no obligations
   if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
+    // ── OVERNIGHT SLEEP DRIVE ──────────────────────────────────────────
     // From 10 PM onward, sleep becomes autonomously attractive.
     // Energy thresholds are effectively lowered: a character's energy is
     // divided by the drive so they feel tired faster at night.
@@ -703,11 +801,13 @@ function computeCorrectiveState(needs, character, locationMap) {
     // is worth staying awake for. Night owl personalities get 20% less drive.
     const overnightDrive = overnightSleepDriveMultiplier(nowET, character);
     const hasOvernightReason = hasMeaningfulOvernightActivity(character);
+
     // Meaningful overnight activities halve the drive — character stays up
     const effectiveDrive = hasOvernightReason
       ? Math.max(1.0, overnightDrive * 0.5)
       : overnightDrive;
 
+    // ── PASS-OUT MEMORY AMPLIFICATION ──────────────────────────────
     // Characters who passed out recently feel exhaustion more intensely.
     // They remember that pass-out was unpleasant and don't want to repeat it.
     // This amplifies sleep pressure without removing autonomy — the character
@@ -730,6 +830,7 @@ function computeCorrectiveState(needs, character, locationMap) {
         passOutAmp *= Math.max(0.5, 1.0 - extraCount * 0.1); // each extra pass-out adds 10% amplification
       }
     }
+
     // Effective energy: raw energy divided by drive AND pass-out memory amp.
     // At night, characters feel fatigue faster. After pass-out, they feel it
     // even faster because they remember the consequence of ignoring it.
@@ -740,24 +841,30 @@ function computeCorrectiveState(needs, character, locationMap) {
       presence === 'at_school' ||
       character.is_jailed ||
       character.house_arrest_active;
+
     const atHome = character.resolved_current_location_id === character.current_home_location_id ||
       presence === 'home' ||
       (character.resolved_location_type || '').toLowerCase() === 'home';
+
     // Overnight obligation override: between 3 AM-6 AM, "at_school" and
     // stale work shifts are nearly impossible. Still respect jail/house_arrest.
     const hour = nowET.getHours();
     const isOvernightViolationWindow = hour >= 3 && hour < 6;
     const staleOvernightObligation = isOvernightViolationWindow &&
       (presence === 'at_school' || (inObligation && hour >= 3 && hour < 6));
+
     // If stale overnight obligation without a meaningful reason, ignore it
     const effectiveInObligation = staleOvernightObligation && !hasOvernightReason
       ? false
       : inObligation;
+
     const isBlocked = effectiveInObligation || !atHome || character.sleep_lock;
 
+    // ── SLEEP WINDOW PROXIMITY ──────────────────────────────────────────
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
     const dayOfWeek = nowET.getDay();
+
     let sleepStartMin = null;
     if (character.sleep_start_time) {
       sleepStartMin = toMin(character.sleep_start_time);
@@ -774,9 +881,11 @@ function computeCorrectiveState(needs, character, locationMap) {
     if (sleepStartMin === null) {
       sleepStartMin = 23 * 60;
     }
+
     let minutesToSleep = sleepStartMin - nowMin;
     if (minutesToSleep < 0) minutesToSleep += 1440;
     const closeToSleepWindow = minutesToSleep <= 90;
+
     // ═══════════════════════════════════════════════════════════════════
     // Effective energy ≤ 25: SLEEP URGENT
     // Sleep is urgent but NEVER abandon real obligations.
@@ -808,6 +917,7 @@ function computeCorrectiveState(needs, character, locationMap) {
       }
       return null; // blocked by obligation or not home — re-evaluate next tick; pass-out will happen naturally if energy drains to ≤10
     }
+
     // ═══════════════════════════════════════════════════════════════════
     // Effective energy ≤ 35: NAP/SLEEP TRANSITION
     //
@@ -831,6 +941,7 @@ function computeCorrectiveState(needs, character, locationMap) {
       }
       return null; // blocked — re-evaluate next tick
     }
+
     // ═══════════════════════════════════════════════════════════════════
     // Effective energy ≤ 40: STRONG NAP PRESSURE
     //
@@ -846,6 +957,7 @@ function computeCorrectiveState(needs, character, locationMap) {
       }
       return null; // blocked — re-evaluate next tick; character will drain naturally
     }
+
     // ═══════════════════════════════════════════════════════════════════
     // Effective energy ≤ 50: NAP AVAILABLE — NO automatic state change
     // Nap is an available option. Decision engine weighs options.
@@ -855,21 +967,26 @@ function computeCorrectiveState(needs, character, locationMap) {
     if (effectiveEnergy <= T.ENERGY_NAP_AVAILABLE) {
       return null; // Pressure exists but no automatic state change
     }
+
     return null;
   }
+
   // Hunger-critical triggers eating
   if (needs.hunger <= T.HUNGER_CRITICAL && !activity.includes('eat')) {
     return { current_activity: 'eating — hunger drove them to food' };
   }
+
   // Health ER triggers hospitalization
   if (needs.health <= T.HEALTH_ER && presence !== 'hospitalized') {
     return { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' };
   }
+
   // Social-critical
   if (needs.social <= T.SOCIAL_CRITICAL && !isInRestState
       && !character.is_jailed && !character.house_arrest_active) {
     return { current_activity: 'seeking social contact — isolated too long' };
   }
+
   // Compound crisis — involuntary collapse, NOT voluntary sleep.
   // Uses 'passed_out' status with its own cap/release logic, NOT 'sleeping'.
   // Does NOT write last_sleep_start — that field is exclusively for voluntary sleep.
@@ -882,10 +999,13 @@ function computeCorrectiveState(needs, character, locationMap) {
       last_pass_out_at: new Date().toISOString(),
     };
   }
+
   return null;
 }
 
+// ── DECISION WEIGHTS ──────────────────────────────────────────────────────
 // Character decides what to do based on current needs and context.
+
 const HYGIENE_CURVE = [
   { threshold: 20, weight: 3.5 },
   { threshold: 35, weight: 2.0 },
@@ -893,6 +1013,7 @@ const HYGIENE_CURVE = [
   { threshold: 65, weight: 0.4 },
   { threshold: 80, weight: 0.1 },
 ];
+
 const ENERGY_CURVE = [
   { threshold: 15, weight: 5.0 },
   { threshold: 25, weight: 4.0 },
@@ -900,6 +1021,7 @@ const ENERGY_CURVE = [
   { threshold: 50, weight: 1.0 },
   { threshold: 70, weight: 0.2 },
 ];
+
 const HUNGER_CURVE = [
   { threshold: 10, weight: 5.0 },
   { threshold: 20, weight: 4.0 },
@@ -907,6 +1029,7 @@ const HUNGER_CURVE = [
   { threshold: 50, weight: 1.0 },
   { threshold: 70, weight: 0.2 },
 ];
+
 const SOCIAL_CURVE = [
   { threshold: 10, weight: 3.0 },
   { threshold: 25, weight: 2.0 },
@@ -914,6 +1037,7 @@ const SOCIAL_CURVE = [
   { threshold: 60, weight: 0.4 },
   { threshold: 80, weight: 0.1 },
 ];
+
 const HEALTH_CURVE = [
   { threshold: 15, weight: 5.0 },
   { threshold: 30, weight: 3.0 },
@@ -921,6 +1045,7 @@ const HEALTH_CURVE = [
   { threshold: 70, weight: 0.5 },
   { threshold: 85, weight: 0.1 },
 ];
+
 const MENTAL_CURVE = [
   { threshold: 30, weight: 4.0 },
   { threshold: 45, weight: 2.5 },
@@ -939,8 +1064,10 @@ function pressureCurve(value, curve) {
 function computeDecisionWeights(needs, character) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
+
   // If already in a rest/recovery state, no autonomous decisions
   if (presence === 'sleeping' || presence === 'napping' || presence === 'hospitalized' || presence === 'passed_out') return null;
+
   const hygieneW  = pressureCurve(needs.hygiene, HYGIENE_CURVE);
   let   energyW   = pressureCurve(needs.energy,  ENERGY_CURVE);
   const hungerW   = pressureCurve(needs.hunger,  HUNGER_CURVE);
@@ -948,6 +1075,7 @@ function computeDecisionWeights(needs, character) {
   const healthW   = pressureCurve(needs.health,   HEALTH_CURVE);
   const mentalW   = pressureCurve(needs.mental,   MENTAL_CURVE);
 
+  // ── PASS-OUT LEARNING: PRACTICAL AVOIDANCE, NOT DEPRESSION ────────────
   // A character who passed out remembers it was unpleasant, embarrassing,
   // and physically draining. They become more likely to choose rest earlier
   // when tired because they do not want to repeat the experience.
@@ -970,11 +1098,14 @@ function computeDecisionWeights(needs, character) {
       energyW *= amp;
     }
   }
+
   return { hygieneW, energyW, hungerW, socialW, healthW, mentalW };
 }
+
 // Needs create pressure, not actions. >2.0=dominant, 1-2=elevated, 0.5-1=mild, <0.5=satisfied.
 function buildPressureProfile(weights) {
   if (!weights) return null;
+
   const { hygieneW, energyW, hungerW, socialW, healthW, mentalW } = weights;
 
   const profile = {
@@ -990,6 +1121,7 @@ function buildPressureProfile(weights) {
     elevated: [],
     satisfied: true,
   };
+
   profile.pressures.forEach(p => {
     if (p.weight > 2.0) {
       profile.dominant = profile.dominant || p.need;
@@ -1001,11 +1133,15 @@ function buildPressureProfile(weights) {
       profile.elevated.push(p.need);
     }
   });
+
   return profile;
 }
+
+// Returns a pressure profile (not a single action), personality-modulated.
 function resolveNextActivity(needs, character) {
   const weights = computeDecisionWeights(needs, character);
   if (!weights) return null;
+
   // Apply personality modulation to the raw pressure weights
   const socialEnergy = character.social_energy || 'ambivert';
   const personalityMod = {
@@ -1013,18 +1149,22 @@ function resolveNextActivity(needs, character) {
     hygiene: 1.0,
     mental: 1.0,
   };
+
   if (socialEnergy === 'extrovert' || socialEnergy === 'mostly_extrovert') {
     personalityMod.social = 1.3;
   } else if (socialEnergy === 'introvert' || socialEnergy === 'mostly_introvert') {
     personalityMod.social = 0.7;
   }
+
   if (character.trait_conscientious) {
     personalityMod.hygiene = 1.3;
     personalityMod.mental = 1.2;
   }
+
   if (character.trait_adaptable) {
     personalityMod.mental = 0.8;
   }
+
   // Build modulated weights
   const modulated = {
     hygieneW: weights.hygieneW * personalityMod.hygiene,
@@ -1034,16 +1174,20 @@ function resolveNextActivity(needs, character) {
     healthW:  weights.healthW,
     mentalW:  weights.mentalW * personalityMod.mental,
   };
+
   const profile = buildPressureProfile(modulated);
+
   if (profile) {
     profile.character_factors = {
       social_energy: socialEnergy,
       personality_mod: personalityMod,
     };
   }
+
   return profile;
 }
 
+// ── STALE CORRECTIVE CLEANUP ──────────────────────────────────────────────
 // Clears stale corrective activities so character doesn't appear permanently
 // "eating" or "sleeping" when they're actually awake.
 //
@@ -1056,6 +1200,7 @@ function resolveNextActivity(needs, character) {
 function resolveStaleCorrectiveActivities(character, needs) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
+
   const correctivePatterns = [
     'eating — hunger drove them to food',
     'forced sleep — exhausted',
@@ -1063,8 +1208,11 @@ function resolveStaleCorrectiveActivities(character, needs) {
     'hospitalized — health collapsed',
     'seeking social contact — isolated too long',
   ];
+
   const isCorrective = correctivePatterns.some(p => activity.includes(p || activity === p));
   if (!isCorrective) return null;
+
+  // Check if the underlying need has recovered enough to clear the corrective state
   if (activity.includes('eat') && needs.hunger > 40) {
     return { current_activity: '', resolved_presence_status: presence === 'sleeping' ? 'home' : presence };
   }
@@ -1100,10 +1248,12 @@ function resolveStaleCorrectiveActivities(character, needs) {
     }
     return null;
   }
+
   // Social corrective cleared once social has recovered enough
   if (activity.includes('seeking social contact') && needs.social > 40) {
     return { current_activity: '' };
   }
+
   return null;
 }
 
@@ -1116,6 +1266,7 @@ function resolveStaleDecisionIntents(character) {
   }
   return null;
 }
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1127,19 +1278,23 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch(() => null);
+
     // Parse payload for optional ownerEmail override (admin-only testing path)
     let payload = {};
     try { payload = await req.json(); } catch (_) { /* no body / GET request */ }
     const ownerEmailOverride = payload.ownerEmail || null;
+
     // When ownerEmail is provided in payload, use it directly (admin/testing path)
     // Requires authenticated user — ownerEmail alone is not sufficient
     if (!user && !ownerEmailOverride) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
     const ownerEmail = ownerEmailOverride || user?.email;
     const now = new Date();
     const nowIso = now.toISOString();
 
+    // ── LOAD CHARACTERS ──────────────────────────────────────────────────
     // Scope: active_created_character only. NPCs and world-service are excluded.
     // owner_email is NOT used in the filter — legacy records may lack the field.
     // Use non-service-role list() — asServiceRole has known issues in test harness.
@@ -1148,6 +1303,7 @@ Deno.serve(async (req) => {
       null,
       200
     ).catch((err) => { charFilterError = err?.message || 'Unknown filter error'; return []; });
+
     // Filter in code: active + active_created_character + matching owner_email
     const characters = allCharacters.filter(c =>
       c.status === 'active' &&
@@ -1155,6 +1311,7 @@ Deno.serve(async (req) => {
       !c.is_world_service &&
       (c.owner_email === ownerEmail || ownerEmailOverride)  // ownerEmailOverride bypasses owner check for admin/testing
     );
+
     if (characters.length === 0) {
       if (charFilterError) {
         return Response.json({ success: false, simulated: 0, message: 'Character fetch failed — rate limit or API error prevented simulation', error: charFilterError });
@@ -1162,6 +1319,7 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, simulated: 0, totalLoaded: allCharacters.length, totalFiltered: characters.length, message: 'No matching active_created_characters found', debug: { ownerEmail, ownerEmailOverride: !!ownerEmailOverride, sampleTypes: [...new Set(allCharacters.slice(0, 20).map(c => c.character_type))], sampleStatuses: [...new Set(allCharacters.slice(0, 20).map(c => c.status))] }});
     }
 
+    // ── LOAD LOCATION MAP ────────────────────────────────────────────────
     // Legacy records may lack owner_email — load all, scope in loop
     let locFilterError = null;
     const locations = await base44.entities.LocationReference.list(
@@ -1173,7 +1331,9 @@ Deno.serve(async (req) => {
     for (const loc of locations) {
       locationMap[loc.id] = loc;
     }
+
     const results = [];
+
     // ═══════════════════════════════════════════════════════════════════════
     // PER-CHARACTER SIMULATION LOOP
     // ═══════════════════════════════════════════════════════════════════════
@@ -1199,16 +1359,19 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── SKIP LOCKED CHARACTERS ───────────────────────────────────────
         // Diagnostic/test characters are excluded from simulation.
         if (char.is_test_character || char.diagnostic_only) {
           continue;
         }
 
+        // ── SKIP INCARCERATED ────────────────────────────────────────────
         // Incarcerated characters have their own needs pipeline.
         if (char.is_jailed || char.resolved_presence_status === 'incarcerated') {
           continue;
         }
 
+        // ── FIRST-TIME INITIALIZATION ────────────────────────────────────
         let needs = getNeedsFromCharacter(char);
         if (needsAreUninitialized(needs) || !char.needs_initialized) {
           await base44.entities.Character.update(char.id, {
@@ -1227,26 +1390,32 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── ELAPSED TIME ─────────────────────────────────────────────────
         const lastSim = char.last_need_simulated_at
           ? new Date(char.last_need_simulated_at).getTime()
           : Date.now();
         const elapsedMs = now.getTime() - lastSim;
+
         // RC5: Cap elapsed time at 8 hours
         const elapsedHours = Math.min(elapsedMs / (1000 * 60 * 60), 8);
+
         // Skip if too recent (less than ~3 minutes)
         if (elapsedHours < 0.05) {
           results.push({ character: charName, status: 'skipped', reason: 'too_recent', elapsed_minutes: Math.round(elapsedHours * 60) });
           continue;
         }
 
+        // ── VICK LOCKED HUNGER/SLEEP ─────────────────────────────────────
         // If Vick has explicitly locked hunger or sleep for this character,
         // those values are frozen — no decay, no recovery.
         // Energy is still simulated if sleep_lock is off.
         const hungerLocked = char.hunger_lock === true;
         const sleepLocked  = char.sleep_lock  === true;
 
+        // ── RESOLVE CONTEXT ───────────────────────────────────────────────
         const context = getLocationContext(char, locationMap, now);
 
+        // ── HOME FOOD CONSUMPTION ─────────────────────────────────────────
         // When character is at home and hungry, consume food from HouseholdResource
         // before applying rates. Snack=0.5 serving(+16.5 hunger), Meal=1 serving(+33 hunger).
         // Does NOT create a financial charge — food was already purchased.
@@ -1258,6 +1427,7 @@ Deno.serve(async (req) => {
             ).catch(() => []);
             const hr = hrArr[0];
             const foodAvailable = hr ? (hr.home_food_value || 0) : 0;
+
             if (foodAvailable > 0) {
               // Determine meal vs snack based on hunger severity
               const isMeal = (needs.hunger ?? 70) < 30;
@@ -1265,13 +1435,16 @@ Deno.serve(async (req) => {
               const hungerRestore = isMeal ? 33 : 16.5;
               const actualConsumed = Math.min(consumed, foodAvailable);
               const newFood = Math.max(0, Math.round((foodAvailable - actualConsumed) * 100) / 100);
+
               // Update HouseholdResource
               await base44.entities.HouseholdResource.update(hr.id, {
                 home_food_value: newFood,
                 last_consumed_at: nowIso,
               }).catch(() => {});
+
               // Apply hunger restoration directly
               needs.hunger = clamp((needs.hunger ?? 70) + (actualConsumed / consumed) * hungerRestore);
+
               results.push({
                 character: charName,
                 event: isMeal ? 'home_meal_consumed' : 'home_snack_consumed',
@@ -1286,6 +1459,7 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── RC2: PASS-OUT DETECTION (energy ≤ ENERGY_PASSOUT) ────────────
         // Character collapses from exhaustion. Written BEFORE the normal
         // rate application so the NEXT tick uses passed_out rates (+8/hr).
         const energyBefore = char.energy_value ?? 75;
@@ -1346,6 +1520,7 @@ Deno.serve(async (req) => {
             continue;
           }
 
+          // ── CONSEQUENCES — only reached because the transition above is proven ──
           try {
             await base44.entities.LifeEvent.create({
               character_id: char.id, character_name: charName,
@@ -1370,6 +1545,7 @@ Deno.serve(async (req) => {
             });
             continue;
           }
+
           results.push({
             character: charName, context: 'passed_out', event: 'pass_out',
             needs: {
@@ -1385,8 +1561,10 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── APPLY TIME-BASED RATES ────────────────────────────────────────
         let newNeeds = applyElapsedTime(needs, elapsedHours, context);
 
+        // ── VICK HUNGER/SLEEP LOCK OVERRIDE ──────────────────────────────
         // If Vick locked hunger, restore original value — no decay.
         if (hungerLocked || char.needs_locks?.hunger) {
           newNeeds.hunger = needs.hunger ?? 70;
@@ -1395,11 +1573,13 @@ Deno.serve(async (req) => {
         if (sleepLocked || char.needs_locks?.energy) {
           newNeeds.energy = needs.energy ?? 75;
         }
+
         if(char.needs_locks?.hygiene) newNeeds.hygiene = needs.hygiene ?? 75;
         if(char.needs_locks?.comfort) newNeeds.comfort = needs.comfort ?? 70;
         if(char.needs_locks?.social) newNeeds.social = needs.social ?? 65;
         if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
         if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
+
         // SOCIAL FULFILLMENT MODEL: Social measures fulfillment, not current activity.
         // A bartender who worked 8h with customers is socially fulfilled (+3/hr → +24/shift).
         // A character resting at home after a social day does NOT lose social (rate=0).
@@ -1407,29 +1587,38 @@ Deno.serve(async (req) => {
         // Being home ≠ antisocial. Being in public ≠ automatically social.
         // Social and Energy are independent: a character can be fulfilled AND tired.
 
+        // ── RC5: CASCADE INFECTION ────────────────────────────────────────
         newNeeds = applyStatInfection(newNeeds, elapsedHours);
 
+        // ── MENTAL MODIFIER ───────────────────────────────────────────────
         if (!hungerLocked) {
           const mentalMod = computeMentalModifier(char, context, locationMap);
           newNeeds.mental = clamp(newNeeds.mental + mentalMod * elapsedHours);
         }
 
+        // ── COMFORT MODIFIER ──────────────────────────────────────────────
         const comfortMod = computeComfortModifier(char, context, locationMap);
         newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * elapsedHours);
 
+        // ── PRESENCE STAY LOCK ────────────────────────────────────────────
         // If character has a stay lock (user chose STAY at scene exit),
         // the resolved location is frozen — do not override presence.
         const hasStayLock = char.presence_stay_lock === true;
+
         let nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
+        // ── HARD SLEEP & NAP CAPS + 19-HOUR AWAKE ENFORCEMENT ─────────────
         // CRITICAL: Sleep and nap timestamps are tracked separately.
         // last_sleep_start → only for actual sleep (resolved_presence_status='sleeping')
         // last_nap_time   → only for naps (resolved_presence_status='napping')
         // The 19-hour awake timer uses last_sleep_start ONLY — naps do NOT reset it.
+        // ─────────────────────────────────────────────────────────────────────
+
         const dbIsSleeping  = char.resolved_presence_status === 'sleeping';
         const dbIsNapping   = char.resolved_presence_status === 'napping';
         const dbIsPassedOut = char.resolved_presence_status === 'passed_out';
 
+        // ── HARD 8-HOUR SLEEP CAP ──────────────────────────────────────────
         // Uses last_sleep_start ONLY. Generic timestamps are NEVER sleep-start evidence.
         // If last_sleep_start is missing, this is a state violation — apply safe correction
         // by setting last_sleep_start=now (resets the 8h timer, conservative but safe).
@@ -1452,16 +1641,7 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              // CONDITIONAL CLAIM: only wake if character is still sleeping
-              await base44.asServiceRole.entities.Character.updateMany(
-                { id: char.id, resolved_presence_status: 'sleeping' },
-                { $set: wakePayload }
-              );
-              const _sleepCapVerify = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
-              if (!_sleepCapVerify || _sleepCapVerify.last_wake_time !== nowIso) {
-                results.push({ character: charName, context, status: 'skipped', reason: 'sleep_cap_claim_lost_to_concurrent_writer' });
-                continue;
-              }
+              await base44.entities.Character.update(char.id, wakePayload);
               try {
                 await base44.entities.SleepTransition.create({
                   character_id: char.id, character_name: charName, owner_email: ownerEmail,
@@ -1552,6 +1732,7 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── HARD 12-HOUR PASS-OUT CAP ─────────────────────────────────────
         // Pass-out cannot last indefinitely. After 12 hours of passed_out recovery,
         // the character wakes up regardless of energy (minimum survival state).
         // Transition: passed_out → home (awake), NOT to sleeping.
@@ -1668,6 +1849,7 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── HARD 3-HOUR NAP CAP ───────────────────────────────────────────
         // Uses last_nap_time ONLY. Nap wake writes last_wake_time (restorative
         // boundary for 19h awake timer). Missing timestamp → reconstruction.
         if (dbIsNapping) {
@@ -1688,16 +1870,7 @@ Deno.serve(async (req) => {
                 comfort_value: Math.round(newNeeds.comfort),
                 last_need_simulated_at: nowIso,
               };
-              // CONDITIONAL CLAIM: only wake if character is still napping
-              await base44.asServiceRole.entities.Character.updateMany(
-                { id: char.id, resolved_presence_status: 'napping' },
-                { $set: napWakePayload }
-              );
-              const _napCapVerify = (await base44.asServiceRole.entities.Character.filter({ id: char.id }, null, 1))?.[0];
-              if (!_napCapVerify || _napCapVerify.last_wake_time !== nowIso) {
-                results.push({ character: charName, context, status: 'skipped', reason: 'nap_cap_claim_lost_to_concurrent_writer' });
-                continue;
-              }
+              await base44.entities.Character.update(char.id, napWakePayload);
               try {
                 await base44.entities.SleepTransition.create({
                   character_id: char.id, character_name: charName, owner_email: ownerEmail,
@@ -1802,6 +1975,7 @@ Deno.serve(async (req) => {
             if (!passOutConsumed) {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
+              // ── 19-HOUR FORCED EXHAUSTION = PASS-OUT / FORCED RECOVERY ────────
               // A character awake for 19+ hours has hit the biological limit.
               // This is NOT a chosen sleep — it is the same consequence as pass-out.
               // Treat it identically: record last_pass_out_at, increment pass_out_count,
@@ -1886,6 +2060,7 @@ Deno.serve(async (req) => {
                 });
                 continue;
               }
+
               try {
                 await base44.entities.LifeEvent.create({
                   character_id: char.id, character_name: charName,
@@ -1909,6 +2084,7 @@ Deno.serve(async (req) => {
                 });
                 continue;
               }
+
               results.push({
                 character: charName, context,
                 event: '19h_pass_out_forced_exhaustion',
@@ -1977,6 +2153,7 @@ Deno.serve(async (req) => {
             }
           }
         }
+
         // ═══════════════════════════════════════════════════════════════════
         // BUILD UPDATE PAYLOAD
         // ═══════════════════════════════════════════════════════════════════
@@ -1993,6 +2170,7 @@ Deno.serve(async (req) => {
 
         // ── SINGLE-TRANSITION-PER-TICK: candidates propose, one selected by priority (1=hospitalized, 2=passed_out, 3=sleeping, 4=napping, 5=pass_out_end) ──
         const transitionCandidates = [];
+
         // RC1: corrective activity writer (sleep/nap/pass_out from pressure pipeline)
         const corrective = computeCorrectiveState(newNeeds, char, locationMap);
         if (corrective) {
@@ -2033,6 +2211,7 @@ Deno.serve(async (req) => {
             });
           }
         }
+
         // RC2 (continued): energy reached zero this tick
         const _poCooldownB = char.last_pass_out_at && char.last_wake_time &&
           new Date(char.last_wake_time).getTime() > new Date(char.last_pass_out_at).getTime() &&
@@ -2055,6 +2234,7 @@ Deno.serve(async (req) => {
             consequence: null,
           });
         }
+
         // RC3: ER escalation — health ≤15 or compound crisis with health ≤20
         const compoundCrisisHealth = newNeeds.health <= T.HEALTH_CRITICAL &&
           [newNeeds.hunger, newNeeds.energy, newNeeds.health]
@@ -2071,6 +2251,7 @@ Deno.serve(async (req) => {
             consequence: { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
           });
         }
+
         // RC4: compound crisis — 3+ needs below 20
         const criticalNeeds = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental]
           .filter(v => v < T.HUNGER_CRITICAL).length;
@@ -2091,6 +2272,7 @@ Deno.serve(async (req) => {
             consequence: { type: 'compound_crisis', criticalNeeds },
           });
         }
+
         // Pass-out release: energy > 35 and (6h elapsed OR medical emergency)
         if (char.presence_stay_lock &&
             char.presence_stay_lock_reason === 'pass_out_recovery' &&
@@ -2126,6 +2308,7 @@ Deno.serve(async (req) => {
           if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
         }
 
+        // ── STALE CORRECTIVE CLEANUP ───────────────────────────────────────
         // WAKE ACTIVITY MUST BE MANDATORY: If stale cleanup clears a sleep state,
         // a wake transition + LifeEvent/Memory MUST be created. Silent wake-up is forbidden.
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
@@ -2140,6 +2323,7 @@ Deno.serve(async (req) => {
             pendingConsequences.push({ type: 'stale_wake', energyValue: Math.round(newNeeds.energy), wakeType: _wt });
           }
         }
+
         const staleIntent = resolveStaleDecisionIntents(char);
         if (staleIntent) {
           Object.assign(updatePayload, staleIntent);
@@ -2180,6 +2364,7 @@ Deno.serve(async (req) => {
             break;
           }
         }
+
         if (!rc6TransitionsVerified) {
           let revertError = null;
           try { await base44.entities.Character.update(char.id, rc6RevertPayload); } catch (e) { revertError = e.message; }
@@ -2265,11 +2450,14 @@ Deno.serve(async (req) => {
           }).catch(() => {});
         }
 
+        // ── FINANCIAL NEED DERIVATION ──────────────────────────────────────
         updatePayload.financial_need_value = deriveFinancialNeed(char);
 
+        // ── AUTONOMOUS DECISION INTENT ────────────────────────────────────
         const nextActivity = resolveNextActivity(newNeeds, char);
         const isCorrectiveActive = corrective &&
           (corrective.current_activity || '').includes(' — ');
+
         results.push({
           character: charName,
           context,
@@ -2288,6 +2476,7 @@ Deno.serve(async (req) => {
           stale_corrective_cleared: staleCleanup ? Object.keys(staleCleanup) : null,
           elapsed_hours: Math.round(elapsedHours * 100) / 100,
         });
+
         // Throttle between characters
         await new Promise(r => setTimeout(r, 200));
       } catch (charError) {
@@ -2295,6 +2484,7 @@ Deno.serve(async (req) => {
         results.push({ character: char.name || char.id, status: 'error', error: charError.message });
       }
     }
+
     return Response.json({
       success: true,
       simulated: results.filter(r => r.status !== 'error' && r.status !== 'skipped').length,
@@ -2302,6 +2492,7 @@ Deno.serve(async (req) => {
       timestamp: nowIso,
       results,
     });
+
   } catch (error) {
     console.error(`[simulateActiveCharacterNeeds] Fatal: ${error.message}`);
     return Response.json({ error: error.message }, { status: 500 });

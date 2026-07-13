@@ -1,94 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── PRE-DEPARTURE CHILDCARE PROTECTION (inlined from ensureChildCaregiverPresence) ──
-const _SAFE_ALONE_AGE = 16;
-function _resolveAge(character) {
-  if (character.age && typeof character.age === 'number' && character.age > 0) return character.age;
-  if (character.age_range) {
-    const r = character.age_range.toLowerCase();
-    if (r.includes('early 20')) return 21;
-    if (r.includes('mid 20')) return 25;
-    if (r.includes('late 20')) return 28;
-    if (r.includes('early 30')) return 31;
-    if (r.includes('mid 30')) return 35;
-    if (r.includes('late 30')) return 38;
-    if (r.includes('40')) return 43;
-    if (r.includes('50')) return 53;
-    if (r.includes('60')) return 63;
-    if (r.includes('70')) return 73;
-  }
-  return null;
-}
-function _isCaregiver(character) {
-  return character.character_type === 'npc_regular' &&
-    (character.is_sitter === true || (character.occupation || '').toLowerCase().includes('babysitter'));
-}
-async function _ensureChildcareBeforeDeparture(base44, char, homeId, allChars, allLocations) {
-  if (!homeId || char.resolved_current_location_id !== homeId) return { ok: true };
-  const childResidents = allChars.filter(c => {
-    if (c.current_home_location_id !== homeId) return false;
-    if (c.id === char.id) return false;
-    if (c.status === 'deleted' || c.status === 'soft_deleted') return false;
-    const age = _resolveAge(c);
-    if (age === null) return false;
-    return age < _SAFE_ALONE_AGE;
-  });
-  if (childResidents.length === 0) return { ok: true };
-  const childrenAtHome = childResidents.filter(c =>
-    !c.resolved_current_location_id || c.resolved_current_location_id === homeId
-  );
-  if (childrenAtHome.length === 0) return { ok: true };
-  const departingAge = _resolveAge(char);
-  if (departingAge !== null && departingAge < _SAFE_ALONE_AGE) return { ok: true };
-  const otherGuardians = allChars.filter(c => {
-    if (c.id === char.id) return false;
-    if (c.current_home_location_id !== homeId) return false;
-    if (c.status === 'deleted' || c.status === 'soft_deleted') return false;
-    const age = _resolveAge(c);
-    if (age === null || age < _SAFE_ALONE_AGE) return false;
-    return !c.resolved_current_location_id || c.resolved_current_location_id === homeId;
-  });
-  if (otherGuardians.length > 0) return { ok: true };
-  const homeLoc = allLocations.find(l => l.id === homeId);
-  if (!homeLoc) return { ok: true };
-  const existingSitter = allChars.find(c =>
-    _isCaregiver(c) && c.resolved_current_location_id === homeId &&
-    c.sitter_assigned_to_location_id === homeId
-  );
-  if (existingSitter) return { ok: true };
-  const availableSitter = allChars.find(c =>
-    _isCaregiver(c) && c.owner_email === char.owner_email &&
-    c.sitter_assigned_to_location_id !== homeId
-  );
-  if (availableSitter) {
-    await base44.asServiceRole.entities.Character.update(availableSitter.id, {
-      resolved_current_location_id: homeId, resolved_current_location_name: homeLoc.name,
-      resolved_location_type: 'home', resolved_presence_status: 'home',
-      resolved_source_reason: 'child_supervision',
-      resolved_last_updated_at: new Date().toISOString(),
-      is_sitter: true, sitter_assigned_to_location_id: homeId,
-    }).catch(() => {});
-    return { ok: true, sitterAssigned: availableSitter.name };
-  }
-  const childNames = childResidents.map(c => c.name).join(', ');
-  const sitterName = homeLoc.name + ' Babysitter';
-  try {
-    await base44.asServiceRole.entities.Character.create({
-      name: sitterName, character_type: 'npc_regular', owner_email: char.owner_email,
-      status: 'active', occupation: 'Babysitter', is_sitter: true,
-      sitter_assigned_to_location_id: homeId, current_home_location_id: homeId,
-      resolved_current_location_id: homeId, resolved_current_location_name: homeLoc.name,
-      resolved_location_type: 'home', resolved_presence_status: 'home',
-      resolved_source_reason: 'child_supervision_spawn',
-      resolved_last_updated_at: new Date().toISOString(),
-      personality_summary: 'A reliable babysitter caring for ' + childNames + ' at ' + homeLoc.name + '.',
-      data_scope: 'private_user', visibility_scope: 'account_private',
-      exclude_from_homepage: true, exclude_from_roster: true,
-    });
-    return { ok: true, sitterSpawned: sitterName };
-  } catch (e) { return { ok: false, error: e.message }; }
-}
-
 // Check if a location-specific shift for this character is active right now (ET)
 // Handles cross-midnight shifts correctly — e.g. 17:00→01:00 spanning two calendar days.
 function isLocationShiftActiveNow(shift, nowET) {
@@ -328,21 +239,7 @@ Deno.serve(async (req) => {
       if (singleActiveWorkLocId) {
         const result = await writeVerifiedTransition({
           payload: {
-            // PRE-DEPARTURE CHILDCARE CHECK
-          {
-            const _homeId = character.current_home_location_id;
-            if (_homeId && character.resolved_current_location_id === _homeId && singleActiveWorkLocId !== _homeId) {
-              let _allChars = [];
-              try { _allChars = await base44.asServiceRole.entities.Character.filter({ owner_email: character.owner_email, status: 'active' }, null, 200); } catch { _allChars = []; }
-              let _allLocs = [];
-              try { _allLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: character.owner_email }, null, 100); } catch { _allLocs = []; }
-              const _ccResult = await _ensureChildcareBeforeDeparture(base44, character, _homeId, _allChars, _allLocs);
-              if (!_ccResult.ok) {
-                return Response.json({ updated: false, reason: 'departure_blocked_childcare: ' + (_ccResult.error || 'unknown') });
-              }
-            }
-          }
-          resolved_current_location_id: singleActiveWorkLocId,
+            resolved_current_location_id: singleActiveWorkLocId,
             resolved_presence_status: 'at_work',
             resolved_location_type: 'work',
             resolved_source_reason: 'work_schedule',
@@ -608,17 +505,6 @@ Deno.serve(async (req) => {
               presence_stay_lock_created_by: char.presence_stay_lock_created_by,
             };
             await base44.asServiceRole.entities.Character.update(char.id, {
-              // PRE-DEPARTURE CHILDCARE CHECK
-              {
-                const _homeId = char.current_home_location_id;
-                if (_homeId && char.resolved_current_location_id === _homeId && activeWorkLocId !== _homeId) {
-                  const _ccResult = await _ensureChildcareBeforeDeparture(base44, char, _homeId, groupChars, ownerLocations);
-                  if (!_ccResult.ok) {
-                    issues_found.push(char.name + ': DEPARTURE_BLOCKED_CHILD CARE — ' + (_ccResult.error || 'unknown'));
-                    continue;
-                  }
-                }
-              }
               resolved_current_location_id: activeWorkLocId,
               resolved_presence_status: 'at_work',
               resolved_location_type: 'work',

@@ -111,17 +111,7 @@ Deno.serve(async (req) => {
             current_activity: null,
             last_wake_time: now.toISOString(),
           };
-          // CONDITIONAL CLAIM: only wake if character is still sleeping
-          await base44.asServiceRole.entities.Character.updateMany(
-            { id: c.id, resolved_presence_status: 'sleeping' },
-            { $set: update }
-          );
-          // Read-back verification: confirm this invocation won the claim
-          const _capWakeVerify = (await base44.asServiceRole.entities.Character.filter({ id: c.id }, null, 1))?.[0];
-          if (!_capWakeVerify || _capWakeVerify.last_wake_time !== now.toISOString()) {
-            console.log(`[resolveInvalidSleepStates] CLAIM_LOST: concurrent writer already woke ${c.name}`);
-            continue;
-          }
+          await base44.asServiceRole.entities.Character.update(c.id, update);
           // Real sleep_end — valid sleep_start existed
           await base44.asServiceRole.entities.SleepTransition.create({
             character_id: c.id,
