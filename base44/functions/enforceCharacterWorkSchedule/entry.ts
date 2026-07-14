@@ -283,8 +283,15 @@ Deno.serve(async (req) => {
         } else if (!isSleeping && character.current_home_location_id) {
           let authRes = null;
           try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_work_end: true, requested_source_reason: 'work_end', requested_authority: 'enforceCharacterWorkSchedule' }); authRes = ir?.data || ir; } catch (e) { return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message }); }
-          // Accept both 'accepted' (work-end → home) and 'modified' (work-end → sleeping, low energy)
-          return Response.json({ updated: authRes?.disposition === 'accepted' || authRes?.disposition === 'modified', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${authRes?.committed_result?.resolved_presence_status || 'unknown'})`, disposition: authRes?.disposition });
+          // Work-end is now movement-first. If the authority signals must_resubmit_sleep
+          // (low energy), submit the follow-up sleeping request at the committed home
+          // location. Only this follow-up commits sleeping and creates sleep records.
+          let finalStatus = authRes?.committed_result?.resolved_presence_status || 'home';
+          if (authRes?.disposition === 'accepted' && authRes?.must_resubmit_sleep) {
+            const sleepHomeId = authRes?.committed_result?.resolved_current_location_id || character.current_home_location_id;
+            try { const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_presence_status: 'sleeping', requested_location_id: sleepHomeId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: singleNowET.toISOString() }); const sRes = sir?.data || sir; if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') { finalStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping'; } } catch (e) { /* non-fatal — movement already committed */ }
+          }
+          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false });
         }
       }
 
@@ -483,17 +490,23 @@ Deno.serve(async (req) => {
           // Route work-end through the sole canonical writer
           let authRes = null;
           try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: ownerEmail, requested_work_end: true, requested_source_reason: 'work_end', requested_authority: 'enforceCharacterWorkSchedule' }); authRes = ir?.data || ir; } catch (invokeErr) { issues_found.push(`${char.name}: AUTHORITY_INVOKE_FAILED — ${invokeErr.message}`); continue; }
-          if (authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected' || authRes?.disposition === 'modified') {
+          if (authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected') {
             const committedLocId = authRes?.committed_result?.resolved_current_location_id || homeLocId;
-            const committedStatus = authRes?.committed_result?.resolved_presence_status || 'home';
-            // Write LocationHistory proof from the committed result
+            let committedStatus = authRes?.committed_result?.resolved_presence_status || 'home';
+            // Write LocationHistory proof from the committed result (movement home, awake)
             try {
               const _nowIso2 = nowET.toISOString();
               const _openRecs2 = await base44.asServiceRole.entities.LocationHistory.filter({ character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20);
               for (const _open of _openRecs2) { if (_open.location_id === committedLocId) continue; const _arrMs2 = new Date(_open.arrival_time).getTime(); const _durMin2 = Math.round((Date.now() - _arrMs2) / 60000); await base44.asServiceRole.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: _nowIso2, duration_minutes: _durMin2 > 0 ? _durMin2 : null }); }
               if (!_openRecs2.find(o => o.location_id === committedLocId)) { await base44.asServiceRole.entities.LocationHistory.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, location_id: committedLocId, location_name: locMap[committedLocId]?.name || '', location_category: locMap[committedLocId]?.category || 'home', event_type: 'return_home', arrival_time: _nowIso2, travel_source: 'schedule', travel_reason: 'shift_ended', is_current: true }); }
-              if (committedStatus === 'sleeping') { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'sleeping', authority: 'enforceCharacterLocationPresence', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(), state_start_ref: nowET.toISOString() }); }
             } catch (proofErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-end proof failed (non-reverting): ${proofErr.message}`); }
+            // Movement-first: if the authority signals must_resubmit_sleep (low energy),
+            // submit the follow-up sleeping request at the committed home location.
+            // Only this follow-up commits sleeping, applies the sleep lock, stamps
+            // last_sleep_start, and allows the sleep-start proof record.
+            if (authRes?.disposition === 'accepted' && authRes?.must_resubmit_sleep) {
+              try { const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: ownerEmail, requested_presence_status: 'sleeping', requested_location_id: committedLocId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: nowET.toISOString() }); const sRes = sir?.data || sir; if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') { committedStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping'; try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_start', from_status: 'home', to_status: 'sleeping', authority: 'enforceCharacterLocationPresence', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(), state_start_ref: nowET.toISOString() }); } catch (stErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: post-work sleep proof failed (non-reverting): ${stErr.message}`); } } } catch (e) { /* non-fatal — movement already committed */ }
+            }
             fixes_applied.push(`${char.name}: relocated home (${committedStatus}) via authority`);
             fixCount++;
           } else {

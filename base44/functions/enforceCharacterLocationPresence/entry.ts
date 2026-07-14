@@ -439,13 +439,18 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     }
     const homeLoc = locationMap[homeLocId];
     const energy = character.energy_value ?? 75;
-    // Post-work presence is determined by energy — low energy may warrant sleep
-    const postWorkStatus = energy < 40 ? 'sleeping' : 'home';
+    const needsPostWorkSleep = energy < 40;
+    // MOVEMENT FIRST: commit the character home awake. The work lock is released.
+    // No sleep-start timestamp, no sleep lock, and no sleep record is created
+    // during the movement commit. If the character cannot remain awake (low
+    // energy), set must_resubmit_sleep so the caller submits a separate
+    // sleeping request after arrival. Only that follow-up commits sleeping,
+    // applies the sleep lock, stamps last_sleep_start, and allows sleep records.
     const canonicalFields = {
       resolved_current_location_id: homeLocId,
       resolved_current_location_name: homeLoc?.name || 'Home',
       resolved_location_type: 'home',
-      resolved_presence_status: postWorkStatus,
+      resolved_presence_status: 'home',
       resolved_source_reason: requested.requested_source_reason || 'work_end',
       resolved_last_updated_at: etTime.toISOString(),
       presence_stay_lock: false,
@@ -455,27 +460,18 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       presence_stay_lock_set_at: null,
       presence_stay_lock_created_by: null,
     };
-    if (postWorkStatus === 'sleeping') {
-      canonicalFields.last_sleep_start = etTime.toISOString();
-      canonicalFields.presence_stay_lock = true;
-      canonicalFields.presence_stay_lock_reason = 'sleep_state';
-      canonicalFields.presence_stay_lock_authority = 'enforceCharacterLocationPresence';
-      canonicalFields.presence_stay_lock_set_at = etTime.toISOString();
-      canonicalFields.presence_stay_lock_created_by = 'system_automation';
-    }
     return {
-      // Work-end → home is 'accepted'. Work-end → sleeping (low energy) is 'modified'
-      // because the request was work-end but the authority determined sleep was needed.
-      disposition: postWorkStatus === 'sleeping' ? 'modified' : 'accepted',
+      disposition: 'accepted',
       canonicalFields,
       committed_result: {
         resolved_current_location_id: homeLocId,
         resolved_current_location_name: homeLoc?.name || 'Home',
         resolved_location_type: 'home',
-        resolved_presence_status: postWorkStatus,
+        resolved_presence_status: 'home',
         resolved_source_reason: requested.requested_source_reason || 'work_end',
-        post_work_sleep: postWorkStatus === 'sleeping',
+        post_work_sleep_needed: needsPostWorkSleep,
       },
+      must_resubmit_sleep: needsPostWorkSleep,
     };
   }
 
@@ -610,7 +606,23 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     };
   }
 
-  // ── FALLBACK: legacy recompute ─────────────────────────────────────────────
+  // ── EXPLICIT REQUEST NOT APPLICABLE TO CURRENT STATE ───────────────────────
+  // An explicit requested transition was submitted but did not match any
+  // applicable handler above. The requested transition is not applicable to
+  // the current canonical state (e.g., a wake request when the character is
+  // not sleeping/napping/passed_out). Return a noncommitting disposition.
+  // Do NOT fall through to legacy recompute — that would commit an unrelated
+  // state (e.g., at_work) merely because another world condition is active.
+  if (hasAnyRequest) {
+    return {
+      disposition: 'no_longer_applicable',
+      canonicalFields: {},
+      reason: 'requested_transition_not_applicable_to_current_state',
+      committed_result: null,
+    };
+  }
+
+  // ── FALLBACK: legacy recompute (only when no requested transition) ────────
   return evaluateLegacyRecompute(character, locationMap, etTime);
 }
 
@@ -865,12 +877,12 @@ Deno.serve(async (req) => {
     const { disposition, canonicalFields, committed_result, reason, must_resubmit_sleep } = evaluation;
 
     // ── NO CHANGE — return immediately ─────────────────────────────────────────
-    if (disposition === 'no_change' || disposition === 'deferred' || disposition === 'rejected') {
+    if (disposition === 'no_change' || disposition === 'deferred' || disposition === 'rejected' || disposition === 'no_longer_applicable') {
       return Response.json({
         disposition,
         character_id,
         owner_email: effectiveOwnerEmail,
-        reason: reason || (disposition === 'no_change' ? 'no_transition_required' : 'request_not_committed'),
+        reason: reason || (disposition === 'no_change' ? 'no_transition_required' : (disposition === 'no_longer_applicable' ? 'requested_transition_no_longer_applicable' : 'request_not_committed')),
         committed_result: null,
       });
     }
