@@ -464,7 +464,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       canonicalFields.presence_stay_lock_created_by = 'system_automation';
     }
     return {
-      disposition: 'accepted',
+      // Work-end → home is 'accepted'. Work-end → sleeping (low energy) is 'modified'
+      // because the request was work-end but the authority determined sleep was needed.
+      disposition: postWorkStatus === 'sleeping' ? 'modified' : 'accepted',
       canonicalFields,
       committed_result: {
         resolved_current_location_id: homeLocId,

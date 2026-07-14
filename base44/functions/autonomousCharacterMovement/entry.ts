@@ -1480,14 +1480,20 @@ Deno.serve(async (req) => {
             console.log(`[autoMove] ${char.name}: NAPPING — remain (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) — 3h cap via enforceStaleNapLimit only`);
             continue;
           }
-          try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: 'nap_complete_energy_recovered', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
-          char.resolved_presence_status = 'home';
-          // MANDATORY NAP WAKE PROOF — SleepTransition + LifeEvent (silent wake forbidden)
-          try {
-            await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'nap_end', from_status: 'napping', to_status: 'home', authority: 'nap_complete_energy_recovered', reason: `Nap complete — energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h.`, timestamp: nowET.toISOString(), state_start_ref: char.last_nap_time || null, elapsed_hours: Math.round(napDurationHours * 100) / 100 });
-            await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up from a nap', description: `${char.name} woke up from a nap. Energy at ${Math.round(energyNow)}.`, emotional_impact: 'refreshed', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['nap_end', 'woke_up'] });
-          } catch (proofError) { console.warn(`[autoMove] ${char.name}: nap wake proof failed (non-reverting): ${proofError.message}`); }
-          console.log(`[autoMove] ✓ ${char.name}: NAPPING → woke naturally (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) [proof created]`);
+          let _napWakeAuth = null;
+          try { const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: 'nap_complete_energy_recovered', requested_timestamp: nowET.toISOString() }); _napWakeAuth = _ir?.data || _ir; } catch { /* non-fatal */ }
+          // Only write proof records if the authority accepted/redirected/modified the wake.
+          if (_napWakeAuth?.disposition === 'accepted' || _napWakeAuth?.disposition === 'redirected' || _napWakeAuth?.disposition === 'modified') {
+            char.resolved_presence_status = _napWakeAuth.committed_result?.resolved_presence_status || 'home';
+            // MANDATORY NAP WAKE PROOF — SleepTransition + LifeEvent (silent wake forbidden)
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'nap_end', from_status: 'napping', to_status: _napWakeAuth.committed_result?.resolved_presence_status || 'home', authority: 'nap_complete_energy_recovered', reason: `Nap complete — energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h.`, timestamp: nowET.toISOString(), state_start_ref: char.last_nap_time || null, elapsed_hours: Math.round(napDurationHours * 100) / 100 });
+              await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up from a nap', description: `${char.name} woke up from a nap. Energy at ${Math.round(energyNow)}.`, emotional_impact: 'refreshed', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['nap_end', 'woke_up'] });
+            } catch (proofError) { console.warn(`[autoMove] ${char.name}: nap wake proof failed (non-reverting): ${proofError.message}`); }
+            console.log(`[autoMove] ✓ ${char.name}: NAPPING → woke naturally (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) [proof created]`);
+          } else {
+            console.log(`[autoMove] ${char.name}: NAP WAKE — authority disposition=${_napWakeAuth?.disposition || 'unknown'} — no proof records written`);
+          }
         }
 
         // ── SLEEPING: separate handler, separate rules, uses last_sleep_start ──
@@ -1604,15 +1610,21 @@ Deno.serve(async (req) => {
             : 'natural_wake_rested';
           // Obligation wakes preserve sleep consequences — no energy boost applied here.
           // Energy reflects actual hours recovered via simulateActiveCharacterNeeds rates.
-          try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: wakeReason, requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
-          char.resolved_presence_status = 'home'; char.resolved_source_reason = wakeReason;
-          // MANDATORY WAKE PROOF — SleepTransition + LifeEvent + CharacterMemory (silent wake forbidden)
-          try {
-            await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home', authority: wakeReason, reason: `Woke — ${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h.`, timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100 });
-            await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up', description: `${char.name} woke up. Slept ${sleepDurationHours.toFixed(1)}h. Energy at ${Math.round(energyNow)}.`, emotional_impact: wakeReason.includes('obligation') ? 'groggy' : 'rested', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['sleep_end', 'woke_up', wakeReason] });
-            await base44.asServiceRole.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${char.name} woke up after sleeping ${sleepDurationHours.toFixed(1)}h. Energy at ${Math.round(energyNow)}.`, memory_summary: `Woke up — slept ${sleepDurationHours.toFixed(1)}h.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id });
-          } catch (proofError) { console.warn(`[autonomousMovement] ${char.name}: wake proof failed (non-reverting): ${proofError.message}`); }
-          console.log(`[autonomousMovement] ✓ ${char.name}: woke — reason=${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h [proof created]`);
+          let _sleepWakeAuth = null;
+          try { const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: wakeReason, requested_timestamp: nowET.toISOString() }); _sleepWakeAuth = _ir?.data || _ir; } catch { /* non-fatal */ }
+          // Only write proof records if the authority accepted/redirected/modified the wake.
+          if (_sleepWakeAuth?.disposition === 'accepted' || _sleepWakeAuth?.disposition === 'redirected' || _sleepWakeAuth?.disposition === 'modified') {
+            char.resolved_presence_status = _sleepWakeAuth.committed_result?.resolved_presence_status || 'home'; char.resolved_source_reason = wakeReason;
+            // MANDATORY WAKE PROOF — SleepTransition + LifeEvent + CharacterMemory (silent wake forbidden)
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: _sleepWakeAuth.committed_result?.resolved_presence_status || 'home', authority: wakeReason, reason: `Woke — ${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h.`, timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100 });
+              await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up', description: `${char.name} woke up. Slept ${sleepDurationHours.toFixed(1)}h. Energy at ${Math.round(energyNow)}.`, emotional_impact: wakeReason.includes('obligation') ? 'groggy' : 'rested', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['sleep_end', 'woke_up', wakeReason] });
+              await base44.asServiceRole.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${char.name} woke up after sleeping ${sleepDurationHours.toFixed(1)}h. Energy at ${Math.round(energyNow)}.`, memory_summary: `Woke up — slept ${sleepDurationHours.toFixed(1)}h.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id });
+            } catch (proofError) { console.warn(`[autonomousMovement] ${char.name}: wake proof failed (non-reverting): ${proofError.message}`); }
+            console.log(`[autonomousMovement] ✓ ${char.name}: woke — reason=${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h [proof created]`);
+          } else {
+            console.log(`[autonomousMovement] ${char.name}: SLEEP WAKE — authority disposition=${_sleepWakeAuth?.disposition || 'unknown'} — no proof records written`);
+          }
           // Do NOT continue — fall through to obligation dispatch (Tier 3.5+)
         }
 

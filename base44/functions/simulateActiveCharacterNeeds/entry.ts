@@ -1295,7 +1295,33 @@ Deno.serve(async (req) => {
               requested_timestamp: nowIso,
             });
             const authData = invokeRes?.data || invokeRes;
-            if (authData?.disposition === 'accepted' || authData?.disposition === 'redirected' || authData?.disposition === 'modified') {
+            if (authData?.must_resubmit_sleep === true) {
+              // Authority redirected (e.g., sleep-at-work → move home first). Sleep is deferred.
+              // Do NOT record a sleep_start transition — sleep has not begun. The authority
+              // committed a movement (home), not sleep. Re-submit the sleep request now that
+              // the character has arrived at the valid sleep location.
+              const resubmitLocId = authData?.committed_result?.resolved_current_location_id || requestedLocId;
+              try {
+                const resubmitRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: char.id, owner_email: ownerEmail,
+                  requested_presence_status: requestedStatus,
+                  requested_location_id: resubmitLocId,
+                  requested_source_reason: requestedReason,
+                  requested_authority: selectedTransition.transition?.authority || 'simulateActiveCharacterNeeds',
+                  requested_timestamp: nowIso,
+                });
+                const resubmitData = resubmitRes?.data || resubmitRes;
+                if ((resubmitData?.disposition === 'accepted' || resubmitData?.disposition === 'modified') && !resubmitData?.must_resubmit_sleep) {
+                  authorityCommittedResult = resubmitData.committed_result;
+                  sleepTransitionsToRecord.push(selectedTransition.transition);
+                  if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
+                } else {
+                  results.push({ character: charName, context, event: 'authority_resubmit_disposition', disposition: resubmitData?.disposition, reason: resubmitData?.reason });
+                }
+              } catch (resubmitErr) {
+                results.push({ character: charName, context, event: 'authority_resubmit_failed', error: resubmitErr.message });
+              }
+            } else if (authData?.disposition === 'accepted' || authData?.disposition === 'redirected' || authData?.disposition === 'modified') {
               authorityCommittedResult = authData.committed_result;
               sleepTransitionsToRecord.push(selectedTransition.transition);
               if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);

@@ -283,7 +283,8 @@ Deno.serve(async (req) => {
         } else if (!isSleeping && character.current_home_location_id) {
           let authRes = null;
           try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_work_end: true, requested_source_reason: 'work_end', requested_authority: 'enforceCharacterWorkSchedule' }); authRes = ir?.data || ir; } catch (e) { return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message }); }
-          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${authRes?.committed_result?.resolved_presence_status || 'unknown'})`, disposition: authRes?.disposition });
+          // Accept both 'accepted' (work-end → home) and 'modified' (work-end → sleeping, low energy)
+          return Response.json({ updated: authRes?.disposition === 'accepted' || authRes?.disposition === 'modified', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${authRes?.committed_result?.resolved_presence_status || 'unknown'})`, disposition: authRes?.disposition });
         }
       }
 
