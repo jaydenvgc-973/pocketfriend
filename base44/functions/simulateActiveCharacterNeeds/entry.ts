@@ -916,22 +916,39 @@ Deno.serve(async (req) => {
             const sleepStartMs = new Date(char.last_sleep_start).getTime();
             const sleepDurationHours = (Date.now() - sleepStartMs) / 3_600_000;
             if (sleepDurationHours >= 8) {
-              const wakePayload = {
-                resolved_presence_status: 'home', current_activity: '',
-                last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
+              // ── ONE TRUTH: Route the wake transition through the authority ──
+              // Need values are written directly (noncanonical). The canonical wake
+              // (presence, lock release, last_wake_time) is committed by the authority.
+              let _wakeAuthResult = null;
+              try {
+                const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: char.id, owner_email: ownerEmail,
+                  requested_presence_status: 'home',
+                  requested_source_reason: 'sleep_cap_8h',
+                  requested_authority: 'simulateActiveCharacterNeeds',
+                  requested_timestamp: nowIso,
+                });
+                _wakeAuthResult = _ir?.data || _ir;
+              } catch (invokeErr) {
+                results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+                continue;
+              }
+              if (_wakeAuthResult?.disposition !== 'accepted' && _wakeAuthResult?.disposition !== 'redirected' && _wakeAuthResult?.disposition !== 'modified') {
+                results.push({ character: charName, context, event: 'authority_disposition', disposition: _wakeAuthResult?.disposition, reason: _wakeAuthResult?.reason });
+                continue;
+              }
+              // Write only noncanonical need values directly
+              await base44.entities.Character.update(char.id, {
+                current_activity: '',
                 hunger_value: Math.round(newNeeds.hunger), energy_value: Math.round(newNeeds.energy),
                 social_value: Math.round(newNeeds.social), health_value: Math.round(newNeeds.health),
                 mental_value: Math.round(newNeeds.mental), hygiene_value: Math.round(newNeeds.hygiene),
                 comfort_value: Math.round(newNeeds.comfort), last_need_simulated_at: nowIso,
-              };
-              await base44.entities.Character.update(char.id, wakePayload);
+              });
               try {
-                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home', authority: 'sleep_cap_8h', reason: `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`, timestamp: nowIso, state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100 });
+                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: _wakeAuthResult.committed_result?.resolved_presence_status || 'home', authority: 'sleep_cap_8h', reason: `Sleep completed 8-hour cap. state_start_ref=${char.last_sleep_start}.`, timestamp: nowIso, state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100 });
               } catch (transitionError) {
-                let revertError = null;
-                try { await base44.entities.Character.update(char.id, { resolved_presence_status: 'sleeping', current_activity: char.current_activity, last_wake_time: char.last_wake_time, hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value, health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value, comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at }); } catch (e) { revertError = e.message; }
-                results.push({ character: charName, context, event: 'unverified_state_write', reason: 'sleep_end SleepTransition write failed — Character state reverted, event is UNVERIFIED', transition_error: transitionError.message, revert_error: revertError });
-                continue;
+                results.push({ character: charName, context, event: 'proof_write_failed', reason: 'sleep_end SleepTransition write failed (canonical state already committed by authority)', transition_error: transitionError.message });
               }
               try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up after full sleep', description: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['sleep_end', 'woke_up'] });
                 await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} slept ${Math.round(sleepDurationHours * 100) / 100}h and woke rested.`, memory_summary: `Slept ${Math.round(sleepDurationHours * 100) / 100}h — woke rested.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
@@ -961,22 +978,37 @@ Deno.serve(async (req) => {
           if (passOutStart) {
             const passOutDurationHours = (Date.now() - new Date(passOutStart).getTime()) / 3_600_000;
             if (passOutDurationHours >= 12) {
-              const passOutWakePayload = {
-                resolved_presence_status: 'home', current_activity: '', last_wake_time: nowIso,
-                presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
+              // ── ONE TRUTH: Route the pass-out recovery wake through the authority ──
+              let _poWakeAuth = null;
+              try {
+                const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: char.id, owner_email: ownerEmail,
+                  requested_presence_status: 'home',
+                  requested_source_reason: 'pass_out_cap_12h',
+                  requested_authority: 'simulateActiveCharacterNeeds',
+                  requested_timestamp: nowIso,
+                });
+                _poWakeAuth = _ir?.data || _ir;
+              } catch (invokeErr) {
+                results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+                continue;
+              }
+              if (_poWakeAuth?.disposition !== 'accepted' && _poWakeAuth?.disposition !== 'redirected' && _poWakeAuth?.disposition !== 'modified') {
+                results.push({ character: charName, context, event: 'authority_disposition', disposition: _poWakeAuth?.disposition, reason: _poWakeAuth?.reason });
+                continue;
+              }
+              // Write only noncanonical need values directly
+              await base44.entities.Character.update(char.id, {
+                current_activity: '',
                 hunger_value: Math.round(newNeeds.hunger), energy_value: Math.round(newNeeds.energy),
                 social_value: Math.round(newNeeds.social), health_value: Math.round(newNeeds.health),
                 mental_value: Math.round(newNeeds.mental), hygiene_value: Math.round(newNeeds.hygiene),
                 comfort_value: Math.round(newNeeds.comfort), last_need_simulated_at: nowIso,
-              };
-              await base44.entities.Character.update(char.id, passOutWakePayload);
+              });
               try {
-                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'pass_out_end', from_status: 'passed_out', to_status: 'home', authority: 'pass_out_cap_12h', reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`, timestamp: nowIso, state_start_ref: passOutStart || null, elapsed_hours: Math.round(passOutDurationHours * 100) / 100 });
+                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'pass_out_end', from_status: 'passed_out', to_status: _poWakeAuth.committed_result?.resolved_presence_status || 'home', authority: 'pass_out_cap_12h', reason: `Pass-out recovery completed 12-hour cap. state_start_ref=${passOutStart}.`, timestamp: nowIso, state_start_ref: passOutStart || null, elapsed_hours: Math.round(passOutDurationHours * 100) / 100 });
               } catch (transitionError) {
-                let revertError = null;
-                try { await base44.entities.Character.update(char.id, { resolved_presence_status: 'passed_out', current_activity: char.current_activity, last_wake_time: char.last_wake_time, presence_stay_lock: char.presence_stay_lock, presence_stay_lock_reason: char.presence_stay_lock_reason, presence_stay_lock_release_condition: char.presence_stay_lock_release_condition, hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value, health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value, comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at }); } catch (e) { revertError = e.message; }
-                results.push({ character: charName, context, event: 'unverified_state_write', reason: 'pass_out_end SleepTransition write failed — Character state reverted, event is UNVERIFIED', transition_error: transitionError.message, revert_error: revertError });
-                continue;
+                results.push({ character: charName, context, event: 'proof_write_failed', reason: 'pass_out_end SleepTransition write failed (canonical state already committed by authority)', transition_error: transitionError.message });
               }
               try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${Math.round(passOutDurationHours * 100) / 100}h of recovery. Energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
                 await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${Math.round(passOutDurationHours * 100) / 100}h of recovery from passing out. Groggy. Energy at ${Math.round(newNeeds.energy)}.`, memory_summary: `Recovered from pass-out after ${Math.round(passOutDurationHours * 100) / 100}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
@@ -1004,22 +1036,37 @@ Deno.serve(async (req) => {
             const napStartMs = new Date(char.last_nap_time).getTime();
             const napDurationHours = (Date.now() - napStartMs) / 3_600_000;
             if (napDurationHours >= 3) {
-              const napWakePayload = {
-                resolved_presence_status: 'home', current_activity: '',
-                last_wake_time: nowIso, presence_stay_lock: false, presence_stay_lock_reason: null, presence_stay_lock_release_condition: null,
+              // ── ONE TRUTH: Route the nap-end wake through the authority ──
+              let _napWakeAuth = null;
+              try {
+                const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: char.id, owner_email: ownerEmail,
+                  requested_presence_status: 'home',
+                  requested_source_reason: 'nap_cap_3h',
+                  requested_authority: 'simulateActiveCharacterNeeds',
+                  requested_timestamp: nowIso,
+                });
+                _napWakeAuth = _ir?.data || _ir;
+              } catch (invokeErr) {
+                results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+                continue;
+              }
+              if (_napWakeAuth?.disposition !== 'accepted' && _napWakeAuth?.disposition !== 'redirected' && _napWakeAuth?.disposition !== 'modified') {
+                results.push({ character: charName, context, event: 'authority_disposition', disposition: _napWakeAuth?.disposition, reason: _napWakeAuth?.reason });
+                continue;
+              }
+              // Write only noncanonical need values directly
+              await base44.entities.Character.update(char.id, {
+                current_activity: '',
                 hunger_value: Math.round(newNeeds.hunger), energy_value: Math.round(newNeeds.energy),
                 social_value: Math.round(newNeeds.social), health_value: Math.round(newNeeds.health),
                 mental_value: Math.round(newNeeds.mental), hygiene_value: Math.round(newNeeds.hygiene),
                 comfort_value: Math.round(newNeeds.comfort), last_need_simulated_at: nowIso,
-              };
-              await base44.entities.Character.update(char.id, napWakePayload);
+              });
               try {
-                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'nap_end', from_status: 'napping', to_status: 'home', authority: 'nap_cap_3h', reason: `Nap completed 3-hour cap. state_start_ref=${char.last_nap_time}.`, timestamp: nowIso, state_start_ref: char.last_nap_time || null, elapsed_hours: Math.round(napDurationHours * 100) / 100 });
+                await base44.entities.SleepTransition.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, transition_type: 'nap_end', from_status: 'napping', to_status: _napWakeAuth.committed_result?.resolved_presence_status || 'home', authority: 'nap_cap_3h', reason: `Nap completed 3-hour cap. state_start_ref=${char.last_nap_time}.`, timestamp: nowIso, state_start_ref: char.last_nap_time || null, elapsed_hours: Math.round(napDurationHours * 100) / 100 });
               } catch (transitionError) {
-                let revertError = null;
-                try { await base44.entities.Character.update(char.id, { resolved_presence_status: 'napping', current_activity: char.current_activity, last_wake_time: char.last_wake_time, hunger_value: char.hunger_value, energy_value: char.energy_value, social_value: char.social_value, health_value: char.health_value, mental_value: char.mental_value, hygiene_value: char.hygiene_value, comfort_value: char.comfort_value, last_need_simulated_at: char.last_need_simulated_at }); } catch (e) { revertError = e.message; }
-                results.push({ character: charName, context, event: 'unverified_state_write', reason: 'nap_end SleepTransition write failed — Character state reverted, event is UNVERIFIED', transition_error: transitionError.message, revert_error: revertError });
-                continue;
+                results.push({ character: charName, context, event: 'proof_write_failed', reason: 'nap_end SleepTransition write failed (canonical state already committed by authority)', transition_error: transitionError.message });
               }
               try { await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up from a nap', description: `${charName} napped ${Math.round(napDurationHours * 100) / 100}h, energy at ${Math.round(newNeeds.energy)}.`, emotional_impact: 'refreshed', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['nap_end', 'woke_up'] });
                 await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} napped ${Math.round(napDurationHours * 100) / 100}h and woke refreshed.`, memory_summary: `Napped ${Math.round(napDurationHours * 100) / 100}h — woke refreshed.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id }); } catch (e) { results.push({ character: charName, event: 'consequence_write_failed', error: e.message }); }
@@ -1263,14 +1310,35 @@ Deno.serve(async (req) => {
 
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);
         if (staleCleanup) {
-          Object.assign(updatePayload, staleCleanup);
-          const _wasResting = dbIsSleeping || dbIsNapping || dbIsPassedOut;
-          const _nowAwake = staleCleanup.resolved_presence_status === 'home';
-          if (_wasResting && _nowAwake && !sleepTransitionsToRecord.some(t => t.transition_type.endsWith('_end'))) {
-            const _wt = dbIsSleeping ? 'sleep_end' : dbIsNapping ? 'nap_end' : 'pass_out_end';
-            const _fs = dbIsSleeping ? 'sleeping' : dbIsNapping ? 'napping' : 'passed_out';
-            sleepTransitionsToRecord.push({ transition_type: _wt, from_status: _fs, to_status: 'home', authority: 'stale_corrective_cleanup', reason: 'Stale corrective state cleared — wake activity created to prevent silent wake.' });
-            pendingConsequences.push({ type: 'stale_wake', energyValue: Math.round(newNeeds.energy), wakeType: _wt });
+          // ── ONE TRUTH: staleCleanup may contain resolved_presence_status (canonical).
+          // Route the canonical wake through the authority. Only current_activity
+          // (noncanonical) goes into the direct updatePayload.
+          if (staleCleanup.current_activity !== undefined) {
+            updatePayload.current_activity = staleCleanup.current_activity;
+          }
+          if (staleCleanup.resolved_presence_status) {
+            const _wasResting = dbIsSleeping || dbIsNapping || dbIsPassedOut;
+            const _nowAwake = staleCleanup.resolved_presence_status === 'home';
+            try {
+              const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: char.id, owner_email: ownerEmail,
+                requested_presence_status: staleCleanup.resolved_presence_status,
+                requested_source_reason: 'stale_corrective_cleanup',
+                requested_authority: 'simulateActiveCharacterNeeds',
+                requested_timestamp: nowIso,
+              });
+              const _authData = _ir?.data || _ir;
+              if (_authData?.disposition === 'accepted' || _authData?.disposition === 'redirected' || _authData?.disposition === 'modified') {
+                if (_wasResting && _nowAwake && !sleepTransitionsToRecord.some(t => t.transition_type.endsWith('_end'))) {
+                  const _wt = dbIsSleeping ? 'sleep_end' : dbIsNapping ? 'nap_end' : 'pass_out_end';
+                  const _fs = dbIsSleeping ? 'sleeping' : dbIsNapping ? 'napping' : 'passed_out';
+                  sleepTransitionsToRecord.push({ transition_type: _wt, from_status: _fs, to_status: 'home', authority: 'stale_corrective_cleanup', reason: 'Stale corrective state cleared — wake activity created to prevent silent wake.' });
+                  pendingConsequences.push({ type: 'stale_wake', energyValue: Math.round(newNeeds.energy), wakeType: _wt });
+                }
+              }
+            } catch (invokeErr) {
+              results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+            }
           }
         }
 

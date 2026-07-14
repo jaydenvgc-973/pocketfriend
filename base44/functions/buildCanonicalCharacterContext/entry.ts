@@ -610,17 +610,12 @@ function buildHardFacts(character) {
     lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}.`);
   }
 
-  // ── SLEEP STATE — AUTHORITATIVE PRIORITY ORDER ──────────────────────────────
-  // Rules (highest priority first):
-  //   1. Verified blocking states (jailed, house_arrest) — handled below
-  //   2. Verified school attendance window — OVERRIDES stale sleeping DB state
-  //   3. Verified work shift — OVERRIDES stale sleeping DB state
-  //   4. Verified sleep state from DB — only accepted when school/work are NOT active
-  //   5. Stale cache — advisory only, never authority
-  //
-  // A character whose DB says "sleeping" but who has an active school/work window
-  // MUST be treated as awake and attending. The DB flag is stale system data.
-  // Stale comfort/energy/needs values MUST NOT drive sleep labeling or dialogue.
+  // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────
+  // Under One Truth, the committed resolved_presence_status is authoritative.
+  // This consumer reads and explains it. It does NOT independently re-derive
+  // a different state (e.g. "at_work" or "at_school") from the schedule.
+  // The authority (enforceCharacterLocationPresence) is the sole writer that
+  // resolves schedule conflicts before committing canonical state.
   const rp = character.resolved_presence_status || '';
   const dbIsSleeping = rp === 'sleeping' || rp === 'napping';
   const dbIsPassedOut = rp === 'passed_out';
@@ -634,59 +629,16 @@ function buildHardFacts(character) {
   }
 
   if (dbIsSleeping) {
-    // Run schedule-based guards before accepting the DB sleep state as truth
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
-    const dayOfWeek = nowET.getDay();
-    const toMinLocal = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-
-    // GUARD 1: Active work shift — sleeping DB state is stale
-    let workShiftActive = false;
-    if (character.work_start_time && character.work_end_time &&
-        Array.isArray(character.work_days) && character.work_days.includes(dayOfWeek)) {
-      const s = toMinLocal(character.work_start_time);
-      const e = toMinLocal(character.work_end_time);
-      if (s !== null && e !== null) {
-        workShiftActive = e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
-      }
-    }
-
-    // GUARD 2: Active school window — sleeping DB state is stale
-    let schoolWindowActive = false;
-    if (character.student_status === 'enrolled' && character.education_location_id &&
-        [1, 2, 3, 4, 5].includes(dayOfWeek)) {
-      const enrollments = character.education_enrollments;
-      if (Array.isArray(enrollments) && enrollments.length > 0) {
-        const activeEnroll = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-        if (activeEnroll) {
-          const s = toMinLocal(activeEnroll.start_time);
-          const e = toMinLocal(activeEnroll.end_time);
-          if (s !== null && e !== null) {
-            schoolWindowActive = nowMin >= s && nowMin < e;
-          }
-        }
-      }
-    }
-
-    if (workShiftActive) {
-      // Work attendance overrides stale sleeping flag — inject authoritative state
-      lines.push(`AUTHORITATIVE PRESENCE STATE: CURRENTLY AT WORK (schedule-verified). The database shows "sleeping" but the current work schedule is active — this is a stale cached value. You are AT WORK, NOT asleep. Do NOT reference sleep, exhaustion, or tiredness from the sleep state. You are awake and working.`);
-    } else if (schoolWindowActive) {
-      // School attendance overrides stale sleeping flag — inject authoritative state
-      lines.push(`AUTHORITATIVE PRESENCE STATE: CURRENTLY AT SCHOOL (schedule-verified). The database shows "sleeping" but the current school schedule is active — this is a stale cached value. You are AT SCHOOL, NOT asleep. Do NOT reference sleep, exhaustion from the sleep state, or claim you are sleeping. You are awake and at school.`);
-    } else {
-      // No active schedule obligation — DB sleep state is accepted
-      lines.push("SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
-    }
+    // Read committed canonical state — no independent schedule override.
+    lines.push("SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
   }
 
-  // ANTI-STALE-CACHE RULE: If presence says at_school or at_work, always confirm that — never let
-  // old cached needs/energy/comfort values override the schedule-verified attendance state.
+  // Confirm committed at_school / at_work presence — read from canonical state.
   if (rp === 'at_school') {
-    lines.push("AUTHORITATIVE PRESENCE: AT SCHOOL. Old energy or comfort values do NOT override this. You are awake, at school, and engaged in your education. Do NOT talk about needing to sleep or going to bed based on old cached values.");
+    lines.push("AUTHORITATIVE PRESENCE: AT SCHOOL. You are awake, at school, and engaged in your education.");
   }
   if (rp === 'at_work') {
-    lines.push("AUTHORITATIVE PRESENCE: AT WORK. Old energy or comfort values do NOT override this. You are awake and working. Do NOT reference exhaustion, sleep, or going to bed based on old cached values.");
+    lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working.");
   }
 
   // Incarceration
@@ -1552,41 +1504,14 @@ Deno.serve(async (req) => {
         ? `\nOTHERS PRESENT: ${coPresence.charactersPresentHere.map(c => c.name).join(', ')} ${coPresence.charactersPresentHere.length === 1 ? 'is' : 'are'} also here.`
         : '';
 
-      // ── STALE CACHE AUTHORITY DRIFT DETECTION ──────────────────────────────
-      // If DB says sleeping but a verified schedule says school or work is active,
-      // this is an authority conflict. Inject an explicit override warning into the
-      // world-state block so the LLM never defers to stale needs/comfort/cache.
-      let staleCacheWarning = '';
-      // passed_out also gets stale-cache check — it's a DB-driven state that can conflict with schedules
-      if (charResolved === 'sleeping' || charResolved === 'napping' || charResolved === 'passed_out') {
-        const nowMinWS = now.getHours() * 60 + now.getMinutes();
-        const dayWS = now.getDay();
-        const toMinWS = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-        let workConflict = false;
-        let schoolConflict = false;
-        if (character.work_start_time && character.work_end_time &&
-            Array.isArray(character.work_days) && character.work_days.includes(dayWS)) {
-          const s = toMinWS(character.work_start_time); const e = toMinWS(character.work_end_time);
-          if (s !== null && e !== null) workConflict = e < s ? (nowMinWS >= s || nowMinWS < e) : (nowMinWS >= s && nowMinWS < e);
-        }
-        if (!workConflict && character.student_status === 'enrolled' && character.education_location_id && [1,2,3,4,5].includes(dayWS)) {
-          const enrollments = character.education_enrollments;
-          if (Array.isArray(enrollments) && enrollments.length > 0) {
-            const activeE = enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-            if (activeE) {
-              const s = toMinWS(activeE.start_time); const e = toMinWS(activeE.end_time);
-              if (s !== null && e !== null) schoolConflict = nowMinWS >= s && nowMinWS < e;
-            }
-          }
-        }
-        if (workConflict) {
-          staleCacheWarning = `\n⚠️ STALE CACHE OVERRIDE: Database shows "sleeping" but your work schedule is currently active. AUTHORITATIVE STATE = AT WORK. Ignore any cached exhaustion, sleep state, or "going to bed" context from prior messages. You are awake and working right now.`;
-        } else if (schoolConflict) {
-          staleCacheWarning = `\n⚠️ STALE CACHE OVERRIDE: Database shows "sleeping" but your school schedule is currently active. AUTHORITATIVE STATE = AT SCHOOL. Ignore any cached exhaustion, sleep state, or "going to bed" context from prior messages. You are awake and at school right now.`;
-        }
-      }
+      // ── REMOVED: STALE CACHE AUTHORITY DRIFT DETECTION ──────────────────────
+      // Under One Truth, the committed resolved_presence_status is authoritative.
+      // This consumer must NOT independently re-derive schedule conflicts to override
+      // the committed canonical state. The authority (enforceCharacterLocationPresence)
+      // resolves schedule conflicts before committing canonical state.
+      const staleCacheWarning = '';
 
-      worldStateContext = `\n════════════════════════════════════\nWORLD STATE AUTHORITY (RECONCILIATION)\n════════════════════════════════════\nCurrent Time: ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET\nYour Current Location: ${charLocName}\nYour Current Presence: ${charResolved}\n${elapsedMinutes > 0 ? `Time Since Last Interaction: ${elapsedStr}` : 'No prior interaction.'}\n${copresenceNote}${otherCharsNote}${staleCacheWarning}\n\nBEHAVIOR DIRECTIVE:\nThis world-state information is AUTHORITATIVE and takes precedence over recent chat context.\nIf recent messages say you were "heading somewhere" or "just arriving," but elapsed time and current location say otherwise, use the current world state.\nCached needs values (energy, comfort, hunger) are display data — they do NOT override verified schedule state.\nIf this block says you are at school or at work, you are NOT asleep — regardless of what prior messages, old needs values, or cached status bars suggest.\n════════════════════════════════════`;
+      worldStateContext = `\n════════════════════════════════════\nWORLD STATE AUTHORITY (RECONCILIATION)\n════════════════════════════════════\nCurrent Time: ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET\nYour Current Location: ${charLocName}\nYour Current Presence: ${charResolved}\n${elapsedMinutes > 0 ? `Time Since Last Interaction: ${elapsedStr}` : 'No prior interaction.'}\n${copresenceNote}${otherCharsNote}\n\nBEHAVIOR DIRECTIVE:\nThis world-state information is AUTHORITATIVE and takes precedence over recent chat context.\nYour committed presence state (${charResolved}) is the single source of truth — it was committed by the canonical authority.\nCached needs values (energy, comfort, hunger) are display data — they do NOT override your committed presence.\nIf your committed state says you are at school, at work, sleeping, or passed out — that IS your current state.\n════════════════════════════════════`;
     } catch (wsErr) {
       console.warn(`[buildCanonicalCharacterContext] world-state reconciliation error: ${wsErr.message}`);
     }

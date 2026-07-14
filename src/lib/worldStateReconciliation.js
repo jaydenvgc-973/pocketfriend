@@ -20,7 +20,9 @@
  * BEFORE any recent chat messages are interpreted.
  */
 
-import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
+// Under One Truth, consumers read committed canonical state directly.
+// resolveCharacterLocation import removed — consumers must not independently
+// re-derive canonical presence or location.
 
 /**
  * Reconcile complete world state for a character before response generation.
@@ -90,8 +92,18 @@ export function reconcileWorldState(
   const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
   const dayOfWeek = nowET.getDay();
 
-  // ── CHARACTER LOCATION (AUTHORITATIVE) ──────────────────────────────────────
-  const charResolved = resolveCharacterLocation(character, locationMap, currentTime);
+  // ── CHARACTER LOCATION — read committed canonical state (One Truth) ────────
+  // Under One Truth, consumers read the committed resolved_presence_status and
+  // resolved_current_location_id directly. They do NOT independently re-derive
+  // a different canonical presence via resolveCharacterLocation.
+  // Shift phase, co-presence, and elapsed-time context remain legitimate.
+  const charResolved = {
+    resolved_current_location_id: character.resolved_current_location_id || null,
+    resolved_current_location_name: character.resolved_current_location_name || null,
+    resolved_location_type: character.resolved_location_type || null,
+    resolved_presence_status: character.resolved_presence_status || null,
+    resolved_source_reason: character.resolved_source_reason || null,
+  };
   const charLocName = (charResolved.resolved_current_location_id && locationMap[charResolved.resolved_current_location_id]?.name)
     || charResolved.resolved_current_location_name;
 

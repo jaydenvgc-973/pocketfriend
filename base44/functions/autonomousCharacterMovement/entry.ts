@@ -1276,33 +1276,27 @@ Deno.serve(async (req) => {
           const canonicalLocId = (isShift && !hasCallout2 && char.occupation_location_id)
             ? char.occupation_location_id
             : homeId;
-          const canonicalLocType = canonicalStatus === 'at_work' ? 'work' : 'home';
-          console.warn(`[autonomousMovement] ${char.name}: ORPHANED 'traveling' with no active session — clearing to '${canonicalStatus}' (canonical repair)`);
+          console.warn(`[autonomousMovement] ${char.name}: ORPHANED 'traveling' with no active session — clearing to '${canonicalStatus}' (canonical repair via authority)`);
+          // ── ONE TRUTH: Route the canonical repair through the authority ──
           try {
-            await base44.entities.Character.update(char.id, {
-              resolved_presence_status:       canonicalStatus,
-              resolved_location_type:         canonicalLocType,
-              resolved_source_reason:         'orphaned_travel_state_cleared',
-              resolved_current_location_id:   canonicalLocId,
-              resolved_last_updated_at:       nowET.toISOString(),
+            await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: char.id, owner_email: char.owner_email,
+              requested_presence_status: canonicalStatus,
+              requested_location_id: canonicalLocId,
+              requested_source_reason: 'orphaned_travel_state_cleared',
+              requested_authority: 'autonomousCharacterMovement',
+              requested_timestamp: nowET.toISOString(),
+            });
+          } catch { /* non-fatal — authority unavailable */ }
+          // Clear noncanonical travel fields (this caller owns these)
+          try {
+            await base44.asServiceRole.entities.Character.update(char.id, {
               travel_status:                  'not_traveling',
               travel_destination_location_id: null,
               traveling_to_location_id:       null,
               traveling_to_location_name:     null,
             });
-          } catch {
-            await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_presence_status:       canonicalStatus,
-              resolved_location_type:         canonicalLocType,
-              resolved_source_reason:         'orphaned_travel_state_cleared',
-              resolved_current_location_id:   canonicalLocId,
-              resolved_last_updated_at:       nowET.toISOString(),
-              travel_status:                  'not_traveling',
-              travel_destination_location_id: null,
-              traveling_to_location_id:       null,
-              traveling_to_location_name:     null,
-            }).catch(() => {});
-          }
+          } catch { /* non-fatal */ }
           // Update in-memory char so subsequent tiers in this iteration see the cleared state
           char.resolved_presence_status = canonicalStatus;
           char.resolved_source_reason   = 'orphaned_travel_state_cleared';
@@ -1760,23 +1754,9 @@ Deno.serve(async (req) => {
                   if (!workLoc) {
                     console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH — shift active but work location id=${activeWorkLocId} not in user scope`);
                   } else if (char.resolved_current_location_id === workLoc.id) {
-                    // Already at work — ensure source reason is correct and skip
+                    // Already at work — ensure source reason is correct via authority
                     if (char.resolved_source_reason !== 'work_schedule') {
-                      try {
-                        await base44.entities.Character.update(char.id, {
-                          resolved_presence_status: 'at_work',
-                          resolved_location_type:   'work',
-                          resolved_source_reason:   'work_schedule',
-                          resolved_last_updated_at: nowET.toISOString(),
-                        });
-                      } catch {
-                        await base44.asServiceRole.entities.Character.update(char.id, {
-                          resolved_presence_status: 'at_work',
-                          resolved_location_type:   'work',
-                          resolved_source_reason:   'work_schedule',
-                          resolved_last_updated_at: nowET.toISOString(),
-                        });
-                      }
+                      try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_id: workLoc.id, requested_source_reason: 'work_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
                     }
                     console.log(`[autonomousMovement] ${char.name}: WORK — already at ${workLoc.name}`);
                     workDispatchDone = true;
@@ -1837,21 +1817,7 @@ Deno.serve(async (req) => {
                 console.warn(`[autonomousMovement] ${char.name}: SCHOOL DISPATCH — enrolled but location id=${char.education_location_id} not in user scope`);
               } else if (char.resolved_current_location_id === schoolLoc.id) {
                 if (char.resolved_source_reason !== 'school_schedule') {
-                  try {
-                    await base44.entities.Character.update(char.id, {
-                      resolved_presence_status: 'at_school',
-                      resolved_location_type:   'school',
-                      resolved_source_reason:   'school_schedule',
-                      resolved_last_updated_at: nowET.toISOString(),
-                    });
-                  } catch {
-                    await base44.asServiceRole.entities.Character.update(char.id, {
-                      resolved_presence_status: 'at_school',
-                      resolved_location_type:   'school',
-                      resolved_source_reason:   'school_schedule',
-                      resolved_last_updated_at: nowET.toISOString(),
-                    });
-                  }
+                  try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_school', requested_location_id: schoolLoc.id, requested_source_reason: 'school_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
                 }
                 console.log(`[autonomousMovement] ${char.name}: SCHOOL — already at ${schoolLoc.name}`);
                 continue;
@@ -1984,21 +1950,13 @@ Deno.serve(async (req) => {
         if (energyUrgency >= 3 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
-            const critPayload = {
-              resolved_current_location_id:   ownHome.id,
-              resolved_current_location_name: ownHome.name,
-              resolved_presence_status:       'home',
-              resolved_location_type:         'home',
-              resolved_source_reason:         'energy_critical_return_home',
-              last_arrived_time:              new Date().toISOString(),
-              presence_stay_lock:             false,
-              presence_stay_lock_location_id: null,
-            };
-            try {
-              await base44.entities.Character.update(char.id, critPayload);
-            } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, critPayload);
-            }
+            // ── ONE TRUTH: Route critical-energy return home through the authority ──
+            await writeCharacterToDestination(base44, char, ownHome.id, ownHome.name, {
+              resolvedPresenceStatus: 'home',
+              resolvedLocationType: 'home',
+              resolvedSourceReason: 'energy_critical_return_home',
+              nowET,
+            });
             totalMoved++;
             moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_CRITICAL] energy(${Math.round(vals.energy)})`);
             console.log(`[autonomousMovement] ✓ ${char.name}: critical energy → ${ownHome.name}`);
@@ -2017,21 +1975,8 @@ Deno.serve(async (req) => {
 
           if (shouldReleaseLock) {
             console.log(`[autonomousMovement] ${char.name}: Releasing presence_stay_lock. Reason: ${releaseReason}. Proof: ${proof}`);
-            const releasePayload = {
-              presence_stay_lock: false,
-              presence_stay_lock_location_id: null,
-              presence_stay_lock_set_at: null,
-              presence_stay_lock_reason: null,
-              presence_stay_lock_authority: null,
-              presence_stay_lock_expires_at: null,
-              presence_stay_lock_release_condition: null,
-              presence_stay_lock_created_by: null,
-            };
-            try {
-              await base44.entities.Character.update(char.id, releasePayload);
-            } catch {
-              await base44.asServiceRole.entities.Character.update(char.id, releasePayload).catch(() => {});
-            }
+            // ── ONE TRUTH: Route lock release through the authority ──
+            try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_lock_release: true, requested_source_reason: `lock_release_${releaseReason || 'auto'}`, requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
             char.presence_stay_lock = false;
           } else if (shouldRespectLock) {
             console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active — skipping autonomous movement. Proof: ${proof}`);

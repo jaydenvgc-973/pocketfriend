@@ -24,7 +24,9 @@
  *   buildCanonicalCharacterContext and remove this frontend call from Chat.
  */
 
-import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
+// Under One Truth, consumers read committed canonical state directly.
+// resolveCharacterLocation import removed — consumers must not independently
+// re-derive canonical presence or location.
 
 /**
  * MAIN RECONCILIATION: Resolve complete world state for a character response
@@ -63,8 +65,18 @@ export function reconcileWorldStateForResponse(
     return createFailedReconciliation('No character provided');
   }
 
-  // ── STEP 1: Resolve character's actual current location ──────────────────────
-  const charLocation = resolveCharacterLocation(character, locationMap, currentTime);
+  // ── STEP 1: Read committed canonical state (One Truth) ──────────────────────
+  // Under One Truth, consumers read the committed resolved_presence_status and
+  // resolved_current_location_id directly from the Character object. They do NOT
+  // independently re-derive a different canonical presence via resolveCharacterLocation.
+  // Shift phase, co-presence, and elapsed-time context remain legitimate.
+  const charLocation = {
+    resolved_current_location_id: character.resolved_current_location_id || null,
+    resolved_current_location_name: character.resolved_current_location_name || null,
+    resolved_location_type: character.resolved_location_type || null,
+    resolved_presence_status: character.resolved_presence_status || null,
+    resolved_source_reason: character.resolved_source_reason || null,
+  };
 
   // ── STEP 2: Resolve user's current location ──────────────────────────────────
   const userLocationResult = resolveUserLocation(userSettings, locationMap);
@@ -190,8 +202,8 @@ function findCoPresenceCharacters(
   for (const otherChar of allCharacters) {
     if (otherChar.id === characterId) continue; // Skip self
 
-    const otherLocation = resolveCharacterLocation(otherChar, locationMap);
-    if (otherLocation.resolved_current_location_id === locationId) {
+    // Read committed canonical location (One Truth) — do NOT re-derive.
+    if (otherChar.resolved_current_location_id === locationId) {
       coPresent.push({
         id: otherChar.id,
         name: otherChar.name,
