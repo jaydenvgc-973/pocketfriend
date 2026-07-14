@@ -237,102 +237,53 @@ Deno.serve(async (req) => {
       };
 
       if (singleActiveWorkLocId) {
-        const result = await writeVerifiedTransition({
-          payload: {
-            resolved_current_location_id: singleActiveWorkLocId,
-            resolved_presence_status: 'at_work',
-            resolved_location_type: 'work',
-            resolved_source_reason: 'work_schedule',
-            resolved_last_updated_at: singleNowET.toISOString(),
-            ...(_wasSleepingBeforeWork ? { last_wake_time: singleNowET.toISOString() } : {}),
-            presence_stay_lock: true,
-            presence_stay_lock_reason: 'work_shift',
-            presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
-            presence_stay_lock_set_at: singleNowET.toISOString(),
-            presence_stay_lock_location_id: singleActiveWorkLocId,
-            presence_stay_lock_created_by: 'system_automation',
-          },
-          revertPayload: revertBase,
-          newLocationId: singleActiveWorkLocId,
-          newStatus: 'at_work',
-          eventType: 'work_start',
-          reason: 'On shift — moved to work',
-        });
-        if (!result.verified) {
-          return Response.json({ updated: false, reason: 'unverified_state_write', proof_error: result.proof_error, revert_error: result.revert_error });
+        // Route through the sole canonical writer — do NOT write canonical fields directly.
+        let authorityResult = null;
+        try {
+          const invokeRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+            character_id: characterId, owner_email: character.owner_email,
+            requested_presence_status: 'at_work', requested_location_id: singleActiveWorkLocId,
+            requested_source_reason: 'work_schedule', requested_authority: 'enforceCharacterWorkSchedule',
+            requested_timestamp: singleNowET.toISOString(),
+          });
+          authorityResult = invokeRes?.data || invokeRes;
+        } catch (invokeErr) {
+          return Response.json({ updated: false, reason: 'authority_invoke_failed', error: invokeErr.message });
         }
+        if (authorityResult?.disposition !== 'accepted' && authorityResult?.disposition !== 'redirected' && authorityResult?.disposition !== 'modified') {
+          return Response.json({ updated: false, reason: 'authority_rejected', disposition: authorityResult?.disposition, authority_reason: authorityResult?.reason });
+        }
+        const committedLocId = authorityResult?.committed_result?.resolved_current_location_id || singleActiveWorkLocId;
+        // Write LocationHistory proof from the committed result
+        try {
+          const _nowIso = singleNowET.toISOString();
+          const _openRecs = await base44.asServiceRole.entities.LocationHistory.filter({ character_id: characterId, owner_email: character.owner_email, is_current: true }, null, 20);
+          for (const _open of _openRecs) { if (_open.location_id === committedLocId) continue; const _arrMs = new Date(_open.arrival_time).getTime(); await base44.asServiceRole.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: _nowIso, duration_minutes: Math.round((Date.now() - _arrMs) / 60000) || null }); }
+          if (!_openRecs.find(o => o.location_id === committedLocId)) { const [_dl] = await base44.asServiceRole.entities.LocationReference.filter({ id: committedLocId }, null, 1); await base44.asServiceRole.entities.LocationHistory.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, location_id: committedLocId, location_name: _dl?.name || '', location_category: _dl?.category || 'generic', event_type: 'work_start', arrival_time: _nowIso, travel_source: 'schedule', travel_reason: 'work_schedule', is_current: true }); }
+        } catch (proofErr) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: work-start proof failed (non-reverting): ${proofErr.message}`); }
         if (_wasSleepingBeforeWork) {
-          try {
-            await base44.asServiceRole.entities.SleepTransition.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: singleNowET.toISOString(), state_start_ref: character.last_sleep_start || null });
-            await base44.asServiceRole.entities.LifeEvent.create({ character_id: characterId, character_name: character.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${character.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: singleNowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] });
-          } catch (proofError) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: work-wake proof failed (non-reverting): ${proofError.message}`); }
+          try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: singleNowET.toISOString(), state_start_ref: character.last_sleep_start || null }); await base44.asServiceRole.entities.LifeEvent.create({ character_id: characterId, character_name: character.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${character.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: singleNowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] }); } catch (proofError) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: work-wake proof failed (non-reverting): ${proofError.message}`); }
         }
-        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: singleActiveWorkLocId, reason: 'On shift — moved to work' });
+        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: committedLocId, reason: 'On shift — moved to work (via authority)' });
       }
 
-      // Not on any active shift — if still showing at a work location, send home
+      // Not on any active shift — if still showing at a work location, send home.
+      // Route work-end through the sole canonical writer. Work end is an obligation
+      // ending, not a canonical presence state. The authority determines the valid
+      // resulting canonical location and presence. Work end does NOT automatically mean "home".
       const effectiveWorkLocId = primaryWorkLocId;
       if (effectiveWorkLocId && resolvedLocId === effectiveWorkLocId) {
         if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
-            const result = await writeVerifiedTransition({
-              payload: {
-                resolved_current_location_id: homeLocId,
-                resolved_presence_status: 'sleeping',
-                resolved_location_type: 'home',
-                resolved_source_reason: 'fallback_to_home_base',
-                resolved_last_updated_at: singleNowET.toISOString(),
-                presence_stay_lock: false,
-                presence_stay_lock_location_id: null,
-                presence_stay_lock_set_at: null,
-                presence_stay_lock_reason: null,
-                presence_stay_lock_authority: null,
-                presence_stay_lock_expires_at: null,
-                presence_stay_lock_release_condition: null,
-                presence_stay_lock_created_by: null,
-              },
-              revertPayload: revertBase,
-              newLocationId: homeLocId,
-              newStatus: 'sleeping',
-              eventType: 'return_home',
-              reason: 'Sleeping at work — moved home',
-            });
-            if (!result.verified) {
-              return Response.json({ updated: false, reason: 'unverified_state_write', proof_error: result.proof_error, revert_error: result.revert_error });
-            }
-            return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: 'Sleeping at work — moved home' });
+            let authRes = null;
+            try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_presence_status: 'sleeping', requested_location_id: homeLocId, requested_source_reason: 'sleep_redirect_from_work', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: singleNowET.toISOString() }); authRes = ir?.data || ir; } catch (e) { return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message }); }
+            return Response.json({ updated: authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id || homeLocId, reason: 'Sleeping at work — authority routed', disposition: authRes?.disposition });
           }
         } else if (!isSleeping && character.current_home_location_id) {
-          const homeLocId = character.current_home_location_id;
-          const energy = character.energy_value ?? 75;
-          const newStatus = energy < 40 ? 'sleeping' : 'home';
-          const result = await writeVerifiedTransition({
-            payload: {
-              resolved_current_location_id: homeLocId,
-              resolved_presence_status: newStatus,
-              resolved_location_type: 'home',
-              resolved_source_reason: 'fallback_to_home_base',
-              resolved_last_updated_at: singleNowET.toISOString(),
-              presence_stay_lock: false,
-              presence_stay_lock_location_id: null,
-              presence_stay_lock_set_at: null,
-              presence_stay_lock_reason: null,
-              presence_stay_lock_authority: null,
-              presence_stay_lock_expires_at: null,
-              presence_stay_lock_release_condition: null,
-              presence_stay_lock_created_by: null,
-            },
-            revertPayload: revertBase,
-            newLocationId: homeLocId,
-            newStatus,
-            eventType: 'return_home',
-            reason: `Shift ended — going home (${newStatus})`,
-          });
-          if (!result.verified) {
-            return Response.json({ updated: false, reason: 'unverified_state_write', proof_error: result.proof_error, revert_error: result.revert_error });
-          }
-          return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: `Shift ended — going home (${newStatus})` });
+          let authRes = null;
+          try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_work_end: true, requested_source_reason: 'work_end', requested_authority: 'enforceCharacterWorkSchedule' }); authRes = ir?.data || ir; } catch (e) { return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message }); }
+          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${authRes?.committed_result?.resolved_presence_status || 'unknown'})`, disposition: authRes?.disposition });
         }
       }
 
@@ -491,166 +442,61 @@ Deno.serve(async (req) => {
           }
           if (resolvedLocId !== activeWorkLocId) {
             issues_found.push(`${char.name}: should be at work but location stale`);
-            const revertPayload = {
-              resolved_current_location_id: char.resolved_current_location_id,
-              resolved_presence_status: char.resolved_presence_status,
-              resolved_location_type: char.resolved_location_type,
-              resolved_source_reason: char.resolved_source_reason,
-              resolved_last_updated_at: char.resolved_last_updated_at,
-              presence_stay_lock: char.presence_stay_lock,
-              presence_stay_lock_reason: char.presence_stay_lock_reason,
-              presence_stay_lock_authority: char.presence_stay_lock_authority,
-              presence_stay_lock_set_at: char.presence_stay_lock_set_at,
-              presence_stay_lock_location_id: char.presence_stay_lock_location_id,
-              presence_stay_lock_created_by: char.presence_stay_lock_created_by,
-            };
-            await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_current_location_id: activeWorkLocId,
-              resolved_presence_status: 'at_work',
-              resolved_location_type: 'work',
-              resolved_source_reason: 'work_schedule',
-              resolved_last_updated_at: nowET.toISOString(),
-              ...(isSleeping ? { last_wake_time: nowET.toISOString() } : {}),
-              presence_stay_lock: true,
-              presence_stay_lock_reason: 'work_shift',
-              presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
-              presence_stay_lock_set_at: nowET.toISOString(),
-              presence_stay_lock_location_id: activeWorkLocId,
-              presence_stay_lock_created_by: 'system_automation',
-            });
+            // Route through the sole canonical writer — do NOT write canonical fields directly.
+            let authRes = null;
             try {
-              // Inline LocationHistory write — cross-function invoke returns 403
-              const _nowIso1 = nowET.toISOString();
-              const _openRecs1 = await base44.asServiceRole.entities.LocationHistory.filter(
-                { character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20
-              );
-              for (const _open of _openRecs1) {
-                if (_open.location_id === activeWorkLocId) continue;
-                const _arrMs1 = new Date(_open.arrival_time).getTime();
-                const _durMin1 = Math.round((Date.now() - _arrMs1) / 60000);
-                await base44.asServiceRole.entities.LocationHistory.update(_open.id, {
-                  is_current: false, departure_time: _nowIso1,
-                  duration_minutes: _durMin1 > 0 ? _durMin1 : null,
-                });
-              }
-              if (!_openRecs1.find(o => o.location_id === activeWorkLocId)) {
-                await base44.asServiceRole.entities.LocationHistory.create({
-                  character_id: char.id, character_name: char.name, owner_email: ownerEmail,
-                  location_id: activeWorkLocId, location_name: locMap[activeWorkLocId]?.name || '',
-                  location_category: locMap[activeWorkLocId]?.category || 'generic',
-                  event_type: 'work_start', arrival_time: _nowIso1,
-                  travel_source: 'schedule', travel_reason: 'work_schedule', is_current: true,
-                });
-              }
-              if (isSleeping) {
-                try {
-                  await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null });
-                  await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${char.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] });
-                } catch (wakeProofError) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-wake proof failed (non-reverting): ${wakeProofError.message}`); }
-              }
-              fixes_applied.push(`${char.name}: synced to work location`);
+              const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: char.id, owner_email: ownerEmail,
+                requested_presence_status: 'at_work', requested_location_id: activeWorkLocId,
+                requested_source_reason: 'work_schedule', requested_authority: 'enforceCharacterWorkSchedule',
+                requested_timestamp: nowET.toISOString(),
+              });
+              authRes = ir?.data || ir;
+            } catch (invokeErr) {
+              issues_found.push(`${char.name}: AUTHORITY_INVOKE_FAILED — ${invokeErr.message}`);
+              continue;
+            }
+            if (authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected' || authRes?.disposition === 'modified') {
+              const committedLocId = authRes?.committed_result?.resolved_current_location_id || activeWorkLocId;
+              // Write LocationHistory proof from the committed result
+              try {
+                const _nowIso1 = nowET.toISOString();
+                const _openRecs1 = await base44.asServiceRole.entities.LocationHistory.filter({ character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20);
+                for (const _open of _openRecs1) { if (_open.location_id === committedLocId) continue; const _arrMs1 = new Date(_open.arrival_time).getTime(); const _durMin1 = Math.round((Date.now() - _arrMs1) / 60000); await base44.asServiceRole.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: _nowIso1, duration_minutes: _durMin1 > 0 ? _durMin1 : null }); }
+                if (!_openRecs1.find(o => o.location_id === committedLocId)) { await base44.asServiceRole.entities.LocationHistory.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, location_id: committedLocId, location_name: locMap[committedLocId]?.name || '', location_category: locMap[committedLocId]?.category || 'generic', event_type: 'work_start', arrival_time: _nowIso1, travel_source: 'schedule', travel_reason: 'work_schedule', is_current: true }); }
+              } catch (proofErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-start proof failed (non-reverting): ${proofErr.message}`); }
+              if (isSleeping) { try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null }); await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${char.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: nowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] }); } catch (wakeProofError) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-wake proof failed (non-reverting): ${wakeProofError.message}`); } }
+              fixes_applied.push(`${char.name}: synced to work location (via authority)`);
               fixCount++;
-            } catch (proofError) {
-              let revertError = null;
-              try { await base44.asServiceRole.entities.Character.update(char.id, revertPayload); } catch (e) { revertError = e.message; }
-              issues_found.push(`${char.name}: UNVERIFIED_STATE_WRITE — work-location proof failed (${proofError.message}), reverted (revert_error=${revertError})`);
+            } else {
+              issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
             }
           }
         } else if (!onShift && workLocId && resolvedLocId === workLocId) {
-          // Character is at work but shift ended
+          // Character is at work but shift ended. Work end is an obligation ending,
+          // not a canonical presence state. Route through the sole canonical writer.
           const homeLocId = char.current_home_location_id;
-          if (!homeLocId) {
-            issues_found.push(`${char.name}: shift ended, at work, no home location`);
-            continue;
-          }
-          // OWNERSHIP CHECK: home location must be in same owner scope
-          if (!locMap[homeLocId]) {
-            issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — home location not in owner scope`);
-            continue;
-          }
-          if (isSleeping) {
-            issues_found.push(`${char.name}: SLEEPING_AT_WORK_INVALID — shift ended`);
-          } else {
-            issues_found.push(`${char.name}: POST_SHIFT_EXIT_NOT_TRIGGERED — still at work`);
-          }
-          const energy = char.energy_value || 75;
-          const newStatus = energy < 40 ? 'sleeping' : 'home';
-          const revertPayload = {
-            resolved_current_location_id: char.resolved_current_location_id,
-            resolved_presence_status: char.resolved_presence_status,
-            resolved_location_type: char.resolved_location_type,
-            resolved_source_reason: char.resolved_source_reason,
-            resolved_last_updated_at: char.resolved_last_updated_at,
-            last_sleep_start: char.last_sleep_start,
-            presence_stay_lock: char.presence_stay_lock,
-            presence_stay_lock_location_id: char.presence_stay_lock_location_id,
-            presence_stay_lock_set_at: char.presence_stay_lock_set_at,
-            presence_stay_lock_reason: char.presence_stay_lock_reason,
-            presence_stay_lock_authority: char.presence_stay_lock_authority,
-            presence_stay_lock_expires_at: char.presence_stay_lock_expires_at,
-            presence_stay_lock_release_condition: char.presence_stay_lock_release_condition,
-            presence_stay_lock_created_by: char.presence_stay_lock_created_by,
-          };
-          // A transition INTO 'sleeping' must stamp last_sleep_start in the SAME
-          // write as the location change — otherwise the SleepTransition proof
-          // below would document a sleep-start timestamp the Character record
-          // never actually recorded (proof/state divergence).
-          await base44.asServiceRole.entities.Character.update(char.id, {
-            resolved_current_location_id: homeLocId,
-            resolved_presence_status: newStatus,
-            resolved_location_type: 'home',
-            resolved_source_reason: 'fallback_to_home_base',
-            resolved_last_updated_at: nowET.toISOString(),
-            ...(newStatus === 'sleeping' ? { last_sleep_start: nowET.toISOString() } : {}),
-            presence_stay_lock: false,
-            presence_stay_lock_location_id: null,
-            presence_stay_lock_set_at: null,
-            presence_stay_lock_reason: null,
-            presence_stay_lock_authority: null,
-            presence_stay_lock_expires_at: null,
-            presence_stay_lock_release_condition: null,
-            presence_stay_lock_created_by: null,
-          });
-          try {
-            // Inline LocationHistory write — cross-function invoke returns 403
-            const _nowIso2 = nowET.toISOString();
-            const _openRecs2 = await base44.asServiceRole.entities.LocationHistory.filter(
-              { character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20
-            );
-            for (const _open of _openRecs2) {
-              if (_open.location_id === homeLocId) continue;
-              const _arrMs2 = new Date(_open.arrival_time).getTime();
-              const _durMin2 = Math.round((Date.now() - _arrMs2) / 60000);
-              await base44.asServiceRole.entities.LocationHistory.update(_open.id, {
-                is_current: false, departure_time: _nowIso2,
-                duration_minutes: _durMin2 > 0 ? _durMin2 : null,
-              });
-            }
-            if (!_openRecs2.find(o => o.location_id === homeLocId)) {
-              await base44.asServiceRole.entities.LocationHistory.create({
-                character_id: char.id, character_name: char.name, owner_email: ownerEmail,
-                location_id: homeLocId, location_name: locMap[homeLocId]?.name || '',
-                location_category: locMap[homeLocId]?.category || 'home',
-                event_type: 'return_home', arrival_time: _nowIso2,
-                travel_source: 'schedule', travel_reason: 'shift_ended', is_current: true,
-              });
-            }
-            // Sleep fact — proven in addition to (not instead of) the location fact.
-            if (newStatus === 'sleeping') {
-              await base44.asServiceRole.entities.SleepTransition.create({
-                character_id: char.id, character_name: char.name, owner_email: ownerEmail,
-                transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown',
-                to_status: 'sleeping', authority: 'enforceCharacterWorkSchedule',
-                reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(),
-                state_start_ref: nowET.toISOString(),
-              });
-            }
-            fixes_applied.push(`${char.name}: relocated home (${newStatus})`);
+          if (!homeLocId) { issues_found.push(`${char.name}: shift ended, at work, no home location`); continue; }
+          if (!locMap[homeLocId]) { issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — home location not in owner scope`); continue; }
+          if (isSleeping) { issues_found.push(`${char.name}: SLEEPING_AT_WORK_INVALID — shift ended`); } else { issues_found.push(`${char.name}: POST_SHIFT_EXIT_NOT_TRIGGERED — still at work`); }
+          // Route work-end through the sole canonical writer
+          let authRes = null;
+          try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: ownerEmail, requested_work_end: true, requested_source_reason: 'work_end', requested_authority: 'enforceCharacterWorkSchedule' }); authRes = ir?.data || ir; } catch (invokeErr) { issues_found.push(`${char.name}: AUTHORITY_INVOKE_FAILED — ${invokeErr.message}`); continue; }
+          if (authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected' || authRes?.disposition === 'modified') {
+            const committedLocId = authRes?.committed_result?.resolved_current_location_id || homeLocId;
+            const committedStatus = authRes?.committed_result?.resolved_presence_status || 'home';
+            // Write LocationHistory proof from the committed result
+            try {
+              const _nowIso2 = nowET.toISOString();
+              const _openRecs2 = await base44.asServiceRole.entities.LocationHistory.filter({ character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20);
+              for (const _open of _openRecs2) { if (_open.location_id === committedLocId) continue; const _arrMs2 = new Date(_open.arrival_time).getTime(); const _durMin2 = Math.round((Date.now() - _arrMs2) / 60000); await base44.asServiceRole.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: _nowIso2, duration_minutes: _durMin2 > 0 ? _durMin2 : null }); }
+              if (!_openRecs2.find(o => o.location_id === committedLocId)) { await base44.asServiceRole.entities.LocationHistory.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, location_id: committedLocId, location_name: locMap[committedLocId]?.name || '', location_category: locMap[committedLocId]?.category || 'home', event_type: 'return_home', arrival_time: _nowIso2, travel_source: 'schedule', travel_reason: 'shift_ended', is_current: true }); }
+              if (committedStatus === 'sleeping') { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'sleeping', authority: 'enforceCharacterLocationPresence', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(), state_start_ref: nowET.toISOString() }); }
+            } catch (proofErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: work-end proof failed (non-reverting): ${proofErr.message}`); }
+            fixes_applied.push(`${char.name}: relocated home (${committedStatus}) via authority`);
             fixCount++;
-          } catch (proofError) {
-            let revertError = null;
-            try { await base44.asServiceRole.entities.Character.update(char.id, revertPayload); } catch (e) { revertError = e.message; }
-            issues_found.push(`${char.name}: UNVERIFIED_STATE_WRITE — home-relocation proof failed (${proofError.message}), reverted (revert_error=${revertError})`);
+          } else {
+            issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
           }
         }
       }

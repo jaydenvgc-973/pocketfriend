@@ -1223,12 +1223,42 @@ Deno.serve(async (req) => {
           }
         }
 
+        // ── ONE TRUTH: Route canonical transitions through enforceCharacterLocationPresence ──
+        // simulateActiveCharacterNeeds retains classification of which transition it is
+        // requesting (sleeping, napping, passed_out, hospitalized, wake, etc.) but does
+        // NOT directly write canonical presence, location, locks, or canonical timestamps.
+        // Need values (hunger, energy, social, health, mental, hygiene, comfort) remain
+        // noncanonical fields owned by this caller and are written directly.
         let selectedTransition = null;
+        let authorityCommittedResult = null;
         if (transitionCandidates.length > 0) {
           selectedTransition = transitionCandidates.reduce((best, c) => (c.priority < best.priority ? c : best));
-          Object.assign(updatePayload, selectedTransition.payload);
-          sleepTransitionsToRecord.push(selectedTransition.transition);
-          if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
+          // Route the canonical transition through the sole canonical writer.
+          // Do NOT apply canonical fields to updatePayload — only need values go in the direct write.
+          const requestedStatus = selectedTransition.payload?.resolved_presence_status || null;
+          const requestedLocId = selectedTransition.payload?.resolved_current_location_id || null;
+          const requestedReason = selectedTransition.payload?.resolved_source_reason || selectedTransition.transition?.reason || null;
+          try {
+            const invokeRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: char.id, owner_email: ownerEmail,
+              requested_presence_status: requestedStatus,
+              requested_location_id: requestedLocId,
+              requested_source_reason: requestedReason,
+              requested_authority: selectedTransition.transition?.authority || 'simulateActiveCharacterNeeds',
+              requested_timestamp: nowIso,
+            });
+            const authData = invokeRes?.data || invokeRes;
+            if (authData?.disposition === 'accepted' || authData?.disposition === 'redirected' || authData?.disposition === 'modified') {
+              authorityCommittedResult = authData.committed_result;
+              sleepTransitionsToRecord.push(selectedTransition.transition);
+              if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
+            } else {
+              // Deferred or rejected — do not create records claiming the transition occurred
+              results.push({ character: charName, context, event: 'authority_disposition', disposition: authData?.disposition, reason: authData?.reason });
+            }
+          } catch (invokeErr) {
+            results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+          }
         }
 
         const staleCleanup = resolveStaleCorrectiveActivities(char, newNeeds);

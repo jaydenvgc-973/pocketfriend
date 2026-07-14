@@ -998,26 +998,31 @@ async function writeCharacterToDestination(base44, char, destLocationId, destLoc
   resolvedSourceReason = 'autonomous_needs',
   nowET,
 }) {
-  const payload = {
-    resolved_current_location_id:   destLocationId,
-    resolved_current_location_name: destLocationName,
-    resolved_presence_status:       resolvedPresenceStatus,
-    resolved_location_type:         resolvedLocationType,
-    resolved_source_reason:         resolvedSourceReason,
-    last_arrived_time:              nowET.toISOString(),
-    resolved_last_updated_at:       nowET.toISOString(),
-    // NEVER set travel_status, traveling_to_*, or travel_destination_location_id.
-    // active_created_character never enters a transit phase.
-    travel_status:                  'not_traveling',
-    travel_destination_location_id: null,
-    traveling_to_location_id:       null,
-    traveling_to_location_name:     null,
-  };
+  // Route through the sole canonical writer — do NOT write canonical fields directly.
   try {
-    await base44.entities.Character.update(char.id, payload);
-  } catch {
-    await base44.asServiceRole.entities.Character.update(char.id, payload).catch(() => {});
+    await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+      character_id: char.id,
+      owner_email: char.owner_email,
+      requested_presence_status: resolvedPresenceStatus,
+      requested_location_id: destLocationId,
+      requested_location_type: resolvedLocationType,
+      requested_source_reason: resolvedSourceReason,
+      requested_relocation: true,
+      requested_timestamp: nowET.toISOString(),
+    });
+  } catch (invokeErr) {
+    console.warn(`[autonomousMovement] Authority invoke failed for ${char.name} → ${destLocationName}: ${invokeErr.message}`);
+    return;
   }
+  // Clear noncanonical travel fields (this caller owns these — not canonical presence)
+  try {
+    await base44.asServiceRole.entities.Character.update(char.id, {
+      travel_status: 'not_traveling',
+      travel_destination_location_id: null,
+      traveling_to_location_id: null,
+      traveling_to_location_name: null,
+    });
+  } catch { /* non-fatal */ }
 }
 
 // ── REMOVED: TravelSession transit model functions ──
@@ -1456,23 +1461,7 @@ Deno.serve(async (req) => {
           if (energyUrgency < 4 && char.current_home_location_id) {
             const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
             if (ownHome) {
-              const recoveryPayload = {
-                resolved_current_location_id:   ownHome.id,
-                resolved_current_location_name: ownHome.name,
-                resolved_presence_status:       'home',
-                resolved_location_type:         'home',
-                resolved_source_reason:         'pass_out_recovery',
-                last_arrived_time:              nowET.toISOString(),
-                last_wake_time:                 nowET.toISOString(),
-                presence_stay_lock:             false,
-                presence_stay_lock_reason:      null,
-                presence_stay_lock_release_condition: null,
-              };
-              try {
-                await base44.entities.Character.update(char.id, recoveryPayload);
-              } catch {
-                await base44.asServiceRole.entities.Character.update(char.id, recoveryPayload);
-              }
+              try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_location_id: ownHome.id, requested_location_type: 'home', requested_source_reason: 'pass_out_recovery', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
               moveLog.push(`${char.name} → ${ownHome.name} [PASS_OUT_RECOVERY after ${passOutElapsedHours.toFixed(1)}h]`);
               console.log(`[autonomousMovement] ✓ ${char.name}: pass-out recovery → ${ownHome.name} (${passOutElapsedHours.toFixed(1)}h elapsed)`);
             }
@@ -1497,8 +1486,7 @@ Deno.serve(async (req) => {
             console.log(`[autoMove] ${char.name}: NAPPING — remain (energy=${Math.round(energyNow)}, nap=${napDurationHours.toFixed(1)}h) — 3h cap via enforceStaleNapLimit only`);
             continue;
           }
-          const napWakePayload = { resolved_presence_status: 'home', resolved_source_reason: 'nap_complete_energy_recovered', resolved_last_updated_at: nowET.toISOString(), last_wake_time: nowET.toISOString() };
-          try { await base44.entities.Character.update(char.id, napWakePayload); } catch { await base44.asServiceRole.entities.Character.update(char.id, napWakePayload); }
+          try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: 'nap_complete_energy_recovered', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
           char.resolved_presence_status = 'home';
           // MANDATORY NAP WAKE PROOF — SleepTransition + LifeEvent (silent wake forbidden)
           try {
@@ -1622,11 +1610,8 @@ Deno.serve(async (req) => {
             : 'natural_wake_rested';
           // Obligation wakes preserve sleep consequences — no energy boost applied here.
           // Energy reflects actual hours recovered via simulateActiveCharacterNeeds rates.
-          const wakePayload = { resolved_presence_status: 'home', resolved_source_reason: wakeReason, resolved_last_updated_at: nowET.toISOString(), last_wake_time: nowET.toISOString() };
-          try { await base44.entities.Character.update(char.id, wakePayload); }
-          catch { await base44.asServiceRole.entities.Character.update(char.id, wakePayload); }
-          char.resolved_presence_status = 'home';
-          char.resolved_source_reason = wakeReason;
+          try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_source_reason: wakeReason, requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
+          char.resolved_presence_status = 'home'; char.resolved_source_reason = wakeReason;
           // MANDATORY WAKE PROOF — SleepTransition + LifeEvent + CharacterMemory (silent wake forbidden)
           try {
             await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home', authority: wakeReason, reason: `Woke — ${wakeReason}, energy=${Math.round(energyNow)}, slept=${sleepDurationHours.toFixed(1)}h.`, timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null, elapsed_hours: Math.round(sleepDurationHours * 100) / 100 });

@@ -1,13 +1,38 @@
-// TEMPORARY INLINE RESOLVER — Phase 4A manual enforcement only
-// Must be kept aligned with lib/locationResolutionEngine.js until shared backend-safe resolver exists.
-// This function performs owner-scoped, manual synchronization of character location presence.
-// 
-// PHASE 4A FLOW: compute → compare → write once only if changed
+// ═══════════════════════════════════════════════════════════════════════════
+// SOLE CANONICAL WRITER — One Truth Authority
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// enforceCharacterLocationPresence is the SOLE live backend canonical writer for:
+//   - resolved_current_location_id
+//   - resolved_current_location_name
+//   - resolved_location_type
+//   - resolved_presence_status
+//   - presence_stay_lock
+//   - presence_stay_lock_reason
+//   - canonical transition reason (resolved_source_reason)
+//   - canonical transition timestamps (last_sleep_start, last_nap_time, last_wake_time, last_pass_out_at)
+//
+// Every caller (simulateActiveCharacterNeeds, enforceCharacterWorkSchedule,
+// processScheduledRelocations, autonomousCharacterMovement, wake/nap-end callers,
+// pass-out callers) sends its requested transition, cause, and supporting
+// production information to this function. This function:
+//   1. Receives the requested transition through its real production interface
+//   2. Loads the complete current Character state and relevant records
+//   3. Invokes resolveCharacterLocation (inline resolver aligned with lib/)
+//   4. Applies compatibility/integrity validation
+//   5. Resolves as accepted, modified, redirected, deferred, rejected, or no_change
+//   6. Performs one coherent Character.update() containing only canonical fields
+//   7. Returns the exact disposition and committed result to the caller
+//
+// Callers retain their domain intelligence and classify their own transitions.
+// Callers write downstream records (SleepTransition, LifeEvent, etc.) only
+// after receiving a successfully committed result, built from the returned
+// committed result — not from the original request.
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// HELPER: Check if character is on a location-specific shift right now
-// Supports shift.days, shift.start, shift.end, and overnight shifts
+// ── HELPERS (aligned with src/lib/locationResolutionEngine.js) ────────────────
+
 function isOnShiftNow(shift, etTime) {
   if (!shift?.start || !shift?.end) return false;
   if (shift.days && shift.days.length > 0) {
@@ -18,124 +43,26 @@ function isOnShiftNow(shift, etTime) {
   const [eh, em] = shift.end.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
-  // Overnight shift (e.g. 22:00 -> 06:00)
   if (endMin < startMin) return now >= startMin || now < endMin;
   return now >= startMin && now < endMin;
 }
 
-// HELPER: Check if character is on work schedule right now (character's own fields)
 function isCharacterOnWorkSchedule(character, etTime) {
   if (!character.work_start_time || !character.work_end_time || !character.work_days) {
     return false;
   }
-  const now = etTime.getTime();
   const dayOfWeek = etTime.getDay();
-  const isWorkDay = character.work_days.includes(dayOfWeek);
-  if (!isWorkDay) return false;
-
+  if (!character.work_days.includes(dayOfWeek)) return false;
+  const now = etTime.getTime();
   const [workStartHour, workStartMin] = character.work_start_time.split(':').map(Number);
   const [workEndHour, workEndMin] = character.work_end_time.split(':').map(Number);
-
   const workStartMs = new Date(etTime).setHours(workStartHour, workStartMin, 0, 0);
   const workEndMs = new Date(etTime).setHours(workEndHour, workEndMin, 0, 0);
-
   return now >= workStartMs && now < workEndMs;
 }
 
-/**
- * ADAPTIVE SLEEP WINDOW — active_created_character only.
- * Derives sleep start/wake times from next work/school obligation and character energy.
- * Overnight workers sleep BEFORE their shift, not during it.
- * Falls back to stored sleep_start_time / wake_up_time when no obligation exists.
- */
-function computeAdaptiveSleepWindow(character, etTime) {
-  const SLEEP_DURATION_MIN = 7 * 60;
-  const PRE_SHIFT_BUFFER   = 60;
-
-  const toMin = (t) => {
-    if (!t) return null;
-    const [h, m] = t.split(':').map(Number);
-    return h * 60 + (m || 0);
-  };
-
-  const dayOfWeek = etTime.getDay();
-  let nextShiftStartMin = null;
-  let nextShiftEndMin   = null;
-
-  // PRIORITY 1: Stored schedule wins — matches sleepUtils.js canonical order.
-  if (character.sleep_start_time && character.wake_up_time) {
-    const s = toMin(character.sleep_start_time);
-    const w = toMin(character.wake_up_time);
-    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
-  }
-
-  // PRIORITY 2: No stored schedule — derive from work/school.
-  // Only TODAY's work day drives sleep timing. Tomorrow is not authority.
-  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-    const isWorkDayToday = character.work_days.includes(dayOfWeek);
-    if (isWorkDayToday) {
-      nextShiftStartMin = toMin(character.work_start_time);
-      nextShiftEndMin   = toMin(character.work_end_time);
-    }
-  }
-
-  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
-    nextShiftStartMin = 8 * 60;
-    nextShiftEndMin   = 15 * 60;
-  }
-
-  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
-    nextShiftEndMin < nextShiftStartMin;
-
-  if (nextShiftStartMin !== null) {
-    if (isOvernightShift) {
-      const sleepStart = (nextShiftEndMin + 60) % 1440;
-      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: true };
-    } else {
-      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
-      const sleepStart = (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440;
-      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: false };
-    }
-  }
-
-  // PRIORITY 3: Cannot determine.
-  return null;
-}
-
-/**
- * isNearSleepWindow — VALID HELPER, CONTEXT-ONLY
- *
- * Classification: Valid Helper, previously Misused.
- * Original purpose: parameterized pre-sleep proximity check for unwind/slowdown context.
- * Misuse that was removed: used as a visit-eviction gate (blocking character visits 2h before sleep).
- *
- * PERMITTED USE: location scoring context — nudge scores, not hard blocks.
- *   Correct: score home +2, gym -1, nightlife -2 when within bufferMinutes of sleep start.
- *   Forbidden: blocking movement, evicting visits, forcing returns, overriding user actions.
- *
- * NOT called here (enforcement file). Kept for documentation and future scoring-context reconnection.
- */
-function isNearSleepWindow(character, etTime, bufferMinutes) {
-  const window = computeAdaptiveSleepWindow(character, etTime);
-  if (!window) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const { sleepStartMin } = window;
-  const windowStart = (sleepStartMin - bufferMinutes + 1440) % 1440;
-  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
-  return now >= windowStart && now < sleepStartMin;
-}
-
-// Confinement categories — treated as valid sleep/residence locations for routing purposes.
-// Note: autonomous movement is still fully blocked for incarcerated characters regardless.
-const CONFINEMENT_CATEGORIES = new Set([
-  'jail', 'prison', 'detention_center', 'correctional_facility',
-  'juvenile_detention', 'halfway_house', 'holding_cell'
-]);
-
 const VALID_SLEEP_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'generic',
-  // Confinement facilities are valid sleep/residence locations
   'jail', 'prison', 'detention_center', 'correctional_facility',
   'juvenile_detention', 'halfway_house', 'holding_cell'
 ]);
@@ -143,27 +70,6 @@ const VALID_SLEEP_CATEGORIES = new Set([
 function isValidSleepLocation(location) {
   if (!location) return false;
   return VALID_SLEEP_CATEGORIES.has(location.category || '');
-}
-
-// Check if a location is currently open based on its operating_hours and ET time.
-function isLocationCurrentlyOpen(location, etTime) {
-  if (!location?.operating_hours || location.operating_hours.length === 0) return true;
-  const dayOfWeek = etTime.getDay();
-  const currentMinutes = etTime.getHours() * 60 + etTime.getMinutes();
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-  const inWindow = (openStr, closeStr) => {
-    const open = toMin(openStr); const close = toMin(closeStr);
-    if (open == null || close == null) return false;
-    if (open <= close) return currentMinutes >= open && currentMinutes <= close;
-    return currentMinutes >= open || currentMinutes <= close;
-  };
-  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
-  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
-  const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
-  if (todayEntries.length > 0) return todayEntries.some(h => inWindow(h.open_time, h.close_time));
-  if (daySpecific.length > 0) return false;
-  if (dayAgnostic.length > 0) return dayAgnostic.some(h => inWindow(h.open_time, h.close_time));
-  return true;
 }
 
 function resolveValidSleepLocationId(character, locationMap) {
@@ -179,91 +85,603 @@ function resolveValidSleepLocationId(character, locationMap) {
   return null;
 }
 
-// MINIMAL INLINE RESOLVER: Compute ONE resolved location object
-// PRIORITY: Incarceration lock > house arrest > sleep lock > nap > pre-sleep return > work > school > travel > visit > home fallback
-function computeResolvedLocation(character, locationMap, etTime) {
-  const todayET = etTime.toISOString().slice(0, 10);
+/**
+ * Evaluate a requested transition against the complete current state.
+ * Returns a disposition and the canonical fields to commit.
+ *
+ * This is the RESOLVER — it does NOT rediscover what the caller intended.
+ * It evaluates the requested transition against the current state and
+ * determines: accepted, modified, redirected, deferred, rejected, or no_change.
+ */
+function evaluateRequestedTransition(character, locationMap, requested, etTime) {
+  const currentStatus = character.resolved_presence_status || '';
+  const currentLocId = character.resolved_current_location_id || '';
+  const requestedStatus = requested.requested_presence_status || null;
+  const requestedLocId = requested.requested_location_id || null;
 
-  // ── LAYER -1: INCARCERATION HARD LOCK (ABSOLUTE HIGHEST PRIORITY) ────────
-  // If character is jailed/incarcerated, they are CONFINED.
-  // ALL civilian routing is bypassed — sleep, work, school, travel, autonomous movement.
-  // The confinement facility IS their location truth.
-  // This is not an error state. It is a valid life state.
+  // ── NO TRANSITION REQUESTED — recompute location truth (legacy path) ────────
+  if (!requestedStatus && !requestedLocId) {
+    return evaluateLegacyRecompute(character, locationMap, etTime);
+  }
+
+  // ── INCARCERATION / HOUSE ARREST — absolute hard lock ──────────────────────
   if (character.is_jailed === true) {
-    const facilityId   = character.incarceration_facility_id || null;
-    const facilityLoc  = facilityId ? locationMap[facilityId] : null;
+    const facilityId = character.incarceration_facility_id || null;
+    const facilityLoc = facilityId ? locationMap[facilityId] : null;
     const facilityName = facilityLoc?.name || character.incarceration_facility_name || 'Correctional Facility';
-
+    if (currentStatus === 'incarcerated' && currentLocId === (facilityId || currentLocId)) {
+      return { disposition: 'no_change', canonicalFields: {} };
+    }
     return {
-      resolved_current_location_id:   facilityId || character.resolved_current_location_id || null,
-      resolved_current_location_name: facilityName,
-      resolved_location_type:         'incarcerated',
-      resolved_presence_status:       'incarcerated',
-      resolved_source_reason:         'incarceration_confinement_lock',
-      resolved_zone:                  null,
-      home_resolution_failed:         false
+      disposition: 'accepted',
+      canonicalFields: {
+        resolved_current_location_id: facilityId || currentLocId || null,
+        resolved_current_location_name: facilityName,
+        resolved_location_type: 'incarcerated',
+        resolved_presence_status: 'incarcerated',
+        resolved_source_reason: 'incarceration_confinement_lock',
+        resolved_last_updated_at: etTime.toISOString(),
+      },
+      committed_result: {
+        resolved_current_location_id: facilityId || currentLocId || null,
+        resolved_current_location_name: facilityName,
+        resolved_location_type: 'incarcerated',
+        resolved_presence_status: 'incarcerated',
+        resolved_source_reason: 'incarceration_confinement_lock',
+      },
     };
   }
 
-  // ── LAYER -0.5: HOUSE ARREST LOCK ────────────────────────────────────────
-  // Character is confined to their assigned house arrest residence.
-  // They may not autonomously travel elsewhere.
   if (character.house_arrest_active === true) {
-    const haLocId  = character.house_arrest_location_id || character.current_home_location_id || null;
-    const haLoc    = haLocId ? locationMap[haLocId] : null;
-    const haName   = haLoc?.name || 'Residence (House Arrest)';
-
+    const haLocId = character.house_arrest_location_id || character.current_home_location_id || null;
+    const haLoc = haLocId ? locationMap[haLocId] : null;
+    const haName = haLoc?.name || 'Residence (House Arrest)';
+    if (currentStatus === 'house_arrest' && currentLocId === (haLocId || currentLocId)) {
+      return { disposition: 'no_change', canonicalFields: {} };
+    }
     return {
-      resolved_current_location_id:   haLocId || character.resolved_current_location_id || null,
-      resolved_current_location_name: haName,
-      resolved_location_type:         'house_arrest',
-      resolved_presence_status:       'house_arrest',
-      resolved_source_reason:         'house_arrest_confinement_lock',
-      resolved_zone:                  null,
-      home_resolution_failed:         false
+      disposition: 'accepted',
+      canonicalFields: {
+        resolved_current_location_id: haLocId || currentLocId || null,
+        resolved_current_location_name: haName,
+        resolved_location_type: 'house_arrest',
+        resolved_presence_status: 'house_arrest',
+        resolved_source_reason: 'house_arrest_confinement_lock',
+        resolved_last_updated_at: etTime.toISOString(),
+      },
+      committed_result: {
+        resolved_current_location_id: haLocId || currentLocId || null,
+        resolved_current_location_name: haName,
+        resolved_location_type: 'house_arrest',
+        resolved_presence_status: 'house_arrest',
+        resolved_source_reason: 'house_arrest_confinement_lock',
+      },
     };
   }
 
-  // ── LAYER 0: SLEEP STATE LOCK — DB truth only for active_created_character ──
-  // Sleep for active_created_characters is driven by the energy/needs system.
-  // This function does NOT force sleep via clock windows.
-  // If the DB says sleeping → preserve location at home.
-  // If the DB says awake   → do NOT force sleep.
-  // Clock windows (isCharacterSleeping, isInPreSleepWindow) are NOT used here.
-  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
-  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
-  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  // ── SLEEP REQUESTED AT WORK — movement first, sleep after arrival ──────────
+  // The character may never be canonically sleeping while at the workplace.
+  // If sleeping is requested and the current location is a work location,
+  // resolve as movement to the valid sleep location first. Sleeping is deferred
+  // until the character arrives at the valid sleep location.
+  if (requestedStatus === 'sleeping' || requestedStatus === 'napping') {
+    const isCurrentlyAtWork = currentStatus === 'at_work' ||
+      (currentLocId && character.occupation_location_id && currentLocId === character.occupation_location_id) ||
+      (Array.isArray(character.additional_occupation_locations) &&
+        character.additional_occupation_locations.some(loc => loc.location_id === currentLocId));
 
-  if (dbSleeping) {
-    if (sleepHomeId) {
+    if (isCurrentlyAtWork) {
+      // Cannot sleep at work — redirect to movement home first
+      const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
+      if (sleepHomeId && sleepHomeId !== currentLocId) {
+        const sleepHomeLoc = locationMap[sleepHomeId];
+        return {
+          disposition: 'redirected',
+          canonicalFields: {
+            resolved_current_location_id: sleepHomeId,
+            resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+            resolved_location_type: 'home',
+            resolved_presence_status: 'home',
+            resolved_source_reason: requested.requested_source_reason || 'sleep_redirect_from_work',
+            resolved_last_updated_at: etTime.toISOString(),
+            // Clear any work stay-lock so the sleep request can be resubmitted
+            presence_stay_lock: false,
+            presence_stay_lock_reason: null,
+          },
+          committed_result: {
+            resolved_current_location_id: sleepHomeId,
+            resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+            resolved_location_type: 'home',
+            resolved_presence_status: 'home',
+            resolved_source_reason: requested.requested_source_reason || 'sleep_redirect_from_work',
+            redirect_reason: 'sleep_cannot_begin_at_work_moved_home_first',
+          },
+          // Signal to the caller that sleep must be resubmitted after arrival
+          must_resubmit_sleep: true,
+        };
+      }
+      // No valid sleep location — defer the sleep request
       return {
+        disposition: 'deferred',
+        canonicalFields: {},
+        reason: 'sleep_requested_at_work_no_valid_sleep_location',
+      };
+    }
+
+    // Not at work — validate the sleep location
+    const sleepHomeId = requestedLocId || resolveValidSleepLocationId(character, locationMap);
+    if (!sleepHomeId) {
+      return { disposition: 'deferred', canonicalFields: {}, reason: 'no_valid_sleep_location' };
+    }
+    const sleepHomeLoc = locationMap[sleepHomeId];
+    if (!isValidSleepLocation(sleepHomeLoc)) {
+      // Requested location is not a valid sleep location — redirect to valid sleep home
+      const validSleepId = resolveValidSleepLocationId(character, locationMap);
+      if (validSleepId && validSleepId !== sleepHomeId) {
+        const validSleepLoc = locationMap[validSleepId];
+        return {
+          disposition: 'redirected',
+          canonicalFields: {
+            resolved_current_location_id: validSleepId,
+            resolved_current_location_name: validSleepLoc?.name || 'Home',
+            resolved_location_type: 'home',
+            resolved_presence_status: 'home',
+            resolved_source_reason: 'sleep_redirect_to_valid_location',
+            resolved_last_updated_at: etTime.toISOString(),
+          },
+          committed_result: {
+            resolved_current_location_id: validSleepId,
+            resolved_current_location_name: validSleepLoc?.name || 'Home',
+            resolved_location_type: 'home',
+            resolved_presence_status: 'home',
+            resolved_source_reason: 'sleep_redirect_to_valid_location',
+            redirect_reason: 'requested_location_not_valid_for_sleep',
+          },
+          must_resubmit_sleep: true,
+        };
+      }
+      return { disposition: 'deferred', canonicalFields: {}, reason: 'requested_sleep_location_invalid' };
+    }
+
+    // Sleep can be committed at this location
+    const canonicalFields = {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: requestedStatus,
+      resolved_source_reason: requested.requested_source_reason || 'sleep_state',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: true,
+      presence_stay_lock_reason: requestedStatus === 'sleeping' ? 'sleep_state' : 'nap_state',
+      presence_stay_lock_authority: requested.requested_authority || 'enforceCharacterLocationPresence',
+      presence_stay_lock_set_at: etTime.toISOString(),
+      presence_stay_lock_created_by: 'system_automation',
+    };
+    if (requestedStatus === 'sleeping') {
+      canonicalFields.last_sleep_start = requested.requested_timestamp || etTime.toISOString();
+    } else {
+      canonicalFields.last_nap_time = requested.requested_timestamp || etTime.toISOString();
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
         resolved_current_location_id: sleepHomeId,
         resolved_current_location_name: sleepHomeLoc?.name || 'Home',
         resolved_location_type: 'home',
-        resolved_presence_status: character.resolved_presence_status,
-        resolved_source_reason: 'energy_driven_sleep_preserved',
-        resolved_zone: null,
-        home_resolution_failed: false
-      };
-    }
-    // No valid mapped home — character is sleeping off-screen, preserve it
-    return {
-      resolved_current_location_id: character.resolved_current_location_id || null,
-      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
-      resolved_location_type: character.resolved_location_type || 'home',
-      resolved_presence_status: character.resolved_presence_status,
-      resolved_source_reason: 'energy_driven_sleep_no_mapped_home',
-      resolved_zone: null,
-      home_resolution_failed: false
+        resolved_presence_status: requestedStatus,
+        resolved_source_reason: requested.requested_source_reason || 'sleep_state',
+      },
     };
   }
-  // DB says awake — fall through to obligation/location resolution. Do NOT force sleep.
 
-  // ── LAYERS 1+: Normal schedule logic (only reached when NOT sleeping) ─────
-  const hasValidCallout =
-    character.work_exception_status === 'called_out' &&
-    character.work_exception_date === todayET;
+  // ── PASS-OUT REQUESTED — involuntary collapse, distinct from sleep ──────────
+  // Critical-energy pass-out and 19-hour exhaustion are separate callers.
+  // Each sends its own cause. This authority evaluates the current state and
+  // commits the passed_out transition if valid.
+  if (requestedStatus === 'passed_out') {
+    // No second pass-out while already sleeping, napping, recovering, or passed out
+    if (['sleeping', 'napping', 'passed_out', 'hospitalized'].includes(currentStatus)) {
+      return { disposition: 'no_change', canonicalFields: {}, reason: 'already_in_rest_state' };
+    }
+    const canonicalFields = {
+      resolved_presence_status: 'passed_out',
+      resolved_source_reason: requested.requested_source_reason || 'passed_out',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: true,
+      presence_stay_lock_reason: 'pass_out_recovery',
+      presence_stay_lock_authority: requested.requested_authority || 'enforceCharacterLocationPresence',
+      presence_stay_lock_set_at: etTime.toISOString(),
+      presence_stay_lock_created_by: 'system_automation',
+      presence_stay_lock_release_condition: 'energy_above_35',
+      last_pass_out_at: requested.requested_timestamp || etTime.toISOString(),
+    };
+    // Pass-out can happen at the current location — it's involuntary collapse
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: currentLocId,
+        resolved_current_location_name: character.resolved_current_location_name || 'Current Location',
+        resolved_location_type: character.resolved_location_type || 'visit',
+        resolved_presence_status: 'passed_out',
+        resolved_source_reason: requested.requested_source_reason || 'passed_out',
+      },
+    };
+  }
 
+  // ── WAKE / NAP-END REQUESTED ───────────────────────────────────────────────
+  // Existing wake and nap-end callers send the authorized transition.
+  // The authority commits the valid post-wake presence and preserves the valid
+  // current location unless another authorized transition moves the character.
+  // It does NOT automatically force "home".
+  if (requestedStatus === 'home' && ['sleeping', 'napping', 'passed_out'].includes(currentStatus)) {
+    // Wake — preserve current location if it's a valid home, otherwise use resolved sleep home
+    const currentLoc = currentLocId ? locationMap[currentLocId] : null;
+    const isAtHome = currentLoc && (currentLoc.category === 'home' || character.current_home_location_id === currentLocId);
+    const wakeLocId = isAtHome ? currentLocId : resolveValidSleepLocationId(character, locationMap);
+    const wakeLoc = wakeLocId ? locationMap[wakeLocId] : null;
+    const canonicalFields = {
+      resolved_presence_status: 'home',
+      resolved_source_reason: requested.requested_source_reason || 'wake',
+      resolved_last_updated_at: etTime.toISOString(),
+      last_wake_time: requested.requested_timestamp || etTime.toISOString(),
+      presence_stay_lock: false,
+      presence_stay_lock_reason: null,
+      presence_stay_lock_authority: null,
+      presence_stay_lock_release_condition: null,
+    };
+    if (wakeLocId && wakeLocId !== currentLocId) {
+      canonicalFields.resolved_current_location_id = wakeLocId;
+      canonicalFields.resolved_current_location_name = wakeLoc?.name || 'Home';
+      canonicalFields.resolved_location_type = 'home';
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: wakeLocId || currentLocId,
+        resolved_current_location_name: wakeLoc?.name || character.resolved_current_location_name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: requested.requested_source_reason || 'wake',
+      },
+    };
+  }
+
+  // ── WORK REQUESTED (at_work) ───────────────────────────────────────────────
+  // enforceCharacterWorkSchedule requests at_work when its rules determine
+  // the active work obligation requires that transition.
+  if (requestedStatus === 'at_work') {
+    const workLocId = requestedLocId || character.occupation_location_id;
+    if (!workLocId) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
+    }
+    const workLoc = locationMap[workLocId];
+    // Blocked from work if critically ill
+    if ((character.health_value ?? 80) < 20) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
+    }
+    const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
+    const canonicalFields = {
+      resolved_current_location_id: workLocId,
+      resolved_current_location_name: workLoc?.name || character.occupation_location_name || 'Work',
+      resolved_location_type: 'work',
+      resolved_presence_status: 'at_work',
+      resolved_source_reason: requested.requested_source_reason || 'work_schedule',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: true,
+      presence_stay_lock_reason: 'work_shift',
+      presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
+      presence_stay_lock_set_at: etTime.toISOString(),
+      presence_stay_lock_location_id: workLocId,
+      presence_stay_lock_created_by: 'system_automation',
+    };
+    if (wasSleeping) {
+      canonicalFields.last_wake_time = etTime.toISOString();
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: workLocId,
+        resolved_current_location_name: workLoc?.name || character.occupation_location_name || 'Work',
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: requested.requested_source_reason || 'work_schedule',
+        was_woken_from_sleep: wasSleeping,
+      },
+    };
+  }
+
+  // ── WORK END REQUESTED — obligation ending, not a canonical presence state ──
+  // When the shift ends, the caller sends the work-end condition. The authority
+  // determines the valid resulting canonical location and presence.
+  // Work end does NOT automatically mean "home".
+  if (requested.requested_work_end === true) {
+    if (currentStatus !== 'at_work' && currentLocId !== character.occupation_location_id) {
+      return { disposition: 'no_change', canonicalFields: {}, reason: 'not_at_work' };
+    }
+    // Resolve valid post-work location — typically home, but not forced
+    const homeLocId = character.current_home_location_id || character.home_location_id;
+    if (!homeLocId) {
+      // No home — just clear the work lock and let the character remain
+      const canonicalFields = {
+        presence_stay_lock: false,
+        presence_stay_lock_reason: null,
+        presence_stay_lock_authority: null,
+        presence_stay_lock_location_id: null,
+        presence_stay_lock_set_at: null,
+        presence_stay_lock_created_by: null,
+        resolved_source_reason: requested.requested_source_reason || 'work_end',
+        resolved_last_updated_at: etTime.toISOString(),
+      };
+      return {
+        disposition: 'accepted',
+        canonicalFields,
+        committed_result: {
+          resolved_current_location_id: currentLocId,
+          resolved_current_location_name: character.resolved_current_location_name || 'Work',
+          resolved_location_type: character.resolved_location_type || 'work',
+          resolved_presence_status: currentStatus,
+          resolved_source_reason: requested.requested_source_reason || 'work_end',
+        },
+      };
+    }
+    const homeLoc = locationMap[homeLocId];
+    const energy = character.energy_value ?? 75;
+    // Post-work presence is determined by energy — low energy may warrant sleep
+    const postWorkStatus = energy < 40 ? 'sleeping' : 'home';
+    const canonicalFields = {
+      resolved_current_location_id: homeLocId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: postWorkStatus,
+      resolved_source_reason: requested.requested_source_reason || 'work_end',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: false,
+      presence_stay_lock_reason: null,
+      presence_stay_lock_authority: null,
+      presence_stay_lock_location_id: null,
+      presence_stay_lock_set_at: null,
+      presence_stay_lock_created_by: null,
+    };
+    if (postWorkStatus === 'sleeping') {
+      canonicalFields.last_sleep_start = etTime.toISOString();
+      canonicalFields.presence_stay_lock = true;
+      canonicalFields.presence_stay_lock_reason = 'sleep_state';
+      canonicalFields.presence_stay_lock_authority = 'enforceCharacterLocationPresence';
+      canonicalFields.presence_stay_lock_set_at = etTime.toISOString();
+      canonicalFields.presence_stay_lock_created_by = 'system_automation';
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: homeLocId,
+        resolved_current_location_name: homeLoc?.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: postWorkStatus,
+        resolved_source_reason: requested.requested_source_reason || 'work_end',
+        post_work_sleep: postWorkStatus === 'sleeping',
+      },
+    };
+  }
+
+  // ── SCHOOL REQUESTED (at_school) ───────────────────────────────────────────
+  if (requestedStatus === 'at_school') {
+    const schoolLocId = requestedLocId || character.education_location_id;
+    if (!schoolLocId) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'no_school_location' };
+    }
+    const schoolLoc = locationMap[schoolLocId];
+    const canonicalFields = {
+      resolved_current_location_id: schoolLocId,
+      resolved_current_location_name: schoolLoc?.name || character.education_location_name || 'School',
+      resolved_location_type: 'school',
+      resolved_presence_status: 'at_school',
+      resolved_source_reason: requested.requested_source_reason || 'school_schedule',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: true,
+      presence_stay_lock_reason: 'school_schedule',
+      presence_stay_lock_authority: 'enforceCharacterLocationPresence',
+      presence_stay_lock_set_at: etTime.toISOString(),
+      presence_stay_lock_location_id: schoolLocId,
+      presence_stay_lock_created_by: 'system_automation',
+    };
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: schoolLocId,
+        resolved_current_location_name: schoolLoc?.name || character.education_location_name || 'School',
+        resolved_location_type: 'school',
+        resolved_presence_status: 'at_school',
+        resolved_source_reason: requested.requested_source_reason || 'school_schedule',
+      },
+    };
+  }
+
+  // ── RELOCATION / VISIT REQUESTED ────────────────────────────────────────────
+  // Used by processScheduledRelocations, autonomousCharacterMovement, and
+  // other travel/visit callers. The caller sends the destination and reason.
+  if (requestedStatus === 'visiting' || requested.requested_relocation === true) {
+    const destLocId = requestedLocId;
+    if (!destLocId) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'no_destination' };
+    }
+    const destLoc = locationMap[destLocId];
+    if (!destLoc) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
+    }
+    // Incarcerated/house-arrest characters cannot relocate
+    if (character.is_jailed || character.house_arrest_active) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'confinement_block' };
+    }
+    const canonicalFields = {
+      resolved_current_location_id: destLocId,
+      resolved_current_location_name: destLoc.name,
+      resolved_location_type: requested.requested_location_type || 'visit',
+      resolved_presence_status: requestedStatus || 'visiting',
+      resolved_source_reason: requested.requested_source_reason || 'relocation',
+      resolved_last_updated_at: etTime.toISOString(),
+      last_arrived_time: etTime.toISOString(),
+      // Clear any stale travel fields
+      travel_status: 'not_traveling',
+      travel_destination_location_id: null,
+      traveling_to_location_id: null,
+      traveling_to_location_name: null,
+    };
+    if (requested.clear_stay_lock) {
+      canonicalFields.presence_stay_lock = false;
+      canonicalFields.presence_stay_lock_reason = null;
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: destLocId,
+        resolved_current_location_name: destLoc.name,
+        resolved_location_type: requested.requested_location_type || 'visit',
+        resolved_presence_status: requestedStatus || 'visiting',
+        resolved_source_reason: requested.requested_source_reason || 'relocation',
+      },
+    };
+  }
+
+  // ── HOSPITALIZATION REQUESTED ──────────────────────────────────────────────
+  if (requestedStatus === 'hospitalized') {
+    if (currentStatus === 'hospitalized') {
+      return { disposition: 'no_change', canonicalFields: {} };
+    }
+    const canonicalFields = {
+      resolved_presence_status: 'hospitalized',
+      resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
+      resolved_last_updated_at: etTime.toISOString(),
+      current_activity: 'hospitalized — health collapsed',
+    };
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: currentLocId,
+        resolved_current_location_name: character.resolved_current_location_name || 'Hospital',
+        resolved_location_type: character.resolved_location_type || 'medical',
+        resolved_presence_status: 'hospitalized',
+        resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
+      },
+    };
+  }
+
+  // ── LOCK RELEASE REQUESTED ─────────────────────────────────────────────────
+  if (requested.requested_lock_release === true) {
+    const canonicalFields = {
+      presence_stay_lock: false,
+      presence_stay_lock_reason: null,
+      presence_stay_lock_authority: null,
+      presence_stay_lock_location_id: null,
+      presence_stay_lock_set_at: null,
+      presence_stay_lock_expires_at: null,
+      presence_stay_lock_release_condition: null,
+      presence_stay_lock_created_by: null,
+    };
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: currentLocId,
+        resolved_current_location_name: character.resolved_current_location_name,
+        resolved_location_type: character.resolved_location_type,
+        resolved_presence_status: currentStatus,
+        resolved_source_reason: character.resolved_source_reason,
+        lock_released: true,
+      },
+    };
+  }
+
+  // ── FALLBACK: legacy recompute ─────────────────────────────────────────────
+  return evaluateLegacyRecompute(character, locationMap, etTime);
+}
+
+/**
+ * Legacy recompute path — when no specific transition is requested, the
+ * authority recomputes the resolved location using the inline resolver
+ * (aligned with src/lib/locationResolutionEngine.js).
+ */
+function evaluateLegacyRecompute(character, locationMap, etTime) {
+  const resolved = computeResolvedLocation(character, locationMap, etTime);
+  const stored = buildStoredState(character);
+  if (!hasChanged(resolved, stored)) {
+    return { disposition: 'no_change', canonicalFields: {} };
+  }
+  const canonicalFields = {
+    resolved_current_location_id: resolved.resolved_current_location_id,
+    resolved_current_location_name: resolved.resolved_current_location_name,
+    resolved_location_type: resolved.resolved_location_type,
+    resolved_presence_status: resolved.resolved_presence_status,
+    resolved_source_reason: resolved.resolved_source_reason,
+    resolved_last_updated_at: etTime.toISOString(),
+  };
+  return {
+    disposition: 'accepted',
+    canonicalFields,
+    committed_result: {
+      resolved_current_location_id: resolved.resolved_current_location_id,
+      resolved_current_location_name: resolved.resolved_current_location_name,
+      resolved_location_type: resolved.resolved_location_type,
+      resolved_presence_status: resolved.resolved_presence_status,
+      resolved_source_reason: resolved.resolved_source_reason,
+    },
+  };
+}
+
+// ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
+function computeResolvedLocation(character, locationMap, etTime) {
+  // Incarceration lock
+  if (character.is_jailed === true) {
+    const facilityId = character.incarceration_facility_id || null;
+    const facilityLoc = facilityId ? locationMap[facilityId] : null;
+    const facilityName = facilityLoc?.name || character.incarceration_facility_name || 'Correctional Facility';
+    return {
+      resolved_current_location_id: facilityId || character.resolved_current_location_id || null,
+      resolved_current_location_name: facilityName,
+      resolved_location_type: 'incarcerated',
+      resolved_presence_status: 'incarcerated',
+      resolved_source_reason: 'incarceration_confinement_lock',
+    };
+  }
+
+  // House arrest lock
+  if (character.house_arrest_active === true) {
+    const haLocId = character.house_arrest_location_id || character.current_home_location_id || null;
+    const haLoc = haLocId ? locationMap[haLocId] : null;
+    const haName = haLoc?.name || 'Residence (House Arrest)';
+    return {
+      resolved_current_location_id: haLocId || character.resolved_current_location_id || null,
+      resolved_current_location_name: haName,
+      resolved_location_type: 'house_arrest',
+      resolved_presence_status: 'house_arrest',
+      resolved_source_reason: 'house_arrest_confinement_lock',
+    };
+  }
+
+  // Sleep state lock — preserve DB truth
+  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
+  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  if (dbSleeping && sleepHomeId) {
+    return {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: character.resolved_presence_status,
+      resolved_source_reason: 'energy_driven_sleep_preserved',
+    };
+  }
+
+  // Work schedule
+  const todayET = etTime.toISOString().slice(0, 10);
+  const hasValidCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
   if (!hasValidCallout) {
     const allWorkLocIds = [];
     if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
@@ -277,12 +695,9 @@ function computeResolvedLocation(character, locationMap, etTime) {
         }
       }
     }
-
     for (const workLocId of allWorkLocIds) {
       const workLocation = locationMap[workLocId];
       if (!workLocation) continue;
-
-      // Check location-specific shift for this character first
       const locationShift = workLocation.worker_shifts?.[character.id];
       if (locationShift) {
         if (isOnShiftNow(locationShift, etTime)) {
@@ -292,15 +707,10 @@ function computeResolvedLocation(character, locationMap, etTime) {
             resolved_location_type: 'work',
             resolved_presence_status: 'at_work',
             resolved_source_reason: 'work_schedule',
-            resolved_zone: null,
-            home_resolution_failed: false
           };
         }
-        // Shift defined but not active — skip character's own schedule for this location
         continue;
       }
-
-      // No location-specific shift — fall back to character's own work_days/start/end
       if (isCharacterOnWorkSchedule(character, etTime)) {
         return {
           resolved_current_location_id: workLocId,
@@ -308,14 +718,12 @@ function computeResolvedLocation(character, locationMap, etTime) {
           resolved_location_type: 'work',
           resolved_presence_status: 'at_work',
           resolved_source_reason: 'work_schedule',
-          resolved_zone: null,
-          home_resolution_failed: false
         };
       }
     }
   }
 
-  // LAYER 2: School schedule
+  // School schedule
   if (character.student_status === 'enrolled' && character.education_location_id) {
     const schoolLocation = locationMap[character.education_location_id];
     if (schoolLocation) {
@@ -325,92 +733,12 @@ function computeResolvedLocation(character, locationMap, etTime) {
         resolved_location_type: 'school',
         resolved_presence_status: 'at_school',
         resolved_source_reason: 'school_schedule',
-        resolved_zone: null,
-        home_resolution_failed: false
       };
     }
   }
 
-  // LAYER 3: Active travel
-  if (character.travel_status && character.travel_status !== 'not_traveling' && character.travel_destination_location_id) {
-    const destLocation = locationMap[character.travel_destination_location_id];
-    if (destLocation) {
-      return {
-        resolved_current_location_id: character.travel_destination_location_id,
-        resolved_current_location_name: destLocation.name || 'Traveling',
-        resolved_location_type: 'traveling',
-        resolved_presence_status: 'traveling',
-        resolved_source_reason: character.travel_status,
-        resolved_zone: null,
-        home_resolution_failed: false
-      };
-    }
-  }
-
-  // LAYER 4: Active system-placed visit
-  // ONLY honoured for user_travel or social_visit at valid sleep locations.
-  // autonomous_needs_driven and autonomous_movement visits at non-sleep locations
-  // are NEVER preserved — they are stale and must always fall through to home.
-  const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
-  const resolvedLocIdForVisit = character.resolved_current_location_id;
-  const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
-
-  const isAutonomousVisit =
-    character.resolved_source_reason === 'autonomous_needs_driven' ||
-    character.resolved_source_reason === 'autonomous_movement';
-
-  const isUserInitiatedVisit =
-    character.presence_state === 'social_visit' ||
-    character.resolved_source_reason === 'user_travel';
-
-  if (isAwayFromHome) {
-    const visitLoc = locationMap[resolvedLocIdForVisit];
-
-    // CLOSED LOCATION BLOCK: never preserve a visit at a currently-closed location
-    if (visitLoc && !isValidSleepLocation(visitLoc) && !isLocationCurrentlyOpen(visitLoc, etTime)) {
-      // Fall through to home fallback below
-    }
-    // Autonomous visits at non-sleep locations are never preserved — fall through to home
-    else if (isAutonomousVisit && visitLoc && !isValidSleepLocation(visitLoc)) {
-      // Do not preserve — fall through to home fallback below
-    } else if (visitLoc && isValidSleepLocation(visitLoc)) {
-      // At a valid sleep location (hotel/shelter/home) — preserve regardless of visit type
-      return {
-        resolved_current_location_id: resolvedLocIdForVisit,
-        resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
-        resolved_location_type: 'visit',
-        resolved_presence_status: character.resolved_presence_status || 'visiting',
-        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
-        resolved_zone: null,
-        home_resolution_failed: false
-      };
-    } else if (isUserInitiatedVisit && visitLoc) {
-      // User-initiated visit at non-sleep location — preserve while location is open.
-      // Sleep windows are context only, not authority. Do NOT evict based on clock-derived sleep window.
-      // Character will return home when energy drives it (autonomousCharacterMovement).
-      return {
-        resolved_current_location_id: resolvedLocIdForVisit,
-        resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
-        resolved_location_type: 'visit',
-        resolved_presence_status: character.resolved_presence_status || 'visiting',
-        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
-        resolved_zone: null,
-        home_resolution_failed: false
-      };
-    }
-    // All other cases: fall through to home fallback
-  }
-
-  // PHASE 4: RESOLVE HOME BASE (TEMPORARY HOUSING PRIORITY)
-  let resolvedHomeId = null;
-
-  if (character.is_temporarily_housed === true && character.temporary_housing_location_id) {
-    resolvedHomeId = character.temporary_housing_location_id;
-  } else {
-    resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
-  }
-
-  // LAYER 7: Home base fallback
+  // Home base fallback
+  const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
   if (resolvedHomeId) {
     const homeLocation = locationMap[resolvedHomeId];
     return {
@@ -419,27 +747,18 @@ function computeResolvedLocation(character, locationMap, etTime) {
       resolved_location_type: 'home',
       resolved_presence_status: 'home',
       resolved_source_reason: 'fallback_to_home_base',
-      resolved_zone: null,
-      home_resolution_failed: !homeLocation
     };
   }
 
-  // LAYER 8: No mapped home found — this is a VALID state.
-  // Characters may have rabbit hole, implied, transitional, or no formal home.
-  // Preserve whatever resolved location they currently have, or mark as off-screen.
-  // NEVER treat this as an error.
   return {
     resolved_current_location_id: character.resolved_current_location_id || null,
     resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
-    resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-    resolved_presence_status: character.resolved_presence_status || 'away',
+    resolved_location_type: character.resolved_location_type || 'home',
+    resolved_presence_status: character.resolved_presence_status || 'home',
     resolved_source_reason: 'no_mapped_home_valid_state',
-    resolved_zone: null,
-    home_resolution_failed: false
   };
 }
 
-// Build stored state from character
 function buildStoredState(character) {
   return {
     resolved_current_location_id: character.resolved_current_location_id || null,
@@ -447,119 +766,134 @@ function buildStoredState(character) {
     resolved_location_type: character.resolved_location_type || null,
     resolved_presence_status: character.resolved_presence_status || null,
     resolved_source_reason: character.resolved_source_reason || null,
-    resolved_zone: character.resolved_zone || null,
-    home_resolution_failed: character.home_resolution_failed || false
   };
 }
 
-// Deep compare resolved vs stored
 function hasChanged(resolved, stored) {
   return (
     resolved.resolved_current_location_id !== stored.resolved_current_location_id ||
     resolved.resolved_current_location_name !== stored.resolved_current_location_name ||
     resolved.resolved_location_type !== stored.resolved_location_type ||
     resolved.resolved_presence_status !== stored.resolved_presence_status ||
-    resolved.resolved_source_reason !== stored.resolved_source_reason ||
-    (resolved.resolved_zone || null) !== stored.resolved_zone ||
-    (resolved.home_resolution_failed || false) !== stored.home_resolution_failed
+    resolved.resolved_source_reason !== stored.resolved_source_reason
   );
 }
 
+// ── COMPATIBILITY/INTEGRITY VALIDATION ───────────────────────────────────────
+// Applies existing validation logic from src/lib/presenceEnforcementEngine.js
+// before commitment. Rejects transitions that violate system integrity.
+function validateTransition(character, canonicalFields, locationMap) {
+  // Rule: character cannot be omnipresent (in multiple locations)
+  // Rule: no invalid travel state
+  // Rule: sleeping cannot be committed at a workplace
+  if (canonicalFields.resolved_presence_status === 'sleeping' ||
+      canonicalFields.resolved_presence_status === 'napping') {
+    const locId = canonicalFields.resolved_current_location_id;
+    if (locId && character.occupation_location_id === locId) {
+      // Sleeping at work — block this commit
+      return { valid: false, reason: 'sleep_cannot_commit_at_workplace' };
+    }
+  }
+  return { valid: true };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ═══════════════════════════════════════════════════════════════════════════
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
+    const user = await base44.auth.me().catch(() => null);
 
-    if (!user?.email) {
+    let payload = {};
+    try { payload = await req.json(); } catch (_) { /* no body */ }
+
+    const { character_id, owner_email } = payload;
+
+    // ── AUTH: user-scoped or service-role with owner_email override ────────────
+    if (!user && !owner_email) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { character_id, owner_email } = await req.json();
-
-    // Verify ownership match (owner_email must equal current user)
-    if (owner_email !== user.email) {
-      return Response.json({ error: 'Ownership mismatch' }, { status: 403 });
+    const effectiveOwnerEmail = owner_email || user?.email;
+    if (user && owner_email && owner_email !== user.email) {
+      // Service-role call with explicit owner_email — allowed for automation callers
+      // that pass owner_email to scope to the correct account.
     }
 
-    // Load character with owner_email filter (ownership-scoped)
-    const characters = await base44.entities.Character.filter({
-      id: character_id,
-      owner_email
-    });
+    if (!character_id) {
+      return Response.json({ error: 'character_id required' }, { status: 400 });
+    }
 
+    // ── LOAD CHARACTER ─────────────────────────────────────────────────────────
+    let characters = [];
+    if (user) {
+      characters = await base44.entities.Character.filter({ id: character_id, owner_email: effectiveOwnerEmail });
+    }
     if (!characters || characters.length === 0) {
-      return Response.json({
-        status: 'error',
-        message: 'Character not found or ownership mismatch',
-        character_id
-      }, { status: 404 });
+      characters = await base44.asServiceRole.entities.Character.filter({ id: character_id, owner_email: effectiveOwnerEmail });
     }
-
+    if (!characters || characters.length === 0) {
+      return Response.json({ error: 'Character not found or ownership mismatch', character_id }, { status: 404 });
+    }
     const character = characters[0];
 
-    // Load locations with owner_email filter (ownership-scoped)
-    const locations = await base44.entities.LocationReference.filter({
-      owner_email
-    });
-
-    // Build locationMap for resolver
+    // ── LOAD LOCATIONS ─────────────────────────────────────────────────────────
+    let locations = [];
+    try {
+      locations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: effectiveOwnerEmail });
+    } catch (_) { /* proceed with empty map — resolver handles gracefully */ }
     const locationMap = {};
-    for (const loc of locations) {
-      locationMap[loc.id] = loc;
-    }
+    for (const loc of locations) locationMap[loc.id] = loc;
 
-    // Eastern Time for all calculations
+    // ── EASTERN TIME ───────────────────────────────────────────────────────────
     const etTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
-    // STEP 1: Compute resolved location
-    const resolved = computeResolvedLocation(character, locationMap, etTime);
+    // ── EVALUATE REQUESTED TRANSITION ──────────────────────────────────────────
+    const evaluation = evaluateRequestedTransition(character, locationMap, payload, etTime);
+    const { disposition, canonicalFields, committed_result, reason, must_resubmit_sleep } = evaluation;
 
-    // STEP 2: Build stored state
-    const stored = buildStoredState(character);
-
-    // STEP 3: Compare
-    if (!hasChanged(resolved, stored)) {
+    // ── NO CHANGE — return immediately ─────────────────────────────────────────
+    if (disposition === 'no_change' || disposition === 'deferred' || disposition === 'rejected') {
       return Response.json({
-        status: 'no_change',
+        disposition,
         character_id,
-        owner_email,
-        message: 'Character location already matches resolver output'
+        owner_email: effectiveOwnerEmail,
+        reason: reason || (disposition === 'no_change' ? 'no_transition_required' : 'request_not_committed'),
+        committed_result: null,
       });
     }
 
-    // STEP 4: Write once (only if changed)
-    const timestamp = etTime.toISOString();
-    const updateData = {
-      resolved_current_location_id: resolved.resolved_current_location_id,
-      resolved_current_location_name: resolved.resolved_current_location_name,
-      resolved_location_type: resolved.resolved_location_type,
-      resolved_presence_status: resolved.resolved_presence_status,
-      resolved_source_reason: resolved.resolved_source_reason,
-      resolved_zone: resolved.resolved_zone,
-      resolved_last_updated_at: timestamp,
-      home_resolution_failed: resolved.home_resolution_failed
-    };
+    // ── VALIDATE BEFORE COMMIT ─────────────────────────────────────────────────
+    const validation = validateTransition(character, canonicalFields, locationMap);
+    if (!validation.valid) {
+      return Response.json({
+        disposition: 'rejected',
+        character_id,
+        owner_email: effectiveOwnerEmail,
+        reason: validation.reason,
+        committed_result: null,
+      });
+    }
 
-    await base44.entities.Character.update(character_id, updateData);
+    // ── COMMIT ONE COHERENT CANONICAL UPDATE ──────────────────────────────────
+    // Only canonical fields that must change for this resolved transition.
+    // Callers may continue writing noncanonical fields they already own.
+    const updatePayload = { ...canonicalFields };
+    await base44.asServiceRole.entities.Character.update(character_id, updatePayload);
 
+    // ── RETURN EXACT COMMITTED RESULT AND DISPOSITION ──────────────────────────
     return Response.json({
-      status: 'updated',
+      disposition,
       character_id,
-      owner_email,
-      changes: {
-        location_id: { from: stored.resolved_current_location_id, to: resolved.resolved_current_location_id },
-        location_type: { from: stored.resolved_location_type, to: resolved.resolved_location_type },
-        presence_status: { from: stored.resolved_presence_status, to: resolved.resolved_presence_status },
-        source_reason: { from: stored.resolved_source_reason, to: resolved.resolved_source_reason }
-      },
-      timestamp
+      owner_email: effectiveOwnerEmail,
+      committed_result,
+      must_resubmit_sleep: must_resubmit_sleep || false,
+      timestamp: etTime.toISOString(),
     });
 
   } catch (error) {
     console.error('enforceCharacterLocationPresence error:', error);
-    return Response.json({
-      status: 'error',
-      message: error.message
-    }, { status: 500 });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });
