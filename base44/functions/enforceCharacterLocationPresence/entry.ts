@@ -100,7 +100,16 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   const requestedLocId = requested.requested_location_id || null;
 
   // ── NO TRANSITION REQUESTED — recompute location truth (legacy path) ────────
-  if (!requestedStatus && !requestedLocId) {
+  // Only fall through to legacy recompute when NO request field is present at all.
+  // Special request flags (requested_work_end, requested_lock_release, requested_relocation)
+  // carry no requestedStatus/requestedLocId and must NOT be swallowed by this guard.
+  const hasAnyRequest =
+    !!requestedStatus ||
+    !!requestedLocId ||
+    requested.requested_work_end === true ||
+    requested.requested_lock_release === true ||
+    requested.requested_relocation === true;
+  if (!hasAnyRequest) {
     return evaluateLegacyRecompute(character, locationMap, etTime);
   }
 
