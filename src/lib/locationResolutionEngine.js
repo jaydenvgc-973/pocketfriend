@@ -100,6 +100,23 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     // Clear the stale resolved fields from local view so layers don't read them.
   }
 
+  // HOSPITALIZATION GUARD: a hospitalized character is physically at the hospital
+  // already committed by the authority (resolved_current_location_id). The
+  // schedule/visit/home layers below must NOT re-resolve a hospitalized character
+  // back to home, work, or school — that is the "Home — Hospitalized" violation.
+  // Preserve the committed hospital state so every surface agrees. This mirrors
+  // the existing confinement handling for incarcerated/house_arrest above.
+  if (character.resolved_presence_status === 'hospitalized') {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id || null,
+      resolved_current_location_name: character.resolved_current_location_name || 'Hospital',
+      resolved_location_type: character.resolved_location_type || 'medical',
+      resolved_presence_status: 'hospitalized',
+      resolved_source_reason: character.resolved_source_reason || 'medical_emergency',
+      resolved_zone: null,
+    };
+  }
+
   // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
   // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
   // This is the ONLY gate between Presence Truth and Schedule Truth.

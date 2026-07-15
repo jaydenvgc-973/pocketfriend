@@ -1253,6 +1253,29 @@ Deno.serve(async (req) => {
           });
         }
 
+        // RC3b: Hospital discharge — the medical crisis that caused hospitalization
+        // has cleared. Uses the existing HEALTH_ER threshold (the inverse of the RC3
+        // admission condition) and the existing COMPOUND_CRISIS threshold — no new
+        // threshold or formula. Routes home through the authority's existing
+        // home/wake transition (the travel/location transition that sends the
+        // character home from the hospital), which records a hospitalized_end
+        // transition via the existing transition system. The discharge LifeEvent
+        // is written through the existing Recent Activity system. No instant
+        // refill — recovery already happened via the hospitalized context rates
+        // over elapsed time. A character still in a compound crisis is NOT
+        // discharged and remains hospitalized.
+        if (char.resolved_presence_status === 'hospitalized' && newNeeds.health > T.HEALTH_ER) {
+          const _dischCritical = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental].filter(v => v < 20).length;
+          if (_dischCritical < T.COMPOUND_CRISIS) {
+            transitionCandidates.push({
+              priority: 1,
+              payload: { resolved_presence_status: 'home', current_activity: '' },
+              transition: { transition_type: 'hospitalized_end', from_status: 'hospitalized', to_status: 'home', authority: 'energy_medical', reason: 'Medical crisis resolved — discharged and sent home.' },
+              consequence: { type: 'hospital_discharge' },
+            });
+          }
+        }
+
         // RC4: compound crisis — 3+ needs below 20 (PRESERVED — separate cause from exhaustion)
         const criticalNeeds = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental].filter(v => v < T.HUNGER_CRITICAL).length;
         if (criticalNeeds >= T.COMPOUND_CRISIS
@@ -1439,6 +1462,8 @@ Deno.serve(async (req) => {
             if (c.type === 'er_escalation') {
               await base44.entities.ScheduledEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_emergency', title: 'Emergency hospitalization', description: `${charName} was hospitalized due to critical health collapse (health: ${c.healthValue}).`, scheduled_time: nowIso, status: 'active', owner_email: ownerEmail });
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Emergency hospitalization', description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`, emotional_impact: 'critical medical event', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'] });
+            } else if (c.type === 'hospital_discharge') {
+              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Discharged from hospital', description: `${charName} recovered enough to leave the hospital and was sent home.`, emotional_impact: 'relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['hospitalized_end', 'discharge', 'sent_home'] });
             } else if (c.type === 'compound_crisis') {
               await base44.entities.ScheduledEvent.create({ character_id: char.id, character_name: charName, event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest', description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold.`, scheduled_time: nowIso, status: 'active', owner_email: ownerEmail });
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Compound crisis — forced rest', description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical.`, emotional_impact: 'physical collapse', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['compound_crisis'] });

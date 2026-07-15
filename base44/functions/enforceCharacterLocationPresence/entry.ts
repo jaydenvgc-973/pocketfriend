@@ -324,7 +324,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   // The authority commits the valid post-wake presence and preserves the valid
   // current location unless another authorized transition moves the character.
   // It does NOT automatically force "home".
-  if (requestedStatus === 'home' && ['sleeping', 'napping', 'passed_out'].includes(currentStatus)) {
+  if (requestedStatus === 'home' && ['sleeping', 'napping', 'passed_out', 'hospitalized'].includes(currentStatus)) {
     // Wake — preserve current location if it's a valid home, otherwise use resolved sleep home
     const currentLoc = currentLocId ? locationMap[currentLocId] : null;
     const isAtHome = currentLoc && (currentLoc.category === 'home' || character.current_home_location_id === currentLocId);
@@ -557,9 +557,22 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   }
 
   // ── HOSPITALIZATION REQUESTED ──────────────────────────────────────────────
+  // A medical crisis uses the existing travel/admission path: the character is
+  // physically moved to the hospital already listed in the app — the existing
+  // medical-category location (the same convention autonomousCharacterMovement
+  // uses to identify hospitals). The committed result carries the hospital as
+  // the authoritative location so homepage, Travel, Chat, and Text all agree;
+  // no surface shows home while another shows hospital. No status bars are
+  // refilled here — recovery is progressive via the hospitalized context rates.
   if (requestedStatus === 'hospitalized') {
     if (currentStatus === 'hospitalized') {
       return { disposition: 'no_change', canonicalFields: {} };
+    }
+    let hospitalLocId = requestedLocId || null;
+    let hospitalLoc = hospitalLocId ? locationMap[hospitalLocId] : null;
+    if (!hospitalLoc || (hospitalLoc.category || '').toLowerCase() !== 'medical') {
+      const medLoc = Object.values(locationMap).find(l => (l.category || '').toLowerCase() === 'medical');
+      if (medLoc) { hospitalLoc = medLoc; hospitalLocId = medLoc.id; }
     }
     const canonicalFields = {
       resolved_presence_status: 'hospitalized',
@@ -567,13 +580,18 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       resolved_last_updated_at: etTime.toISOString(),
       current_activity: 'hospitalized — health collapsed',
     };
+    if (hospitalLocId) {
+      canonicalFields.resolved_current_location_id = hospitalLocId;
+      canonicalFields.resolved_current_location_name = hospitalLoc?.name || 'Hospital';
+      canonicalFields.resolved_location_type = 'medical';
+    }
     return {
       disposition: 'accepted',
       canonicalFields,
       committed_result: {
-        resolved_current_location_id: currentLocId,
-        resolved_current_location_name: character.resolved_current_location_name || 'Hospital',
-        resolved_location_type: character.resolved_location_type || 'medical',
+        resolved_current_location_id: hospitalLocId || currentLocId,
+        resolved_current_location_name: hospitalLoc?.name || character.resolved_current_location_name || 'Hospital',
+        resolved_location_type: hospitalLocId ? 'medical' : (character.resolved_location_type || 'medical'),
         resolved_presence_status: 'hospitalized',
         resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       },
