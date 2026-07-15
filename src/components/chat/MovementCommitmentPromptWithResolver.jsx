@@ -78,37 +78,11 @@ export default function MovementCommitmentPromptWithResolver({
     doResolve();
   }, [rawDestination, recentMessages, currentCharacter]);
 
-  // ALL hooks must be declared before any early returns
-  useEffect(() => {
-    if (resolving || error) return;
-    if (!resolutionResult?.location_id) return;
-    if (resolutionResult?.confidence < 0.85) return;
-    if (resolutionResult?.requires_disambiguation) return;
-    const timer = setTimeout(async () => {
-      try {
-        // Pass all character fields from the already-loaded context — no backend lookup needed
-        const response = await base44.functions.invoke('confirmMovementCommitment', {
-          character_id: characterId,
-          character_name: currentCharacter?.name || characterName,
-          character_current_location_id: currentCharacter?.resolved_current_location_id || null,
-          character_current_location_name: currentCharacter?.resolved_current_location_name || null,
-          destination_location_id: resolutionResult.location_id,
-          destination_name: resolutionResult.location_name,
-          scheduled_arrival_time: scheduledTime,
-          conversation_id: conversationId,
-          message_id: messageId,
-          travel_reason: `${characterName} committed to arriving at ${resolutionResult.location_name}`,
-        });
-        if (response?.data?.success) {
-          console.log('[MOVEMENT_COMMITMENT] Auto-confirmed:', response.data);
-          onConfirm(response.data);
-        }
-      } catch (err) {
-        console.warn('[MOVEMENT_COMMITMENT] Auto-confirm failed:', err.message);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [resolving, error, resolutionResult]); // eslint-disable-line
+  // The relocation is created ONLY when the user presses "Yes, Schedule It" in the
+  // prompt below. The resolver prefill is NOT an auto-commitment: it only suggests a
+  // destination. "Not Now" must create nothing, and exactly one relocation is created
+  // per user confirmation. Auto-confirming from resolver confidence made the modal
+  // decorative and bypassed the user's choice — removed.
 
   // Early returns AFTER all hooks
   if (resolving) {
