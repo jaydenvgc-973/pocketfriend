@@ -308,7 +308,7 @@ function buildClothingAwarenessContextInline(observingCharacter, coPresent = [],
 
 // ── WARDROBE / CLOSET AWARENESS BLOCK ────────────────────────────────────────
 // Profile knowledge, not memory. Characters know what they own without retrieval.
-function buildWardrobeAwarenessBlock(character, resolvedOutfits) {
+function buildWardrobeAwarenessBlock(character, resolvedOutfit) {
   if (!character) return '';
 
   const closet = character.character_closet || [];
@@ -316,15 +316,16 @@ function buildWardrobeAwarenessBlock(character, resolvedOutfits) {
   const hasCloset = closet.some(item => item.outfit_id);
   const rotationEnabled = character.outfit_rotation_enabled !== false;
 
-    if (!hasCloset && !currentOutfit) return '';
+  // No closet and no manual outfit → clothing awareness is simply inactive.
+  // Do nothing. No error, no fallback wardrobe, no invented outfit.
+  if (!hasCloset && !currentOutfit) return '';
 
   const lines = [];
   lines.push('WARDROBE — YOUR CLOTHING AND OUTFITS (profile knowledge — you know this without being told)');
 
-  // Pre-compute outfits array at function scope (needed by both closet listing and rotation awareness)
   const outfits = closet.filter(item => item.type === 'outfit' || item.outfit_id);
 
-  // ── Closet contents ──
+  // ── Closet contents (profile knowledge — what they own) ──
   if (hasCloset) {
     lines.push('');
     lines.push('YOUR CLOSET CONTENTS:');
@@ -357,44 +358,22 @@ function buildWardrobeAwarenessBlock(character, resolvedOutfits) {
     }
   }
 
-  // ── Current + planned outfit (from the EXISTING outfit authority) ──
-  // resolvedOutfits comes from resolveCharacterOutfitContext (the single outfit
-  // authority used by image generation). This does NOT recompute rotation,
-  // category chains, override handling, or pool selection — it consumes the same
-  // production result so Chat, Text, and image prompts agree on one outfit.
-  // Rotation ON → Today's Rotation is authoritative. Rotation OFF → the authority
-  // returns the manual current_outfit (existing behavior preserved below).
-  const cur = resolvedOutfits?.current || null;
+  // ── Current outfit — reads the EXISTING Today's Rotation result ──
+  // resolvedOutfit is the single result from resolveCharacterOutfitContext — the
+  // same authority image generation and the visible Today's Rotation use. Chat,
+  // Text, and images therefore agree on one outfit. This does not recompute
+  // rotation, pick categories, or aggregate multiple lookups.
   if (rotationEnabled) {
-    if (cur?.text) {
-      lines.push(`\nCURRENT OUTFIT (TODAY'S ROTATION — AUTHORITATIVE): ${cur.text}${cur.category ? ` [${cur.category.replace(/_/g, ' ')}]` : ''}`);
-      lines.push('This is what you are wearing RIGHT NOW. Outfit rotation is ON — this outfit was assigned for today by your rotation (including any today-override you chose). You know exactly what you have on.');
+    if (resolvedOutfit?.text) {
+      lines.push(`\nCURRENT OUTFIT (TODAY'S ROTATION — AUTHORITATIVE): ${resolvedOutfit.text}${resolvedOutfit.category ? ` [${resolvedOutfit.category.replace(/_/g, ' ')}]` : ''}`);
+      lines.push("This is what you are wearing RIGHT NOW. Outfit rotation is ON — this outfit was assigned for today by your rotation (including any today-override you chose). You know exactly what you have on.");
       lines.push("When asked what you are wearing today, what you have on, or what outfit you are wearing — describe THIS outfit. Do NOT answer from the general closet, do NOT randomly pick another outfit, do NOT describe a different day's outfit, and NEVER claim you do not know what you are wearing. Today's Rotation already decided this — just report it.");
-
-      // ── Planned outfits for other contexts today (from the same authority) ──
-      const home = resolvedOutfits?.home || null;
-      const work = resolvedOutfits?.work || null;
-      const planned = [];
-      if (home?.text && home.text !== cur.text) {
-        planned.push(`Home / around the house: ${home.text}${home.category ? ` [${home.category.replace(/_/g, ' ')}]` : ''}`);
-      }
-      if (work?.text && work.text !== cur.text) {
-        planned.push(`Work${work.source === 'uniform' ? ' (required uniform)' : ''}: ${work.text}${work.category ? ` [${work.category.replace(/_/g, ' ')}]` : ''}`);
-      }
-      if (planned.length > 0) {
-        lines.push(`\nTODAY'S ROTATION — PLANNED OUTFITS (what you have picked out for other activities today):`);
-        for (const p of planned) lines.push(`• ${p}`);
-        lines.push("If asked what you plan to wear today, what you have picked out, what you are going to wear later, what you are wearing to work, or what you are changing into — answer from the assignment above that matches the requested context. These are your planned outfits for today; you already know them.");
-        lines.push(`For a context not listed above (such as going out tonight, a special occasion, or daily wear), answer from the outfit in the matching category of your closet (listed below) that Today's Rotation assigned for today. Today's Rotation is day-stable — one outfit per category is assigned for the day. Do NOT invent, randomly choose, or pull a different day's outfit. If no outfit is assigned for that category today, say so honestly.`);
-      } else {
-        lines.push(`\nTODAY'S ROTATION is your planned wardrobe for the day. For other activities (going out, special occasion, daily wear), answer from the outfit in the matching category of your closet (listed below) that Today's Rotation assigned for today. Do NOT invent or randomly choose — report the assigned outfit.`);
-      }
       lines.push("Asking about an outfit never changes Today's Rotation — you are only reporting what is already assigned.");
-    } else {
-      lines.push(`\nCURRENT OUTFIT: No outfit in Today's Rotation matched your current context. Your closet may not have an outfit for today's category. If asked what you are wearing, say honestly that you haven't picked an outfit for this context yet — do NOT invent one from the general closet.`);
     }
+    // No resolved outfit for the current context → say nothing. Do not invent one,
+    // do not report an error, do not guess from the general closet.
   } else if (currentOutfit) {
-    // Rotation OFF — manual current_outfit authority (existing behavior preserved)
+    // Rotation OFF — manual current_outfit is the authority (existing behavior, unchanged)
     const label = currentOutfit.label || 'Current outfit';
     const desc = currentOutfit.full_description
       ? ` — ${currentOutfit.full_description.substring(0, 150)}`
@@ -1697,32 +1676,24 @@ Deno.serve(async (req) => {
     const educationBlock = buildEducationBlock(character);
     const todayLocationBlock = buildTodayLocationBlock(character);
 
-    // ── Resolve authoritative outfit from the EXISTING outfit authority ───────
-    // resolveCharacterOutfitContext is the single outfit authority (used by image
-    // generation). We consume its result here so Chat, Text, and image prompts all
-    // agree on one outfit. This does NOT recompute rotation, category chains,
-    // override handling, or pool selection — it reads the existing production
-    // result. Rotation OFF and uniform/context overrides are preserved inside that
-    // authority. Only invoked when a user session is present (Chat/Text path);
-    // automation callers skip gracefully.
-    let resolvedOutfits = null;
+    // ── Reconnect to the EXISTING Today's Rotation result ─────────────────────
+    // resolveCharacterOutfitContext is the existing outfit authority — the same
+    // result that powers image generation and the visible Today's Rotation. Chat
+    // and Text read this single existing result so all surfaces agree. This does
+    // NOT recompute rotation, pick categories, or build any aggregation — it reads
+    // the one existing production result. Rotation OFF and uniform precedence are
+    // preserved inside that existing authority.
+    let resolvedOutfit = null;
     if (user) {
       try {
         const outfitOwnerEmail = character.owner_email || resolvedEmail || null;
-        const [curRes, homeRes, workRes] = await Promise.all([
-          base44.functions.invoke('resolveCharacterOutfitContext', { characterId, locationCategory: null, ownerEmail: outfitOwnerEmail }).catch(() => null),
-          base44.functions.invoke('resolveCharacterOutfitContext', { characterId, locationCategory: 'home', ownerEmail: outfitOwnerEmail }).catch(() => null),
-          base44.functions.invoke('resolveCharacterOutfitContext', { characterId, locationCategory: 'workplace', ownerEmail: outfitOwnerEmail }).catch(() => null),
-        ]);
-        const pick = (r) => {
-          const d = r?.data || r;
-          if (!d || d.error) return null;
-          const text = typeof d.text === 'string' && d.text.trim() ? d.text.trim() : null;
-          if (!text) return null;
-          return { text, category: d.category || null, source: d.source || null };
-        };
-        resolvedOutfits = { current: pick(curRes), home: pick(homeRes), work: pick(workRes) };
-        contextLog.push({ step: 'resolve_outfit', current: resolvedOutfits.current?.source || null, home: resolvedOutfits.home?.source || null, work: resolvedOutfits.work?.source || null });
+        const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
+          characterId, locationCategory: null, ownerEmail: outfitOwnerEmail,
+        }).catch(() => null);
+        const d = res?.data || res;
+        const text = d && !d.error && typeof d.text === 'string' && d.text.trim() ? d.text.trim() : null;
+        if (text) resolvedOutfit = { text, category: d.category || null, source: d.source || null };
+        contextLog.push({ step: 'resolve_outfit', source: resolvedOutfit?.source || null });
       } catch (outfitErr) {
         contextLog.push({ step: 'resolve_outfit', status: 'error', error: outfitErr.message });
       }
@@ -1730,15 +1701,14 @@ Deno.serve(async (req) => {
       contextLog.push({ step: 'resolve_outfit', skipped: 'no_user_session' });
     }
 
-    const wardrobeBlock = buildWardrobeAwarenessBlock(character, resolvedOutfits);
+    const wardrobeBlock = buildWardrobeAwarenessBlock(character, resolvedOutfit);
 
     // ── Step 11a: Clothing awareness blocks ────────────────────────────────────
-    // Self-clothing: what the character is wearing right now. Consumes the existing
-    // resolved outfit (resolveCharacterOutfitContext) so Chat/Text/images agree —
-    // no rotation logic is duplicated here.
-    // Co-presence clothing: what physically co-present characters are visibly wearing
-    // (degrades to empty when co-present closet data is unavailable, as in this path).
-    const selfClothingBlock = buildSelfClothingAwarenessInline(character, resolvedOutfits?.current?.text || null);
+    // Self-clothing reads the same existing Today's Rotation result (above) so
+    // Chat, Text, and image generation agree on one outfit. No rotation logic is
+    // duplicated here. Co-presence clothing degrades to empty when co-present
+    // outfit data is unavailable in this path.
+    const selfClothingBlock = buildSelfClothingAwarenessInline(character, resolvedOutfit?.text || null);
     const coPresenceCharRecords = (coPresence?.charactersPresentHere || [])
       .map(cp => ({ id: cp.id, name: cp.name, display_name: cp.name, current_outfit: null, character_closet: [] }));
     // Note: co-presence records from this path only carry id+name (not full character records).
