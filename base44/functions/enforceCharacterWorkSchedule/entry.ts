@@ -289,7 +289,22 @@ Deno.serve(async (req) => {
           let finalStatus = authRes?.committed_result?.resolved_presence_status || 'home';
           if (authRes?.disposition === 'accepted' && authRes?.must_resubmit_sleep) {
             const sleepHomeId = authRes?.committed_result?.resolved_current_location_id || character.current_home_location_id;
-            try { const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_presence_status: 'sleeping', requested_location_id: sleepHomeId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: singleNowET.toISOString() }); const sRes = sir?.data || sir; if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') { finalStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping'; } } catch (e) { /* non-fatal — movement already committed */ }
+            try {
+              const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_presence_status: 'sleeping', requested_location_id: sleepHomeId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: singleNowET.toISOString() });
+              const sRes = sir?.data || sir;
+              if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') {
+                finalStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping';
+                // When the follow-up sleep request commits 'sleeping', record the sleep_start
+                // proof AND a Recent Activity (LifeEvent) + memory so the profile's Life Journal
+                // shows when the character went to sleep. Without this, post-work sleep was
+                // committed silently — the canonical state said sleeping but no entry appeared.
+                if (finalStatus === 'sleeping') {
+                  const _sleepNowIso = singleNowET.toISOString();
+                  try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, transition_type: 'sleep_start', from_status: 'home', to_status: 'sleeping', authority: 'enforceCharacterWorkSchedule', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: _sleepNowIso, state_start_ref: _sleepNowIso }); } catch (stErr) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: post-work sleep proof failed (non-reverting): ${stErr.message}`); }
+                  try { await base44.asServiceRole.entities.LifeEvent.create({ character_id: characterId, character_name: character.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Went to sleep after work', description: `${character.name} got off their shift and went straight to sleep — exhausted from the day.`, emotional_impact: 'tired, recovering', triggered_by: 'life_simulation', timestamp: _sleepNowIso, context_tags: ['sleep_start', 'post_work_sleep'] }); await base44.asServiceRole.entities.CharacterMemory.create({ character_id: characterId, memory_type: 'event', memory_text: `${character.name} went to sleep right after work, exhausted from the shift.`, memory_summary: `Went to sleep after work.`, importance_score: 3, permanence: 'short_term', related_character_id: characterId }); } catch (lifeErr) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: post-work sleep LifeEvent failed (non-reverting): ${lifeErr.message}`); }
+                }
+              }
+            } catch (e) { /* non-fatal — movement already committed */ }
           }
           return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false });
         }
@@ -505,7 +520,22 @@ Deno.serve(async (req) => {
             // Only this follow-up commits sleeping, applies the sleep lock, stamps
             // last_sleep_start, and allows the sleep-start proof record.
             if (authRes?.disposition === 'accepted' && authRes?.must_resubmit_sleep) {
-              try { const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: ownerEmail, requested_presence_status: 'sleeping', requested_location_id: committedLocId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: nowET.toISOString() }); const sRes = sir?.data || sir; if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') { committedStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping'; try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_start', from_status: 'home', to_status: 'sleeping', authority: 'enforceCharacterLocationPresence', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: nowET.toISOString(), state_start_ref: nowET.toISOString() }); } catch (stErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: post-work sleep proof failed (non-reverting): ${stErr.message}`); } } } catch (e) { /* non-fatal — movement already committed */ }
+              try {
+                const sir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: ownerEmail, requested_presence_status: 'sleeping', requested_location_id: committedLocId, requested_source_reason: 'post_work_sleep_low_energy', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: nowET.toISOString() });
+                const sRes = sir?.data || sir;
+                if (sRes?.disposition === 'accepted' || sRes?.disposition === 'redirected') {
+                  committedStatus = sRes?.committed_result?.resolved_presence_status || 'sleeping';
+                  if (committedStatus === 'sleeping') {
+                    const _gSleepIso = nowET.toISOString();
+                    try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: ownerEmail, transition_type: 'sleep_start', from_status: 'home', to_status: 'sleeping', authority: 'enforceCharacterWorkSchedule', reason: 'Shift ended — low energy, went to sleep at home.', timestamp: _gSleepIso, state_start_ref: _gSleepIso }); } catch (stErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: post-work sleep proof failed (non-reverting): ${stErr.message}`); }
+                    // Record a Recent Activity (LifeEvent) + memory so the profile's Life Journal
+                    // shows when the character went to sleep after a shift. Previously this path
+                    // wrote only the SleepTransition proof, leaving the canonical sleeping state
+                    // with no visible "went to sleep" entry.
+                    try { await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Went to sleep after work', description: `${char.name} got off their shift and went straight to sleep — exhausted from the day.`, emotional_impact: 'tired, recovering', triggered_by: 'life_simulation', timestamp: _gSleepIso, context_tags: ['sleep_start', 'post_work_sleep'] }); await base44.asServiceRole.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${char.name} went to sleep right after work, exhausted from the shift.`, memory_summary: `Went to sleep after work.`, importance_score: 3, permanence: 'short_term', related_character_id: char.id }); } catch (lifeErr) { console.warn(`[enforceCharacterWorkSchedule] ${char.name}: post-work sleep LifeEvent failed (non-reverting): ${lifeErr.message}`); }
+                  }
+                }
+              } catch (e) { /* non-fatal — movement already committed */ }
             }
             fixes_applied.push(`${char.name}: relocated home (${committedStatus}) via authority`);
             fixCount++;
