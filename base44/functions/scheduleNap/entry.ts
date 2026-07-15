@@ -95,13 +95,45 @@ Deno.serve(async (req) => {
         wakePayload.comfort_value = Math.round(comfortRecover);
       }
 
-      await base44.entities.Character.update(characterId, wakePayload);
+      // ── ONE TRUTH: Route the canonical nap-end wake through enforceCharacterLocationPresence ──
+      // scheduleNap retains domain intelligence (user-directed wake, pass-out recovery) but
+      // does NOT directly write canonical presence, lock, or last_wake_time. The authority
+      // commits the canonical wake; only an accepted committed result records the nap_end.
+      let wakeAuthRes = null;
+      try {
+        const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+          character_id: characterId, owner_email: char.owner_email,
+          requested_presence_status: 'home',
+          requested_source_reason: 'user_directed_nap_wake', requested_authority: 'scheduleNap',
+          requested_timestamp: wakeTime,
+        });
+        wakeAuthRes = ir?.data || ir;
+      } catch (invokeErr) {
+        return Response.json({ success: false, error: 'authority_invoke_failed', reason: invokeErr.message }, { status: 500 });
+      }
+      if (wakeAuthRes?.disposition !== 'accepted' || !wakeAuthRes?.committed_result) {
+        return Response.json({ success: false, error: 'wake_not_committed', disposition: wakeAuthRes?.disposition, reason: wakeAuthRes?.reason || 'Authority did not commit a wake state.' }, { status: 500 });
+      }
+      const committedWakePresence = wakeAuthRes.committed_result.resolved_presence_status || 'home';
 
-      // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ────────────
+      // Write only noncanonical caller-owned fields. The authority committed canonical
+      // presence, lock release, and last_wake_time. mental/comfort recovery is noncanonical.
+      const noncanonicalWakePayload = {
+        current_activity: '',
+        pending_alarm_time: null,
+        last_need_simulated_at: wakeTime,
+      };
+      if (hadRecentPassOut) {
+        noncanonicalWakePayload.mental_value = wakePayload.mental_value;
+        noncanonicalWakePayload.comfort_value = wakePayload.comfort_value;
+      }
+      await base44.entities.Character.update(characterId, noncanonicalWakePayload);
+
+      // ── NAP-END DOWNSTREAM RECORD — from the committed result ───────────
       try {
         await base44.entities.SleepTransition.create({
           character_id: characterId, character_name: charName, owner_email: char.owner_email,
-          transition_type: 'nap_end', from_status: 'napping', to_status: 'home',
+          transition_type: 'nap_end', from_status: 'napping', to_status: committedWakePresence,
           authority: 'user_directed',
           reason: 'User-authorized nap completed (scheduled wake). last_wake_time reset.',
           timestamp: wakeTime, state_start_ref: char.last_nap_time,
@@ -109,15 +141,13 @@ Deno.serve(async (req) => {
           verified_higher_priority_interrupt: false,
         });
       } catch (transitionError) {
-        let revertError = null;
-        try { await base44.entities.Character.update(characterId, preWakeSnapshot); } catch (e) { revertError = e.message; }
+        // Canonical state is already committed by the authority — proof failure is reported, not reverted.
         return Response.json({
-          success: false,
-          error: 'unverified_state_write',
-          reason: 'nap_end SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
-          transition_error: transitionError.message,
-          revert_error: revertError,
-        }, { status: 500 });
+          success: true, action: 'wake', characterId, wakeTime,
+          passout_recovery_applied: hadRecentPassOut,
+          message: `${charName} woke from their nap (canonical state committed; nap_end proof write failed).`,
+          consequence_write_failed: `nap_end proof write failed: ${transitionError.message}`,
+        });
       }
 
       // ── RULE 10: Record nap wake — only reached because transition is proven.
@@ -193,26 +223,60 @@ Deno.serve(async (req) => {
     // ── RULES 3–4: Place into real napping state with authoritative timestamp ──
     // Also write pending_alarm_time = napEndIso so the alarm system can fire
     // the 2-hour auto-wake (rule 7/8). A user-set alarm earlier will override this.
+    // ── ONE TRUTH: Route the canonical nap-start through enforceCharacterLocationPresence ──
+    // scheduleNap retains domain intelligence (user-directed, 2-hour alarm, duration) but
+    // does NOT directly write canonical presence, lock, or last_nap_time. The authority
+    // commits the canonical nap state; only an accepted committed 'napping' result records
+    // the nap_start downstream record. A redirected request (e.g., napping at work) moves
+    // home first via must_resubmit_sleep — no nap_start is recorded from the redirect.
+    const napHomeId = char.current_home_location_id || char.resolved_current_location_id || null;
+    let napAuthRes = null;
+    try {
+      const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+        character_id: characterId, owner_email: char.owner_email,
+        requested_presence_status: 'napping', requested_location_id: napHomeId,
+        requested_source_reason: 'user_directed_nap', requested_authority: 'scheduleNap',
+        requested_timestamp: napStart.toISOString(),
+      });
+      napAuthRes = ir?.data || ir;
+    } catch (invokeErr) {
+      return Response.json({ success: false, error: 'authority_invoke_failed', reason: invokeErr.message }, { status: 500 });
+    }
+
+    let napCommitted = null;
+    if (napAuthRes?.must_resubmit_sleep === true) {
+      // Redirected (e.g., at work → move home awake). No nap_start from the redirect.
+      // Resubmit the napping request at the committed location — one redirect → one resubmit.
+      const resubmitLocId = napAuthRes?.committed_result?.resolved_current_location_id || napHomeId;
+      try {
+        const rir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+          character_id: characterId, owner_email: char.owner_email,
+          requested_presence_status: 'napping', requested_location_id: resubmitLocId,
+          requested_source_reason: 'user_directed_nap', requested_authority: 'scheduleNap',
+          requested_timestamp: napStart.toISOString(),
+        });
+        const rRes = rir?.data || rir;
+        if (rRes?.disposition === 'accepted' && !rRes?.must_resubmit_sleep && rRes?.committed_result?.resolved_presence_status === 'napping') {
+          napCommitted = rRes.committed_result;
+        }
+      } catch { /* non-fatal — fall through to failure */ }
+    } else if (napAuthRes?.disposition === 'accepted' && napAuthRes?.committed_result?.resolved_presence_status === 'napping') {
+      napCommitted = napAuthRes.committed_result;
+    }
+
+    if (!napCommitted) {
+      return Response.json({ success: false, error: 'nap_not_committed', disposition: napAuthRes?.disposition, reason: napAuthRes?.reason || 'Authority did not commit a napping state.' }, { status: 500 });
+    }
+
+    // Write only noncanonical caller-owned fields (activity + 2-hour wake alarm + sim timer).
+    // The authority already committed canonical presence, lock, and last_nap_time.
     await base44.entities.Character.update(characterId, {
-      resolved_presence_status: 'napping',
-      current_activity:         `napping (${napDurationMinutes}min)`,
-      last_nap_time:            napStart.toISOString(),  // authoritative nap-start timer
-      last_need_simulated_at:   napStart.toISOString(),
-      // Stay lock: prevent other automations from overriding this user-directed nap
-      presence_stay_lock:                   true,
-      presence_stay_lock_reason:            'nap_state',
-      presence_stay_lock_authority:         'scheduleNap_user_directed',
-      presence_stay_lock_set_at:            napStart.toISOString(),
-      presence_stay_lock_created_by:        'user',
-      presence_stay_lock_release_condition: 'nap_complete',
-      presence_stay_lock_expires_at:        napEndIso,   // lock expires at nap end
-      // ── RULE 8: Schedule 2-hour auto-wake via alarm system ───────────
-      // pending_alarm_time is read by processScheduledCharacterAlarms to fire the wake.
-      // A user-scheduled alarm at an earlier time will override this.
+      current_activity: `napping (${napDurationMinutes}min)`,
       pending_alarm_time: napEndIso,
+      last_need_simulated_at: napStart.toISOString(),
     });
 
-    // ── AUTHORITATIVE TRANSITION RECORD — hard gate, atomic ──────────────
+    // ── NAP-START DOWNSTREAM RECORD — from the committed result ──────────
     try {
       await base44.entities.SleepTransition.create({
         character_id: characterId, character_name: charName, owner_email: char.owner_email,
@@ -223,15 +287,13 @@ Deno.serve(async (req) => {
         verified_higher_priority_interrupt: false,
       });
     } catch (transitionError) {
-      let revertError = null;
-      try { await base44.entities.Character.update(characterId, preNapSnapshot); } catch (e) { revertError = e.message; }
+      // Canonical state is already committed by the authority — proof failure is reported, not reverted.
       return Response.json({
-        success: false,
-        error: 'unverified_state_write',
-        reason: 'nap_start SleepTransition proof failed — Character state reverted, event is UNVERIFIED',
-        transition_error: transitionError.message,
-        revert_error: revertError,
-      }, { status: 500 });
+        success: true, action: 'start', characterId,
+        napStartTime: napStart.toISOString(), napEndTime: napEndIso, durationMinutes: napDurationMinutes,
+        message: `${charName} is now napping (canonical state committed; nap_start proof write failed).`,
+        proof_write_failed: transitionError.message,
+      });
     }
 
     // ── RULES 5–6: Record nap start — only reached because transition is proven.

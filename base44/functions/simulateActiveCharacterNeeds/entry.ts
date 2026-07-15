@@ -1295,12 +1295,15 @@ Deno.serve(async (req) => {
               requested_timestamp: nowIso,
             });
             const authData = invokeRes?.data || invokeRes;
+            const intendedTo = selectedTransition.transition?.to_status || null;
             if (authData?.must_resubmit_sleep === true) {
-              // Authority redirected (e.g., sleep-at-work → move home first). Sleep is deferred.
-              // Do NOT record a sleep_start transition — sleep has not begun. The authority
-              // committed a movement (home), not sleep. Re-submit the sleep request now that
-              // the character has arrived at the valid sleep location.
+              // Authority redirected the sleep/nap request (e.g., sleep-at-work → move home
+              // awake first). The redirect committed a MOVEMENT, not sleep. Do NOT record a
+              // sleep_start/nap_start from the redirect. Re-submit the sleep/nap request at
+              // the committed location; only the resubmit's accepted committed result records
+              // the transition. One redirect → one resubmit (no loop).
               const resubmitLocId = authData?.committed_result?.resolved_current_location_id || requestedLocId;
+              const redirectPresence = authData?.committed_result?.resolved_presence_status || null;
               try {
                 const resubmitRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
                   character_id: char.id, owner_email: ownerEmail,
@@ -1311,9 +1314,14 @@ Deno.serve(async (req) => {
                   requested_timestamp: nowIso,
                 });
                 const resubmitData = resubmitRes?.data || resubmitRes;
-                if ((resubmitData?.disposition === 'accepted' || resubmitData?.disposition === 'modified') && !resubmitData?.must_resubmit_sleep) {
+                const resubmitPresence = resubmitData?.committed_result?.resolved_presence_status || null;
+                // Record only when the resubmit is accepted, not still redirecting, and the
+                // committed presence matches the intended transition (e.g., 'napping').
+                if (resubmitData?.disposition === 'accepted' && !resubmitData?.must_resubmit_sleep && resubmitPresence === intendedTo) {
                   authorityCommittedResult = resubmitData.committed_result;
-                  sleepTransitionsToRecord.push(selectedTransition.transition);
+                  // Use the committed result: from_status = post-redirect presence (where the
+                  // character actually was when sleep/nap began), to_status = committed presence.
+                  sleepTransitionsToRecord.push({ ...selectedTransition.transition, from_status: redirectPresence || selectedTransition.transition.from_status, to_status: resubmitPresence });
                   if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
                 } else {
                   results.push({ character: charName, context, event: 'authority_resubmit_disposition', disposition: resubmitData?.disposition, reason: resubmitData?.reason });
@@ -1321,12 +1329,21 @@ Deno.serve(async (req) => {
               } catch (resubmitErr) {
                 results.push({ character: charName, context, event: 'authority_resubmit_failed', error: resubmitErr.message });
               }
-            } else if (authData?.disposition === 'accepted' || authData?.disposition === 'redirected' || authData?.disposition === 'modified') {
-              authorityCommittedResult = authData.committed_result;
-              sleepTransitionsToRecord.push(selectedTransition.transition);
-              if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
+            } else if (authData?.disposition === 'accepted') {
+              const committedPresence = authData?.committed_result?.resolved_presence_status || null;
+              // Record the transition only when the committed presence matches the intended
+              // transition (e.g., a nap_start records only when committed presence is 'napping').
+              // A redirected movement (awake home) does NOT record a sleep/nap start.
+              if (committedPresence === intendedTo) {
+                authorityCommittedResult = authData.committed_result;
+                sleepTransitionsToRecord.push({ ...selectedTransition.transition, to_status: committedPresence });
+                if (selectedTransition.consequence) pendingConsequences.push(selectedTransition.consequence);
+              } else {
+                results.push({ character: charName, context, event: 'authority_disposition_mismatch', disposition: authData?.disposition, intended: intendedTo, committed: committedPresence, reason: authData?.reason });
+              }
             } else {
-              // Deferred or rejected — do not create records claiming the transition occurred
+              // redirected (without must_resubmit_sleep), deferred, rejected, no_longer_applicable —
+              // do not create records claiming the transition occurred.
               results.push({ character: charName, context, event: 'authority_disposition', disposition: authData?.disposition, reason: authData?.reason });
             }
           } catch (invokeErr) {
