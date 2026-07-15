@@ -154,6 +154,22 @@ export async function buildImageGenerationContext({
     appearanceLockText = descParts.join(', ');
   }
 
+  // ── BODY-MARK VISUAL GUIDANCE (hickey / love bite) ─────────────────────────
+  // A hickey is a bruise caused by suction, NOT a cut, scratch, or slash.
+  // When the prompt references one, append the canonical suction-bruise
+  // description to the identity block so it flows into the final provider
+  // prompt. This prevents generators from depicting it as a knife wound,
+  // laceration, or scratch.
+  const _HICKEY_KEYWORDS = ['hickey', 'love bite', 'love-bite'];
+  const _hickyDetected = !!(prompt && _HICKEY_KEYWORDS.some(k => prompt.toLowerCase().includes(k)));
+  const HICKEY_VISUAL_GUIDANCE = 'When a hickey (love bite) is shown: depict it as a faint to moderate suction bruise — soft diffuse edges (not sharp lines), oval or irregular rounded shape, reddish/pinkish-purple/violet tones depending on age, flat against the skin. The skin surface remains smooth and unbroken — NO cuts, NO scratches, NO scabs, NO bleeding, NO raised texture, NO linear or slash-like appearance. It is minor bruising beneath the skin, not an injury to the skin itself.';
+  if (_hickyDetected) {
+    appearanceLockText = appearanceLockText
+      ? `${appearanceLockText}. ${HICKEY_VISUAL_GUIDANCE}`
+      : HICKEY_VISUAL_GUIDANCE;
+    audit.diagnostics.body_mark_guidance = { hickey: true, guidance: HICKEY_VISUAL_GUIDANCE };
+  }
+
   audit.diagnostics.identity = {
     character_id: effectiveCharacterId || null,
     character_name: effectiveCharacterName || null,
