@@ -321,6 +321,29 @@ Return ONLY the narrative text, nothing else.`;
       .replace(/\s{2,}/g, ' ')
       .trim();
 
+    // ── HYGIENE ACTION RECOVERY ─────────────────────────────────────────────
+    // A narrative that establishes a recognized hygiene action (shower, bath,
+    // washing face/hair/hands, brushing teeth, grooming) must recover the
+    // authoritative hygiene_value. Reuses the existing autonomous-activity recovery
+    // amounts (+20 wash / +10 groom). Applied once, only when hygiene is still
+    // below normal. Live Needs reads this same field, so the bar reflects the
+    // recovery without a refresh, scheduler, or repair job.
+    if ((character.hygiene_value ?? 75) < 70) {
+      const _narrLower = (narrativeContent || '').toLowerCase();
+      const _isWash = /shower|showering|bath|bathing|bathe|bathed|washing (her|his|their )?(face|hair|hands)|washes (her|his|their )?(face|hair|hands)|wash up|washed up|freshen up|freshened up|soaking in a (warm )?bath/.test(_narrLower);
+      const _isGroom = !_isWash && /brush(ing|es|ed)? (her|his|their )?teeth|groom(ing|ed)?|fixing (her|his|their )?hair/.test(_narrLower);
+      if (_isWash || _isGroom) {
+        const _delta = _isWash ? 20 : 10;
+        const _target = Math.min(100, Math.round((character.hygiene_value ?? 75) + _delta));
+        try {
+          await base44SR.entities.Character.update(character.id, { hygiene_value: _target });
+          console.log(`[triggerCharacterNarratives] hygiene recovery applied: ${character.name} ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20' : 'groom +10'}) — narrative established a hygiene action`);
+        } catch (_hErr) {
+          console.warn(`[triggerCharacterNarratives] hygiene recovery write failed (non-blocking): ${_hErr.message}`);
+        }
+      }
+    }
+
     // ── 9. SAVE — scoped to the correct conversation + character ──
     let createdMessage;
     try {

@@ -697,6 +697,30 @@ If no actions occur, return empty action_effects array.`;
         }
       }
 
+      // ── HYGIENE ACTION GUARANTEE ──────────────────────────────────────────
+      // A narrative that establishes a recognized hygiene action (shower, bath,
+      // washing face/hair/hands, brushing teeth, grooming) must recover the
+      // authoritative hygiene_value. Reuses the existing autonomous-activity
+      // recovery amounts (+20 wash / +10 groom). Applied exactly once here: only
+      // when the LLM action_effects did not already recover hygiene above the
+      // narrative target, and only when hygiene is still below normal. Live Needs
+      // reads this same field, so the bar reflects the recovery without a refresh.
+      if ((character.hygiene_value ?? 75) < 70) {
+        const _narrLower = (narrativeText || '').toLowerCase();
+        const _isWash = /shower|showering|bath|bathing|bathe|bathed|washing (her|his|their )?(face|hair|hands)|washes (her|his|their )?(face|hair|hands)|wash up|washed up|freshen up|freshened up|soaking in a (warm )?bath/.test(_narrLower);
+        const _isGroom = !_isWash && /brush(ing|es|ed)? (her|his|their )?teeth|groom(ing|ed)?|fixing (her|his|their )?hair/.test(_narrLower);
+        if (_isWash || _isGroom) {
+          const _delta = _isWash ? 20 : 10;
+          const _target = Math.min(100, Math.round((character.hygiene_value ?? 75) + _delta));
+          const _existing = characterUpdatePayload.hygiene_value ?? -Infinity;
+          if (_target > _existing) {
+            characterUpdatePayload.hygiene_value = _target;
+            updatedNeeds.hygiene = _target;
+            console.log(`[generateAutomaticNarrative] hygiene recovery applied: ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20' : 'groom +10'}) — narrative established a hygiene action`);
+          }
+        }
+      }
+
       // Save character updates if any changes were made.
       // ROUTING RULE:
       //   User-triggered: use user-scoped client (satisfies Character RLS via owner_email).

@@ -125,8 +125,8 @@ export function resolveExpiredAction(character, actionType, timestamp) {
     needUpdates.energy_value = Math.min(100, (character.energy_value || 75) + 40);
   }
 
-  // Shower/hygiene improves hygiene
-  if (normalizedAction.includes('shower') || normalizedAction.includes('wash') || normalizedAction.includes('bathe')) {
+  // Hygiene actions (shower, bath, washing face/hair/hands, brushing teeth, grooming) improve hygiene
+  if (normalizedAction.includes('shower') || normalizedAction.includes('wash') || normalizedAction.includes('bathe') || normalizedAction.includes('bath') || normalizedAction.includes('brush') || normalizedAction.includes('teeth') || normalizedAction.includes('groom')) {
     needUpdates.hygiene_value = Math.min(100, (character.hygiene_value || 75) + 35);
   }
 
