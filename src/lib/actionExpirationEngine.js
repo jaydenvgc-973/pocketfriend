@@ -144,7 +144,13 @@ export function resolveExpiredAction(character, actionType, timestamp) {
     /\b(quick_shower|full_shower|brushing_teeth|washing_face|washing_hair|washing_hands|taking_bath|taking_shower|grooming_hair)\b/.test(normalizedAction)
   );
   if (_isPersonalHygiene) {
-    needUpdates.hygiene_value = Math.min(100, (character.hygiene_value || 75) + 35);
+    // A completed personal-hygiene action (shower/bath/wash face/brush teeth)
+    // produces recovery because it occurred — not because the current value is
+    // below a cutoff. Restore to at least the established 75 baseline even when
+    // hygiene had decayed before the action expired, so a completed bath/shower
+    // is never left near a low decayed value. Capped at 100.
+    const _hygBase = character.hygiene_value || 75;
+    needUpdates.hygiene_value = Math.min(100, Math.max(_hygBase + 35, 75));
   }
 
   // Social/hangout improves social

@@ -362,10 +362,19 @@ Return ONLY the narrative text, nothing else.`;
         /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower)
       );
       if (_isWash || _isGroom) {
+        // A completed hygiene action produces recovery because it occurred — not
+        // because the current value is below a cutoff. A full wash (shower/bath)
+        // restores to at least the established 75 baseline even when hygiene had
+        // decayed before the recovery fired, so a completed bath/shower is never
+        // left near a low decayed value. Grooming (brush teeth, fix hair) is a
+        // partial refresh and remains additive. Capped at 100.
+        const _base = character.hygiene_value ?? 75;
         const _delta = _isWash ? 20 : 10;
-        const _target = Math.min(100, Math.round((character.hygiene_value ?? 75) + _delta));
+        const _target = _isWash
+          ? Math.min(100, Math.max(Math.round(_base + _delta), 75))
+          : Math.min(100, Math.round(_base + _delta));
         await base44SR.entities.Character.update(character.id, { hygiene_value: _target });
-        console.log(`[triggerCharacterNarratives] hygiene recovery applied: ${character.name} ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20' : 'groom +10'}) — narrative established a hygiene action`);
+        console.log(`[triggerCharacterNarratives] hygiene recovery applied: ${character.name} ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20 (floor 75)' : 'groom +10'}) — narrative established a hygiene action`);
       }
     }
 

@@ -35,6 +35,57 @@ Deno.serve(async (req) => {
 
     const text = messageContent.toLowerCase().trim();
 
+    // ── HYGIENE RECOVERY (existing completion flow) ──────────────────────────
+    // A character message that establishes a COMPLETED personal-hygiene action
+    // (shower, bath, washing face/hair/hands, brushing teeth/hair, grooming) must
+    // recover the authoritative hygiene_value during this existing chat completion
+    // flow. This reuses the established detection rules and the 75 baseline floor
+    // already used by the narrative hygiene recovery path — it is not a separate
+    // hygiene authority; it writes the same authoritative Character.hygiene_value.
+    // Environmental cleaning (cleaning the bathroom, washing dishes/car/clothes),
+    // observations of another person, and bare-noun/plan references are rejected.
+    // Runs BEFORE the tense guard so a completed action stated in past/perfect
+    // tense ("I just got out of the shower", "I showered") still recovers hygiene,
+    // even though past tense is not a valid current_activity source.
+    {
+      const _narrLower = text;
+      const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b[^.!?\n]{0,40}\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(_narrLower) || /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(_narrLower);
+      const _observation = /\b(watches|watched|observes|observed|sees|saw|notices|noticed)\b[^.!?\n]{0,30}\b(showering|bathing|washing|brushing|grooming)\b/.test(_narrLower);
+      const _perfWash =
+        /\bshowered\b/.test(_narrLower) || /\bshowering\b/.test(_narrLower) ||
+        /\b(he|she|they)\b[^.!?\n]{0,30}\bshowers\b/.test(_narrLower) ||
+        /\b(bathed|bathing|bathes)\b/.test(_narrLower) ||
+        /\b(takes|took|taking)\b[^.!?\n]{0,20}\b(shower|bath)\b/.test(_narrLower) ||
+        /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(face|hair|hands)\b/.test(_narrLower) ||
+        /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) ||
+        /fresh from (a )?(shower|bath)/.test(_narrLower) ||
+        /(stepping|steps|gets) out of (the|a) (shower|bath)/.test(_narrLower) ||
+        /out of the (shower|bath)/.test(_narrLower) ||
+        /after (her|his|their) (shower|bath)/.test(_narrLower) ||
+        /(finishes|finished) (showering|bathing)/.test(_narrLower) ||
+        /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower);
+      const _isGroom = !_perfWash && !_envClean && !_observation && (
+        /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(teeth|hair)\b/.test(_narrLower) ||
+        /\b(grooms|groomed|grooming)\b/.test(_narrLower) ||
+        /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower)
+      );
+      const _isWash = _perfWash && !_envClean && !_observation;
+      if (_isWash || _isGroom) {
+        const _base = character.hygiene_value ?? 75;
+        const _delta = _isWash ? 20 : 10;
+        const _target = _isWash
+          ? Math.min(100, Math.max(Math.round(_base + _delta), 75))
+          : Math.min(100, Math.round(_base + _delta));
+        if (_target !== _base) {
+          try {
+            await base44.entities.Character.update(characterId, { hygiene_value: _target });
+            console.log(`[updateCharacterActivityFromMessage] hygiene recovery: ${character.name} ${_base} → ${_target} (${_isWash ? 'wash +20 (floor 75)' : 'groom +10'}) — chat reply established a hygiene action`);
+          } catch (e) { /* non-fatal — activity update still proceeds */ }
+        }
+      }
+    }
+
+
     // ── SLEEP/FATIGUE DIALOGUE GUARD — PERMANENT RULE ────────────────────────────
     // Dialogue expressing tiredness, fatigue, sleep intent, or sleep planning is
     // NEVER a valid source for current_activity. These are feeling-state expressions,
