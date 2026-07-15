@@ -804,26 +804,42 @@ Deno.serve(async (req) => {
 
         const context = getLocationContext(char, locationMap, now);
 
-        // ── HOME FOOD CONSUMPTION ─────────────────────────────────────────
-        if (!hungerLocked && (context === 'home_resting' || context === 'home_active') &&
-            (needs.hunger ?? 70) < 50 && char.current_home_location_id) {
-          try {
-            const hrArr = await base44.entities.HouseholdResource.filter(
-              { owner_email: ownerEmail, home_location_id: char.current_home_location_id, resource_type: 'food' }, null, 1
-            ).catch(() => []);
-            const hr = hrArr[0];
-            const foodAvailable = hr ? (hr.home_food_value || 0) : 0;
-            if (foodAvailable > 0) {
-              const isMeal = (needs.hunger ?? 70) < 30;
-              const consumed = isMeal ? 1 : 0.5;
-              const hungerRestore = isMeal ? 33 : 16.5;
-              const actualConsumed = Math.min(consumed, foodAvailable);
-              const newFood = Math.max(0, Math.round((foodAvailable - actualConsumed) * 100) / 100);
-              await base44.entities.HouseholdResource.update(hr.id, { home_food_value: newFood, last_consumed_at: nowIso }).catch(() => {});
-              needs.hunger = clamp((needs.hunger ?? 70) + (actualConsumed / consumed) * hungerRestore);
-              results.push({ character: charName, event: isMeal ? 'home_meal_consumed' : 'home_snack_consumed', food_consumed: actualConsumed, food_remaining: newFood, hunger_before: char.hunger_value ?? 70, hunger_after: Math.round(needs.hunger) });
+        // ── EATING: HOME ($0) AND WORK ($0) ─────────────────────────────
+        // Active created characters may eat at home or at work. Both are $0
+        // transactions — they must NOT be skipped because no money is charged,
+        // and must NOT be assigned restaurant/bar costs. Restaurant/bar eating
+        // (separate paths) uses location-specific costs. Eating fires whenever
+        // hunger is low and the character is awake at their home location or on
+        // shift; it never depends on a pantry balance.
+        if (!hungerLocked && !char.needs_locks?.hunger && (needs.hunger ?? 70) < 50) {
+          const _awake = !['sleeping','napping','passed_out','hospitalized'].includes(char.resolved_presence_status || '');
+          const _atHome = _awake && !!char.resolved_current_location_id &&
+            (char.resolved_current_location_id === char.current_home_location_id ||
+             char.resolved_current_location_id === char.temporary_housing_location_id);
+          const _atWork = _awake && isOnShift(char, locationMap);
+          if (_atHome || _atWork) {
+            const isMeal = (needs.hunger ?? 70) < 30;
+            const hungerRestore = isMeal ? 33 : 16.5;
+            // Home: deplete pantry if a HouseholdResource food record exists,
+            // but never block eating on pantry balance (eating at home is $0).
+            if (_atHome) {
+              try {
+                const hrArr = await base44.entities.HouseholdResource.filter(
+                  { owner_email: ownerEmail, home_location_id: char.current_home_location_id, resource_type: 'food' }, null, 1
+                ).catch(() => []);
+                const hr = hrArr[0];
+                const foodAvailable = hr ? (hr.home_food_value || 0) : 0;
+                if (hr && foodAvailable > 0) {
+                  const consumed = isMeal ? 1 : 0.5;
+                  const actualConsumed = Math.min(consumed, foodAvailable);
+                  const newFood = Math.max(0, Math.round((foodAvailable - actualConsumed) * 100) / 100);
+                  await base44.entities.HouseholdResource.update(hr.id, { home_food_value: newFood, last_consumed_at: nowIso }).catch(() => {});
+                }
+              } catch (e) { /* Non-fatal — eating still proceeds at $0 */ }
             }
-          } catch (e) { /* Non-fatal */ }
+            needs.hunger = clamp((needs.hunger ?? 70) + hungerRestore);
+            results.push({ character: charName, event: isMeal ? (_atHome ? 'home_meal_consumed' : 'work_meal_consumed') : (_atHome ? 'home_snack_consumed' : 'work_snack_consumed'), eating_location: _atHome ? 'home' : 'work', cost: 0, hunger_before: char.hunger_value ?? 70, hunger_after: Math.round(needs.hunger) });
+          }
         }
 
         // ── RC2: PASS-OUT DETECTION (energy ≤ ENERGY_PASSOUT) ────────────
