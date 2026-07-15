@@ -168,24 +168,6 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     };
   }
 
-  // ── HOSPITALIZATION HARD LOCK — a medical crisis has priority over every
-  // ordinary schedule, autonomous movement, work, school, social travel,
-  // restaurants, bars, errands, and optional invitations. A hospitalized
-  // character remains at the hospital until the needs simulation discharges
-  // them (requested_presence_status 'home') after recovery. Any conflicting
-  // transition is rejected so work/school/relocation/automation cannot pull a
-  // critical character out of the hospital.
-  if (currentStatus === 'hospitalized' &&
-      requestedStatus !== 'hospitalized' &&
-      requestedStatus !== 'home') {
-    return {
-      disposition: 'rejected',
-      canonicalFields: {},
-      reason: 'hospitalization_lock_blocks_conflicting_transition',
-      committed_result: null,
-    };
-  }
-
   // ── SLEEP REQUESTED AT WORK — movement first, sleep after arrival ──────────
   // The character may never be canonically sleeping while at the workplace.
   // If sleeping is requested and the current location is a work location,
@@ -574,108 +556,24 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     };
   }
 
-  // ── HOSPITAL DISCHARGE REQUESTED (hospitalized → home) ───────────────────
-  // Only the needs simulation may discharge, and only once every need that
-  // contributed to the medical crisis has recovered above the critical
-  // threshold. The authority re-verifies recovery before releasing. This is a
-  // real location transition (home), not a label change — the caller records
-  // discharge in Recent Activity and LocationHistory.
-  if (currentStatus === 'hospitalized' && requestedStatus === 'home') {
-    const _h = character.health_value ?? 80;
-    const _e = character.energy_value ?? 75;
-    const _hu = character.hunger_value ?? 70;
-    const _hy = character.hygiene_value ?? 75;
-    const _m = character.mental_value ?? 70;
-    const _criticalCount = [_h, _e, _hu, _hy, _m, character.social_value ?? 65].filter(v => v < 20).length;
-    const _stillCritical = _h <= 20 || _e <= 10 || _hu <= 20 || _hy <= 20 || _m <= 40 || _criticalCount >= 3;
-    if (_stillCritical) {
-      return { disposition: 'rejected', canonicalFields: {}, reason: 'discharge_blocked_still_critical', committed_result: null };
-    }
-    const homeLocId = character.current_home_location_id || character.home_location_id || null;
-    const homeLoc = homeLocId ? locationMap[homeLocId] : null;
-    const canonicalFields = {
-      resolved_current_location_id: homeLocId || currentLocId || null,
-      resolved_current_location_name: homeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: 'home',
-      resolved_source_reason: requested.requested_source_reason || 'hospital_discharge',
-      resolved_last_updated_at: etTime.toISOString(),
-      current_activity: '',
-      last_wake_time: etTime.toISOString(),
-      presence_stay_lock: false,
-      presence_stay_lock_reason: null,
-      presence_stay_lock_authority: null,
-      presence_stay_lock_location_id: null,
-      presence_stay_lock_set_at: null,
-      presence_stay_lock_release_condition: null,
-      presence_stay_lock_created_by: null,
-    };
-    return {
-      disposition: 'accepted',
-      canonicalFields,
-      committed_result: {
-        resolved_current_location_id: homeLocId || currentLocId || null,
-        resolved_current_location_name: homeLoc?.name || 'Home',
-        resolved_location_type: 'home',
-        resolved_presence_status: 'home',
-        resolved_source_reason: requested.requested_source_reason || 'hospital_discharge',
-      },
-    };
-  }
-
-  // ── HOSPITALIZATION REQUESTED — travel/admit to the hospital ────────────
-  // Hospitalized means physically present at a hospital location. The character
-  // is transported to the hospital already listed in the app (category
-  // 'medical'). Their authoritative location becomes the hospital — never home.
-  // No status bars are refilled here; recovery is progressive via the needs
-  // simulation's hospitalized context rates and existing eating/sleeping/
-  // hygiene/mental/health activities over elapsed time.
+  // ── HOSPITALIZATION REQUESTED ──────────────────────────────────────────────
   if (requestedStatus === 'hospitalized') {
     if (currentStatus === 'hospitalized') {
       return { disposition: 'no_change', canonicalFields: {} };
     }
-    let hospitalLocId = requestedLocId || null;
-    let hospitalLoc = hospitalLocId ? locationMap[hospitalLocId] : null;
-    if (!hospitalLoc) {
-      const candidates = Object.values(locationMap).filter(l => {
-        const cat = (l.category || '').toLowerCase();
-        const nm = (l.name || '').toLowerCase();
-        return cat === 'medical' || cat === 'hospital' || nm.includes('hospital') || nm.includes('medical center');
-      });
-      candidates.sort((a, b) => {
-        const aSys = a.is_system_managed ? 1 : 0, bSys = b.is_system_managed ? 1 : 0;
-        if (aSys !== bSys) return bSys - aSys;
-        const aH = (a.name || '').toLowerCase().includes('hospital') ? 1 : 0;
-        const bH = (b.name || '').toLowerCase().includes('hospital') ? 1 : 0;
-        return bH - aH;
-      });
-      if (candidates.length > 0) { hospitalLoc = candidates[0]; hospitalLocId = hospitalLoc.id; }
-    }
-    if (!hospitalLoc) {
-      return { disposition: 'deferred', canonicalFields: {}, reason: 'no_hospital_location_available', committed_result: null };
-    }
     const canonicalFields = {
-      resolved_current_location_id: hospitalLocId,
-      resolved_current_location_name: hospitalLoc.name || 'Hospital',
-      resolved_location_type: 'medical',
       resolved_presence_status: 'hospitalized',
       resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       resolved_last_updated_at: etTime.toISOString(),
-      current_activity: 'hospitalized — admitted for medical crisis',
-      presence_stay_lock: true,
-      presence_stay_lock_reason: 'medical_crisis_hospitalization',
-      presence_stay_lock_authority: requested.requested_authority || 'enforceCharacterLocationPresence',
-      presence_stay_lock_set_at: etTime.toISOString(),
-      presence_stay_lock_created_by: 'system_automation',
-      presence_stay_lock_release_condition: 'medical_crisis_resolved',
+      current_activity: 'hospitalized — health collapsed',
     };
     return {
       disposition: 'accepted',
       canonicalFields,
       committed_result: {
-        resolved_current_location_id: hospitalLocId,
-        resolved_current_location_name: hospitalLoc.name || 'Hospital',
-        resolved_location_type: 'medical',
+        resolved_current_location_id: currentLocId,
+        resolved_current_location_name: character.resolved_current_location_name || 'Hospital',
+        resolved_location_type: character.resolved_location_type || 'medical',
         resolved_presence_status: 'hospitalized',
         resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       },

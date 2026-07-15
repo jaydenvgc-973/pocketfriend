@@ -40,7 +40,7 @@ const RATES = {
   // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
   // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  hospitalized:    { hunger: +10,  energy: +10, social:  0,   health: +6,   mental: +3,   hygiene: +2,   comfort: +3   },
+  hospitalized:    { hunger: -0.5, energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
@@ -1286,27 +1286,6 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── HOSPITAL DISCHARGE — only when every need that contributed to the
-        // medical crisis has recovered above the critical threshold. Routes
-        // home through the authority (real location transition); the authority
-        // re-verifies recovery before releasing. Records discharge in Recent
-        // Activity. No bars are refilled here — recovery already happened via
-        // the hospitalized context rates over elapsed time.
-        if (char.resolved_presence_status === 'hospitalized') {
-          const _dh = newNeeds.health ?? 80, _de = newNeeds.energy ?? 75, _dhu = newNeeds.hunger ?? 70;
-          const _dhy = newNeeds.hygiene ?? 75, _dm = newNeeds.mental ?? 70;
-          const _dCriticalCount = [_dh, _de, _dhu, _dhy, _dm, newNeeds.social ?? 65].filter(v => v < 20).length;
-          const _dRecovered = _dh > 25 && _de > 15 && _dhu > 25 && _dhy > 25 && _dm > 50 && _dCriticalCount < 2;
-          if (_dRecovered) {
-            transitionCandidates.push({
-              priority: 5,
-              payload: { resolved_presence_status: 'home', current_activity: '' },
-              transition: { transition_type: 'hospitalized_end', from_status: 'hospitalized', to_status: 'home', authority: 'energy_medical', reason: 'Medical crisis resolved — discharged and sent home.' },
-              consequence: { type: 'hospital_discharge', healthValue: Math.round(_dh), energyValue: Math.round(_de) },
-            });
-          }
-        }
-
         // ── ONE TRUTH: Route canonical transitions through enforceCharacterLocationPresence ──
         // simulateActiveCharacterNeeds retains classification of which transition it is
         // requesting (sleeping, napping, passed_out, hospitalized, wake, etc.) but does
@@ -1460,14 +1439,6 @@ Deno.serve(async (req) => {
             if (c.type === 'er_escalation') {
               await base44.entities.ScheduledEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_emergency', title: 'Emergency hospitalization', description: `${charName} was hospitalized due to critical health collapse (health: ${c.healthValue}).`, scheduled_time: nowIso, status: 'active', owner_email: ownerEmail });
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Emergency hospitalization', description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`, emotional_impact: 'critical medical event', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'] });
-              try {
-                const _admLocId = authorityCommittedResult?.resolved_current_location_id;
-                if (_admLocId) {
-                  const _openRecs = await base44.entities.LocationHistory.filter({ character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20);
-                  for (const _open of _openRecs) { if (_open.location_id === _admLocId) continue; const _arrMs = new Date(_open.arrival_time).getTime(); await base44.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: nowIso, duration_minutes: Math.round((Date.now() - _arrMs) / 60000) || null }); }
-                  if (!_openRecs.find(o => o.location_id === _admLocId)) { const _al = locationMap[_admLocId]; await base44.entities.LocationHistory.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, location_id: _admLocId, location_name: _al?.name || 'Hospital', location_category: _al?.category || 'medical', event_type: 'arrival', arrival_time: nowIso, travel_source: 'system', travel_reason: 'hospital_admission', is_current: true }); }
-                }
-              } catch (_e) { /* non-fatal */ }
             } else if (c.type === 'compound_crisis') {
               await base44.entities.ScheduledEvent.create({ character_id: char.id, character_name: charName, event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest', description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold.`, scheduled_time: nowIso, status: 'active', owner_email: ownerEmail });
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Compound crisis — forced rest', description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical.`, emotional_impact: 'physical collapse', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['compound_crisis'] });
@@ -1480,17 +1451,6 @@ Deno.serve(async (req) => {
             } else if (c.type === 'pass_out_end_recovery') {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Recovered from pass-out', description: `${charName} woke after ${c.elapsedHours}h of recovery. Energy at ${c.energyValue}.`, emotional_impact: 'groggy, relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['pass_out_end', 'recovery'] });
               await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} woke after ${c.elapsedHours}h of recovery from passing out.`, memory_summary: `Recovered from pass-out after ${c.elapsedHours}h.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id });
-            } else if (c.type === 'hospital_discharge') {
-              await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Discharged from hospital', description: `${charName} recovered enough to leave the hospital and was sent home.`, emotional_impact: 'relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['hospital_discharge', 'discharge', 'sent_home'] });
-              await base44.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${charName} was discharged from the hospital after recovering from a medical crisis.`, memory_summary: `Discharged from the hospital.`, importance_score: 6, permanence: 'long_term', related_character_id: char.id });
-              try {
-                const _dischLocId = authorityCommittedResult?.resolved_current_location_id;
-                if (_dischLocId) {
-                  const _openRecs = await base44.entities.LocationHistory.filter({ character_id: char.id, owner_email: ownerEmail, is_current: true }, null, 20);
-                  for (const _open of _openRecs) { if (_open.location_id === _dischLocId) continue; const _arrMs = new Date(_open.arrival_time).getTime(); await base44.entities.LocationHistory.update(_open.id, { is_current: false, departure_time: nowIso, duration_minutes: Math.round((Date.now() - _arrMs) / 60000) || null }); }
-                  if (!_openRecs.find(o => o.location_id === _dischLocId)) { const _dl = locationMap[_dischLocId]; await base44.entities.LocationHistory.create({ character_id: char.id, character_name: charName, owner_email: ownerEmail, location_id: _dischLocId, location_name: _dl?.name || 'Home', location_category: _dl?.category || 'home', event_type: 'return_home', arrival_time: nowIso, travel_source: 'system', travel_reason: 'hospital_discharge', is_current: true }); }
-                }
-              } catch (_e) { /* non-fatal */ }
             } else if (c.type === 'stale_wake') {
               const _wTitle = c.wakeType === 'pass_out_end' ? 'Recovered from pass-out' : c.wakeType === 'nap_end' ? 'Woke up from a nap' : 'Woke up';
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'minor', title: _wTitle, description: `${charName} woke up. Energy at ${c.energyValue}.`, emotional_impact: c.wakeType === 'pass_out_end' ? 'groggy' : 'rested', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: [c.wakeType, 'woke_up', 'stale_cleanup'] });
