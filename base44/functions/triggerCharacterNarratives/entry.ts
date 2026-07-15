@@ -342,39 +342,55 @@ Return ONLY the narrative text, nothing else.`;
       const _narrLower = (narrativeContent || '').toLowerCase();
       const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b[^.!?\n]{0,40}\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(_narrLower) || /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(_narrLower);
       const _observation = /\b(watches|watched|observes|observed|sees|saw|notices|noticed)\b[^.!?\n]{0,30}\b(showering|bathing|washing|brushing|grooming)\b/.test(_narrLower);
-      const _perfWash =
+      // Differentiated hygiene recovery — different actions have different effects.
+      // Full shower → 100. Full bath → at least 90 (never lowers). Partial actions
+      // (wash hair/face/hands, brush teeth, groom hair) add proportionately smaller
+      // amounts and may combine toward 100. No action lowers hygiene; cap 100.
+      const _hygShower =
         /\bshowered\b/.test(_narrLower) || /\bshowering\b/.test(_narrLower) ||
         /\b(he|she|they)\b[^.!?\n]{0,30}\bshowers\b/.test(_narrLower) ||
+        /\b(takes|took|taking)\b[^.!?\n]{0,20}\bshower\b/.test(_narrLower) ||
+        /fresh from (a )?shower/.test(_narrLower) ||
+        /(stepping|steps|gets) out of (the|a) shower/.test(_narrLower) ||
+        /out of the shower/.test(_narrLower) ||
+        /after (her|his|their) shower/.test(_narrLower) ||
+        /(finishes|finished) showering/.test(_narrLower) ||
+        /\b(quick_shower|full_shower|taking_shower)\b/.test(_narrLower);
+      const _hygBath = !_hygShower && (
         /\b(bathed|bathing|bathes)\b/.test(_narrLower) ||
-        /\b(takes|took|taking)\b[^.!?\n]{0,20}\b(shower|bath)\b/.test(_narrLower) ||
-        /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(face|hair|hands)\b/.test(_narrLower) ||
-        /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) ||
-        /fresh from (a )?(shower|bath)/.test(_narrLower) ||
-        /(stepping|steps|gets) out of (the|a) (shower|bath)/.test(_narrLower) ||
-        /out of the (shower|bath)/.test(_narrLower) ||
-        /after (her|his|their) (shower|bath)/.test(_narrLower) ||
-        /(finishes|finished) (showering|bathing)/.test(_narrLower) ||
-        /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower);
-      const _isWash = _perfWash && !_envClean && !_observation;
-      const _isGroom = !_isWash && !_envClean && !_observation && (
-        /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(teeth|hair)\b/.test(_narrLower) ||
-        /\b(grooms|groomed|grooming)\b/.test(_narrLower) ||
-        /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower)
+        /\b(takes|took|taking)\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
+        /fresh from (a )?bath/.test(_narrLower) ||
+        /(stepping|steps|gets) out of (the|a) bath/.test(_narrLower) ||
+        /out of the bath/.test(_narrLower) ||
+        /after (her|his|their) bath/.test(_narrLower) ||
+        /(finishes|finished) bathing/.test(_narrLower) ||
+        /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
+        /\btaking_bath\b/.test(_narrLower)
       );
-      if (_isWash || _isGroom) {
-        // A completed hygiene action produces recovery because it occurred — not
-        // because the current value is below a cutoff. A full wash (shower/bath)
-        // restores to at least the established 75 baseline even when hygiene had
-        // decayed before the recovery fired, so a completed bath/shower is never
-        // left near a low decayed value. Grooming (brush teeth, fix hair) is a
-        // partial refresh and remains additive. Capped at 100.
+      const _hygWashHair = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bwashing_hair\b/.test(_narrLower);
+      const _hygWashFace = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bface\b/.test(_narrLower) || /\bwashing_face\b/.test(_narrLower);
+      const _hygWashHands = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhands\b/.test(_narrLower) || /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) || /\bwashing_hands\b/.test(_narrLower);
+      const _hygBrushTeeth = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bteeth\b/.test(_narrLower) || /\bbrushing_teeth\b/.test(_narrLower);
+      const _hygGroomHair = /\b(grooms|groomed|grooming)\b/.test(_narrLower) || /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bgrooming_hair\b/.test(_narrLower);
+      const _anyHygiene = _hygShower || _hygBath || _hygWashHair || _hygWashFace || _hygWashHands || _hygBrushTeeth || _hygGroomHair;
+      if (_anyHygiene && !_envClean && !_observation) {
         const _base = character.hygiene_value ?? 75;
-        const _delta = _isWash ? 20 : 10;
-        const _target = _isWash
-          ? Math.min(100, Math.max(Math.round(_base + _delta), 75))
-          : Math.min(100, Math.round(_base + _delta));
-        await base44SR.entities.Character.update(character.id, { hygiene_value: _target });
-        console.log(`[triggerCharacterNarratives] hygiene recovery applied: ${character.name} ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20 (floor 75)' : 'groom +10'}) — narrative established a hygiene action`);
+        let _result = _base;
+        const _parts = [];
+        if (_hygShower) { _result = 100; _parts.push('shower→100'); }
+        else {
+          if (_hygBath) { _result = Math.max(_result, 90); _parts.push('bath→≥90'); }
+          if (_hygWashHair) { _result = Math.min(100, _result + 15); _parts.push('wash_hair+15'); }
+          if (_hygWashFace) { _result = Math.min(100, _result + 12); _parts.push('wash_face+12'); }
+          if (_hygWashHands) { _result = Math.min(100, _result + 6); _parts.push('wash_hands+6'); }
+          if (_hygBrushTeeth) { _result = Math.min(100, _result + 8); _parts.push('brush_teeth+8'); }
+          if (_hygGroomHair) { _result = Math.min(100, _result + 6); _parts.push('groom_hair+6'); }
+        }
+        _result = Math.max(_base, Math.min(100, Math.round(_result)));
+        if (_result !== _base) {
+          await base44SR.entities.Character.update(character.id, { hygiene_value: _result });
+          console.log(`[triggerCharacterNarratives] hygiene recovery applied: ${character.name} ${_base} → ${_result} (${_parts.join(', ')}) — narrative established a hygiene action`);
+        }
       }
     }
 

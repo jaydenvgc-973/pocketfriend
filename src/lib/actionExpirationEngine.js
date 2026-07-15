@@ -133,24 +133,37 @@ export function resolveExpiredAction(character, actionType, timestamp) {
   // requirement prevents "wash"/"brush" from matching environmental cleaning.
   const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b/.test(normalizedAction) && /\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(normalizedAction);
   const _envWash = /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(normalizedAction);
-  const _isPersonalHygiene = !_envClean && !_envWash && (
-    /\b(showered|showering|showers)\b/.test(normalizedAction) ||
+  // Differentiated hygiene recovery — different actions have different effects.
+  // Full shower → 100. Full bath → at least 90 (never lowers). Partial actions add
+  // proportionately smaller amounts and may combine toward 100. No action lowers
+  // hygiene; nothing exceeds 100.
+  const _hygShower = /\b(showered|showering|showers)\b/.test(normalizedAction) ||
+    /\b(takes|took|taking)\b[^.!?\n]{0,20}\bshower\b/.test(normalizedAction) ||
+    /\b(quick_shower|full_shower|taking_shower)\b/.test(normalizedAction);
+  const _hygBath = !_hygShower && (
     /\b(bathed|bathing|bathes)\b/.test(normalizedAction) ||
-    /\b(takes|took|taking)\b[^.!?\n]{0,20}\b(shower|bath)\b/.test(normalizedAction) ||
-    /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|its)?\s?(face|hair|hands)\b/.test(normalizedAction) ||
-    /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)?\s?(teeth|hair)\b/.test(normalizedAction) ||
-    /\b(grooms|groomed|grooming|groom)\b/.test(normalizedAction) ||
-    /\b(wash up|washed up|freshen up|freshened up)\b/.test(normalizedAction) ||
-    /\b(quick_shower|full_shower|brushing_teeth|washing_face|washing_hair|washing_hands|taking_bath|taking_shower|grooming_hair)\b/.test(normalizedAction)
+    /\b(takes|took|taking)\b[^.!?\n]{0,20}\bbath\b/.test(normalizedAction) ||
+    /\btaking_bath\b/.test(normalizedAction)
   );
-  if (_isPersonalHygiene) {
-    // A completed personal-hygiene action (shower/bath/wash face/brush teeth)
-    // produces recovery because it occurred — not because the current value is
-    // below a cutoff. Restore to at least the established 75 baseline even when
-    // hygiene had decayed before the action expired, so a completed bath/shower
-    // is never left near a low decayed value. Capped at 100.
+  const _hygWashHair = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|its)?\s?hair\b/.test(normalizedAction) || /\bwashing_hair\b/.test(normalizedAction);
+  const _hygWashFace = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|its)?\s?face\b/.test(normalizedAction) || /\bwashing_face\b/.test(normalizedAction);
+  const _hygWashHands = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|its)?\s?hands\b/.test(normalizedAction) || /\b(wash up|washed up|freshen up|freshened up)\b/.test(normalizedAction) || /\bwashing_hands\b/.test(normalizedAction);
+  const _hygBrushTeeth = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)?\s?teeth\b/.test(normalizedAction) || /\bbrushing_teeth\b/.test(normalizedAction);
+  const _hygGroomHair = /\b(grooms|groomed|grooming|groom)\b/.test(normalizedAction) || /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)?\s?hair\b/.test(normalizedAction) || /\bgrooming_hair\b/.test(normalizedAction);
+  const _anyHygiene = _hygShower || _hygBath || _hygWashHair || _hygWashFace || _hygWashHands || _hygBrushTeeth || _hygGroomHair;
+  if (_anyHygiene && !_envClean && !_envWash) {
     const _hygBase = character.hygiene_value || 75;
-    needUpdates.hygiene_value = Math.min(100, Math.max(_hygBase + 35, 75));
+    let _result = _hygBase;
+    if (_hygShower) { _result = 100; }
+    else {
+      if (_hygBath) { _result = Math.max(_result, 90); }
+      if (_hygWashHair) { _result = Math.min(100, _result + 15); }
+      if (_hygWashFace) { _result = Math.min(100, _result + 12); }
+      if (_hygWashHands) { _result = Math.min(100, _result + 6); }
+      if (_hygBrushTeeth) { _result = Math.min(100, _result + 8); }
+      if (_hygGroomHair) { _result = Math.min(100, _result + 6); }
+    }
+    needUpdates.hygiene_value = Math.max(_hygBase, Math.min(100, Math.round(_result)));
   }
 
   // Social/hangout improves social
