@@ -8,12 +8,56 @@
  *   1. Send My Location → creates a user-side location_share message in the conversation
  *   2. Request Character's Location → creates a system prompt that makes the character
  *      respond with their verified location (sets share_location flag via message)
+ *
+ * AUTHORITATIVE LOCATION CONSUMER:
+ *   The character's current location is NEVER read from a raw Character field or a
+ *   cached page-load snapshot. It is resolved fresh through the same authoritative
+ *   location/presence system used by work presence, profile, homepage, and the
+ *   multi-job work-schedule enforcement: `enforceCharacterLocationPresence`.
+ *   Calling it with no requested transition triggers its legacy recompute path, which
+ *   evaluates every active job (primary + additional_occupation_locations), school,
+ *   home, incarceration, house arrest, sleep, and other recognized states — and
+ *   returns the committed resolved result. This tool only consumes that result; it
+ *   does not derive, cache, or independently compute a competing location.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Navigation, ArrowRight } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+
+/**
+ * Resolve the character's authoritative current location through the existing
+ * presence/location authority. Returns { locationId, locationName, presenceStatus }.
+ * On `no_change` the stored fields already equal the recomputed truth, so the
+ * (now-confirmed) Character fields are authoritative and safe to use.
+ */
+async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
+  const res = await base44.functions.invoke('enforceCharacterLocationPresence', {
+    character_id: characterId,
+    owner_email: ownerEmail || undefined,
+  });
+  const data = res?.data || res;
+  const committed = data?.committed_result;
+  if (committed && committed.resolved_current_location_id) {
+    return {
+      locationId: committed.resolved_current_location_id,
+      locationName: committed.resolved_current_location_name || null,
+      presenceStatus: committed.resolved_presence_status || null,
+    };
+  }
+  // no_change (or deferred) — the stored fields are the authoritative recomputed truth.
+  // Read them from the authority's character load by re-fetching the Character record
+  // so we never rely on a stale page-load snapshot passed in as a prop.
+  const chars = await base44.entities.Character.filter({ id: characterId }, null, 1);
+  const ch = chars?.[0];
+  if (!ch) return null;
+  return {
+    locationId: ch.resolved_current_location_id || null,
+    locationName: ch.resolved_current_location_name || null,
+    presenceStatus: ch.resolved_presence_status || null,
+  };
+}
 
 export default function LocationShareTool({
   isOpen,
@@ -27,14 +71,32 @@ export default function LocationShareTool({
 }) {
   const [isSending, setIsSending] = useState(false);
   const [result, setResult] = useState(null); // { type: 'success'|'error', text: string }
+  // Authoritative resolved character location (consumed from the presence authority).
+  const [resolvedCharLoc, setResolvedCharLoc] = useState(null);
+  const [resolvingLoc, setResolvingLoc] = useState(false);
+
+  // Resolve the character's authoritative current location whenever the tool opens,
+  // so the displayed "Currently:" reflects truth (and re-establishes it if drifted).
+  useEffect(() => {
+    if (!isOpen || !characterId) { setResolvedCharLoc(null); return; }
+    let cancelled = false;
+    setResolvingLoc(true);
+    resolveAuthoritativeCharLocation(characterId, character?.owner_email)
+      .then(loc => { if (!cancelled) setResolvedCharLoc(loc); })
+      .catch(err => { console.warn('[LocationShareTool] resolve failed:', err?.message); if (!cancelled) setResolvedCharLoc(null); })
+      .finally(() => { if (!cancelled) setResolvingLoc(false); });
+    return () => { cancelled = true; };
+  }, [isOpen, characterId, character?.owner_email]);
 
   if (!isOpen) return null;
 
   const userLocId   = userSettings?.user_current_location_id   || null;
   const userLocName = userSettings?.user_current_location_name || null;
-  const charLocId   = character?.resolved_current_location_id  || null;
-  const charLocName = character?.resolved_current_location_name || null;
   const worldName   = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
+  // Character location is the authoritative resolved result — never a raw prop field.
+  const charLocId   = resolvedCharLoc?.locationId || null;
+  const charLocName = resolvedCharLoc?.locationName || null;
+  const charPresence = resolvedCharLoc?.presenceStatus || character?.resolved_presence_status || null;
 
   const handleSendMyLocation = async () => {
     if (!userLocId || !userLocName) {
@@ -69,12 +131,20 @@ export default function LocationShareTool({
       // The character must acknowledge the shared location — not silently receive it.
       // Reaction depends on relationship, distance, reason, and personality.
       try {
-        const charLocContext = charLocName ? `Your current location is: ${charLocName}.` : 'Your current location is unknown.';
-        const sameLocation = charLocId && charLocId === userLocId;
+        // Re-resolve the character's authoritative location for the distance context
+        // so the reply reflects the current resolved state, not the on-open snapshot.
+        let replyCharLoc = resolvedCharLoc;
+        try {
+          const fresh = await resolveAuthoritativeCharLocation(characterId, character?.owner_email);
+          if (fresh) { setResolvedCharLoc(fresh); replyCharLoc = fresh; }
+        } catch (_) { /* use on-open resolved value */ }
+
+        const charLocContext = replyCharLoc?.locationName ? `Your current location is: ${replyCharLoc.locationName}.` : 'Your current location is unknown.';
+        const sameLocation = replyCharLoc?.locationId && replyCharLoc.locationId === userLocId;
         const distanceCtx = sameLocation
           ? "You are at the same location as the person sharing — you are already there!"
-          : charLocName
-          ? `You are currently at ${charLocName}, which may be a different place.`
+          : replyCharLoc?.locationName
+          ? `You are currently at ${replyCharLoc.locationName}, which may be a different place.`
           : '';
         const personalityCtx = [
           character?.personality_summary ? `Your personality: ${character.personality_summary}.` : '',
@@ -131,10 +201,6 @@ Write a short natural text message responding to receiving their location. React
   };
 
   const handleRequestCharacterLocation = async () => {
-    if (!charLocId || !charLocName) {
-      setResult({ type: 'error', text: "Character location is currently unknown." });
-      return;
-    }
     if (!conversationId) {
       setResult({ type: 'error', text: 'No active conversation found. Send a message first.' });
       return;
@@ -143,6 +209,23 @@ Write a short natural text message responding to receiving their location. React
     setIsSending(true);
     setResult(null);
     try {
+      // Resolve the character's authoritative current location fresh at send time —
+      // never rely on the on-open snapshot, a previous chat message, image caption,
+      // memory, or drawer state. This consumes the same resolver used by work
+      // presence and the multi-job work-schedule correction.
+      const fresh = await resolveAuthoritativeCharLocation(characterId, character?.owner_email);
+      const loc = fresh || resolvedCharLoc;
+      if (loc) setResolvedCharLoc(loc);
+
+      const shareLocId = loc?.locationId || null;
+      const shareLocName = loc?.locationName || null;
+      const sharePresence = loc?.presenceStatus || null;
+
+      if (!shareLocId || !shareLocName) {
+        setResult({ type: 'error', text: "Character location is currently unknown." });
+        return;
+      }
+
       // Create a character message with a verified location_share card directly
       const msg = await base44.entities.Message.create({
         conversation_id: conversationId,
@@ -153,9 +236,9 @@ Write a short natural text message responding to receiving their location. React
         is_read: true,
         timestamp: new Date().toISOString(),
         location_share: {
-          location_id: charLocId,
-          location_name: charLocName,
-          presence_status: character?.resolved_presence_status || null,
+          location_id: shareLocId,
+          location_name: shareLocName,
+          presence_status: sharePresence,
           location_category: null,
           character_avatar_url: character?.avatar_url || null,
           note: null,
@@ -165,16 +248,22 @@ Write a short natural text message responding to receiving their location. React
       if (onMessageCreated && msg?.id) onMessageCreated(msg);
       // Update conversation preview
       await base44.entities.Conversation.update(conversationId, {
-        last_message_preview: `📍 ${charLocName}`,
+        last_message_preview: `📍 ${shareLocName}`,
         last_message_date: new Date().toISOString(),
       }).catch(() => {});
-      setResult({ type: 'success', text: `${character?.name}'s location (${charLocName}) was added to the conversation.` });
+      setResult({ type: 'success', text: `${character?.name}'s location (${shareLocName}) was added to the conversation.` });
     } catch (err) {
       setResult({ type: 'error', text: 'Failed to share character location. Please try again.' });
     } finally {
       setIsSending(false);
     }
   };
+
+  const charDisplay = resolvingLoc && !resolvedCharLoc
+    ? 'Resolving current location…'
+    : charLocName
+      ? `Currently: ${charLocName}`
+      : 'Location unknown';
 
   return createPortal(
     <AnimatePresence>
@@ -251,9 +340,7 @@ Write a short natural text message responding to receiving their location. React
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-foreground">Request {character?.name}'s Location</p>
               <p className="text-xs text-muted-foreground truncate">
-                {charLocName
-                  ? `Currently: ${charLocName}`
-                  : 'Location unknown'}
+                {charDisplay}
               </p>
             </div>
             <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
