@@ -104,16 +104,31 @@ Deno.serve(async (req) => {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
 
-      // Load all work locations for this character (ownership-scoped)
+      // Load all active employment records for this character. A character may hold
+      // multiple jobs; every active job's schedule is evaluated independently. Per-job
+      // schedule resolution (never merged/copied across jobs):
+      //   1. Location-specific worker_shifts[characterId] — authoritative for that job.
+      //   2. The matching additional_occupation_locations entry's own work fields — for
+      //      secondary jobs. Secondary jobs NEVER inherit the primary job's schedule.
+      //   3. Character-level work_start_time/work_end_time/work_days — PRIMARY job only.
       const singleAllWorkLocIds = [];
-      if (character.occupation_location_id) singleAllWorkLocIds.push(character.occupation_location_id);
-      if (character.current_work_location_id && !singleAllWorkLocIds.includes(character.current_work_location_id)) {
-        singleAllWorkLocIds.push(character.current_work_location_id);
+      const singleJobSchedules = {}; // locId -> { start, end, days } | null
+      const singlePrimaryLocId = character.occupation_location_id || character.current_work_location_id || null;
+      if (singlePrimaryLocId) {
+        if (!singleAllWorkLocIds.includes(singlePrimaryLocId)) singleAllWorkLocIds.push(singlePrimaryLocId);
+        singleJobSchedules[singlePrimaryLocId] = (character.work_start_time && character.work_end_time && Array.isArray(character.work_days))
+          ? { start: character.work_start_time, end: character.work_end_time, days: character.work_days }
+          : null;
       }
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
-          if (entry.location_id && !singleAllWorkLocIds.includes(entry.location_id)) {
-            singleAllWorkLocIds.push(entry.location_id);
+          if (!entry.location_id) continue;
+          if (!singleAllWorkLocIds.includes(entry.location_id)) singleAllWorkLocIds.push(entry.location_id);
+          if (entry.work_start_time && entry.work_end_time) {
+            const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+            singleJobSchedules[entry.location_id] = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+          } else if (!(entry.location_id in singleJobSchedules)) {
+            singleJobSchedules[entry.location_id] = null;
           }
         }
       }
@@ -125,37 +140,25 @@ Deno.serve(async (req) => {
         if (locs?.[0]) singleLocMap[locId] = locs[0];
       }
 
-      // Find which work location has an active shift right now (worker_shifts authoritative)
+      // Find which job has an active shift right now. Evaluate EVERY active job's
+      // schedule — not only the primary or first job.
       let singleActiveWorkLocId = null;
       for (const locId of singleAllWorkLocIds) {
         const loc = singleLocMap[locId];
         if (!loc) continue;
         const locationShift = loc.worker_shifts?.[characterId];
-        if (locationShift) {
-          if (isLocationShiftActiveNow(locationShift, singleClock)) {
-            singleActiveWorkLocId = locId;
-            break;
-          }
-          continue; // Shift defined but not active — do not fall back to character schedule
+        if (locationShift && locationShift.start && locationShift.end) {
+          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = locId; break; }
+          continue; // location-specific shift defined but not active — do not fall back
         }
-        // No location-specific shift — use character-level schedule
-        if (character.work_start_time && character.work_end_time && character.work_days) {
-          const nowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
-          const [sh, sm] = character.work_start_time.split(':').map(Number);
-          const [eh, em] = character.work_end_time.split(':').map(Number);
-          const startMin = sh * 60 + sm;
-          const endMin = eh * 60 + em;
-          const isCross = endMin < startMin;
-          const today = singleClock.getDay();
-          const yesterday = (today + 6) % 7;
-          const active = isCross
-            ? (character.work_days.includes(today) && nowMin >= startMin) || (character.work_days.includes(yesterday) && nowMin < endMin)
-            : character.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-          if (active) { singleActiveWorkLocId = locId; break; }
+        const jobShift = singleJobSchedules[locId];
+        if (jobShift && jobShift.start && jobShift.end) {
+          if (isLocationShiftActiveNow(jobShift, singleClock)) { singleActiveWorkLocId = locId; break; }
         }
       }
 
-      const primaryWorkLocId = singleAllWorkLocIds.find(id => singleLocMap[id]) || null;
+      // Which job's workplace is the character currently at (any active job).
+      const singleCurrentWorkLocId = (resolvedLocId && singleAllWorkLocIds.includes(resolvedLocId)) ? resolvedLocId : null;
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -271,8 +274,32 @@ Deno.serve(async (req) => {
       // Route work-end through the sole canonical writer. Work end is an obligation
       // ending, not a canonical presence state. The authority determines the valid
       // resulting canonical location and presence. Work end does NOT automatically mean "home".
-      const effectiveWorkLocId = primaryWorkLocId;
-      if (effectiveWorkLocId && resolvedLocId === effectiveWorkLocId) {
+      if (singleCurrentWorkLocId) {
+        // Before sending home, check whether another active job has a current or
+        // immediately-following shift — if so, hold for the next tick instead of a
+        // home detour between back-to-back shifts at different jobs.
+        const _sNowMin = singleClock.getHours() * 60 + singleClock.getMinutes();
+        const _sToday = singleClock.getDay();
+        let _sImminent = null;
+        for (const locId of singleAllWorkLocIds) {
+          if (locId === singleCurrentWorkLocId) continue;
+          const loc = singleLocMap[locId];
+          if (!loc) continue;
+          const _ls = loc.worker_shifts?.[characterId];
+          const _sh = (_ls && _ls.start && _ls.end) ? _ls : (singleJobSchedules[locId] && singleJobSchedules[locId].start && singleJobSchedules[locId].end ? singleJobSchedules[locId] : null);
+          if (!_sh) continue;
+          const [sh, sm] = _sh.start.split(':').map(Number);
+          const sMin = sh * 60 + sm;
+          let minsToStart = sMin - _sNowMin;
+          if (minsToStart < 0) minsToStart += 1440;
+          if (minsToStart >= 0 && minsToStart <= 30) {
+            const hasDays = _sh.days && _sh.days.length > 0;
+            if (!hasDays || _sh.days.includes(_sToday)) { _sImminent = locId; break; }
+          }
+        }
+        if (_sImminent) {
+          return Response.json({ updated: false, reason: 'Shift ended at current job — another job shift starts within 30m, holding for next tick', imminentJob: _sImminent });
+        }
         if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
@@ -393,64 +420,61 @@ Deno.serve(async (req) => {
           continue; // Called out — do not force to work
         }
 
-        // Collect ALL work location IDs for this character
+        // Collect ALL active employment records for this character. A character may
+        // hold multiple jobs; every active job's schedule is evaluated independently.
+        // Per-job schedule resolution (never merged/copied across jobs):
+        //   1. Location-specific worker_shifts[char.id] — authoritative for that job.
+        //   2. The matching additional_occupation_locations entry's own work fields —
+        //      for secondary jobs. Secondary jobs NEVER inherit the primary job's
+        //      character-level schedule.
+        //   3. Character-level work_start_time/work_end_time/work_days — PRIMARY job
+        //      (occupation_location_id / current_work_location_id) only.
         const allWorkLocIds = [];
-        if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
-        if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
-          allWorkLocIds.push(char.current_work_location_id);
+        const jobSchedules = {}; // locId -> { start, end, days } | null
+        const primaryLocId = char.occupation_location_id || char.current_work_location_id || null;
+        if (primaryLocId) {
+          if (!allWorkLocIds.includes(primaryLocId)) allWorkLocIds.push(primaryLocId);
+          jobSchedules[primaryLocId] = (char.work_start_time && char.work_end_time && Array.isArray(char.work_days))
+            ? { start: char.work_start_time, end: char.work_end_time, days: char.work_days }
+            : null;
         }
         if (Array.isArray(char.additional_occupation_locations)) {
           for (const entry of char.additional_occupation_locations) {
-            if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
-              allWorkLocIds.push(entry.location_id);
+            if (!entry.location_id) continue;
+            if (!allWorkLocIds.includes(entry.location_id)) allWorkLocIds.push(entry.location_id);
+            if (entry.work_start_time && entry.work_end_time) {
+              const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+              jobSchedules[entry.location_id] = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+            } else if (!(entry.location_id in jobSchedules)) {
+              jobSchedules[entry.location_id] = null;
             }
           }
         }
 
         if (allWorkLocIds.length === 0) continue;
 
-        // Determine which work location (if any) has an active shift right now.
-        // worker_shifts[char.id] is authoritative for that location.
-        // If no location-specific shift exists, fall back to character-level schedule.
+        // Determine which job (if any) has an active shift right now. Evaluate EVERY
+        // active job's schedule — not only the primary or first job — so a current
+        // shift is found even when it belongs to the second, third, or later job.
         let activeWorkLocId = null;
         for (const locId of allWorkLocIds) {
           const loc = locMap[locId];
           if (!loc) continue;
           const locationShift = loc.worker_shifts?.[char.id];
-          if (locationShift) {
-            if (isLocationShiftActiveNow(locationShift, globalClock)) {
-              activeWorkLocId = locId;
-              break;
-            }
-            // Shift defined but not active for this location — do NOT fall back to character schedule
-            continue;
+          if (locationShift && locationShift.start && locationShift.end) {
+            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = locId; break; }
+            continue; // location-specific shift defined but not active — do not fall back
           }
-          // No location-specific shift — use character-level schedule
-          if (char.work_start_time && char.work_end_time && char.work_days) {
-            const nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
-            const [sh, sm] = char.work_start_time.split(':').map(Number);
-            const [eh, em] = char.work_end_time.split(':').map(Number);
-            const startMin = sh * 60 + sm;
-            const endMin = eh * 60 + em;
-            const isCross = endMin < startMin;
-            const today = globalClock.getDay();
-            const yesterday = (today + 6) % 7;
-            const onCharSchedule = isCross
-              ? (char.work_days.includes(today) && nowMin >= startMin) || (char.work_days.includes(yesterday) && nowMin < endMin)
-              : char.work_days.includes(today) && nowMin >= startMin && nowMin < endMin;
-            if (onCharSchedule) {
-              activeWorkLocId = locId;
-              break;
-            }
+          const jobShift = jobSchedules[locId];
+          if (jobShift && jobShift.start && jobShift.end) {
+            if (isLocationShiftActiveNow(jobShift, globalClock)) { activeWorkLocId = locId; break; }
           }
         }
 
-        // Also determine what the "primary" work location is for post-shift return logic
-        // (the first location in allWorkLocIds that is in scope)
-        const primaryWorkLocId = allWorkLocIds.find(id => locMap[id]) || null;
-
+        // Identify which job's workplace the character is currently at (any of their
+        // active jobs, not only the primary). Used for post-shift return logic.
+        const currentWorkLocId = (resolvedLocId && allWorkLocIds.includes(resolvedLocId)) ? resolvedLocId : null;
         const onShift = !!activeWorkLocId;
-        const workLocId = activeWorkLocId || primaryWorkLocId;
 
         if (onShift && activeWorkLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope
@@ -490,9 +514,37 @@ Deno.serve(async (req) => {
               issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
             }
           }
-        } else if (!onShift && workLocId && resolvedLocId === workLocId) {
-          // Character is at work but shift ended. Work end is an obligation ending,
-          // not a canonical presence state. Route through the sole canonical writer.
+        } else if (!onShift && currentWorkLocId) {
+          // Character is at a job's workplace but that job's shift has ended. Work
+          // end is an obligation ending, not a canonical presence state. Before
+          // sending home, check whether ANOTHER active job has a current or
+          // immediately-following scheduled shift — if so, hold (do not send home)
+          // so the next enforcement tick routes the character to that job, avoiding
+          // a home detour between back-to-back shifts at different jobs.
+          const _nowMin = globalClock.getHours() * 60 + globalClock.getMinutes();
+          const _today = globalClock.getDay();
+          let imminentOtherJob = null;
+          for (const locId of allWorkLocIds) {
+            if (locId === currentWorkLocId) continue;
+            const loc = locMap[locId];
+            if (!loc) continue;
+            const _ls = loc.worker_shifts?.[char.id];
+            const _shift = (_ls && _ls.start && _ls.end) ? _ls : (jobSchedules[locId] && jobSchedules[locId].start && jobSchedules[locId].end ? jobSchedules[locId] : null);
+            if (!_shift) continue;
+            const [sh, sm] = _shift.start.split(':').map(Number);
+            const sMin = sh * 60 + sm;
+            let minsToStart = sMin - _nowMin;
+            if (minsToStart < 0) minsToStart += 1440;
+            if (minsToStart >= 0 && minsToStart <= 30) {
+              const hasDays = _shift.days && _shift.days.length > 0;
+              if (!hasDays || _shift.days.includes(_today)) { imminentOtherJob = locId; break; }
+            }
+          }
+          if (imminentOtherJob) {
+            issues_found.push(`${char.name}: shift ended at current job — another job shift starts within 30m, holding for next tick`);
+            continue;
+          }
+          // Route through the sole canonical writer.
           const homeLocId = char.current_home_location_id;
           if (!homeLocId) { issues_found.push(`${char.name}: shift ended, at work, no home location`); continue; }
           if (!locMap[homeLocId]) { issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — home location not in owner scope`); continue; }

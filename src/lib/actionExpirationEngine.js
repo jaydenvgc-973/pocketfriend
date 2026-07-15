@@ -125,8 +125,25 @@ export function resolveExpiredAction(character, actionType, timestamp) {
     needUpdates.energy_value = Math.min(100, (character.energy_value || 75) + 40);
   }
 
-  // Hygiene actions (shower, bath, washing face/hair/hands, brushing teeth, grooming) improve hygiene
-  if (normalizedAction.includes('shower') || normalizedAction.includes('wash') || normalizedAction.includes('bathe') || normalizedAction.includes('bath') || normalizedAction.includes('brush') || normalizedAction.includes('teeth') || normalizedAction.includes('groom')) {
+  // Personal hygiene actions only: taking a shower/bath, washing face/hair/hands,
+  // brushing teeth/hair, grooming. Environmental cleaning (cleaning the bathroom,
+  // scrubbing the tub, washing dishes/car/clothes, mopping, sweeping, dusting) is
+  // NOT personal hygiene and must not trigger hygiene recovery. Word boundaries
+  // prevent "bath" from matching "bathroom", and the body-part/verb-form
+  // requirement prevents "wash"/"brush" from matching environmental cleaning.
+  const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b/.test(normalizedAction) && /\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(normalizedAction);
+  const _envWash = /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(normalizedAction);
+  const _isPersonalHygiene = !_envClean && !_envWash && (
+    /\b(showered|showering|showers)\b/.test(normalizedAction) ||
+    /\b(bathed|bathing|bathes)\b/.test(normalizedAction) ||
+    /\b(takes|took|taking)\b[^.!?\n]{0,20}\b(shower|bath)\b/.test(normalizedAction) ||
+    /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|its)?\s?(face|hair|hands)\b/.test(normalizedAction) ||
+    /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)?\s?(teeth|hair)\b/.test(normalizedAction) ||
+    /\b(grooms|groomed|grooming|groom)\b/.test(normalizedAction) ||
+    /\b(wash up|washed up|freshen up|freshened up)\b/.test(normalizedAction) ||
+    /\b(quick_shower|full_shower|brushing_teeth|washing_face|washing_hair|washing_hands|taking_bath|taking_shower|grooming_hair)\b/.test(normalizedAction)
+  );
+  if (_isPersonalHygiene) {
     needUpdates.hygiene_value = Math.min(100, (character.hygiene_value || 75) + 35);
   }
 
