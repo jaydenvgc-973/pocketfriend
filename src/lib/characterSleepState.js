@@ -236,6 +236,61 @@ export function getCharacterSleepState(character, locationMap) {
     const nowMin    = nowET.getHours() * 60 + nowET.getMinutes();
     const dayOfWeek = nowET.getDay();
 
+    // OBLIGATION OVERRIDE (One Truth) — an active scheduled obligation overrides a stale
+    // DB sleeping/napping state. Mirrors sleepUtils.isCharacterAsleep so every sleep consumer
+    // (Home card, ChatHeader, AlarmTool, getCharacterLivePresence) reads one truth: a
+    // character on an active work shift (not blocked) or in a school window is AWAKE at that
+    // obligation — not asleep — even if resolved_presence_status hasn't been overwritten yet.
+    const isBlockedFromWork =
+      (character.health_value !== undefined && character.health_value < 20) ||
+      (character.current_activity && character.current_activity.toLowerCase().includes('emergency'));
+    const obligationAwake = (() => {
+      if (!isBlockedFromWork && character.work_start_time && character.work_end_time &&
+          Array.isArray(character.work_days) && character.work_days.length > 0 &&
+          character.work_days.includes(dayOfWeek)) {
+        const wStart = toMinLocal(character.work_start_time);
+        const wEnd = toMinLocal(character.work_end_time);
+        if (wStart !== null && wEnd !== null) {
+          const onShift = wEnd < wStart ? (nowMin >= wStart || nowMin < wEnd) : (nowMin >= wStart && nowMin < wEnd);
+          if (onShift) return { awake: true, reason: 'work_shift_active' };
+        }
+      }
+      if (!isBlockedFromWork && locationMap) {
+        const workLocIds = [];
+        if (character.occupation_location_id) workLocIds.push(character.occupation_location_id);
+        if (character.current_work_location_id && !workLocIds.includes(character.current_work_location_id)) workLocIds.push(character.current_work_location_id);
+        if (Array.isArray(character.additional_occupation_locations)) {
+          for (const entry of character.additional_occupation_locations) {
+            if (entry.location_id && !workLocIds.includes(entry.location_id)) workLocIds.push(entry.location_id);
+          }
+        }
+        for (const wLocId of workLocIds) {
+          const wLoc = locationMap[wLocId];
+          if (!wLoc) continue;
+          const shift = wLoc.worker_shifts?.[character.id];
+          if (shift && shift.start && shift.end) {
+            const sMin = toMinLocal(shift.start);
+            const eMin = toMinLocal(shift.end);
+            if (sMin !== null && eMin !== null) {
+              const onShift = eMin < sMin ? (nowMin >= sMin || nowMin < eMin) : (nowMin >= sMin && nowMin < eMin);
+              if (onShift) return { awake: true, reason: 'worker_shift_active' };
+            }
+          }
+        }
+      }
+      if (character.student_status === 'enrolled' && character.education_location_id &&
+          [1, 2, 3, 4, 5].includes(dayOfWeek) &&
+          Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+        const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (active) {
+          const sStart = toMinLocal(active.start_time);
+          const sEnd = toMinLocal(active.end_time);
+          if (sStart !== null && sEnd !== null && nowMin >= sStart && nowMin < sEnd) return { awake: true, reason: 'school_window_active' };
+        }
+      }
+      return { awake: false };
+    })();
+
     // passed_out is an involuntary collapse state — mechanically and visually distinct from sleeping.
     // isSleeping is FALSE — this is NOT voluntary sleep.
     // isPassedOut is TRUE — this is forced recovery from exhaustion.
@@ -339,9 +394,16 @@ export function getCharacterSleepState(character, locationMap) {
         }
       }
 
-      // REMOVED: Work-shift and school-window overrides for sleeping status.
-      // The backend (enforceCharacterWorkSchedule) already has a sleep guard. If it let the
-      // character sleep, the frontend must respect that. The 8-hour cap above handles stale sleep.
+      // OBLIGATION OVERRIDE (One Truth): active work shift (not blocked) or school window
+      // overrides a stale DB sleeping state — the schedule is authoritative.
+      if (obligationAwake.awake) {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: false, isLikelyStale: false,
+          blockingCondition: `obligation_${obligationAwake.reason}`,
+        };
+      }
 
       // All checks passed — sleep is valid
       return {
@@ -384,8 +446,16 @@ export function getCharacterSleepState(character, locationMap) {
         };
       }
 
-      // REMOVED: Work-shift and school-window overrides for napping status.
-      // Backend authorities decide whether a napping character should be at work — not the frontend.
+      // OBLIGATION OVERRIDE (One Truth): active work shift (not blocked) or school window
+      // overrides a stale DB napping state.
+      if (obligationAwake.awake) {
+        return {
+          isSleeping: false, isNapping: false, displayLabel: 'awake',
+          contextLabel: null, visible_label: null, confidence: 1,
+          stale_risk: false, isLikelyStale: false,
+          blockingCondition: `obligation_${obligationAwake.reason}`,
+        };
+      }
 
       // Jail / house arrest blocker
       if (character.is_jailed || character.house_arrest_active) {

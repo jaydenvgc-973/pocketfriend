@@ -238,41 +238,43 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
                 const canonicalPresence = character.resolved_presence_status || '';
 
-                // BLOCKING STATE: hospitalized/jailed/house_arrest — always wins
+                // BLOCKING STATE: hospitalized/jailed/house_arrest — always wins.
+                // These are authority-committed crisis states the live resolver preserves.
                 const isBlockingState = character.is_jailed ||
                   character.house_arrest_active ||
                   canonicalPresence === 'hospitalized' ||
                   canonicalPresence === 'incarcerated';
 
-                // SCHEDULE-VERIFIED SCHOOL: at_school presence or education schedule is active
-                const isVerifiedAtSchool = canonicalPresence === 'at_school' ||
-                  presence.status === 'at_school' ||
-                  (character.student_status === 'enrolled' && character.education_location_id && presence.status === 'at_location' &&
+                // SCHEDULE-VERIFIED states come from the LIVE resolver only (One Truth).
+                // The stale DB resolved_presence_status is NOT authoritative for work/school —
+                // the resolver recomputes from the actual schedule. A stale 'at_work' left by an
+                // automation that hasn't run work-end must NOT show "at work" off-shift, and a
+                // stale 'sleeping' must NOT show "asleep" when the character is actually on shift.
+                const isVerifiedAtSchool = presence.status === 'at_school' ||
+                  (character.student_status === 'enrolled' && character.education_location_id &&
+                    presence.status === 'at_location' &&
                     character.resolved_current_location_id === character.education_location_id);
 
-                // SCHEDULE-VERIFIED WORK: at_work presence is authoritative
-                const isVerifiedAtWork = canonicalPresence === 'at_work' || presence.status === 'at_work';
+                const isVerifiedAtWork = presence.status === 'at_work';
 
-                // ── SLEEP DETECTION: DB-first ──────────────────────────────────
-                // Sleeping and napping are actual sleep states — character is ASLEEP.
-                // Only suppressed when school or work is verified active.
-                const sleepState = getCharacterSleepState(character);
-                // Cross-validate: DB presence must ALSO pass sleep state validation.
-                // A stale nap/sleep in resolved_presence_status is NOT authoritative without
-                // getCharacterSleepState confirming it as valid.
-                const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'sleeping' || canonicalPresence === 'napping');
+                // ── SLEEP DETECTION: live-resolver-first ──────────────────────────
+                // presence (from getCharacterLivePresence → resolveCharacterLocation) is the
+                // schedule-anchored truth. getCharacterSleepState cross-validates the DB sleep
+                // state with the same obligation guard so both agree.
+                const sleepState = getCharacterSleepState(character, locationMap);
 
-                // Sleep derivation is suppressed when school or work is the verified active state
+                const liveIsSleeping = presence.status === 'sleeping' || presence.status === 'napping';
+                const canonicalIsSleeping = !isVerifiedAtSchool && !isVerifiedAtWork && liveIsSleeping;
+
                 const derivedAsleep = canonicalIsSleeping ||
                   (!isVerifiedAtSchool && !isVerifiedAtWork && sleepState.isSleeping);
                 const isNapping = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  (canonicalPresence === 'napping' || sleepState.isNapping);
+                  (presence.status === 'napping' || sleepState.isNapping);
 
                 // RESTING: awake state — relaxing but NOT asleep.
                 // Never grouped with sleeping/napping. Uses location icon, not sleep icon.
                 const isResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
-                  canonicalPresence === 'resting' && sleepState.displayLabel === 'resting';
+                  presence.status === 'resting' && sleepState.displayLabel === 'resting';
 
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {

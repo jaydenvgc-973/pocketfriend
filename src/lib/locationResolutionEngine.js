@@ -109,7 +109,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
-  if (!hasValidCallout && !isCharacterAsleepFromUtils(character)) {
+  if (!hasValidCallout && !isCharacterAsleepFromUtils(character, locationMap)) {
   // LAYER 1: Work schedule — SLEEP GUARD: asleep/napping characters must not be forced to work
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
@@ -187,7 +187,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // LAYER 2: Check school schedule
   // SLEEP PRE-CHECK: if the character is in their sleep window, school must NOT win.
   // Sleep enforcement (Layer 3.5A) runs after this, but we must not send sleeping characters to school.
-  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character)) {
+  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character, locationMap)) {
     const schoolLocation = locationMap[character.education_location_id];
     if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {
@@ -229,7 +229,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.religion &&
     character.religion !== 'None' &&
     character.belief_level !== 'in_name_only' &&
-    !isCharacterAsleepFromUtils(character)
+    !isCharacterAsleepFromUtils(character, locationMap)
   ) {
     const religiousLoc = locationMap[character.religious_location_id];
     if (religiousLoc) {
@@ -316,7 +316,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // Work/school resolution: if sleep is invalid because work or school is active,
   // we do NOT fall to home — the work/school layers above (Layer 1, Layer 2) have already
   // returned the correct obligation location. Sleep is simply not inserted here.
-  const characterIsSleeping = isCharacterSleeping(character);
+  const characterIsSleeping = isCharacterSleeping(character, locationMap);
 
   // VGC ACTIVE-WINDOW GUARD: VGC Towers NPC residents follow the VGC travel
   // schedule, NOT their individual sleep schedules, during the active travel
@@ -655,8 +655,8 @@ function isInPreSleepReturnWindow(character, currentTime) {
  * SINGLE SOURCE OF TRUTH: delegates to sleepUtils.isCharacterAsleep
  * so locationResolutionEngine and UI use identical logic.
  */
-function isCharacterSleeping(character) {
-  return isCharacterAsleepFromUtils(character);
+function isCharacterSleeping(character, locationMap) {
+  return isCharacterAsleepFromUtils(character, locationMap);
 }
 
 
@@ -884,47 +884,42 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // Do NOT show "Traveling to…" — characters are at their current_location_id, period.
   // If presence_status is 'traveling', it is stale — fall through to current location display.
 
-  // ── PRIORITY 2.5: REMOVED — Consumers read committed canonical state ──────
-  // This block previously ran resolveCharacterLocation to override committed DB
-  // presence with a live schedule re-derivation. Under One Truth, consumers may
-  // NOT independently choose a different current canonical presence. The committed
-  // resolved_presence_status from enforceCharacterLocationPresence is authoritative.
-  // Schedule context is retained for shift phase display only, not for overriding presence.
+  // ── ONE TRUTH: live schedule-anchored resolution ───────────────────────────
+  // The committed resolved_presence_status is authoritative ONLY insofar as the resolver
+  // recomputes it from the actual schedule. A stale DB field left by an automation that
+  // hasn't run (e.g. sleeping through a shift, at_work after a shift ended) must NOT override
+  // the live schedule. resolveCharacterLocation is the single resolver shared with the Travel
+  // page — Home/Chat/Travel read one truth. (Sleep/napping/resting/rabbit_hole/blocking states
+  // were already handled above via getCharacterSleepState + committed crisis flags.)
+  const resolved = resolveCharacterLocation(character, locationMap);
+  const liveStatus = resolved.resolved_presence_status;
+  const liveLocId = resolved.resolved_current_location_id;
+  const liveLoc = liveLocId ? locationMap[liveLocId] : null;
+  const liveLocName = resolved.resolved_current_location_name || liveLoc?.name || locName;
 
-  // ── PRIORITY 3: CONFIRMED PRESENCE — read committed canonical state ───────
-  // Under One Truth, consumers read the committed resolved_presence_status directly.
-  // No independent re-derivation via resolveCharacterLocation.
-  if (presenceStatus === 'at_work') {
-    const locName = loc?.name || character.resolved_current_location_name || 'Work';
-    return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
+  if (liveStatus === 'at_work') {
+    return { status: 'at_work', label: 'At work', sublabel: liveLocName || character.occupation_location_name || 'Work', isTransit: false, isSleeping: false };
   }
-  if (presenceStatus === 'at_school') {
+  if (liveStatus === 'at_school') {
     const schoolLoc = locationMap[character.education_location_id];
-    return { status: 'at_school', label: `At school`, sublabel: schoolLoc?.name || 'School', isTransit: false, isSleeping: false };
+    return { status: 'at_school', label: 'At school', sublabel: schoolLoc?.name || liveLocName || 'School', isTransit: false, isSleeping: false };
   }
-  if (presenceStatus === 'visiting') {
-    return { status: 'visiting', label: `At ${locName}`, sublabel: null, isTransit: false, isSleeping: false };
+  if (liveStatus === 'visiting') {
+    return { status: 'visiting', label: `At ${liveLocName}`, sublabel: null, isTransit: false, isSleeping: false };
   }
-  if (presenceStatus === 'home') {
-    // Only trust the stored 'home' status if the character actually has a home location assigned.
-    // If no home location exists, the stored field is stale — fall through to the location fallback.
+  if (liveStatus === 'home') {
     const hasHome = !!(character.current_home_location_id || character.home_location_id);
     if (hasHome) {
-      return { status: 'home', label: 'At home', sublabel: locName, isTransit: false, isSleeping: false };
+      return { status: 'home', label: 'At home', sublabel: liveLocName, isTransit: false, isSleeping: false };
     }
   }
 
-  // ── PRIORITY 3.9: REMOVED — Consumers read committed canonical state ─────
-  // This block previously ran resolveCharacterLocation to override committed DB
-  // presence with a live schedule re-derivation. Under One Truth, consumers may
-  // NOT independently choose a different current canonical presence.
-
-  // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
+  // ── FALLBACK — last confirmed location ────────────────────────────────────
   // RULE: Only display a location name if resolved_current_location_id exists AND a name is available.
   // If neither exists, show Away — never Nearby, never stale location, never Home.
-  const hasValidLocation = !!character.resolved_current_location_id && !!locName;
+  const hasValidLocation = !!liveLocId && !!liveLocName;
   return hasValidLocation
-    ? { status: 'at_location', label: `At ${locName}`, sublabel: null, isTransit: false, isSleeping: false }
+    ? { status: 'at_location', label: `At ${liveLocName}`, sublabel: null, isTransit: false, isSleeping: false }
     : { status: 'away', label: 'Away', sublabel: 'No valid location assigned', isTransit: false, isSleeping: false };
 }
 

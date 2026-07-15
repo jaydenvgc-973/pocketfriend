@@ -676,11 +676,68 @@ export function isCharacterAsleep(character, locationMap) {
       if ((nowET.getTime() - sleepStartMs) / 3_600_000 >= 8) return false;
     }
 
-    // RULE 3 (REMOVED): Work-shift and school-window overrides.
-    // The backend enforceCharacterWorkSchedule already has a sleep guard (isBlockedFromWork).
-    // If the backend let the character sleep through a shift, that is the authoritative decision.
-    // Frontend overrides here caused the card to show "at work" when the character was in bed.
-    // The 8-hour cap (RULE 2) already handles truly stale sleep.
+    // RULE 3: OBLIGATION GUARD (One Truth) — an active scheduled obligation overrides a
+    // stale DB sleeping state. A resolved_presence_status='sleeping' that the work/school
+    // automation has not yet overwritten must NOT suppress the live schedule: if the
+    // character is on an active work shift (and not blocked from work) or in a school
+    // window, they are NOT asleep — the schedule is authoritative. Blocked-from-work
+    // mirrors backend enforceCharacterWorkSchedule.isBlockedFromWork so a legitimately
+    // sick/emergency character is not forced awake. This keeps Home/Chat/Travel aligned.
+    const isBlockedFromWork =
+      (character.health_value !== undefined && character.health_value < 20) ||
+      (character.current_activity && character.current_activity.toLowerCase().includes('emergency'));
+
+    // Active work shift — character-level schedule
+    if (!isBlockedFromWork && character.work_start_time && character.work_end_time &&
+        Array.isArray(character.work_days) && character.work_days.length > 0 &&
+        character.work_days.includes(dayOfWeek)) {
+      const wStart = toMin(character.work_start_time);
+      const wEnd = toMin(character.work_end_time);
+      if (wStart !== null && wEnd !== null) {
+        const onShift = wEnd < wStart
+          ? (currentMin >= wStart || currentMin < wEnd)
+          : (currentMin >= wStart && currentMin < wEnd);
+        if (onShift) return false;
+      }
+    }
+
+    // Active work shift — location worker_shifts (requires locationMap)
+    if (!isBlockedFromWork && locationMap) {
+      const workLocIds = [];
+      if (character.occupation_location_id) workLocIds.push(character.occupation_location_id);
+      if (character.current_work_location_id && !workLocIds.includes(character.current_work_location_id)) workLocIds.push(character.current_work_location_id);
+      if (Array.isArray(character.additional_occupation_locations)) {
+        for (const entry of character.additional_occupation_locations) {
+          if (entry.location_id && !workLocIds.includes(entry.location_id)) workLocIds.push(entry.location_id);
+        }
+      }
+      for (const wLocId of workLocIds) {
+        const wLoc = locationMap[wLocId];
+        if (!wLoc) continue;
+        const shift = wLoc.worker_shifts?.[character.id];
+        if (shift && shift.start && shift.end) {
+          const sMin = toMin(shift.start);
+          const eMin = toMin(shift.end);
+          if (sMin !== null && eMin !== null) {
+            const onShift = eMin < sMin
+              ? (currentMin >= sMin || currentMin < eMin)
+              : (currentMin >= sMin && currentMin < eMin);
+            if (onShift) return false;
+          }
+        }
+      }
+    }
+
+    // Active school window
+    if (character.student_status === 'enrolled' && character.education_location_id &&
+        [1, 2, 3, 4, 5].includes(dayOfWeek)) {
+      let sStart = null, sEnd = null;
+      if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+        const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+        if (active) { sStart = toMin(active.start_time); sEnd = toMin(active.end_time); }
+      }
+      if (sStart !== null && sEnd !== null && currentMin >= sStart && currentMin < sEnd) return false;
+    }
 
     return true; // All rules passed — ordinary sleep is valid
   }
