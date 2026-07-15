@@ -565,14 +565,46 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   // no surface shows home while another shows hospital. No status bars are
   // refilled here — recovery is progressive via the hospitalized context rates.
   if (requestedStatus === 'hospitalized') {
-    if (currentStatus === 'hospitalized') {
-      return { disposition: 'no_change', canonicalFields: {} };
-    }
+    // Resolve the hospital once (existing medical-category location, the same
+    // convention autonomousCharacterMovement uses to identify hospitals).
     let hospitalLocId = requestedLocId || null;
     let hospitalLoc = hospitalLocId ? locationMap[hospitalLocId] : null;
     if (!hospitalLoc || (hospitalLoc.category || '').toLowerCase() !== 'medical') {
       const medLoc = Object.values(locationMap).find(l => (l.category || '').toLowerCase() === 'medical');
       if (medLoc) { hospitalLoc = medLoc; hospitalLocId = medLoc.id; }
+    }
+    if (currentStatus === 'hospitalized') {
+      // Already hospitalized. The original hospitalization may have committed the
+      // presence WITHOUT moving the location to the hospital — the "Home —
+      // Hospitalized" violation (resolved_presence_status='hospitalized' but
+      // resolved_current_location_id is still home, resolved_location_type is
+      // not 'medical'). Reconcile the committed location to the hospital using
+      // the same resolution as a fresh admission. This is the existing
+      // hospitalization handler completing the move it committed; no new rule.
+      // If the location is already the hospital (or no hospital exists), there
+      // is nothing to do.
+      const currentLoc = currentLocId ? locationMap[currentLocId] : null;
+      const currentIsMedical = currentLoc && (currentLoc.category || '').toLowerCase() === 'medical';
+      if (currentIsMedical || !hospitalLocId) {
+        return { disposition: 'no_change', canonicalFields: {} };
+      }
+      const canonicalFields = {
+        resolved_current_location_id: hospitalLocId,
+        resolved_current_location_name: hospitalLoc?.name || 'Hospital',
+        resolved_location_type: 'medical',
+        resolved_last_updated_at: etTime.toISOString(),
+      };
+      return {
+        disposition: 'accepted',
+        canonicalFields,
+        committed_result: {
+          resolved_current_location_id: hospitalLocId,
+          resolved_current_location_name: hospitalLoc?.name || 'Hospital',
+          resolved_location_type: 'medical',
+          resolved_presence_status: 'hospitalized',
+          resolved_source_reason: character.resolved_source_reason || 'medical_emergency',
+        },
+      };
     }
     const canonicalFields = {
       resolved_presence_status: 'hospitalized',

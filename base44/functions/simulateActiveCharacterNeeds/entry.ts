@@ -1244,12 +1244,26 @@ Deno.serve(async (req) => {
         // RC3: ER escalation — health ≤15 or compound crisis with health ≤20
         const compoundCrisisHealth = newNeeds.health <= T.HEALTH_CRITICAL &&
           [newNeeds.hunger, newNeeds.energy, newNeeds.health].filter(v => v < T.HEALTH_CRITICAL).length >= 2;
-        if ((newNeeds.health <= T.HEALTH_ER || compoundCrisisHealth) && char.resolved_presence_status !== 'hospitalized') {
+        // A character already marked hospitalized but whose committed location is
+        // NOT the hospital (resolved_location_type !== 'medical') is in the
+        // "Home — Hospitalized" violation — the original hospitalization committed
+        // the presence without moving the location. Re-issue the hospitalization
+        // request so the authority reconciles the location to the hospital. This
+        // is the existing RC3 admission path repairing its own incomplete commit;
+        // no new rule or threshold. For a reconciliation (already hospitalized),
+        // no transition record and no er_escalation consequence are produced —
+        // only the location is fixed, so an already-hospitalized character does
+        // not receive a duplicate "Emergency hospitalization" Recent Activity
+        // entry. The discharge LifeEvent remains the only new Recent Activity.
+        const _staleHospitalLocation = char.resolved_presence_status === 'hospitalized' &&
+          (char.resolved_location_type || '').toLowerCase() !== 'medical';
+        if ((newNeeds.health <= T.HEALTH_ER || compoundCrisisHealth) &&
+            (char.resolved_presence_status !== 'hospitalized' || _staleHospitalLocation)) {
           transitionCandidates.push({
             priority: 1,
             payload: { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' },
-            transition: { transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'hospitalized', authority: 'energy_medical', reason: `Health reached ${Math.round(newNeeds.health)} (threshold ${T.HEALTH_ER}).`, verified_higher_priority_interrupt: true, interrupt_reason: 'health_critical_15' },
-            consequence: { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
+            transition: _staleHospitalLocation ? null : { transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'hospitalized', authority: 'energy_medical', reason: `Health reached ${Math.round(newNeeds.health)} (threshold ${T.HEALTH_ER}).`, verified_higher_priority_interrupt: true, interrupt_reason: 'health_critical_15' },
+            consequence: _staleHospitalLocation ? null : { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
           });
         }
 
