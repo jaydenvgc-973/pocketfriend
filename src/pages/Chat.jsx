@@ -28,7 +28,7 @@ import ShoppingApp from "@/components/chat/ShoppingApp";
 import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import ChatApprovals from "@/components/chat/ChatApprovals";
 import LogHousingChangeModal from "@/components/housing/LogHousingChangeModal";
-import { callLLMWithRetry } from "@/lib/llmUtils";
+import { callLLMWithRetry, callWithRetry, is429Error } from "@/lib/llmUtils";
 import { resolveOrCreateConversation, waitForConversationReady } from "@/lib/conversationResolver";
 import { buildEducationContext, buildSongsContext, buildDynamicContexts, buildImageRule, validateLocationInResponse, buildLinkContext, buildFinancialContext, buildCommitmentsContext, buildHouseholdCoPresenceContext, buildConfinementImageOverride, buildJailConfinementContext, buildReceivedImageContext, buildConversationLog, containsFamilyDenial } from "@/lib/promptContextBuilders";
 import { buildClothingAwarenessContext, buildSelfClothingAwareness } from "@/lib/clothingAwarenessContext";
@@ -461,6 +461,7 @@ export default function Chat({ chatTypeOverride } = {}) {
 
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
+    if (isGloballyRateLimited()) { setSendError("You're sending too quickly — please wait a moment and try again."); return; }
     setSendError(null);
 
     if (text.trim().toLowerCase().startsWith("fix:")) {
@@ -505,7 +506,7 @@ export default function Chat({ chatTypeOverride } = {}) {
           recentMessages: messages,
           characterName: character.name,
         });
-        worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => ({ data: { success: false, error: err.message } }));
+        worldPhoneSendResult = await base44.functions.invoke('sendWorldPhoneMessage', wpPayload).catch(err => { if (is429Error(err)) reportRateLimit(60000); return { data: { success: false, error: err.message } }; });
         console.log('[WorldPhone] send result:', worldPhoneSendResult?.data);
       }
     }
@@ -533,21 +534,19 @@ export default function Chat({ chatTypeOverride } = {}) {
       setConversationId(convoId);
     }
 
-    const userMsg = await base44.entities.Message.create({
-      conversation_id: convoId,
-      sender_type: "user",
-      content: text,
-      image_url: userImageUrl || undefined,
-      timestamp: new Date().toISOString(),
-      ...(activeCharacter ? {
-        played_as_character_id: activeCharacter?.id,
-        played_as_character_name: activeCharacter?.name,
-      } : {}),
-    });
-    if (!userMsg || !userMsg.id) {
-      setSendError("Message failed to save. Try again.");
+    let userMsg;
+    try {
+      userMsg = await callWithRetry(() => base44.entities.Message.create({
+        conversation_id: convoId, sender_type: "user", content: text,
+        image_url: userImageUrl || undefined, timestamp: new Date().toISOString(),
+        ...(activeCharacter ? { played_as_character_id: activeCharacter?.id, played_as_character_name: activeCharacter?.name } : {}),
+      }));
+    } catch (createErr) {
+      if (is429Error(createErr)) reportRateLimit(60000);
+      setSendError(is429Error(createErr) ? "You're sending too quickly — please wait a moment and try again." : "Message failed to save. Try again.");
       return;
     }
+    if (!userMsg || !userMsg.id) { setSendError("Message failed to save. Try again."); return; }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
     // ── CHARACTER AUTONOMOUS REACTION TO USER MESSAGE ─────────────────────────
