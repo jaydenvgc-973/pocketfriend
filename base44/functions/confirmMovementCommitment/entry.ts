@@ -68,6 +68,26 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing required field: scheduled_arrival_time' }, { status: 400 });
     }
 
+    // ── MINIMUM LEAD-TIME GUARDRAIL ───────────────────────────────────────────
+    // The selected travel time must be at least 5 minutes later than the current
+    // time. This is a minimum advance-scheduling requirement ONLY — it gives the
+    // one-time scheduler enough notice to register the execution. It does NOT
+    // authorize a five-minute interval, recurring signal, scanner, heartbeat,
+    // background check, or next-run processor. No component wakes every five
+    // minutes. One one-time execution is registered for the exact chosen time.
+    const MIN_LEAD_MS = 5 * 60 * 1000;
+    const leadMs = new Date(scheduled_arrival_time).getTime() - Date.now();
+    if (isNaN(leadMs)) {
+      return Response.json({ error: 'Invalid scheduled_arrival_time — not a valid timestamp' }, { status: 400 });
+    }
+    if (leadMs < MIN_LEAD_MS) {
+      return Response.json({
+        error: 'Travel time must be at least 5 minutes from now',
+        minimum_lead_minutes: 5,
+        selected_time: scheduled_arrival_time,
+      }, { status: 400 });
+    }
+
     // The character is already loaded and validated by the chat page.
     // The authenticated user owns the chat — no backend character lookup needed.
     // We use the character fields passed from the already-loaded frontend context.
