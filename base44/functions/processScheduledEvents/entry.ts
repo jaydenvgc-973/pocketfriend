@@ -4,8 +4,11 @@ Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
   try {
-    const user = await base44.auth.me();
-    if (user?.role !== 'admin') {
+    // Allow invocation by the scheduled runner (no user / service-role context) and
+    // by admins. Non-admin interactive callers are blocked. All entity writes below
+    // use asServiceRole, so no user context is required to process due events.
+    const user = await base44.auth.me().catch(() => null);
+    if (user && user.role !== 'admin') {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -150,41 +153,74 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TRAVEL ARRIVAL: write authoritative location ───────────────────────
-        // When a character made a travel promise in chat, we committed a ScheduledEvent
-        // of type 'travel_arrival'. On firing, write the arrival to the Character record.
+        // ── TRAVEL ARRIVAL: invoke the sole canonical writer once ──────────────
+        // A promised trip committed a ScheduledEvent (type 'travel_arrival') with an
+        // exact trigger_time. On firing, route the move through
+        // enforceCharacterLocationPresence — the sole canonical writer — exactly once.
+        // It commits the authoritative location/presence and applies all existing
+        // authoritative protections, including the absolute incarceration block (a
+        // jailed character is forced to incarceration regardless of the requested
+        // transition, so a promised trip cannot teleport them out of jail). The
+        // ScheduledEvent was already marked completed above, so the trip is one-time
+        // and a blocked trip does not run later.
         if (event.type === 'travel_arrival' && event.primary_character_id) {
           const travelPayload = event.event_payload || {};
           const destLocId = travelPayload.destination_location_id;
           const destLocName = travelPayload.destination_location_name;
+          const charId = event.primary_character_id;
           const arrivalNow = new Date().toISOString();
-          // Always clear traveling state on arrival, even if exact location id is absent
-          const locationUpdate = {
-            resolved_location_type: 'visit',
-            resolved_presence_status: 'visiting',
-            resolved_source_reason: 'conversation_travel_arrival',
-            resolved_last_updated_at: arrivalNow,
+
+          let authorityResponse = null;
+          try {
+            const invokeResult = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: charId,
+              owner_email: event.owner_email || travelPayload.owner_email || undefined,
+              requested_presence_status: 'visiting',
+              requested_location_id: destLocId || null,
+              requested_location_type: 'visit',
+              requested_source_reason: 'promised_travel_arrival',
+              requested_relocation: true,
+              clear_stay_lock: true,
+            });
+            authorityResponse = invokeResult?.data || invokeResult;
+          } catch (invokeErr) {
+            console.error(`[processScheduledEvents] travel_arrival authority invoke FAILED for ${charId}: ${invokeErr.message}`);
+          }
+
+          const disposition = authorityResponse?.disposition || (authorityResponse ? 'accepted' : 'failed');
+          const committed = authorityResponse?.committed_result || null;
+          const arrivedAtDestination = !!(committed && destLocId && committed.resolved_current_location_id === destLocId);
+          const blockedByIncarceration = !!(committed && (committed.resolved_presence_status === 'incarcerated' || committed.resolved_location_type === 'incarcerated'));
+
+          // Clear noncanonical travel state regardless of disposition (the one-time trip has been resolved)
+          await base44.asServiceRole.entities.Character.update(charId, {
             travel_status: 'not_traveling',
             traveling_to_location_id: null,
             traveling_to_location_name: null,
             travel_destination_location_id: null,
-            last_arrived_time: arrivalNow,
-          };
-          if (destLocId && destLocName) {
-            locationUpdate.resolved_current_location_id = destLocId;
-            locationUpdate.resolved_current_location_name = destLocName;
-          }
-          await base44.asServiceRole.entities.Character.update(event.primary_character_id, locationUpdate);
+            last_arrived_time: arrivedAtDestination ? arrivalNow : null,
+          }).catch(() => {});
 
-          // Mark commitment as completed
+          // Mark the commitment completed (arrived) or failed (blocked/rejected) — never retry
           if (travelPayload.commitment_id) {
-            await base44.asServiceRole.entities.CharacterCommitment.update(travelPayload.commitment_id, {
-              status: 'completed',
-              travel_arrived_at: arrivalNow,
-              completion_result: destLocName ? `Arrived at ${destLocName}` : 'Arrived at destination',
-            }).catch(() => {});
+            try {
+              if (arrivedAtDestination) {
+                await base44.asServiceRole.entities.CharacterCommitment.update(travelPayload.commitment_id, {
+                  status: 'completed',
+                  travel_arrived_at: arrivalNow,
+                  completion_result: destLocName ? `Arrived at ${destLocName}` : 'Arrived at destination',
+                });
+              } else {
+                await base44.asServiceRole.entities.CharacterCommitment.update(travelPayload.commitment_id, {
+                  status: 'failed',
+                  completion_result: blockedByIncarceration ? 'blocked_by_incarceration' : `authority_disposition_${disposition}`,
+                });
+              }
+            } catch (commitErr) {
+              console.warn(`[processScheduledEvents] commitment update failed: ${commitErr.message}`);
+            }
           }
-          console.log(`[processScheduledEvents] ✓ Travel arrival: char=${event.primary_character_id} → "${destLocName || 'destination'}"`);
+          console.log(`[processScheduledEvents] ✓ Travel arrival: char=${charId} → "${destLocName || 'destination'}" | disposition=${disposition} | arrived=${arrivedAtDestination} | blocked_jail=${blockedByIncarceration}`);
         }
 
         // If narrative type, post in chat

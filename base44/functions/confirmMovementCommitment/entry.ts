@@ -113,49 +113,69 @@ Deno.serve(async (req) => {
 
     const destLocId = destLocation.id;
 
-    // Step 3: Save pending scheduled relocation on character
-    // The user owns this character (they are in the chat) — use user-scoped write first.
-    // User-scoped write passes Character RLS (data.owner_email === user.email).
-    // Service-role fallback handles edge cases (protected characters, session issues).
     const nowIso = new Date().toISOString();
-    const relocationFields = {
-      next_location_id: destLocId,
-      next_location_name: destLocation.name,
-      pending_scheduled_relocation_at: scheduled_arrival_time,
-      pending_relocation_from: character.resolved_current_location_id,
-      pending_relocation_from_name: character.resolved_current_location_name,
-      pending_relocation_source: 'user_confirmed_commitment',
-      pending_relocation_message_id: message_id,
-      pending_relocation_confirmed_at: nowIso,
-      resolved_last_updated_at: nowIso,
-    };
+
+    // ── Step 3: Create CharacterCommitment (tracking) ──────────────────────────
+    // The commitment tracks the promised trip. Its id is carried in the
+    // ScheduledEvent payload so processScheduledEvents can mark it completed
+    // (arrived) or failed (blocked by an authoritative state such as jail).
+    let commitmentId = null;
     try {
-      await base44.entities.Character.update(character_id, relocationFields);
-    } catch (_writeErr) {
-      // Fallback to service role — user owns this character, verified via auth
-      await base44.asServiceRole.entities.Character.update(character_id, relocationFields);
+      const commitment = await base44.asServiceRole.entities.CharacterCommitment.create({
+        character_id,
+        character_name: character.name,
+        owner_email: user.email,
+        commitment_type: 'arrival',
+        destination_location_id: destLocId,
+        destination_location_name: destLocation.name,
+        commitment_source: 'chat_commitment',
+        source_message_id: message_id,
+        source_conversation_id: conversation_id,
+        commitment_text: travel_reason || `${character.name} committed to being at ${destLocation.name}`,
+        expected_arrival_time: scheduled_arrival_time,
+        expected_arrival_window_minutes: 15,
+        interruptible: false,
+        status: 'active',
+        created_at: nowIso,
+      });
+      commitmentId = commitment?.id || null;
+    } catch (err) {
+      console.warn('[confirmMovementCommitment] CharacterCommitment create failed (non-fatal):', err.message);
     }
 
-    // Step 4: Create CharacterCommitment record for tracking
-    await base44.asServiceRole.entities.CharacterCommitment.create({
-      character_id,
-      character_name: character.name,
-      owner_email: user.email,
-      commitment_type: 'arrival',
-      destination_location_id: destLocId,
-      destination_location_name: destLocation.name,
-      commitment_source: 'chat_commitment',
-      source_message_id: message_id,
-      source_conversation_id: conversation_id,
-      commitment_text: travel_reason || `${character.name} committed to being at ${destLocation.name}`,
-      expected_arrival_time: scheduled_arrival_time,
-      expected_arrival_window_minutes: 15,
-      interruptible: false,
-      status: 'active',
-      created_at: nowIso,
-    }).catch(err => {
-      console.warn('[confirmMovementCommitment] CharacterCommitment create failed (non-fatal):', err.message);
-    });
+    // ── Step 4: Commit the exact-time scheduled execution ──────────────────────
+    // The application's existing exact-time mechanism is ScheduledEvent +
+    // processScheduledEvents. "Yes, Schedule It" commits ONE destination and ONE
+    // exact trigger_time. processScheduledEvents fires it once when trigger_time
+    // arrives, routes the move through enforceCharacterLocationPresence (the sole
+    // canonical writer), and marks the event completed so it cannot repeat. This
+    // does NOT set pending_scheduled_relocation_at / next_location_id — those fed
+    // the recurring relocation scanner, which is not the execution authority here.
+    try {
+      await base44.asServiceRole.entities.ScheduledEvent.create({
+        character_ids: [character_id],
+        character_names: [character.name],
+        primary_character_id: character_id,
+        description: `${character.name} is scheduled to arrive at ${destLocation.name}.`,
+        trigger_time: scheduled_arrival_time,
+        type: 'travel_arrival',
+        source: 'commitment',
+        status: 'pending',
+        conversation_id: conversation_id || null,
+        owner_email: user.email,
+        event_payload: {
+          destination_location_id: destLocId,
+          destination_location_name: destLocation.name,
+          from_location_id: character.resolved_current_location_id || null,
+          from_location_name: character.resolved_current_location_name || null,
+          commitment_id: commitmentId,
+          owner_email: user.email,
+          source_message_id: message_id || null,
+        },
+      });
+    } catch (err) {
+      console.warn('[confirmMovementCommitment] ScheduledEvent create failed:', err.message);
+    }
 
     // Step 5: Record as memory
     await base44.asServiceRole.entities.CharacterMemory.create({

@@ -64,46 +64,6 @@ Deno.serve(async (req) => {
       const scheduledTime = new Date(char.pending_scheduled_relocation_at);
       if (now < scheduledTime) continue; // not due yet
 
-      // ── INCARCERATION BLOCK (absolute) ──────────────────────────────────────
-      // Jail/incarceration is an absolute travel block. A promised-travel
-      // schedule cannot interrupt, clear, bypass, shorten, or overwrite it.
-      // If the character is incarcerated at the scheduled time, the one-time
-      // relocation is recorded as blocked and cleared from pending so it
-      // cannot fire later or retry. The character is NOT teleported, the
-      // authoritative location is NOT changed, and the incarceration state is
-      // NOT altered. This is a one-time block, not a defer — no later retry.
-      const _ACTIVE_INCARCERATION = new Set(['pretrial', 'sentenced', 'serving', 'work_release', 'solitary', 'transferred']);
-      const isIncarcerated = char.is_jailed
-        || char.house_arrest_active
-        || char.resolved_presence_status === 'incarcerated'
-        || (char.incarceration_status && _ACTIVE_INCARCERATION.has(char.incarceration_status));
-      if (isIncarcerated) {
-        await base44.asServiceRole.entities.Character.update(char.id, {
-          pending_scheduled_relocation_at: null,
-          pending_relocation_from: null,
-          pending_relocation_from_name: null,
-          pending_relocation_source: null,
-          pending_relocation_message_id: null,
-          pending_relocation_confirmed_at: null,
-          next_location_id: null,
-          next_location_name: null,
-        });
-        const blockedCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
-          { character_id: char.id, status: 'active' }, null, 5
-        ).catch(() => []);
-        for (const c of blockedCommitments) {
-          try {
-            await base44.asServiceRole.entities.CharacterCommitment.update(c.id, {
-              status: 'failed',
-              cancellation_reason: 'blocked_by_incarceration',
-            });
-          } catch { /* non-fatal */ }
-        }
-        rejected.push({ character_name: char.name, reason: 'blocked_by_incarceration' });
-        console.log(`[processScheduledRelocations] ${char.name}: promised travel BLOCKED by incarceration — cleared, not executed, not retried`);
-        continue;
-      }
-
       const fromLocation = char.resolved_current_location_name || 'Previous Location';
       const toLocation = char.next_location_name || 'Destination';
 
