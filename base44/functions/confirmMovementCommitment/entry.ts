@@ -121,8 +121,8 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
 
     // ── Step 3: Create CharacterCommitment (tracking) ──────────────────────────
-    // The commitment tracks the promised trip. Its id is carried in the
-    // ScheduledEvent event_payload so processScheduledEvents can mark it arrived
+    // The commitment tracks the promised trip. Its id is carried on the character's
+    // pending_relocation_message_id so the relocation processor can mark it arrived
     // or failed (e.g. blocked by an authoritative state such as jail).
     let commitmentId = null;
     try {
@@ -148,48 +148,22 @@ Deno.serve(async (req) => {
       console.warn('[confirmMovementCommitment] CharacterCommitment create failed (non-fatal):', err.message);
     }
 
-    // ── Step 4: Register the scheduled relocation as a ScheduledEvent ──────────
+    // ── Step 4: Register the scheduled relocation on the character ──────────────
     // "Yes, Schedule It" commits ONE destination and ONE exact scheduled arrival
-    // time by creating a ScheduledEvent (type 'travel_arrival') — the existing
-    // production scheduled-travel entry point. processScheduledEvents selects it
-    // once trigger_time becomes due and routes the move through
-    // enforceCharacterLocationPresence, the sole canonical writer / teleportation
-    // pathway. No pending relocation fields are stamped — that routes through a
-    // separate processor (processScheduledRelocations) and would cause duplicate
-    // execution. Any stale pending fields from prior attempts are cleared so the
-    // ScheduledEvent is the sole execution path.
-    await base44.asServiceRole.entities.ScheduledEvent.create({
-      type: 'travel_arrival',
-      status: 'pending',
-      trigger_time: scheduled_arrival_time,
-      primary_character_id: character_id,
-      character_ids: [character_id],
-      character_names: [character.name],
-      description: `${character.name} arrives at ${destLocation.name}.`,
-      conversation_id: conversation_id || null,
-      source: 'commitment',
-      owner_email: user.email,
-      event_payload: {
-        destination_location_id: destLocId,
-        destination_location_name: destLocation.name,
-        commitment_id: commitmentId,
-        owner_email: user.email,
-        source_message_id: message_id || null,
-        travel_reason: travel_reason || null,
-      },
-    });
-
-    // Clear any stale pending-relocation fields so the sole execution path is the
-    // ScheduledEvent (processScheduledEvents → enforceCharacterLocationPresence).
+    // time by stamping the character's pending relocation fields — the existing
+    // scheduled-travel registration pathway. Setting pending_scheduled_relocation_at
+    // fires the existing registration trigger (entity automation on Character
+    // update), which routes the move through enforceCharacterLocationPresence, the
+    // authoritative location writer / teleportation pathway.
     await base44.entities.Character.update(character_id, {
-      pending_scheduled_relocation_at: null,
-      next_location_id: null,
-      next_location_name: null,
-      pending_relocation_from: null,
-      pending_relocation_from_name: null,
-      pending_relocation_source: null,
-      pending_relocation_message_id: null,
-      pending_relocation_confirmed_at: null,
+      pending_scheduled_relocation_at: scheduled_arrival_time,
+      next_location_id: destLocId,
+      next_location_name: destLocation.name,
+      pending_relocation_from: character.resolved_current_location_id || null,
+      pending_relocation_from_name: character.resolved_current_location_name || null,
+      pending_relocation_source: 'user_confirmed_commitment',
+      pending_relocation_message_id: commitmentId || message_id || null,
+      pending_relocation_confirmed_at: nowIso,
     });
 
     // Step 5: Record as memory
