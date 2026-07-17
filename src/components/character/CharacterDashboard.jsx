@@ -717,7 +717,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       const sentimentBuckets = {};
 
       msgs3dFallback.forEach(m => {
-        if (m.is_narrative === true) return; // autonomous narratives are not conversations
         const sentiment = resolveMessageSentiment(m);
         const bucket = sentiment || "unclassified";
         sentimentBuckets[bucket] = (sentimentBuckets[bucket] || 0) + 1;
@@ -859,7 +858,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       // If missing, infer from message content.
       // Use msgs3dFallback so this doesn't return 0 if Conversation filter failed.
       msgs3dFallback.forEach(m => {
-        if (m.is_narrative === true) return; // autonomous narratives are not conversations
         const mDate = m.timestamp || m.created_date;
         if (!mDate) return;
         if (m.emotional_state && m.emotional_state !== "calm") {
@@ -1094,7 +1092,6 @@ export default function CharacterDashboard({ character, allCharacters = [] }) {
       };
       // Include ALL messages in last 3 days — legacy messages without emotional_state use inferred sentiment for priority
       msgs3dFallback.forEach(m => {
-        if (m.is_narrative === true) return; // autonomous narratives are not conversations — no "Conversation with" entry
         const resolvedEmotion = m.emotional_state || (m.content ? inferEmotionFromText(m.content)?.emotion : null) || null;
         const existing = convoMsgPick[m.conversation_id];
         if (!existing || priorityScore(resolvedEmotion) > priorityScore(existing._resolvedEmotion))

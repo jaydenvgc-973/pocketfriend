@@ -696,9 +696,8 @@ If no actions occur, return empty action_effects array.`;
           }
         }
       }
-    }
 
-    // ── HYGIENE ACTION GUARANTEE ──────────────────────────────────────────
+      // ── HYGIENE ACTION GUARANTEE ──────────────────────────────────────────
       // A narrative that establishes that the CHARACTER PERFORMED a recognized
       // hygiene action (shower, bath, washing face/hair/hands, brushing teeth,
       // grooming) must recover the authoritative hygiene_value. Recovery happens
@@ -769,6 +768,7 @@ If no actions occur, return empty action_effects array.`;
           console.warn(`[generateAutomaticNarrative] Character needs update skipped (non-blocking):`, updateErr.message);
         }
       }
+    }
 
     // Persist reconciliation updates if any — same routing rule as above.
     if (Object.keys(reconciliationUpdates).length > 0) {
