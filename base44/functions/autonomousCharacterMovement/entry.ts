@@ -139,19 +139,42 @@ function isLocationOpen(location) {
   return true;
 }
 
-// ── PROTECTED ARRIVAL COMMITMENT PREDICATE ──────────────────────────────────
-// Reads ONLY the valid arrival contract written by confirmMovementCommitment:
-//   commitment_type === 'arrival', interruptible === false, destination_location_id,
-//   expected_arrival_time, expected_arrival_window_minutes
-// 'active': protected once inside the arrival window (now >= eta - window_minutes).
-// 'arrived': protected while resolved_current_location_id === destination_location_id
-//   (condition-based release — when an authoritative system moves the character,
-//   the match fails and protection lapses; no timer or invented expiration).
+// ── PROTECTED ARRIVAL COMMITMENT PREDICATE (read-only) ──────────────────────
+// Determines ONLY whether an authoritative promised-arrival commitment currently
+// protects this character from non-emergency autonomous relocation. It performs
+// no movement, no commitment writes, and no status transitions.
+//
+// confirmMovementCommitment writes BOTH:
+//   CharacterCommitment: { commitment_type:'arrival', status:'active',
+//     interruptible:false, destination_location_id, expected_arrival_time,
+//     expected_arrival_window_minutes }
+//   Character: { pending_scheduled_relocation_at, next_location_id }
+// processScheduledRelocations owns those pending fields and clears them when the
+// relocation is fulfilled or abandoned — that authoritative registration IS the
+// lifecycle. No invented timer/expiration is added.
+//
+// Active pending arrival — protective when ALL hold:
+//   commitment_type === 'arrival', status === 'active', interruptible === false,
+//   destination_location_id exists,
+//   character.pending_scheduled_relocation_at exists,
+//   character.next_location_id === commitment.destination_location_id,
+//   expected_arrival_time is valid, pending_scheduled_relocation_at is valid,
+//   both timestamps represent the same scheduled instant,
+//   now >= expected_arrival_time - expected_arrival_window_minutes (window has opened).
+// The window OPENS protection; it does NOT close it. If the pending registration is
+// cleared, a stale 'active' commitment no longer protects — no symmetric post-ETA
+// expiration is invented.
+//
+// Fulfilled arrival — protective while:
+//   commitment_type === 'arrival', status === 'arrived', interruptible === false,
+//   destination_location_id === character.resolved_current_location_id.
+// Ends automatically when an authorized system changes the character's location.
+//
 // Work/school authority is NOT re-evaluated here. Tier 3.5 dispatch runs before
 // this predicate is computed and continues on its own authority, so a mandatory
 // shift/session naturally overrides the commitment without a competing check.
-// expected_arrival_time is validated (NaN rejected). Query failures are logged
-// and treated as "no protection found" (non-fatal — does not crash the run).
+// Timestamps are validated (NaN rejected). Query failures are logged and treated
+// as "no protection found" (non-fatal — does not crash the run).
 async function getProtectedArrivalCommitment(base44, char) {
   if (!char?.id || !char?.owner_email) return null;
   let cs = null;
@@ -168,19 +191,29 @@ async function getProtectedArrivalCommitment(base44, char) {
   const nowMs = Date.now();
   for (const c of cs) {
     if (c?.interruptible !== false || !c?.destination_location_id) continue;
+
+    // ── ACTIVE PENDING ARRIVAL ──
     if (c.status === 'active') {
       if (!c.expected_arrival_time) continue;
-      const aMs = new Date(c.expected_arrival_time).getTime();
-      if (!Number.isFinite(aMs)) continue;
+      const etaMs = new Date(c.expected_arrival_time).getTime();
+      if (!Number.isFinite(etaMs)) continue;
+
+      // Active protection exists only while backed by the character's authoritative
+      // pending-relocation registration (owned/cleared by processScheduledRelocations).
+      const pendingAt = char.pending_scheduled_relocation_at;
+      if (!pendingAt) continue;
+      const pendingMs = new Date(pendingAt).getTime();
+      if (!Number.isFinite(pendingMs)) continue;
+
+      // Pending registration and commitment must target the same instant and place.
+      if (pendingMs !== etaMs) continue;
+      if (char.next_location_id !== c.destination_location_id) continue;
+
       const wMin = c.expected_arrival_window_minutes ?? 15;
-      // Protection is bounded by the authoritative arrival window
-      // (expected_arrival_window_minutes — written by confirmMovementCommitment).
-      // Outside the window the authoritative lifecycle
-      // (processScheduledRelocations) owns the status transition; a commitment
-      // still 'active' past the window is stale and no longer protected. The bound
-      // is the existing authoritative window field — not an invented timer.
-      if (nowMs >= aMs - wMin * 60000 && nowMs <= aMs + wMin * 60000) return c;
+      if (nowMs >= etaMs - wMin * 60000) return c;
     }
+
+    // ── FULFILLED ARRIVAL ──
     if (c.status === 'arrived' && c.destination_location_id === char.resolved_current_location_id) return c;
   }
   return null;
@@ -1793,14 +1826,22 @@ Deno.serve(async (req) => {
             }
           }
         }
-        // ── PROTECTED PROMISED-ARRIVAL PREDICATE ────────────────
-        // Computed AFTER Tier 3.5 work/school dispatch (which continues on its own
-        // authority), so a mandatory shift/session naturally overrides the commitment.
-        // The predicate reads only the valid arrival contract — it does NOT re-evaluate
-        // work/school, so there is no competing obligation authority.
+        // ── PROTECTED PROMISED-ARRIVAL GUARD ─────────────────────────────────
+        // Read-only: determines whether an authoritative promised-arrival commitment
+        // currently protects this character from non-emergency autonomous relocation.
+        // Placed AFTER absolute safety (Tier 0: incarceration/house-arrest/hospitalization
+        // and pass-out) and mandatory work/school dispatch (Tier 3.5), BEFORE every
+        // non-emergency energy-return branch and ordinary autonomous movement. When
+        // protected, skip all remaining autonomous relocation tiers —
+        // processScheduledRelocations is the sole promised-travel executor and lifecycle
+        // owner. This guard performs no movement, no commitment writes, no status
+        // transitions; it only reads CharacterCommitment + the character's authoritative
+        // pending-relocation fields.
         const protectedArrival = await getProtectedArrivalCommitment(base44, char);
         if (protectedArrival) {
-          console.log(`[autonomousMovement] ${char.name}: protected arrival — commitment ${protectedArrival.id} (status=${protectedArrival.status} → ${protectedArrival.destination_location_name || protectedArrival.destination_location_id})`);
+          console.log(`[autonomousMovement] ${char.name}: PROTECTED ARRIVAL — commitment ${protectedArrival.id} (status=${protectedArrival.status} → ${protectedArrival.destination_location_name || protectedArrival.destination_location_id}) — autonomous relocation skipped`);
+          skippedLog.push(`${char.name}: protected promised arrival (→ ${protectedArrival.destination_location_name || protectedArrival.destination_location_id})`);
+          continue;
         }
 
         // ── ENERGY < 20 RETURN-HOME (yields to protected arrival) ──────────
@@ -1812,7 +1853,7 @@ Deno.serve(async (req) => {
           const atHome = homeId && char.resolved_current_location_id === homeId;
           const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
           const energyVal = char.energy_value ?? 75;
-          if (!alreadySleeping && homeId && !atHome && energyVal < 20 && !protectedArrival) {
+          if (!alreadySleeping && homeId && !atHome && energyVal < 20) {
             const sleepHome = userLocations.find(loc => loc.id === homeId);
             if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
               await writeCharacterToDestination(base44, char, sleepHome.id, sleepHome.name, {
@@ -1939,7 +1980,7 @@ Deno.serve(async (req) => {
         // ── TIER 4: CRITICAL ENERGY (< 25) — force home regardless of toggle ─
         // Not at pass-out level but critically low. Must go home NOW.
         // Overrides stay-lock and toggle. Yields to a protected promised arrival.
-        if (energyUrgency >= 3 && char.current_home_location_id && !protectedArrival) {
+        if (energyUrgency >= 3 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
             // ── ONE TRUTH: Route critical-energy return home through the authority ──
@@ -2023,89 +2064,13 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── TIER 6.5: ACTIVE COMMITMENT CHECK ────────────────────────────────
-        // Priority order: hard obligations (work/school/jail already handled above) →
-        //   active arrival commitments → social context → personality → needs-based wandering.
-        //
-        // The authoritative arrival contract (confirmMovementCommitment) writes
-        // interruptible=false, which means autonomous logic may NOT override the
-        // commitment except by legitimate blockers (jail, health emergency). There
-        // is no personality bail — that belonged only to the obsolete
-        // travel_directive contract and contradicts interruptible=false. It is removed.
-        {
-          let commitmentHandled = false;
-          try {
-            const activeCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
-              { character_id: char.id, owner_email: char.owner_email, commitment_type: 'arrival' },
-              '-created_at', 50
-            );
-            const liveCommitments = (activeCommitments || []).filter(c =>
-              c.interruptible === false && c.status === 'active' && !!c.destination_location_id
-            );
-
-            // Priority 0: Skip if already in transit to this destination
-            const alreadyTraveling = char.resolved_presence_status === 'traveling' &&
-              char.travel_destination_location_id != null;
-            if (alreadyTraveling) {
-              console.log(`[autonomousMovement] ${char.name}: already in_transit to ${char.traveling_to_location_name || char.travel_destination_location_id} — skip`);
-              commitmentHandled = true;
-            }
-
-            // Priority 1: Active arrival commitment due within its window.
-            // Valid contract (confirmMovementCommitment): commitment_type='arrival',
-            // interruptible=false, expected_arrival_time, expected_arrival_window_minutes.
-            // When due (now >= eta - window), travel to the destination. This dispatch
-            // sends the character TO the destination; the protectedArrival predicate
-            // (computed after Tier 3.5) prevents energy-return FROM it. Stale values
-            // (travel_directive, travel_promise, scheduled_execute_at, in_progress)
-            // are fully removed — the schema enum has no such types/statuses.
-            if (!commitmentHandled) {
-              const nowMs = Date.now();
-              const due = liveCommitments.find(c => {
-                if (!c.expected_arrival_time) return false;
-                const aMs = new Date(c.expected_arrival_time).getTime();
-                if (!Number.isFinite(aMs)) return false;
-                const wMin = c.expected_arrival_window_minutes ?? 15;
-                return nowMs >= aMs - wMin * 60000;
-              });
-              if (due) {
-                const destLoc = userLocations.find(l => l.id === due.destination_location_id);
-                if (destLoc) {
-                  if (char.resolved_current_location_id !== destLoc.id) {
-                    await writeCharacterToDestination(base44, char, destLoc.id, destLoc.name, {
-                      resolvedPresenceStatus: 'visiting',
-                      resolvedLocationType: 'visit',
-                      resolvedSourceReason: `commitment_arrival: due ${due.expected_arrival_time}`,
-                      nowET,
-                    });
-                    totalMoved++;
-                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_ARRIVAL] due ${due.expected_arrival_time}`);
-                    console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT ARRIVAL → ${destLoc.name}`);
-                    commitmentHandled = true;
-                  } else {
-                    await base44.asServiceRole.entities.CharacterCommitment.update(due.id, {
-                      status: 'arrived',
-                      completed_at: nowET.toISOString(),
-                    }).catch(() => {});
-                    console.log(`[autonomousMovement] ${char.name}: COMMITMENT ARRIVAL — already at ${destLoc.name}, marked arrived`);
-                    commitmentHandled = true;
-                  }
-                }
-              }
-            }
-          } catch (commitErr) {
-            // Non-fatal — if commitment lookup fails, fall through to normal needs-based movement
-            console.warn(`[autonomousMovement] ${char.name}: commitment check failed (non-fatal) — ${commitErr.message}`);
-          }
-
-          if (commitmentHandled) {
-            if (totalMoved >= MAX_MOVES_PER_RUN) {
-              return Response.json({ success: true, users_processed: Object.keys(byUser).length, characters_moved: totalMoved, moves: moveLog, blocked_with_reason: blockedLog, skipped: skippedLog.length, capped: true, timestamp: new Date().toISOString() });
-            }
-            continue;
-          }
-        }
-        // END TIER 6.5
+        // ── PROMISED-ARRIVAL GUARD (formerly Tier 6.5 executor) ──────────────
+        // The promised-arrival guard now lives ABOVE the energy-return branches
+        // (directly after Tier 3.5 work/school dispatch). autonomousCharacterMovement
+        // no longer executes or completes promised travel — it does not dispatch to
+        // the commitment destination, mark commitments arrived, or write completed_at.
+        // processScheduledRelocations is the sole promised-travel executor and
+        // lifecycle owner. See getProtectedArrivalCommitment + the guard above.
 
         // ── PRELOAD HOUSEHOLD INVENTORY + FINANCIAL DATA FOR SCORING ─────────
         // These are used by scoreLocation() for inventory-driven grocery and
@@ -2235,7 +2200,7 @@ Deno.serve(async (req) => {
         // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
         // No teleport — initiate transit to home. processTravelArrivals delivers them.
         // Yields to a protected promised arrival.
-        if (energyUrgency >= 2 && char.current_home_location_id && !protectedArrival) {
+        if (energyUrgency >= 2 && char.current_home_location_id) {
         const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
         if (ownHome && char.resolved_current_location_id !== ownHome.id) {
           await writeCharacterToDestination(base44, char, ownHome.id, ownHome.name, {
@@ -2335,11 +2300,9 @@ Deno.serve(async (req) => {
         // ── DIRECT LOCATION WRITE — no transit phase ────────────────────────
         // active_created_characters move immediately to the selected destination.
         // Need fulfillment and dwell duration are handled by simulateActiveCharacterNeeds
-        // and the existing activity/dwell systems. Yields to a protected promised arrival.
-        if (protectedArrival) {
-          skippedLog.push(`${char.name}: protected arrival (→ ${protectedArrival.destination_location_name || protectedArrival.destination_location_id}) — autonomous relocation blocked`);
-          continue;
-        }
+        // and the existing activity/dwell systems. The promised-arrival guard above
+        // (after Tier 3.5) already skipped protected characters, so this ordinary
+        // movement branch only runs for unprotected characters.
         await writeCharacterToDestination(base44, char, finalLocation.id, finalLocation.name, {
           resolvedPresenceStatus: 'visiting',
           resolvedLocationType: 'visit',
