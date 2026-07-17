@@ -2075,7 +2075,7 @@ Deno.serve(async (req) => {
 
         // ── TIER 6.5: ACTIVE COMMITMENT CHECK ────────────────────────────────
         // Priority order: hard obligations (work/school/jail already handled above) →
-        //   active promises/directives → social context → personality → needs-based wandering.
+        //   active arrival commitments → social context → personality → needs-based wandering.
         //
         // Commitment reliability is weighted by character personality (canonical trait registry).
         // Loyal + conscientious characters almost always follow through.
