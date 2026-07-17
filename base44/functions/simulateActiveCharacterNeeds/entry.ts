@@ -77,8 +77,6 @@ const T = {
   ENERGY_NAP_AVAILABLE: 50, // nap becomes an available option — does NOT force state change
   HEALTH_ER:        15,
   HEALTH_CRITICAL:  20,
-  HYGIENE_CRITICAL: 20,
-  HYGIENE_LOW:      35,
   SOCIAL_CRITICAL:  20,   // social need critically low — must seek social contact
   COMPOUND_CRISIS:   3,   // number of needs below 20 to trigger compound handling
   // Mental decays slowly — thresholds are MUCH higher than physical needs
@@ -613,22 +611,6 @@ function computeCorrectiveState(needs, character, locationMap) {
   if (needs.health <= T.HEALTH_ER && presence !== 'hospitalized') return { resolved_presence_status: 'hospitalized', current_activity: 'hospitalized — health collapsed' };
   if (needs.social <= T.SOCIAL_CRITICAL && !isInRestState && !character.is_jailed && !character.house_arrest_active) return { current_activity: 'seeking social contact — isolated too long' };
 
-  // Hygiene — perform hygiene before deteriorating to prolonged critical levels.
-  // Fires when hygiene is low and the character is awake and not already
-  // performing hygiene. Sets a hygiene activity so the narrative system narrates
-  // the action, which triggers the existing hygiene recovery guarantee.
-  // Residential spaces (home, hotel, dorm, shelter) and homeless characters
-  // (shelters, public restrooms) are all eligible — the narrative describes
-  // context-appropriate hygiene; recovery is not gated on location. This mirrors
-  // the existing hunger/social corrective pattern and uses the existing
-  // HYGIENE_LOW threshold from the decision-weight curve.
-  if (needs.hygiene <= T.HYGIENE_LOW && !isInRestState &&
-      !activity.includes('shower') && !activity.includes('bath') &&
-      !activity.includes('wash') && !activity.includes('groom') &&
-      !activity.includes('freshen') && !activity.includes('hygiene')) {
-    return { current_activity: 'freshening up — hygiene needs attention' };
-  }
-
   // Compound crisis — involuntary collapse, NOT voluntary sleep.
   // PRESERVED: This is a separate cause (3+ needs below 20), NOT exhaustion or 19-hour.
   const criticalCount = [needs.hunger, needs.energy, needs.health, needs.social, needs.mental].filter(v => v < 20).length;
@@ -723,11 +705,10 @@ function resolveNextActivity(needs, character) {
 function resolveStaleCorrectiveActivities(character, needs) {
   const activity = (character.current_activity || '').toLowerCase();
   const presence = character.resolved_presence_status || '';
-  const correctivePatterns = ['eating — hunger drove them to food', 'forced sleep — exhausted', 'forced rest — compound crisis', 'hospitalized — health collapsed', 'seeking social contact — isolated too long', 'freshening up — hygiene needs attention'];
+  const correctivePatterns = ['eating — hunger drove them to food', 'forced sleep — exhausted', 'forced rest — compound crisis', 'hospitalized — health collapsed', 'seeking social contact — isolated too long'];
   const isCorrective = correctivePatterns.some(p => activity.includes(p || activity === p));
   if (!isCorrective) return null;
   if (activity.includes('eat') && needs.hunger > 40) return { current_activity: '', resolved_presence_status: presence === 'sleeping' ? 'home' : presence };
-  if (activity.includes('freshen') && needs.hygiene > 50) return { current_activity: '' };
   if (activity.includes('forced sleep') || activity.includes('forced rest')) {
     if (presence !== 'sleeping' && presence !== 'napping' && presence !== 'passed_out') {
       if (needs.energy > 50) return { current_activity: '', resolved_presence_status: 'home' };
