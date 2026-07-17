@@ -195,6 +195,65 @@ function isLocationOpen(location) {
   return true;
 }
 
+// ── PROTECTED ARRIVAL COMMITMENT PREDICATE ──────────────────────────────────
+// Reads valid CharacterCommitment schema (arrival/active|arrived/interruptible:false/
+// expected_arrival_time/destination_location_id). Defers to active work/school.
+// Condition-based release: 'arrived' stops protecting when character leaves dest.
+async function getProtectedArrivalCommitment(base44, char, nowET, userLocations) {
+  if (!char?.id || !char?.owner_email) return null;
+  let cs = null;
+  try {
+    cs = await base44.asServiceRole.entities.CharacterCommitment.filter(
+      { character_id: char.id, owner_email: char.owner_email }, '-created_at', 10
+    );
+  } catch { return null; }
+  if (!cs?.length) return null;
+  const nm = nowET.getHours() * 60 + nowET.getMinutes();
+  const dw = nowET.getDay();
+  const td = nowET.toISOString().slice(0, 10);
+  let shiftActive = false;
+  if (Array.isArray(char.work_days) && char.work_days.includes(dw) &&
+      char.work_start_time && char.work_end_time &&
+      !(char.work_exception_status === 'called_out' && char.work_exception_date === td)) {
+    const s = toMin(char.work_start_time), e = toMin(char.work_end_time);
+    if (s != null && e != null) shiftActive = e < s ? (nm >= s || nm < e) : (nm >= s && nm < e);
+  }
+  if (!shiftActive && Array.isArray(char.additional_occupation_locations)) {
+    for (const en of char.additional_occupation_locations) {
+      const loc = userLocations.find(l => l.id === en.location_id);
+      const sh = loc?.worker_shifts?.[char.id];
+      if (!sh?.start || !sh?.end) continue;
+      const sd = Array.isArray(sh.days) && sh.days.length ? sh.days : null;
+      if (sd && !sd.includes(dw)) continue;
+      const s = toMin(sh.start), e = toMin(sh.end);
+      if (s != null && e != null && (e < s ? (nm >= s || nm < e) : (nm >= s && nm < e))) { shiftActive = true; break; }
+    }
+  }
+  if (shiftActive) return null;
+  let schoolActive = false;
+  if (char.student_status === 'enrolled' && char.education_location_id) {
+    const sl = userLocations.find(l => l.id === char.education_location_id);
+    if (sl?.operating_hours?.length) schoolActive = isLocationOpen(sl);
+    else {
+      const ed = char.education_details || {};
+      const s = toMinutes(ed.start_time || ed.school_start_time || '');
+      const e = toMinutes(ed.end_time || ed.school_end_time || '');
+      if (s != null && e != null) schoolActive = e < s ? (nm >= s || nm < e) : (nm >= s && nm < e);
+    }
+  }
+  if (schoolActive) return null;
+  for (const c of cs) {
+    if (c?.commitment_type !== 'arrival' || c?.interruptible !== false || !c?.destination_location_id) continue;
+    if (c.status === 'active' && c.expected_arrival_time) {
+      const aMs = new Date(c.expected_arrival_time).getTime();
+      const wMin = c.expected_arrival_window_minutes ?? 15;
+      if (nowET.getTime() >= aMs - wMin * 60000) return c;
+    }
+    if (c.status === 'arrived' && c.destination_location_id === char.resolved_current_location_id) return c;
+  }
+  return null;
+}
+
 /**
  * AUTONOMOUS CHARACTER MOVEMENT — NEEDS-DRIVEN
  *
@@ -1628,6 +1687,19 @@ Deno.serve(async (req) => {
           // Do NOT continue — fall through to obligation dispatch (Tier 3.5+)
         }
 
+        // ── PROTECTED PROMISED-ARRIVAL GUARD ─────────────────────
+        // Non-interruptible arrival commitment blocks non-emergency autonomous
+        // movement (energy-return-home + ordinary relocation). Defers to active
+        // work/school (checked in predicate). Condition-based release.
+        {
+          const _pa = await getProtectedArrivalCommitment(base44, char, nowET, userLocations);
+          if (_pa) {
+            console.log(`[autonomousMovement] ${char.name}: PROTECTED ARRIVAL — commitment ${_pa.id} (status=${_pa.status}, dest=${_pa.destination_location_name || _pa.destination_location_id})`);
+            skippedLog.push(`${char.name}: protected arrival (${_pa.status} → ${_pa.destination_location_name || _pa.destination_location_id})`);
+            continue;
+          }
+        }
+
         // ── ENERGY-BASED HOME ROUTING (travel only — no direct sleep writes) ───
         // SINGLE SLEEP AUTHORITY RULE (permanent):
         //   Only simulateActiveCharacterNeeds may write resolved_presence_status = 'sleeping'.
@@ -2123,37 +2195,9 @@ Deno.serve(async (req) => {
               }
             }
 
-            // Priority 2: Travel promises that are due within 60 minutes
-            if (!commitmentHandled) {
-              const nowMs = nowET.getTime();
-              const promise = liveCommitments.find(c => {
-                if (c.commitment_type !== 'travel_promise') return false;
-                if (!c.destination_location_id) return false;
-                if (!c.scheduled_execute_at) return false;
-                const dueMs = new Date(c.scheduled_execute_at).getTime();
-                return dueMs - nowMs <= 60 * 60 * 1000 && dueMs > nowMs - 10 * 60 * 1000;
-              });
-              if (promise && promise.destination_location_id) {
-                const destLoc = userLocations.find(l => l.id === promise.destination_location_id);
-                if (destLoc && char.resolved_current_location_id !== destLoc.id) {
-                  // Direct location write — NO TravelSession, NO transit phase
-                  await writeCharacterToDestination(base44, char, destLoc.id, destLoc.name, {
-                    resolvedPresenceStatus: 'visiting',
-                    resolvedLocationType: 'visit',
-                    resolvedSourceReason: promise.promised_action || 'travel promise fulfillment',
-                    nowET,
-                  });
-                  await base44.asServiceRole.entities.CharacterCommitment.update(promise.id, {
-                    status: 'in_progress',
-                    travel_started_at: nowET.toISOString(),
-                  }).catch(() => {});
-                  totalMoved++;
-                  moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_PROMISE] due ${promise.promised_time_window || 'soon'}`);
-                  console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT PROMISE → ${destLoc.name}`);
-                  commitmentHandled = true;
-                }
-              }
-            }
+            // Priority 2: Travel promises — stale schema (travel_promise /
+            // scheduled_execute_at) no current writer produces. Promised-arrival
+            // protection is handled by the guard above.
           } catch (commitErr) {
             // Non-fatal — if commitment lookup fails, fall through to normal needs-based movement
             console.warn(`[autonomousMovement] ${char.name}: commitment check failed (non-fatal) — ${commitErr.message}`);
