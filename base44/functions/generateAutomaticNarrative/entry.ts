@@ -699,10 +699,11 @@ If no actions occur, return empty action_effects array.`;
     }
 
     // Hygiene action guarantee: a narrative that establishes the CHARACTER PERFORMED a
-    // recognized hygiene action recovers hygiene_value with the established action-specific
-    // amounts (shower→100, bath→90, wash hair +25, wash face/hands +15, brush teeth +10,
-    // brush hair/groom +8). Performance-verb match only; intentions, observations, and
-    // environmental cleaning are rejected. Take the max with any LLM action_effects value.
+    // completed shower or bath recovers hygiene_value to the established outcome
+    // (shower→100, bath→90). Performance-verb match only; intentions, observations, and
+    // environmental cleaning are rejected. Other grooming actions (wash face/hands,
+    // brush teeth/hair, groom) have NO established recovery authority, so no value is
+    // applied for them here — none is invented. Take the max with any LLM action_effects value.
       {
         const _narrLower = (narrativeText || '').toLowerCase();
         const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b[^.!?\n]{0,40}\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(_narrLower) || /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(_narrLower);
@@ -721,23 +722,10 @@ If no actions occur, return empty action_effects array.`;
             /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
             /fresh from (a )?bath/.test(_narrLower) || /out of (the|a) bath/.test(_narrLower) ||
             /after (her|his|their) bath/.test(_narrLower) || /(finishes|finished) bathing/.test(_narrLower);
-          const _washHair = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower);
-          const _washFaceHands = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(face|hands)\b/.test(_narrLower) ||
-            /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower);
-          const _brushTeeth = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bteeth\b/.test(_narrLower);
-          const _brushHair = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) ||
-            /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower);
-          const _groom = /\b(grooms|groomed|grooming)\b/.test(_narrLower);
           let _target = null, _label = null;
           if (_shower) { _target = 100; _label = 'shower→100'; }
           else if (_bath) { _target = 90; _label = 'bath→90'; }
-          else if (_washHair) { _target = Math.min(100, (character.hygiene_value ?? 75) + 25); _label = 'wash-hair +25'; }
-          else if (_washFaceHands) { _target = Math.min(100, (character.hygiene_value ?? 75) + 15); _label = 'wash-face/hands +15'; }
-          else if (_brushTeeth) { _target = Math.min(100, (character.hygiene_value ?? 75) + 10); _label = 'brush-teeth +10'; }
-          else if (_brushHair) { _target = Math.min(100, (character.hygiene_value ?? 75) + 8); _label = 'brush-hair +8'; }
-          else if (_groom) { _target = Math.min(100, (character.hygiene_value ?? 75) + 8); _label = 'groom +8'; }
           if (_target != null) {
-            _target = Math.round(_target);
             const _existing = characterUpdatePayload.hygiene_value ?? -Infinity;
             if (_target > _existing) {
               characterUpdatePayload.hygiene_value = _target;
