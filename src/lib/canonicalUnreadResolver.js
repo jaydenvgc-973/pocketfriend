@@ -52,6 +52,13 @@ export function isCountableUnread(msg, viewedCharacterId = null) {
   // 3. Exclude recovery/fallback signals
   if (msg.recovery_signal === true) return false;
 
+  // 3b. Exclude autonomous narratives — they are system-generated documentation of
+  // character state (sleep, passive time, hygiene), NOT actual character messages.
+  // Only real user messages and real character messages count as conversations.
+  // triggerCharacterNarratives writes narratives with is_narrative=true; these must
+  // never be classified as conversation activity.
+  if (msg.is_narrative === true) return false;
+
   // 4. Exclude system/date/divider/timestamp rows by type field
   const t = (msg.type || '').toLowerCase();
   if (t === 'date' || t === 'divider' || t === 'system' || t === 'timestamp' || t === 'separator') return false;
@@ -282,6 +289,7 @@ export async function fetchUnreadMessagesForConversations(conversationIds, base4
     // Pre-filter before storing in map: exclude recovery signals, empty content, date dividers.
     // isCountableUnread handles direction (outgoing) filtering per-character at call site.
     const msgs = (results[idx] || []).filter(msg => {
+      if (msg.is_narrative === true) return false;
       if (msg.recovery_signal === true) return false;
       const t = (msg.type || '').toLowerCase();
       if (['date','divider','system','timestamp','separator'].includes(t)) return false;
