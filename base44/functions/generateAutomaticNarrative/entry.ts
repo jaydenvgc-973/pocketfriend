@@ -654,6 +654,70 @@ If no actions occur, return empty action_effects array.`;
     let characterUpdatePayload = {};
     const updatedNeeds = { ...needsSnapshot };
 
+    // ── EATING ROUTING: Reconnect documented eating to recordEatingEvent ──
+    // When the LLM action_effects include a positive hunger change, the narrative
+    // documents an eating occurrence. Route to the existing recordEatingEvent handler
+    // (the canonical hunger writer) instead of directly mutating hunger_value.
+    // recordEatingEvent owns the authoritative HUNGER_RECOVERY table (snack=+20,
+    // meal=+40, large_meal=+60) and also updates energy/comfort. The LLM-invented
+    // change magnitude maps to meal size so the existing handler applies its
+    // established recovery values. Eating effects are removed from actionEffects
+    // so the direct mutation loop below does not double-apply.
+    let _eatingOccurred = false;
+    let _eatingMealSize = null;
+    if (actionEffects && actionEffects.length > 0) {
+      const _eatingEffect = actionEffects.find(e => e.type === 'needs' && e.need === 'hunger' && e.change > 0);
+      if (_eatingEffect) {
+        _eatingMealSize = _eatingEffect.change >= 50 ? 'large_meal' : _eatingEffect.change >= 25 ? 'meal' : 'snack';
+        try {
+          const _eatRes = await base44.asServiceRole.functions.invoke('recordEatingEvent', {
+            characterId,
+            mealSize: _eatingMealSize,
+            foodDescription: narrativeText.substring(0, 80),
+            locationName: resolvedLocationName,
+          });
+          const _eatData = _eatRes?.data || _eatRes;
+          if (_eatData?.success !== false && !_eatData?.skipped) {
+            _eatingOccurred = true;
+            // recordEatingEvent updated hunger/energy/comfort — remove those effects
+            // from actionEffects so the direct mutation loop does not double-apply.
+            for (let i = actionEffects.length - 1; i >= 0; i--) {
+              const e = actionEffects[i];
+              if (e.type === 'needs' && ['hunger', 'energy', 'comfort'].includes(e.need) && e.change > 0) {
+                actionEffects.splice(i, 1);
+              }
+            }
+            if (_eatData?.hungerAfter !== undefined) updatedNeeds.hunger = _eatData.hungerAfter;
+            if (_eatData?.energyAfter !== undefined) updatedNeeds.energy = _eatData.energyAfter;
+            if (_eatData?.comfortAfter !== undefined) updatedNeeds.comfort = _eatData.comfortAfter;
+            console.log(`[generateAutomaticNarrative] EATING routed to recordEatingEvent | size=${_eatingMealSize} | hunger: ${_eatData?.hungerBefore ?? '?'} → ${_eatData?.hungerAfter ?? '?'}`);
+          } else {
+            console.warn(`[generateAutomaticNarrative] recordEatingEvent skipped: ${_eatData?.reason || 'unknown'}`);
+          }
+        } catch (_eatErr) {
+          console.warn(`[generateAutomaticNarrative] recordEatingEvent invoke failed (non-blocking, will not double-apply hunger): ${_eatErr.message}`);
+          // If invoke fails, still remove the hunger effect so the LLM-invented value
+          // is NOT applied directly — the existing recordEatingEvent authority owns
+          // hunger. The eating occurrence is documented but its consequence will be
+          // applied by the next pulse or scene call to recordEatingEvent.
+          for (let i = actionEffects.length - 1; i >= 0; i--) {
+            const e = actionEffects[i];
+            if (e.type === 'needs' && e.need === 'hunger' && e.change > 0) {
+              actionEffects.splice(i, 1);
+            }
+          }
+        }
+      }
+    }
+
+    // ── HYGIENE OCCURRENCE FLAG (for Recent Activity) ──
+    // The existing hygiene recovery block below detects hygiene actions from
+    // narrative text. This flag records whether a hygiene occurrence was detected
+    // so a LifeEvent (Recent Activity) can be created for it after the character
+    // update. Set inside the existing block — no duplicate detection logic here.
+    let _hygieneOccurred = false;
+    let _hygieneActionLabel = null;
+
     if (actionEffects && actionEffects.length > 0) {
       console.log(`[generateAutomaticNarrative] Applying ${actionEffects.length} action effects...`);
       
@@ -739,6 +803,8 @@ If no actions occur, return empty action_effects array.`;
           /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower)
         );
         if (_isWash || _isGroom) {
+          _hygieneOccurred = true;
+          _hygieneActionLabel = _isWash ? 'washing' : 'grooming';
           const _delta = _isWash ? 20 : 10;
           const _target = Math.min(100, Math.round((character.hygiene_value ?? 75) + _delta));
           const _existing = characterUpdatePayload.hygiene_value ?? -Infinity;
@@ -767,6 +833,61 @@ If no actions occur, return empty action_effects array.`;
         } catch (updateErr) {
           console.warn(`[generateAutomaticNarrative] Character needs update skipped (non-blocking):`, updateErr.message);
         }
+      }
+    }
+
+    // ── RECENT ACTIVITY: Create LifeEvent records for documented activities ──
+    // Autonomous narratives document real character behavior. When a supported
+    // activity is documented (eating, hygiene), the existing Recent Activity system
+    // (LifeEvent entity) must record it — the same way classifyConversationEvent
+    // creates LifeEvents for conversation events and simulateActiveCharacterNeeds
+    // creates LifeEvents for sleep/wake transitions. Occurrence vs continuation is
+    // governed by the existing 30-minute interval check and 60-minute same-instance
+    // dedup above — only new occurrences reach this point. No new dedup window is
+    // invented. LifeEvent fields mirror the existing classifyConversationEvent
+    // pattern exactly; triggered_by 'life_simulation' is the existing enum value
+    // for autonomous/simulation-origin events.
+    const _nowIso = NOW.toISOString();
+    if (_eatingOccurred) {
+      try {
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: characterId,
+          character_name: character.name,
+          event_type: 'routine_positive_event',
+          valence: 'positive',
+          severity: 'moderate',
+          title: `Had a ${_eatingMealSize === 'snack' ? 'snack' : _eatingMealSize === 'large_meal' ? 'large meal' : 'meal'}`,
+          description: `${character.name} had a ${_eatingMealSize === 'snack' ? 'snack' : _eatingMealSize === 'large_meal' ? 'large meal' : 'meal'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
+          emotional_impact: 'satisfied',
+          triggered_by: 'life_simulation',
+          context_tags: ['eating_event', _eatingMealSize, 'autonomous_narrative'],
+          systems_updated: ['hunger'],
+          timestamp: _nowIso,
+        });
+        console.log(`[generateAutomaticNarrative] Recent Activity (LifeEvent) created: eating_event (${_eatingMealSize})`);
+      } catch (_leErr) {
+        console.warn(`[generateAutomaticNarrative] Eating LifeEvent create failed (non-blocking): ${_leErr.message}`);
+      }
+    }
+    if (_hygieneOccurred) {
+      try {
+        await base44.asServiceRole.entities.LifeEvent.create({
+          character_id: characterId,
+          character_name: character.name,
+          event_type: 'routine_positive_event',
+          valence: 'positive',
+          severity: 'minor',
+          title: `${_hygieneActionLabel === 'washing' ? 'Freshened up' : 'Groomed'}`,
+          description: `${character.name} ${_hygieneActionLabel === 'washing' ? 'washed up and freshened' : 'groomed'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
+          emotional_impact: 'refreshed',
+          triggered_by: 'life_simulation',
+          context_tags: ['hygiene', _hygieneActionLabel, 'autonomous_narrative'],
+          systems_updated: ['hygiene'],
+          timestamp: _nowIso,
+        });
+        console.log(`[generateAutomaticNarrative] Recent Activity (LifeEvent) created: hygiene (${_hygieneActionLabel})`);
+      } catch (_leErr) {
+        console.warn(`[generateAutomaticNarrative] Hygiene LifeEvent create failed (non-blocking): ${_leErr.message}`);
       }
     }
 
