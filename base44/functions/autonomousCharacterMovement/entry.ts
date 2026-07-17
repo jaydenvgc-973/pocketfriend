@@ -196,58 +196,40 @@ function isLocationOpen(location) {
 }
 
 // ── PROTECTED ARRIVAL COMMITMENT PREDICATE ──────────────────────────────────
-// Reads valid CharacterCommitment schema (arrival/active|arrived/interruptible:false/
-// expected_arrival_time/destination_location_id). Defers to active work/school.
-// Condition-based release: 'arrived' stops protecting when character leaves dest.
-async function getProtectedArrivalCommitment(base44, char, nowET, userLocations) {
+// Reads ONLY the valid arrival contract written by confirmMovementCommitment:
+//   commitment_type === 'arrival', interruptible === false, destination_location_id,
+//   expected_arrival_time, expected_arrival_window_minutes
+// 'active': protected once inside the arrival window (now >= eta - window_minutes).
+// 'arrived': protected while resolved_current_location_id === destination_location_id
+//   (condition-based release — when an authoritative system moves the character,
+//   the match fails and protection lapses; no timer or invented expiration).
+// Work/school authority is NOT re-evaluated here. Tier 3.5 dispatch runs before
+// this predicate is computed and continues on its own authority, so a mandatory
+// shift/session naturally overrides the commitment without a competing check.
+// expected_arrival_time is validated (NaN rejected). Query failures are logged
+// and treated as "no protection found" (non-fatal — does not crash the run).
+async function getProtectedArrivalCommitment(base44, char) {
   if (!char?.id || !char?.owner_email) return null;
   let cs = null;
   try {
     cs = await base44.asServiceRole.entities.CharacterCommitment.filter(
-      { character_id: char.id, owner_email: char.owner_email }, '-created_at', 10
+      { character_id: char.id, owner_email: char.owner_email, commitment_type: 'arrival' },
+      '-created_at', 50
     );
-  } catch { return null; }
+  } catch (qErr) {
+    console.error(`[autonomousMovement] ${char.name}: arrival-commitment query FAILED — protection not evaluated: ${qErr.message}`);
+    return null;
+  }
   if (!cs?.length) return null;
-  const nm = nowET.getHours() * 60 + nowET.getMinutes();
-  const dw = nowET.getDay();
-  const td = nowET.toISOString().slice(0, 10);
-  let shiftActive = false;
-  if (Array.isArray(char.work_days) && char.work_days.includes(dw) &&
-      char.work_start_time && char.work_end_time &&
-      !(char.work_exception_status === 'called_out' && char.work_exception_date === td)) {
-    const s = toMin(char.work_start_time), e = toMin(char.work_end_time);
-    if (s != null && e != null) shiftActive = e < s ? (nm >= s || nm < e) : (nm >= s && nm < e);
-  }
-  if (!shiftActive && Array.isArray(char.additional_occupation_locations)) {
-    for (const en of char.additional_occupation_locations) {
-      const loc = userLocations.find(l => l.id === en.location_id);
-      const sh = loc?.worker_shifts?.[char.id];
-      if (!sh?.start || !sh?.end) continue;
-      const sd = Array.isArray(sh.days) && sh.days.length ? sh.days : null;
-      if (sd && !sd.includes(dw)) continue;
-      const s = toMin(sh.start), e = toMin(sh.end);
-      if (s != null && e != null && (e < s ? (nm >= s || nm < e) : (nm >= s && nm < e))) { shiftActive = true; break; }
-    }
-  }
-  if (shiftActive) return null;
-  let schoolActive = false;
-  if (char.student_status === 'enrolled' && char.education_location_id) {
-    const sl = userLocations.find(l => l.id === char.education_location_id);
-    if (sl?.operating_hours?.length) schoolActive = isLocationOpen(sl);
-    else {
-      const ed = char.education_details || {};
-      const s = toMinutes(ed.start_time || ed.school_start_time || '');
-      const e = toMinutes(ed.end_time || ed.school_end_time || '');
-      if (s != null && e != null) schoolActive = e < s ? (nm >= s || nm < e) : (nm >= s && nm < e);
-    }
-  }
-  if (schoolActive) return null;
+  const nowMs = Date.now();
   for (const c of cs) {
-    if (c?.commitment_type !== 'arrival' || c?.interruptible !== false || !c?.destination_location_id) continue;
-    if (c.status === 'active' && c.expected_arrival_time) {
+    if (c?.interruptible !== false || !c?.destination_location_id) continue;
+    if (c.status === 'active') {
+      if (!c.expected_arrival_time) continue;
       const aMs = new Date(c.expected_arrival_time).getTime();
+      if (!Number.isFinite(aMs)) continue;
       const wMin = c.expected_arrival_window_minutes ?? 15;
-      if (nowET.getTime() >= aMs - wMin * 60000) return c;
+      if (nowMs >= aMs - wMin * 60000) return c;
     }
     if (c.status === 'arrived' && c.destination_location_id === char.resolved_current_location_id) return c;
   }
@@ -1687,68 +1669,8 @@ Deno.serve(async (req) => {
           // Do NOT continue — fall through to obligation dispatch (Tier 3.5+)
         }
 
-        // ── PROTECTED PROMISED-ARRIVAL GUARD ─────────────────────
-        // Non-interruptible arrival commitment blocks non-emergency autonomous
-        // movement (energy-return-home + ordinary relocation). Defers to active
-        // work/school (checked in predicate). Condition-based release.
-        {
-          const _pa = await getProtectedArrivalCommitment(base44, char, nowET, userLocations);
-          if (_pa) {
-            console.log(`[autonomousMovement] ${char.name}: PROTECTED ARRIVAL — commitment ${_pa.id} (status=${_pa.status}, dest=${_pa.destination_location_name || _pa.destination_location_id})`);
-            skippedLog.push(`${char.name}: protected arrival (${_pa.status} → ${_pa.destination_location_name || _pa.destination_location_id})`);
-            continue;
-          }
-        }
-
-        // ── ENERGY-BASED HOME ROUTING (travel only — no direct sleep writes) ───
-        // SINGLE SLEEP AUTHORITY RULE (permanent):
-        //   Only simulateActiveCharacterNeeds may write resolved_presence_status = 'sleeping'.
-        //   It does so at energy ≤ 20 only, at a valid sleep location, with alarm/shift guards.
-        //   autonomousCharacterMovement may only route characters home via TravelSession.
-        //
-        // THRESHOLDS:
-        //   energy < 20 AND not at home → return home via TravelSession (critically tired)
-        //   energy < 30 AND at home     → no action needed (scorer keeps them home; simulateNeeds writes sleep)
-        //
-        // Case A (energy < 30 at home → write sleeping) was removed — it was a duplicate sleep
-        // authority that fired at energy=28, ignored alarms/work/school, and bypassed foreground yield.
-        {
-          const homeId = char.current_home_location_id;
-          const atHome = homeId && char.resolved_current_location_id === homeId;
-          const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
-          const energyVal = char.energy_value ?? 75;
-
-          if (!alreadySleeping && homeId) {
-            // ARCHITECTURE RULE (permanent):
-            // autonomousCharacterMovement MUST NOT write resolved_presence_status = 'sleeping'.
-            // Sleep onset is exclusively owned by simulateActiveCharacterNeeds at energy ≤ 20.
-            // Case A (energy < 30 at home → write sleeping directly) was removed because:
-            //   1. It conflicted with simulateActiveCharacterNeeds threshold (20 vs 30 = duplicate authority)
-            //   2. It ran BEFORE Tier 3.5 work/school dispatch — sleeping a character before their shift check
-            //   3. It bypassed the foreground yield gate entirely
-            //   4. It ignored pending_alarm_time, active commitments, and user intent
-            // The location scorer already nudges home high when energy < 30, so the character
-            // stays home naturally. simulateActiveCharacterNeeds writes sleep at energy ≤ 20.
-
-            // Case B: not at home, critically tired — return home via TravelSession.
-            // simulateActiveCharacterNeeds will write sleep once they arrive and energy ≤ 20.
-            if (!atHome && energyVal < 20) {
-              const sleepHome = userLocations.find(loc => loc.id === homeId);
-              if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
-                await writeCharacterToDestination(base44, char, sleepHome.id, sleepHome.name, {
-                  resolvedPresenceStatus: 'home',
-                  resolvedLocationType: 'home',
-                  resolvedSourceReason: `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
-                  nowET,
-                });
-                totalMoved++;
-                moveLog.push(`${char.name} → ${sleepHome.name} [TIRED_RETURN_HOME energy=${Math.round(energyVal)}]`);
-                console.log(`[autonomousMovement] ✓ ${char.name}: tired, returning home to sleep (energy=${Math.round(energyVal)})`);
-                continue;
-              }
-            }
-          }
-        }
+        // (energy < 20 return-home moved below Tier 3.5 so mandatory work/school
+        //  dispatch overrides it; see protectedArrival + ENERGY < 20 block after Tier 3.5)
 
         // ── TIER 3.5: ACTIVE WORK / SCHOOL DISPATCH ─────────────────────────
         // Runs immediately after sleep/wake evaluation, BEFORE energy or needs scoring.
@@ -1921,6 +1843,42 @@ Deno.serve(async (req) => {
             }
           }
         }
+        // ── PROTECTED PROMISED-ARRIVAL PREDICATE ────────────────
+        // Computed AFTER Tier 3.5 work/school dispatch (which continues on its own
+        // authority), so a mandatory shift/session naturally overrides the commitment.
+        // The predicate reads only the valid arrival contract — it does NOT re-evaluate
+        // work/school, so there is no competing obligation authority.
+        const protectedArrival = await getProtectedArrivalCommitment(base44, char);
+        if (protectedArrival) {
+          console.log(`[autonomousMovement] ${char.name}: protected arrival — commitment ${protectedArrival.id} (status=${protectedArrival.status} → ${protectedArrival.destination_location_name || protectedArrival.destination_location_id})`);
+        }
+
+        // ── ENERGY < 20 RETURN-HOME (yields to protected arrival) ──────────
+        // Critically tired: return home so simulateActiveCharacterNeeds can write
+        // sleep. Yields to a non-interruptible promised arrival. autonomousCharacterMovement
+        // never writes sleeping — that is owned by simulateActiveCharacterNeeds at energy ≤ 20.
+        {
+          const homeId = char.current_home_location_id;
+          const atHome = homeId && char.resolved_current_location_id === homeId;
+          const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+          const energyVal = char.energy_value ?? 75;
+          if (!alreadySleeping && homeId && !atHome && energyVal < 20 && !protectedArrival) {
+            const sleepHome = userLocations.find(loc => loc.id === homeId);
+            if (sleepHome && char.resolved_current_location_id !== sleepHome.id) {
+              await writeCharacterToDestination(base44, char, sleepHome.id, sleepHome.name, {
+                resolvedPresenceStatus: 'home',
+                resolvedLocationType: 'home',
+                resolvedSourceReason: `energy_low_return_home_sleep energy(${Math.round(energyVal)})`,
+                nowET,
+              });
+              totalMoved++;
+              moveLog.push(`${char.name} → ${sleepHome.name} [TIRED_RETURN_HOME energy=${Math.round(energyVal)}]`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: tired, returning home to sleep (energy=${Math.round(energyVal)})`);
+              continue;
+            }
+          }
+        }
+
         // ── PRE-SHIFT RETURN-HOME: route home when work/school within 8 hours ──
         // A character with a shift starting within 8 hours should return home
         // so they can rest, prepare, and avoid being far from the work location.
@@ -2030,8 +1988,8 @@ Deno.serve(async (req) => {
 
         // ── TIER 4: CRITICAL ENERGY (< 25) — force home regardless of toggle ─
         // Not at pass-out level but critically low. Must go home NOW.
-        // Overrides stay-lock and toggle.
-        if (energyUrgency >= 3 && char.current_home_location_id) {
+        // Overrides stay-lock and toggle. Yields to a protected promised arrival.
+        if (energyUrgency >= 3 && char.current_home_location_id && !protectedArrival) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
             // ── ONE TRUTH: Route critical-energy return home through the authority ──
@@ -2130,12 +2088,11 @@ Deno.serve(async (req) => {
           const reliabilityScore = computeCommitmentReliabilityScore(char);
           try {
             const activeCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
-              { character_id: char.id },
-              '-created_at',
-              10
+              { character_id: char.id, owner_email: char.owner_email, commitment_type: 'arrival' },
+              '-created_at', 50
             );
             const liveCommitments = (activeCommitments || []).filter(c =>
-              c.status === 'active' || c.status === 'in_progress'
+              c.interruptible === false && c.status === 'active' && !!c.destination_location_id
             );
 
             // Priority 0: Skip if already in transit to this destination
@@ -2146,58 +2103,58 @@ Deno.serve(async (req) => {
               commitmentHandled = true;
             }
 
-            // Priority 1: Travel directives — "I'm on my way" / "heading there now"
+            // Priority 1: Active arrival commitment due within its window.
+            // Valid contract (confirmMovementCommitment): commitment_type='arrival',
+            // interruptible=false, expected_arrival_time, expected_arrival_window_minutes.
+            // When due (now >= eta - window), travel to the destination. This dispatch
+            // sends the character TO the destination; the protectedArrival predicate
+            // (computed after Tier 3.5) prevents energy-return FROM it. Stale values
+            // (travel_directive, travel_promise, scheduled_execute_at, in_progress)
+            // are fully removed — the schema enum has no such types/statuses.
             if (!commitmentHandled) {
-              const directive = liveCommitments.find(c => c.commitment_type === 'travel_directive');
-              if (directive && directive.destination_location_id) {
-                const destLoc = userLocations.find(l => l.id === directive.destination_location_id);
+              const nowMs = Date.now();
+              const due = liveCommitments.find(c => {
+                if (!c.expected_arrival_time) return false;
+                const aMs = new Date(c.expected_arrival_time).getTime();
+                if (!Number.isFinite(aMs)) return false;
+                const wMin = c.expected_arrival_window_minutes ?? 15;
+                return nowMs >= aMs - wMin * 60000;
+              });
+              if (due) {
+                const destLoc = userLocations.find(l => l.id === due.destination_location_id);
                 if (destLoc) {
-                  // PERSONALITY CHECK: very unreliable characters (score < -3) have a small chance
-                  // of bailing. But this must be VISIBLE — the commitment is marked "bailed" not silently dropped.
-                  // Loyal/conscientious characters (score >= 1) NEVER bail on directives.
                   const bailChance = reliabilityScore < -3 ? 0.15 : reliabilityScore < -1 ? 0.05 : 0;
                   const bailRolled = bailChance > 0 && Math.random() < bailChance;
                   if (bailRolled) {
-                    // Mark commitment as bailed with personality reason — NEVER silent
-                    await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
+                    await base44.asServiceRole.entities.CharacterCommitment.update(due.id, {
                       status: 'cancelled',
-                      cancellation_reason: `personality_bail: reliability_score=${reliabilityScore.toFixed(1)} (${char.trait_wishy_washy ? 'wishy-washy' : char.trait_two_faced ? 'two-faced' : 'unreliable'})`,
+                      cancellation_reason: `personality_bail: reliability_score=${reliabilityScore.toFixed(1)}`,
                     }).catch(() => {});
-                    console.log(`[autonomousMovement] ${char.name}: PERSONALITY BAIL on directive (score=${reliabilityScore.toFixed(1)}) — commitment marked cancelled, NOT silently dropped`);
+                    console.log(`[autonomousMovement] ${char.name}: PERSONALITY BAIL on arrival commitment (score=${reliabilityScore.toFixed(1)})`);
                     commitmentHandled = true;
-                    skippedLog.push(`${char.name}: personality bail on commitment (reliability=${reliabilityScore.toFixed(1)})`);
+                    skippedLog.push(`${char.name}: personality bail on arrival commitment (reliability=${reliabilityScore.toFixed(1)})`);
                   } else if (char.resolved_current_location_id !== destLoc.id) {
-                    // Direct location write — NO TravelSession, NO transit phase
                     await writeCharacterToDestination(base44, char, destLoc.id, destLoc.name, {
                       resolvedPresenceStatus: 'visiting',
                       resolvedLocationType: 'visit',
-                      resolvedSourceReason: directive.promised_action || 'commitment travel directive',
+                      resolvedSourceReason: `commitment_arrival: due ${due.expected_arrival_time}`,
                       nowET,
                     });
-                    await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
-                      status: 'in_progress',
-                      travel_started_at: nowET.toISOString(),
-                    }).catch(() => {});
                     totalMoved++;
-                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_TRAVEL_DIRECTIVE] "${directive.promised_action || 'on the way'}"`);
-                    console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT DIRECTIVE → ${destLoc.name}`);
+                    moveLog.push(`${char.name} → ${destLoc.name} [COMMITMENT_ARRIVAL] due ${due.expected_arrival_time}`);
+                    console.log(`[autonomousMovement] ✓ ${char.name}: COMMITMENT ARRIVAL → ${destLoc.name}`);
+                    commitmentHandled = true;
                   } else {
-                    // Already there — mark completed
-                    await base44.asServiceRole.entities.CharacterCommitment.update(directive.id, {
-                      status: 'completed',
-                      travel_arrived_at: nowET.toISOString(),
-                      completion_result: `Already at ${destLoc.name}`,
+                    await base44.asServiceRole.entities.CharacterCommitment.update(due.id, {
+                      status: 'arrived',
+                      completed_at: nowET.toISOString(),
                     }).catch(() => {});
-                    console.log(`[autonomousMovement] ${char.name}: COMMITMENT DIRECTIVE — already at destination ${destLoc.name}`);
+                    console.log(`[autonomousMovement] ${char.name}: COMMITMENT ARRIVAL — already at ${destLoc.name}, marked arrived`);
+                    commitmentHandled = true;
                   }
-                  commitmentHandled = true;
                 }
               }
             }
-
-            // Priority 2: Travel promises — stale schema (travel_promise /
-            // scheduled_execute_at) no current writer produces. Promised-arrival
-            // protection is handled by the guard above.
           } catch (commitErr) {
             // Non-fatal — if commitment lookup fails, fall through to normal needs-based movement
             console.warn(`[autonomousMovement] ${char.name}: commitment check failed (non-fatal) — ${commitErr.message}`);
@@ -2339,7 +2296,8 @@ Deno.serve(async (req) => {
 
         // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
         // No teleport — initiate transit to home. processTravelArrivals delivers them.
-        if (energyUrgency >= 2 && char.current_home_location_id) {
+        // Yields to a protected promised arrival.
+        if (energyUrgency >= 2 && char.current_home_location_id && !protectedArrival) {
         const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
         if (ownHome && char.resolved_current_location_id !== ownHome.id) {
           await writeCharacterToDestination(base44, char, ownHome.id, ownHome.name, {
@@ -2439,7 +2397,11 @@ Deno.serve(async (req) => {
         // ── DIRECT LOCATION WRITE — no transit phase ────────────────────────
         // active_created_characters move immediately to the selected destination.
         // Need fulfillment and dwell duration are handled by simulateActiveCharacterNeeds
-        // and the existing activity/dwell systems.
+        // and the existing activity/dwell systems. Yields to a protected promised arrival.
+        if (protectedArrival) {
+          skippedLog.push(`${char.name}: protected arrival (→ ${protectedArrival.destination_location_name || protectedArrival.destination_location_id}) — autonomous relocation blocked`);
+          continue;
+        }
         await writeCharacterToDestination(base44, char, finalLocation.id, finalLocation.name, {
           resolvedPresenceStatus: 'visiting',
           resolvedLocationType: 'visit',
