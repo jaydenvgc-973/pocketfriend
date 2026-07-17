@@ -109,10 +109,10 @@ const FALLBACK_CHAINS = {
   sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
   swimwear:     ['swimwear', 'gym', 'daily_casual'],
   gym:          ['gym', 'outdoor', 'daily_casual'],
-  work:         ['work', 'formal', 'daily_casual'],
+  work:         ['work', 'daily_casual'],
   formal:       ['formal', 'work', 'daily_casual'],
   church:       ['church', 'formal', 'daily_casual'],
-  nightlife:    ['nightlife', 'date_night', 'daily_casual'],
+  nightlife:    ['nightlife', 'formal', 'date_night', 'daily_casual'],
   date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
   school:       ['school', 'daily_casual'],
   lounge:       ['lounge', 'daily_casual'],
@@ -160,6 +160,7 @@ function resolveTargetCategory(character, locationCategory) {
 
   if (/\b(wedding|funeral|gala|graduation|ceremony|formal event|black tie)\b/.test(activity)) return 'formal';
   if (/\b(club|nightclub|party|going out|night out|bar hopping)\b/.test(activity)) return 'nightlife';
+  if (locationCategory === 'social') return 'nightlife';
   if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
 
   if (/\b(school|class|campus|lecture|study|college|university)\b/.test(activity)) return 'school';
