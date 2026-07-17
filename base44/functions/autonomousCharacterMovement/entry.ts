@@ -1,61 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── CANONICAL TRAIT REGISTRY (inlined — no local imports in Deno functions) ──
-// Mirrors lib/characterTraitRegistry.js. Keep in sync.
-const TRAIT_COMMITMENT_MODIFIERS = {
-  trait_loyal:           +3,
-  trait_conscientious:   +2,
-  trait_parental:        +1,
-  trait_empathetic:      +1,
-  trait_compassionate:   +1,
-  trait_polite:          +1,
-  trait_overcorrects:    +1,
-  trait_adaptable:       +0.5,
-  trait_stubborn:        +0.5,
-  trait_leader:          +1,
-  trait_goody_two_shoes: +1,
-  trait_law_abiding:     +1,
-  trait_two_faced:       -2,
-  trait_wishy_washy:     -2,
-  trait_toxic:           -1,
-  trait_self_absorbed:   -1,
-  trait_hot_and_cold:    -1,
-  trait_easily_distracted: -1,
-  trait_volatile:        -1,
-  trait_philanderer:     -1,
-  trait_rude:            -0.5,
-  trait_cynical:         -0.5,
-  trait_hard_to_read:    -0.5,
-};
-const QUIRK_COMMITMENT_MODIFIERS = {
-  disciplined:     +2,
-  people_pleaser:  +1,
-  workaholic:      -0.5,
-  unmotivated:     -1,
-  overthinker:     -0.5,
-  thrill_seeker:   -1,
-  drinker:         -0.5,
-};
-
-/**
- * Compute commitment reliability score for a character from canonical traits/quirks.
- * Returns a numeric delta. 0 = average. Positive = more reliable. Negative = less reliable.
- */
-function computeCommitmentReliabilityScore(char) {
-  let score = 0;
-  for (const [key, mod] of Object.entries(TRAIT_COMMITMENT_MODIFIERS)) {
-    if (char[key] === true) score += mod;
-  }
-  const quirks = char.quirks || [];
-  for (const q of quirks) {
-    if (!q.active) continue;
-    const mod = QUIRK_COMMITMENT_MODIFIERS[q.quirk_id] || 0;
-    const mult = q.intensity === 'mild' ? 0.5 : q.intensity === 'strong' ? 1.5 : 1.0;
-    score += mod * mult;
-  }
-  return score;
-}
-
 // ── INLINE PRESENCE STAY LOCK VALIDATOR ──────────────────────────────────────
 // No network call. Observes authoritative state. Does NOT duplicate sleep/work/school logic.
 function validateStayLock(char, nowET) {
@@ -229,7 +173,13 @@ async function getProtectedArrivalCommitment(base44, char) {
       const aMs = new Date(c.expected_arrival_time).getTime();
       if (!Number.isFinite(aMs)) continue;
       const wMin = c.expected_arrival_window_minutes ?? 15;
-      if (nowMs >= aMs - wMin * 60000) return c;
+      // Protection is bounded by the authoritative arrival window
+      // (expected_arrival_window_minutes — written by confirmMovementCommitment).
+      // Outside the window the authoritative lifecycle
+      // (processScheduledRelocations) owns the status transition; a commitment
+      // still 'active' past the window is stale and no longer protected. The bound
+      // is the existing authoritative window field — not an invented timer.
+      if (nowMs >= aMs - wMin * 60000 && nowMs <= aMs + wMin * 60000) return c;
     }
     if (c.status === 'arrived' && c.destination_location_id === char.resolved_current_location_id) return c;
   }
@@ -2077,15 +2027,13 @@ Deno.serve(async (req) => {
         // Priority order: hard obligations (work/school/jail already handled above) →
         //   active arrival commitments → social context → personality → needs-based wandering.
         //
-        // Commitment reliability is weighted by character personality (canonical trait registry).
-        // Loyal + conscientious characters almost always follow through.
-        // Wishy-washy + two-faced characters have reduced follow-through probability.
-        // But note: the system should only REDUCE travel probability for flaky characters,
-        // NEVER silently null the destination. If a flaky character fails to show, the
-        // commitment must be marked as "bailed" with an in-character reason, not silently lost.
+        // The authoritative arrival contract (confirmMovementCommitment) writes
+        // interruptible=false, which means autonomous logic may NOT override the
+        // commitment except by legitimate blockers (jail, health emergency). There
+        // is no personality bail — that belonged only to the obsolete
+        // travel_directive contract and contradicts interruptible=false. It is removed.
         {
           let commitmentHandled = false;
-          const reliabilityScore = computeCommitmentReliabilityScore(char);
           try {
             const activeCommitments = await base44.asServiceRole.entities.CharacterCommitment.filter(
               { character_id: char.id, owner_email: char.owner_email, commitment_type: 'arrival' },
@@ -2123,17 +2071,7 @@ Deno.serve(async (req) => {
               if (due) {
                 const destLoc = userLocations.find(l => l.id === due.destination_location_id);
                 if (destLoc) {
-                  const bailChance = reliabilityScore < -3 ? 0.15 : reliabilityScore < -1 ? 0.05 : 0;
-                  const bailRolled = bailChance > 0 && Math.random() < bailChance;
-                  if (bailRolled) {
-                    await base44.asServiceRole.entities.CharacterCommitment.update(due.id, {
-                      status: 'cancelled',
-                      cancellation_reason: `personality_bail: reliability_score=${reliabilityScore.toFixed(1)}`,
-                    }).catch(() => {});
-                    console.log(`[autonomousMovement] ${char.name}: PERSONALITY BAIL on arrival commitment (score=${reliabilityScore.toFixed(1)})`);
-                    commitmentHandled = true;
-                    skippedLog.push(`${char.name}: personality bail on arrival commitment (reliability=${reliabilityScore.toFixed(1)})`);
-                  } else if (char.resolved_current_location_id !== destLoc.id) {
+                  if (char.resolved_current_location_id !== destLoc.id) {
                     await writeCharacterToDestination(base44, char, destLoc.id, destLoc.name, {
                       resolvedPresenceStatus: 'visiting',
                       resolvedLocationType: 'visit',
