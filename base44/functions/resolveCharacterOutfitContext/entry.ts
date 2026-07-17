@@ -329,13 +329,27 @@ Deno.serve(async (req) => {
       }
 
       // P2: Day-stable closet rotation by category chain
+      // Mirrors outfitRotationEngine.pickFromPool: outfits with rotation_number are sorted
+      // ascending and cycled by day-index so the user's numbered sequence is respected.
+      // Outfits without rotation_number fall back to day-index over the full pool. This
+      // ensures the daily rotation re-reads the current selection instead of locking to
+      // DB array order or a previous day's pick.
       for (const cat of chain) {
         const pool = outfits.filter(o => o.category === cat);
         if (!pool.length) continue;
-        const picked = pool[stableIndex % pool.length];
+        const numbered = pool
+          .filter(o => o.rotation_number != null && o.rotation_number !== "")
+          .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+        const unnumbered = pool.filter(o => o.rotation_number == null || o.rotation_number === "");
+        const favorites = unnumbered.filter(o => o.is_favorite);
+        const candidates = numbered.length > 0
+          ? numbered
+          : (favorites.length > 0 ? favorites : unnumbered);
+        if (!candidates.length) continue;
+        const picked = candidates[stableIndex % candidates.length];
         const t = buildOutfitText(picked) || picked.label?.trim() || null;
         if (t) {
-          console.log(`[resolveCharacterOutfitContext] ✅ ROTATION_ON cat="${cat}" idx=${stableIndex % pool.length}/${pool.length} → "${t.substring(0,80)}"`);
+          console.log(`[resolveCharacterOutfitContext] ✅ ROTATION_ON cat="${cat}" idx=${stableIndex % candidates.length}/${candidates.length} rot_num=${picked.rotation_number ?? 'none'} → "${t.substring(0,80)}"`);
           return Response.json({ text: t, source: 'closet_rotation', category: cat });
         }
       }

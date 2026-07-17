@@ -14,7 +14,7 @@
  * All consumers (image gen, narrative, profile, scene) use this single result.
  */
 
-import { resolveTargetCategory, buildOutfitPromptText } from './outfitRotationEngine.js';
+import { resolveTargetCategory, buildOutfitPromptText, resolveCurrentOutfit } from './outfitRotationEngine.js';
 import { buildJailUniformOutfitContext } from './jailUniformResolver.js';
 import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
 import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
@@ -148,65 +148,14 @@ export function resolveCategoryFromContext(context) {
  * @returns {object|null} Outfit item or null
  */
 export function pickOutfitFromCloset(character, targetCategory) {
-  const closet = character.character_closet || [];
-  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
-  if (outfits.length === 0) return null;
-
-  const currentOutfitId = character.current_outfit?.outfit_id || null;
-  // outfit_rotation_enabled defaults to true when not set (preserves existing behavior)
-  const rotationEnabled = character.outfit_rotation_enabled !== false;
-
-  const FALLBACK_CHAINS = {
-    sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
-    swimwear:     ['swimwear', 'gym', 'daily_casual'],
-    gym:          ['gym', 'outdoor', 'daily_casual'],
-    work:         ['work', 'formal', 'daily_casual'],
-    formal:       ['formal', 'work', 'daily_casual'],
-    church:       ['church', 'formal', 'daily_casual'],
-    nightlife:    ['nightlife', 'date_night', 'daily_casual'],
-    date_night:   ['date_night', 'nightlife', 'daily_casual'],
-    school:       ['school', 'daily_casual'],
-    lounge:       ['lounge', 'daily_casual'],
-    outdoor:      ['outdoor', 'daily_casual'],
-    daily_casual: ['daily_casual', 'outdoor', 'lounge'],
-    bath:         ['bath', 'sleepwear', 'lounge'],
-  };
-
-  const chain = FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
-
-  // ROTATION OFF: always return the currently selected outfit if it exists in closet
-  if (!rotationEnabled && currentOutfitId) {
-    const locked = outfits.find(o => o.outfit_id === currentOutfitId);
-    if (locked) return locked;
-  }
-
-  // ROTATION ON: if current outfit matches the context category chain, prefer it
-  if (rotationEnabled && currentOutfitId) {
-    const currentItem = outfits.find(o => o.outfit_id === currentOutfitId);
-    if (currentItem && chain.includes(currentItem.category)) {
-      return currentItem;
-    }
-  }
-
-  // Walk the chain — pick by daily rotation within each category pool
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length === 0) continue;
-    if (pool.length === 1) return pool[0];
-
-    const now = new Date();
-    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
-    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    let idx = (dayOfYear + idHash) % pool.length;
-    // When rotating, skip the currently selected outfit if alternatives exist
-    if (rotationEnabled && pool[idx]?.outfit_id === currentOutfitId && pool.length > 1) {
-      idx = (idx + 1) % pool.length;
-    }
-    return pool[idx];
-  }
-
-  // Last resort: any outfit
-  return outfits[0] || null;
+  // DELEGATE to the canonical rotation engine.
+  // The previous local implementation preferred `current_outfit` when rotation was ON,
+  // which locked the character into a stale manual selection and prevented the daily /
+  // per-transition re-read required by the Character Closet rules. The canonical
+  // resolveCurrentOutfit handles rotation_number ordering, today_category_outfit_overrides
+  // (rotation ON), manual_category_selections (rotation OFF), and never prefers
+  // current_outfit while rotation is active. This is a pure delegation — no new logic.
+  return resolveCurrentOutfit(character, '', null, targetCategory);
 }
 
 /**
