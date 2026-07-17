@@ -698,40 +698,55 @@ If no actions occur, return empty action_effects array.`;
       }
     }
 
-    // Hygiene action guarantee: a narrative that establishes the CHARACTER PERFORMED a
-    // completed shower or bath recovers hygiene_value to the established outcome
-    // (shower→100, bath→90). Performance-verb match only; intentions, observations, and
-    // environmental cleaning are rejected. Other grooming actions (wash face/hands,
-    // brush teeth/hair, groom) have NO established recovery authority, so no value is
-    // applied for them here — none is invented. Take the max with any LLM action_effects value.
+    // ── HYGIENE ACTION GUARANTEE ──────────────────────────────────────────
+      // A narrative that establishes that the CHARACTER PERFORMED a recognized
+      // hygiene action (shower, bath, washing face/hair/hands, brushing teeth,
+      // grooming) must recover the authoritative hygiene_value. Recovery happens
+      // because the action occurred; it is not gated on the current hygiene value.
+      // Reuses the existing autonomous-activity recovery amounts (+20 wash / +10
+      // groom). The existing 75 is the established fallback/baseline already used by
+      // the hygiene system; no separate cutoff is introduced here.
+      // The match requires a performance verb form (showers/showered/showering,
+      // takes/took/taking a shower, bathed/bathing, washes/washed her face, brushes
+      // her teeth, grooms, fixes her hair) — bare nouns, planned actions
+      // ("wants to take a shower" uses the bare infinitive "take", not matched),
+      // observations of another person, environmental cleaning (cleaning the
+      // bathroom, washing dishes/car/clothes), and object references are rejected.
+      // Live Needs reads this same field, so the bar reflects the recovery.
+      // Within-path protection: never apply less than an already-produced hygiene
+      // action effect (take the max of the narrative recovery target and any value
+      // the LLM action_effects already set).
       {
         const _narrLower = (narrativeText || '').toLowerCase();
         const _envClean = /\b(clean(ing|s|ed)|scrub(bing|s|ed)|mopping|mopped|sweeping|swept|vacuuming|vacuumed|dusting|dusted|wiping|wipes|wiped|polishing|polished)\b[^.!?\n]{0,40}\b(bathroom|toilet|kitchen|floor|counter|sink|tub|mirror|dishes|car|clothes|windows|laundry|house|home|room|tiles|rug|carpet|stove|oven)\b/.test(_narrLower) || /\b(washes|washed|washing|cleans|cleaned|cleaning)\b[^.!?\n]{0,30}\b(dishes|car|clothes|windows|laundry|floors?)\b/.test(_narrLower);
         const _observation = /\b(watches|watched|observes|observed|sees|saw|notices|noticed)\b[^.!?\n]{0,30}\b(showering|bathing|washing|brushing|grooming)\b/.test(_narrLower);
-        if (_envClean || _observation) { /* not a performed hygiene action */ }
-        else {
-          const _shower = /\bshowered\b/.test(_narrLower) || /\bshowering\b/.test(_narrLower) ||
-            /\b(he|she|they)\b[^.!?\n]{0,30}\bshowers\b/.test(_narrLower) ||
-            /\b(takes|took|taking)\b[^.!?\n]{0,20}\bshower\b/.test(_narrLower) ||
-            /fresh from (a )?shower/.test(_narrLower) ||
-            /(stepping|steps|gets) out of (the|a) shower/.test(_narrLower) ||
-            /out of the shower/.test(_narrLower) || /after (her|his|their) shower/.test(_narrLower) ||
-            /(finishes|finished) showering/.test(_narrLower);
-          const _bath = /\b(bathed|bathing|bathes)\b/.test(_narrLower) ||
-            /\b(takes|took|taking)\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
-            /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
-            /fresh from (a )?bath/.test(_narrLower) || /out of (the|a) bath/.test(_narrLower) ||
-            /after (her|his|their) bath/.test(_narrLower) || /(finishes|finished) bathing/.test(_narrLower);
-          let _target = null, _label = null;
-          if (_shower) { _target = 100; _label = 'shower→100'; }
-          else if (_bath) { _target = 90; _label = 'bath→90'; }
-          if (_target != null) {
-            const _existing = characterUpdatePayload.hygiene_value ?? -Infinity;
-            if (_target > _existing) {
-              characterUpdatePayload.hygiene_value = _target;
-              updatedNeeds.hygiene = _target;
-              console.log(`[generateAutomaticNarrative] hygiene recovery: ${character.hygiene_value ?? 75} → ${_target} (${_label})`);
-            }
+        const _perfWash =
+          /\bshowered\b/.test(_narrLower) || /\bshowering\b/.test(_narrLower) ||
+          /\b(he|she|they)\b[^.!?\n]{0,30}\bshowers\b/.test(_narrLower) ||
+          /\b(bathed|bathing|bathes)\b/.test(_narrLower) ||
+          /\b(takes|took|taking)\b[^.!?\n]{0,20}\b(shower|bath)\b/.test(_narrLower) ||
+          /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(face|hair|hands)\b/.test(_narrLower) ||
+          /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) ||
+          /fresh from (a )?(shower|bath)/.test(_narrLower) ||
+          /(stepping|steps|gets) out of (the|a) (shower|bath)/.test(_narrLower) ||
+          /out of the (shower|bath)/.test(_narrLower) ||
+          /after (her|his|their) (shower|bath)/.test(_narrLower) ||
+          /(finishes|finished) (showering|bathing)/.test(_narrLower) ||
+          /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower);
+        const _isWash = _perfWash && !_envClean && !_observation;
+        const _isGroom = !_isWash && !_envClean && !_observation && (
+          /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\b(teeth|hair)\b/.test(_narrLower) ||
+          /\b(grooms|groomed|grooming)\b/.test(_narrLower) ||
+          /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower)
+        );
+        if (_isWash || _isGroom) {
+          const _delta = _isWash ? 20 : 10;
+          const _target = Math.min(100, Math.round((character.hygiene_value ?? 75) + _delta));
+          const _existing = characterUpdatePayload.hygiene_value ?? -Infinity;
+          if (_target > _existing) {
+            characterUpdatePayload.hygiene_value = _target;
+            updatedNeeds.hygiene = _target;
+            console.log(`[generateAutomaticNarrative] hygiene recovery applied: ${character.hygiene_value ?? 75} → ${_target} (${_isWash ? 'wash +20' : 'groom +10'}) — narrative established a hygiene action`);
           }
         }
       }
