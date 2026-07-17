@@ -310,12 +310,17 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Narrative must reflect what they'd realistically be doing here at this time.`;
     }
 
-    // Needs color
+    // Needs color — thresholds match stable baselines (75), not critical-only.
+    // A character whose hunger is below 75 (the stable baseline) is hungry and
+    // should eat. A character whose hygiene is below 75 should freshen up.
+    // The LLM needs this signal at the stable threshold, not just at crisis,
+    // so autonomous narratives document eating and hygiene at normal hunger
+    // levels (e.g. hunger 70) — not only when needs are critically low.
     const needsHints = [];
-    if (needsSnapshot.hunger < 40) needsHints.push('they are noticeably hungry');
+    if (needsSnapshot.hunger < 75) needsHints.push(needsSnapshot.hunger < 40 ? 'they are very hungry and need to eat right now' : 'they are hungry and want to eat something');
     if (needsSnapshot.energy < 35) needsHints.push('they feel exhausted');
     if (needsSnapshot.social < 30) needsHints.push('they feel isolated or lonely');
-    if (needsSnapshot.hygiene < 35) needsHints.push('they feel like they need to clean up');
+    if (needsSnapshot.hygiene < 75) needsHints.push(needsSnapshot.hygiene < 40 ? 'they really need to clean up' : 'they want to freshen up');
     if (needsSnapshot.mental < 30) needsHints.push('they are mentally stressed or overwhelmed');
     const needsLine = needsHints.length > 0
       ? `\nCURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.`
@@ -608,6 +613,16 @@ Return a JSON object with:
     }
   ]
 }
+
+NEED VALUE DIRECTION — CRITICAL:
+All need values are SATISFACTION meters: 100 = fully satisfied, 0 = completely deprived.
+A POSITIVE change means the need is being SATISFIED (value goes UP = better).
+A NEGATIVE change means the need is DROPPING (value goes DOWN = worse).
+• Eating INCREASES hunger (positive change) — the character is more fed after eating.
+• Sleeping INCREASES energy (positive change) — the character is more rested.
+• Showering/washing INCREASES hygiene (positive change) — the character is cleaner.
+• Socializing INCREASES social (positive change) — the character is more fulfilled.
+Do NOT return a negative hunger change for eating. Eating always makes hunger go UP.
 
 Only include action_effects if the narrative describes concrete actions (eating, sleeping, showering, socializing, etc.).
 If no actions occur, return empty action_effects array.`;
