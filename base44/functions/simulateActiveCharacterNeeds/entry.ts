@@ -556,19 +556,7 @@ function computeCorrectiveState(needs, character, locationMap) {
     const staleOvernightObligation = isOvernightViolationWindow &&
       (presence === 'at_school' || (inObligation && hour >= 3 && hour < 6));
     const effectiveInObligation = staleOvernightObligation && !hasOvernightReason ? false : inObligation;
-    // REUSE EXISTING presence_stay_lock contract: when a promised visit is
-    // protected (lock active, reason 'scheduled_user_confirmed_relocation', not
-    // expired), ordinary corrective sleep/nap defers. This check is inside the
-    // energy 25-50% sleep/nap pipeline — AFTER the energy pass-out (≤10,
-    // disabled) and medical hospitalization (≤5) branches above, and BEFORE
-    // the hunger-eating, health-ER hospitalization, social-seeking, and
-    // compound-crisis pass-out branches below. Only ordinary sleep/nap is
-    // deferred; all emergency and involuntary branches remain unaffected.
-    const promisedVisitProtected = character.presence_stay_lock === true &&
-      character.presence_stay_lock_reason === 'scheduled_user_confirmed_relocation' &&
-      (!character.presence_stay_lock_expires_at ||
-        new Date(character.presence_stay_lock_expires_at).getTime() > Date.now());
-    const isBlocked = effectiveInObligation || !atHome || character.sleep_lock || promisedVisitProtected;
+    const isBlocked = effectiveInObligation || !atHome || character.sleep_lock;
 
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();

@@ -98,15 +98,6 @@ Deno.serve(async (req) => {
           // Complete the committed relocation and clear only fulfilled pending data.
           // The authority already wrote the canonical location/presence.
           // This caller clears only the pending relocation fields that were fulfilled.
-          // REUSE EXISTING presence_stay_lock contract: protect the accepted promised
-          // visit from ordinary corrective sleep/nap reversal. The lock auto-expires
-          // via presence_stay_lock_expires_at — the existing expiration lifecycle
-          // evaluated by autonomousCharacterMovement's validateStayLock, which calls
-          // enforceCharacterLocationPresence with requested_lock_release to clear
-          // all lock fields without moving the character. Higher-authority states
-          // (work, school, emergency, user teleport) overwrite/clear the lock through
-          // their own enforceCharacterLocationPresence calls.
-          const VISIT_PROTECTION_MS = 4 * 60 * 60 * 1000; // 4h — aligns with STALE_PRESENCE_MS
           await base44.asServiceRole.entities.Character.update(char.id, {
             pending_scheduled_relocation_at: null,
             pending_relocation_from: null,
@@ -121,13 +112,6 @@ Deno.serve(async (req) => {
             travel_destination_location_id: null,
             traveling_to_location_id: null,
             traveling_to_location_name: null,
-            // Existing stay-lock fields — protect the promised visit
-            presence_stay_lock: true,
-            presence_stay_lock_reason: 'scheduled_user_confirmed_relocation',
-            presence_stay_lock_authority: 'processScheduledRelocations',
-            presence_stay_lock_set_at: nowIso,
-            presence_stay_lock_created_by: 'system_automation',
-            presence_stay_lock_expires_at: new Date(now.getTime() + VISIT_PROTECTION_MS).toISOString(),
           });
 
           // Write LocationHistory proof from the committed result (not the original request)
