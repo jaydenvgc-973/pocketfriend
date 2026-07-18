@@ -103,8 +103,7 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped, onAnaly
           <div className="text-center space-y-1">
             <p className="text-sm text-white/90 font-medium">Watch something together</p>
             <p className="text-[11px] text-white/50">
-              Paste a link from YouTube, Vimeo, Dailymotion, Internet Archive, X, Instagram, Facebook, TikTok, Twitch, Wistia, Brightcove, Loom, Vidyard, Kaltura, Cloudflare Stream, Bunny Stream, Spotify, SoundCloud, or Mixcloud — or a direct HTTPS MP4/WebM link.
-              The link is not saved permanently.
+               Paste any publicly accessible video link — YouTube, Vimeo, news articles with embedded video, business or personal websites with HTML5 video, HLS/DASH streams, or direct MP4/WebM links. Any public HTTPS URL is accepted; the link is not saved permanently.
             </p>
           </div>
 
@@ -112,7 +111,7 @@ export default function WatchVideoPanel({ onClose, onStarted, onStopped, onAnaly
             type="url"
             value={rawInput}
             onChange={(e) => setRawInput(e.target.value)}
-            placeholder="Paste a YouTube, Vimeo, X, Instagram, or Facebook video link…"
+            placeholder="Paste any public video link…"
             className="w-full px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm placeholder:text-zinc-500 focus:outline-none focus:border-primary"
           />
 

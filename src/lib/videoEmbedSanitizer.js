@@ -220,7 +220,7 @@ const PROVIDERS = [
 // DIRECT MEDIA FILES (MP4 / WebM / OGV)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ALLOWED_DIRECT_EXTENSIONS = [".mp4", ".webm", ".ogv"];
+const ALLOWED_DIRECT_EXTENSIONS = [".mp4", ".webm", ".ogv", ".m3u8", ".mpd"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EMBED-HOST ALLOWLIST (for already-embeddable player URLs pasted directly)
@@ -367,9 +367,26 @@ export function sanitizeVideoInput(rawInput) {
     }
   }
 
+  // ── GENERIC PUBLIC URL ACCEPTANCE ──────────────────────────────────────────
+  // Any publicly accessible HTTPS URL is accepted. The backend link analysis
+  // pipeline (analyzeSharedLink) fetches the page, follows embedded players to
+  // their underlying source, and determines whether a playable video exists.
+  // We do NOT reject based on domain — we accept and let the analysis determine
+  // the content. The page is rendered in an iframe so the user can watch it
+  // while characters receive understanding through the analysis pipeline.
+  if (parsed && parsed.protocol === "https:") {
+    return {
+      valid: true,
+      provider: "generic",
+      embedUrl: urlToProcess,
+      originalUrl: urlToProcess,
+      type: "iframe",
+    };
+  }
+
   return {
     valid: false,
-    error: "Unsupported source. Use a supported video provider link (YouTube, Vimeo, Dailymotion, Internet Archive, X, Instagram, Facebook, TikTok, Twitch, Wistia, Brightcove, Loom, Vidyard, Kaltura, Cloudflare Stream, Bunny Stream, Spotify, SoundCloud, Mixcloud) or a direct HTTPS MP4/WebM link.",
+    error: "Could not access the video. The link may require authentication, be blocked by the host, or no playable video exists on the page.",
   };
 }
 
