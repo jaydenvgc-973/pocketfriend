@@ -39,6 +39,7 @@ import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInterac
 import { extractSceneItemLabel } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
+import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
@@ -886,6 +887,14 @@ export default function Scene() {
 
     const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
 
+    // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
+    // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
+    // dropping the user's hair_type, appearance_age, custom_keywords, and height lock.
+    // buildAppearanceLockBlock is the full identity authority — inject it for the user so
+    // their face/body identity stays intact alongside the closet-driven outfit.
+    // The avatar remains the visual identity anchor; this text reinforces it.
+    const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
+
     // ── REFERENCE IMAGE ASSEMBLY: AVATARS FIRST (IDENTITY SOURCE) ──────────────
     // Prioritize character avatars for identity locking, then location environment refs
     const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone) || locationZones[0];
@@ -940,6 +949,10 @@ export default function Scene() {
       // AVATAR IDENTITY LOCK: enforce full identity matching for all visible people
       if (visiblePeopleForScene.length > 0) {
         finalPrompt += buildAvatarIdentityEnforcementBlock(visiblePeopleForScene);
+      }
+      // USER IDENTITY: full appearance lock (face/body) — keeps the user's identity intact
+      if (userAppearanceBlock) {
+        finalPrompt += userAppearanceBlock;
       }
       try {
         // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
@@ -1033,7 +1046,7 @@ export default function Scene() {
       ...envRefs.filter((u) => !residentAvatarUrls.includes(u))];
 
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
@@ -1060,7 +1073,7 @@ export default function Scene() {
         const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix}${_diversityDirective} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
@@ -1074,7 +1087,7 @@ export default function Scene() {
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix} Photorealistic.`;
       }
     }
 
