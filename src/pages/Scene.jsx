@@ -861,12 +861,27 @@ export default function Scene() {
     }).
     filter(Boolean);
 
-    // Also inject user's current outfit if set
-    const userCurrentOutfit = settings?.user_current_outfit;
-    if (userCurrentOutfit?.label) {
-      const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
-      const desc = userCurrentOutfit.full_description || parts.join(', ');
-      if (desc) outfitLines.push(`${displayName} is wearing: ${desc}`);
+    // ── USER OUTFIT AUTHORITY ──────────────────────────────────────────────
+    // The user's outfit comes from the user closet via resolveUserOutfitContext
+    // (the single user outfit authority — mirrors resolveCharacterOutfitContext).
+    // Avatar is identity only, never a clothing source.
+    // Rotation ON: today's override > day-stable rotation by category.
+    // Rotation OFF: manual category selection > user_current_outfit.
+    // Null (empty closet / no selection) is a valid preference — not an error.
+    // User instructions to remove/change items in a scene action are handled by
+    // the action prompt override and do NOT mutate the stored outfit rotation.
+    try {
+      const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
+        ownerEmail: currentUser?.email,
+        locationCategory: location?.category,
+        locationId: location?.id,
+      });
+      const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
+      if (userOutfitText) {
+        outfitLines.push(`${displayName} is wearing: ${userOutfitText}`);
+      }
+    } catch (e) {
+      // non-blocking — null outfit is a valid preference
     }
 
     const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
