@@ -198,7 +198,7 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
         </div>
 
         {/* Generate */}
-        <Button onClick={() => onGenerateSceneImage ? onGenerateSceneImage() : generate()} disabled={isGenerating || isGeneratingImage} className="w-full rounded-xl gap-2">
+        <Button onClick={generate} disabled={isGenerating || isGeneratingImage} className="w-full rounded-xl gap-2">
           <Sparkles className="w-4 h-4" />
           {(isGenerating || isGeneratingImage) ? "Generating..." : generatedImage ? "Regenerate" : "Generate Photo"}
         </Button>
