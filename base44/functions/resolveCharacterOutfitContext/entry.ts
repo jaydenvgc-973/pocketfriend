@@ -168,7 +168,12 @@ function resolveTargetCategory(character, locationCategory) {
 
   if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
 
-  if (presence === 'home' || locationCategory === 'home') return 'lounge';
+  // Home loungewear applies ONLY when the character is actually at a home location.
+  // A character who traveled to a non-home location (park, gym, café, etc.) must NOT
+  // wear loungewear even if resolved_presence_status is stale 'home' from before travel.
+  // Mirrors resolveUserOutfitContext: requires BOTH home presence AND home location.
+  if (locationCategory === 'home') return 'lounge';
+  if (!locationCategory && presence === 'home') return 'lounge';
   if (/\b(relaxing|chilling|lounging|watching tv|at home)\b/.test(activity)) return 'lounge';
 
   return 'daily_casual';
