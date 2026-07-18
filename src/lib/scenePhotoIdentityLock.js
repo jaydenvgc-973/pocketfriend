@@ -13,14 +13,22 @@ import { resolveHousingLocationForCharacter } from './resolveHousingLocationForC
  * Build outfit enforcement text for a list of characters and optionally the user.
  * Uses appearance_lock for identity, closet/current_outfit for clothing ONLY.
  */
-function buildPhotoOutfitBlock(selectedChars, user = null, locationCategory = null) {
+function buildPhotoOutfitBlock(selectedChars, user = null, locationCategory = null, resolvedOutfitLines = null) {
   let appearanceBlocks = '';
-  let outfitLines = [];
   
   // Build appearance locks for each character
   for (const c of selectedChars) {
     appearanceBlocks += buildAppearanceLockBlock(c);
   }
+
+  // If pre-resolved outfit lines are provided (from the backend authority), use them
+  // and skip the frontend resolver. This is the authoritative path.
+  if (resolvedOutfitLines && resolvedOutfitLines.length > 0) {
+    const outfitBlock = `\n\nOUTFIT LOCK — MANDATORY (PER-PERSON, NO CROSS-CONTAMINATION):\nEach person MUST appear in exactly the outfit listed under their name ONLY. Do NOT invent or substitute clothing. The user wears the user's outfit; each character wears their own outfit. Do NOT swap, blend, or transfer clothing between identities.\n${resolvedOutfitLines.join('\n')}`;
+    return appearanceBlocks + outfitBlock;
+  }
+  
+  let outfitLines = [];
   
   // Build outfit descriptions for each character
   for (const c of selectedChars) {
@@ -83,7 +91,7 @@ VALIDATION:
 ════════════════════════════════════════════════════════════════`;
 }
 
-export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName, user = null, locationMap = {}) {
+export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName, user = null, locationMap = {}, resolvedOutfitLines = null) {
   // CRITICAL: Resolve housing context for each character FIRST
   // If home_resolution_failed, do NOT trust location for outfit/environment
   const housingDecisions = selectedChars.map(char => ({
@@ -97,7 +105,7 @@ export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, 
     : (location?.category || null);
 
   const identityLock = buildPhotoIdentityLockPrompt(selectedChars, displayName);
-  const outfitBlock = buildPhotoOutfitBlock(selectedChars, user, locationCategoryToUse);
+  const outfitBlock = buildPhotoOutfitBlock(selectedChars, user, locationCategoryToUse, resolvedOutfitLines);
   
   const charSummary = selectedChars.length > 0
     ? selectedChars.map(c => `${c.name}${c.age ? ` (${c.age})` : ''}`).join(', ')

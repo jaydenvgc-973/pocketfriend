@@ -59,9 +59,43 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0] || null;
     const refImages = [...avatarUrls, ...(firstImage ? [firstImage] : [])].slice(0, 6);
 
+    // ── OUTFIT AUTHORITY (same path as the Scene page top image) ─────────────
+    // Resolve the user's outfit via resolveUserOutfitContext and each character's
+    // outfit via resolveCharacterOutfitContext — the single backend authorities.
+    // Null (empty closet / no selection) is a valid preference, not an error.
+    const resolvedOutfitLines = [];
+    const charOutfitResults = await Promise.all(
+      selectedChars.map((c) =>
+        base44.functions.invoke('resolveCharacterOutfitContext', {
+          characterId: c.id,
+          locationCategory: location?.category,
+          locationId: location?.id,
+          ownerEmail: currentUser?.email,
+        })
+          .then((res) => ({ name: c.name, text: res?.data?.text || res?.text || null }))
+          .catch(() => ({ name: c.name, text: null }))
+      )
+    );
+    charOutfitResults.forEach((r) => {
+      if (r.text) resolvedOutfitLines.push(`${r.name}: ${r.text}`);
+    });
+    try {
+      const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
+        ownerEmail: currentUser?.email,
+        locationCategory: location?.category,
+        locationId: location?.id,
+      });
+      const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
+      if (userOutfitText) {
+        resolvedOutfitLines.push(`${displayName}: ${userOutfitText}`);
+      }
+    } catch (e) {
+      // non-blocking — null user outfit is a valid preference
+    }
+
     try {
       // Build prompt with STRICT identity lock enforcement
-      const finalPrompt = buildPhotoGenerationPrompt(autoPrompt, selectedChars, location, displayName);
+      const finalPrompt = buildPhotoGenerationPrompt(autoPrompt, selectedChars, location, displayName, currentUser, {}, resolvedOutfitLines);
       
       console.log('[Photo] Generating with strict identity lock:', {
         avatarCount: avatarUrls.length,

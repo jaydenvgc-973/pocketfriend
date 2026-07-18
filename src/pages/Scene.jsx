@@ -844,33 +844,34 @@ export default function Scene() {
     const hour = nowET.getHours();
     const lightingDesc = getLightingDescriptor(hour);
 
-    // Build outfit descriptions for brought characters from their closet
-    const getCharacterOutfitDesc = (char) => {
-      const outfit = char.current_outfit;
-      const closet = char.character_closet || [];
-      const closetOutfits = closet.filter((item) => item.type === "outfit" || !item.piece_type && item.outfit_id);
-      let activeOutfit = outfit?.label ? outfit : closetOutfits[closetOutfits.length - 1] || null;
-      if (!activeOutfit) return null;
-      const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
-      return activeOutfit.full_description || parts.join(', ') || null;
-    };
+    // ── OUTFIT AUTHORITY (user + characters, single backend path) ─────────────
+    // BOTH the user and each brought character resolve their outfit through the
+    // single backend authority (resolveUserOutfitContext / resolveCharacterOutfitContext).
+    // Stale frontend reads of current_outfit / character_closet are forbidden — they
+    // bypass rotation, daily overrides, manual category selections, and uniforms.
+    // Null (empty closet / no selection) is a valid preference, not an error.
+    // Temporary in-scene changes (take off coat, change shirt) are handled by the
+    // action prompt override and do NOT mutate the stored outfit rotation.
+    const outfitLines = [];
 
-    const outfitLines = broughtCharacters.
-    map((c) => {
-      const desc = getCharacterOutfitDesc(c);
-      return desc ? `${c.name} is wearing: ${desc}` : null;
-    }).
-    filter(Boolean);
+    // Characters: resolve each through resolveCharacterOutfitContext
+    const charOutfitResults = await Promise.all(
+      broughtCharacters.map((c) =>
+        base44.functions.invoke('resolveCharacterOutfitContext', {
+          characterId: c.id,
+          locationCategory: location?.category,
+          locationId: location?.id,
+          ownerEmail: currentUser?.email,
+        })
+          .then((res) => ({ name: c.name, text: res?.data?.text || res?.text || null }))
+          .catch(() => ({ name: c.name, text: null }))
+      )
+    );
+    charOutfitResults.forEach((r) => {
+      if (r.text) outfitLines.push(`${r.name} is wearing: ${r.text}`);
+    });
 
-    // ── USER OUTFIT AUTHORITY ──────────────────────────────────────────────
-    // The user's outfit comes from the user closet via resolveUserOutfitContext
-    // (the single user outfit authority — mirrors resolveCharacterOutfitContext).
-    // Avatar is identity only, never a clothing source.
-    // Rotation ON: today's override > day-stable rotation by category.
-    // Rotation OFF: manual category selection > user_current_outfit.
-    // Null (empty closet / no selection) is a valid preference — not an error.
-    // User instructions to remove/change items in a scene action are handled by
-    // the action prompt override and do NOT mutate the stored outfit rotation.
+    // User: resolve through resolveUserOutfitContext
     try {
       const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
         ownerEmail: currentUser?.email,
@@ -885,7 +886,9 @@ export default function Scene() {
       // non-blocking — null outfit is a valid preference
     }
 
-    const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
+    const outfitSuffix = outfitLines.length > 0
+      ? ` OUTFIT REQUIREMENT — PER-PERSON ASSIGNMENT (NO CROSS-CONTAMINATION): ${outfitLines.join('. ')}. Each outfit is assigned to the named person ONLY. The user wears the user's outfit; each character wears their own outfit. Do NOT swap, blend, or transfer clothing between identities. Do NOT use avatar/reference photo clothing. Reproduce each exact outfit on its assigned person.`
+      : '';
 
     // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
     // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
