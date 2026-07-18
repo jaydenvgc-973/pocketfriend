@@ -119,6 +119,27 @@ export default function Scene() {
   // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
+  // ── USER PARTICIPANT FOR SCENE IMAGES ──────────────────────────────────────
+  // The user is present at the scene (they traveled here). Build a pseudo-character
+  // object so the image generator includes the user alongside their companions.
+  // Only created when the user has an avatar — without one, identity can't be locked.
+  const userParticipant = useMemo(() => {
+    const userAvatar = currentUser?.generated_avatar_urls?.[0]
+      || currentUser?.reference_image_urls?.[0]
+      || currentUser?.avatar_url
+      || null;
+    if (!userAvatar) return null;
+    return {
+      id: currentUser?.id || 'user',
+      name: displayName,
+      avatar_url: userAvatar,
+      image_avatar_url: userAvatar,
+      appearance_lock: settings?.appearance_lock || null,
+      gender: settings?.user_gender || currentUser?.gender || null,
+      isUser: true,
+    };
+  }, [currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
+
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
@@ -773,10 +794,8 @@ export default function Scene() {
     return () => clearInterval(interval);
   }, [location?.id, activeZone]);
 
-  // Scene image is NOT generated automatically on mount.
-  // Reason: the page is fully usable without it (placeholder emoji renders, chat/actions/input all work).
-  // Automatic AI image generation on mount competes with the user's first interaction.
-  // Image is generated only when:
+  // Scene image auto-loads when the page is navigated to (once key data is ready).
+  // Also generated when:
   //   1. User explicitly taps the ↻ refresh button (sets hasUserRequestedImage=true + sceneImage=null)
   //   2. User changes zone (handleZoneChange sets hasUserRequestedImage=true + sceneImage=null)
   //   3. An action triggers generateSceneImage() directly (handleAction path)
@@ -787,6 +806,16 @@ export default function Scene() {
       generateSceneImage();
     }
   }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage]);
+
+  // ── AUTO-LOAD ON NAVIGATION ──────────────────────────────────────────────
+  // Trigger the first scene image generation once the page data is ready.
+  // Gated on brought characters resolving so companions appear in the first image.
+  useEffect(() => {
+    if (hasUserRequestedImage) return;
+    if (!location || location.is_rabbit_hole) return;
+    if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return;
+    setHasUserRequestedImage(true);
+  }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
   // Duplicate ensureChildCaregiverPresence removed — see comment above.
 
@@ -853,8 +882,12 @@ export default function Scene() {
     allZoneImagesFlat.slice(0, 4) :
     firstImage ? [firstImage] : [];
 
-    // Use resolvedWhosHereList directly — no re-query, no re-matching by name
-    const visiblePeopleForScene = resolvedWhosHereList;
+    // Use resolvedWhosHereList directly — no re-query, no re-matching by name.
+    // Include the user participant so their avatar is in the visual reference stack
+    // and their name is in the identity enforcement block.
+    const visiblePeopleForScene = userParticipant
+      ? [...resolvedWhosHereList, userParticipant]
+      : resolvedWhosHereList;
 
     // Prioritize avatars (identity lock) before environment images
     const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
@@ -866,10 +899,15 @@ export default function Scene() {
       const isGlobal = !isHomeLocation && location.location_type === "global";
 
       if (!isGlobal) {
-        // Use resolvedWhosHereList directly — already properly resolved with avatars
-        const physicallyPresent = isHomeLocation ?
+        // Use resolvedWhosHereList directly — already properly resolved with avatars.
+        // Include the user participant so the user appears alongside their companions.
+        const basePresent = isHomeLocation ?
         resolveSceneImagePeople(location, resolvedWhosHereList, currentUser, true) :
         resolvedWhosHereList;
+        const physicallyPresent = [
+        ...basePresent,
+        ...(userParticipant ? [userParticipant] : [])].
+        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
 
         if (physicallyPresent.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
@@ -877,7 +915,7 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
-            finalPrompt += buildIdentityLockBlock(physicallyPresent, currentUser);
+            finalPrompt += buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
           }
         }
       }
@@ -926,7 +964,8 @@ export default function Scene() {
 
       const residentialPeople = [
       ...broughtCharacters,
-      ...selectedNpcsFull].
+      ...selectedNpcsFull,
+      ...(userParticipant ? [userParticipant] : [])].
       filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
 
       // DIAGNOSTIC LOG: Show WHO'S HERE count vs scene count
@@ -950,7 +989,7 @@ export default function Scene() {
 
       const visibleNames = residentialPeople.map((c) => c.name);
 
-      const identityLockBlock = buildIdentityLockBlock(residentialPeople, currentUser);
+      const identityLockBlock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser);
 
       const strictPeopleRule = visibleNames.length > 0 ?
       `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
@@ -1000,23 +1039,25 @@ export default function Scene() {
     // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
     {
       if (isGlobal) {
-        const charNames = sceneCharacters.slice(0, 3).map((c) => c.name).join(", ");
+        const globalPeople = [...sceneCharacters.slice(0, 3), ...(userParticipant ? [userParticipant] : [])];
+        const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        const charIdentityLocks = buildIdentityLockBlock(sceneCharacters.slice(0, 3), currentUser);
-        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(sceneCharacters.slice(0, 3));
+        const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
+        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix}${_diversityDirective} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
-        ...(selectedNpcIds ? selectedNpcs : [])].
-        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 3); // cap at 3
+        ...(selectedNpcIds ? selectedNpcs : []),
+        ...(userParticipant ? [userParticipant] : [])].
+        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 4); // cap at 4 (includes user)
 
         const peopleDesc = physicallyPresent.length > 0 ?
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
         `The space is completely empty — no silhouettes, no background figures, nobody.`;
 
-        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
+        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
       }
