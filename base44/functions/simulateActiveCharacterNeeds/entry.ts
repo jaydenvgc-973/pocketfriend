@@ -40,7 +40,13 @@ const RATES = {
   // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
   // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  hospitalized:    { hunger: -0.5, energy: +4,  social:  0,   health: +5,   mental: -0.3, hygiene: +1,   comfort: +2   },
+  // HOSPITAL TENDING: A hospitalized character is a patient — nurses feed them
+  // (meals on trays), restore energy (rest/sleep in a hospital bed), treat health
+  // (medical care), clean them (sponge bath / nurse washes face & body), and
+  // provide comfort and reassurance. ALL needs are tended so they increase.
+  // hunger +8 = fed (hospital meals); hygiene +4 = sponge bath / nurse cleanup;
+  // mental +1 = reassurance; social +1 = nurse/doctor/visitor contact.
+  hospitalized:    { hunger: +8,  energy: +5,  social: +1,   health: +5,   mental: +1,   hygiene: +4,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
