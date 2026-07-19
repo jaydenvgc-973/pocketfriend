@@ -1326,11 +1326,19 @@ Deno.serve(async (req) => {
           });
         }
 
-        // RC3b: Hospital discharge — AND gate across the complete approved
-        // hospitalization-recovery dimensions. Discharge only when every need
-        // governed by hospitalization reaches the approved 85% threshold.
-        // Uses the full canonical life-needs set: hunger, energy, social,
-        // health, mental, hygiene, comfort. No reduced subset.
+        // RC3b: Hospital discharge — AND gate across the canonical life-needs
+        // defined in needsStateEngine.js (getNeedStates): hunger, energy, social,
+        // health, mental, hygiene, comfort. Financial need is excluded — it is
+        // not a hospitalization recovery dimension. These are the same 7 needs
+        // used in the HOSPITAL_STABILIZATION admission config, but the discharge
+        // set is grounded in the canonical life-needs definition, not inferred
+        // from the stabilization fields.
+        // Threshold: 85 is the minimum of the approved 85–90% recovery range.
+        // Discharge requires ALL dimensions to meet this minimum — no dimension
+        // may remain below 85. Recovery is provided by existing activity
+        // execution (triggerAutonomousActions needsEffect: hygiene +20, social
+        // +15, mental +20, comfort +15, health +12) and the eating block
+        // (hunger +15–16.5), NOT by passive hospitalization rates.
         if (char.resolved_presence_status === 'hospitalized') {
           const DISCHARGE_THRESHOLD = 85;
           const _allRecovered = [
