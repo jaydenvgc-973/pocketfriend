@@ -525,35 +525,22 @@ function computeCorrectiveState(needs, character, locationMap) {
   const isInRestState = presence === 'sleeping' || presence === 'napping' ||
     presence === 'passed_out' || presence === 'hospitalized';
 
-  // ── HOSPITALIZED: Activity-based recovery without presence change ──────
-  // Hospitalized characters select existing recovery activities (sleeping,
-  // resting) through this corrective state. The activity sets the context via
-  // getLocationContext, and the existing activity rate applies naturally.
-  // resolved_presence_status remains 'hospitalized' — no presence transition.
-  // No hospital-specific rate is created; the existing sleeping/resting rates
-  // are reused through the existing context→rate mechanism.
-  if (presence === 'hospitalized') {
-    // Sleep activity — energy recovery (existing sleeping rate: energy +12.5/hr)
-    if (needs.energy <= T.ENERGY_LOW && !character.sleep_lock && !activity.includes('sleep')) {
-      return { current_activity: 'sleeping — recovering in hospital bed' };
-    }
-    // Energy recovered — transition from sleep to rest
-    if (activity.includes('sleep') && needs.energy >= 85) {
-      return { current_activity: 'resting — recovering in hospital bed' };
-    }
-    // Rest activity — health/mental/comfort recovery (existing resting rate:
-    // health +1/hr, mental +3/hr, comfort +3/hr). This is the default recovery
-    // activity for hospitalized characters whose energy is sufficient.
-    if (needs.energy > T.ENERGY_LOW && !activity.includes('rest') && !activity.includes('sleep')) {
-      return { current_activity: 'resting — recovering in hospital bed' };
-    }
-    // All activity-recoverable needs met — clear activity so RC3b discharge can fire
-    if ((activity.includes('rest') || activity.includes('sleep')) &&
-        needs.energy >= 85 && needs.health >= 85 && needs.mental >= 85 && needs.comfort >= 85) {
-      return { current_activity: '' };
-    }
-    return null;
-  }
+  // HOSPITALIZED: No hospital-specific activity engine. Hospitalized characters
+  // are at a hospital location and recover through the EXISTING activity system
+  // (triggerAutonomousActions), which selects activities by need level and
+  // applies the existing needsEffect (hygiene +20, social +30, mental +20,
+  // comfort +15, health +20, hunger +35). Those activities fire for all active
+  // characters regardless of presence. triggerAutonomousActions does NOT change
+  // resolved_presence_status, so the character stays hospitalized during
+  // activities. autonomousCharacterMovement has a Tier 0 hard stop that blocks
+  // movement for hospitalized characters. The getLocationContext function maps
+  // the current_activity to an existing rate context (sleeping, resting,
+  // eating, default) so elapsed-time rates apply correctly. No new activities,
+  // rates, or recovery systems are created here.
+  //
+  // Hospitalized is a rest state (isInRestState below), so the subsequent
+  // energy/nap/pass-out/compound-crisis checks are all blocked. Only the
+  // eating corrective (hunger ≤ 20) can fire — a valid activity at a hospital.
 
   // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse. NOT sleeping.
   // ── DISABLED: Exhaustion-threshold pass-out is blocked per mandatory shutdown.
