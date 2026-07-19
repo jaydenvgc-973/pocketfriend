@@ -141,6 +141,9 @@ Deno.serve(async (req) => {
     for (const char of selected) {
       // Skip asleep characters — no invite possible, they're sleeping
       if (isCharacterAsleep(char)) continue;
+      // Hospitalized characters are in a protected recovery state — social
+      // invitations must not interrupt medical care.
+      if (char.resolved_presence_status === 'hospitalized') continue;
 
       const charHome = char.current_home_location_id ? eligibleLocMap[char.current_home_location_id] : null;
       const charWork = char.occupation_location_id   ? eligibleLocMap[char.occupation_location_id]   : null;

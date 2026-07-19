@@ -915,7 +915,16 @@ Deno.serve(async (req) => {
         if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
         if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
 
-        newNeeds = applyStatInfection(newNeeds, elapsedHours);
+        // Hospitalized characters are in a protected recovery state receiving care.
+        // The hospitalized context rate already trends ALL recoverable needs toward
+        // recovery (feeding, rest, hygiene, treatment, comfort). Cross-need infection
+        // decay would reverse that recovery — a stabilized need must not begin decaying
+        // again merely because another need is still recovering. Ordinary unattended
+        // life-need decay does not occur during hospitalization. This is the existing
+        // protected-state integration, not a new rate or threshold.
+        if (context !== 'hospitalized') {
+          newNeeds = applyStatInfection(newNeeds, elapsedHours);
+        }
 
         if (!hungerLocked) {
           const mentalMod = computeMentalModifier(char, context, locationMap);

@@ -70,6 +70,10 @@ Deno.serve(async (req) => {
 
       // Helper: Check if character is blocked from work
       const isBlockedFromWork = (char) => {
+        // Hospitalized characters are in a protected recovery state — work must
+        // not interrupt medical care. The existing discharge pathway restores
+        // presence once medically stable.
+        if (char.resolved_presence_status === 'hospitalized') return true;
         const isCriticallyIll = char.health_value !== undefined && char.health_value < 20;
         const isInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
         return isCriticallyIll || isInEmergency;
@@ -418,6 +422,13 @@ Deno.serve(async (req) => {
         const todayET = `${_gEtParsed[4]}-${_gEtParsed[2].padStart(2,'0')}-${_gEtParsed[3].padStart(2,'0')}`;
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
+        }
+
+        // Hospitalized characters are in a protected recovery state — work must
+        // not interrupt medical care. The existing discharge pathway restores
+        // presence to home once medically stable.
+        if (char.resolved_presence_status === 'hospitalized') {
+          continue;
         }
 
         // Collect ALL active employment records for this character. A character may
