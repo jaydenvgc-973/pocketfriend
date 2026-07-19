@@ -40,11 +40,13 @@ const RATES = {
   // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
   // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  // HOSPITAL STABILIZATION (one-time): Repurposed as fixed stabilization amounts
-  // applied exactly once at admission in enforceCharacterLocationPresence.
-  // NOT applied as recurring recovery here — see applyElapsedTime hospitalized
-  // context for continued recovery through existing activity effects.
-  hospitalized:    { hunger: +8,  energy: +5,  social: +1,   health: +5,   mental: +1,   hygiene: +4,   comfort: +2   },
+  // NOTE: The former `hospitalized` recurring rate has been REMOVED from this table.
+  // Those values are now one-time stabilization amounts applied exclusively at
+  // admission by enforceCharacterLocationPresence (HOSPITAL_STABILIZATION).
+  // This table no longer contains a hospitalization entry — elapsed-time
+  // processing cannot apply it. Hospitalized characters recover through
+  // existing activity contexts (sleeping, resting, eating) resolved by
+  // getLocationContext, not through a hospitalized rate.
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
@@ -206,7 +208,17 @@ function getLocationContext(character, locationMap, now) {
   const activity = (character.current_activity || '').toLowerCase();
   const presenceStatus = character.resolved_presence_status || character.location_status;
 
-  if (presenceStatus === 'hospitalized') return 'hospitalized';
+  // Hospitalized: context is determined by the character's current recovery
+  // activity — NOT by hospitalization status. No passive recovery from being
+  // hospitalized alone. The activity (set by computeCorrectiveState) selects an
+  // existing context (sleeping, resting, eating), and that context's existing
+  // rate applies. If no recovery activity is set, context is 'default' (decay).
+  if (presenceStatus === 'hospitalized') {
+    if (activity.includes('sleep') || activity.includes('asleep')) return 'sleeping';
+    if (activity.includes('rest') || activity.includes('relax') || activity.includes('recover')) return 'resting';
+    if (activity.includes('eat') || activity.includes('food') || activity.includes('meal')) return 'eating';
+    return 'default';
+  }
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
   if (activity.includes('passed out') || activity.includes('collapsed')) return 'passed_out';
@@ -418,28 +430,11 @@ function computeMentalModifier(char, context, locationMap) {
 }
 
 function applyElapsedTime(needs, elapsedHours, context) {
-  // HOSPITALIZED: RATES.hospitalized is repurposed as one-time stabilization
-  // (applied at admission in enforceCharacterLocationPresence). Continued recovery
-  // here reuses EXISTING activity effects — no hospital-specific duplicate rate:
-  //   resting   → health +1, mental +3, comfort +3 (existing resting rate)
-  //   sleeping  → energy +12.5 (hospital bed rest — existing sleeping rate)
-  //   hospital  → health +3 (medical treatment — existing hospital rate)
-  //   nursing   → social +1, hygiene +4 (no existing resting/sleeping equivalent)
-  // Hunger decay (resting -1) is offset by the eating block (extended to hospitalized).
-  if (context === 'hospitalized') {
-    const r = RATES.resting;
-    const s = RATES.sleeping;
-    const h = RATES.hospital;
-    return {
-      hunger:  clamp((needs.hunger  ?? 70) + r.hunger  * elapsedHours),
-      energy:  clamp((needs.energy  ?? 75) + s.energy  * elapsedHours),
-      social:  clamp((needs.social  ?? 65) + 1          * elapsedHours),
-      health:  clamp((needs.health  ?? 80) + h.health  * elapsedHours),
-      mental:  clamp((needs.mental  ?? 70) + r.mental  * elapsedHours),
-      hygiene: clamp((needs.hygiene ?? 75) + 4          * elapsedHours),
-      comfort: clamp((needs.comfort ?? 70) + r.comfort * elapsedHours),
-    };
-  }
+  // No hospitalized branch. The former RATES.hospitalized has been removed from
+  // the rate table. Hospitalized characters recover ONLY through existing
+  // activity contexts (sleeping, resting, eating) resolved by getLocationContext
+  // based on their current_activity. Stabilization is a one-time admission event
+  // committed by enforceCharacterLocationPresence — never a recurring rate here.
   const rates = RATES[context] || RATES.default;
   return {
     hunger:  clamp((needs.hunger  ?? 70) + rates.hunger  * elapsedHours),
@@ -529,6 +524,36 @@ function computeCorrectiveState(needs, character, locationMap) {
 
   const isInRestState = presence === 'sleeping' || presence === 'napping' ||
     presence === 'passed_out' || presence === 'hospitalized';
+
+  // ── HOSPITALIZED: Activity-based recovery without presence change ──────
+  // Hospitalized characters select existing recovery activities (sleeping,
+  // resting) through this corrective state. The activity sets the context via
+  // getLocationContext, and the existing activity rate applies naturally.
+  // resolved_presence_status remains 'hospitalized' — no presence transition.
+  // No hospital-specific rate is created; the existing sleeping/resting rates
+  // are reused through the existing context→rate mechanism.
+  if (presence === 'hospitalized') {
+    // Sleep activity — energy recovery (existing sleeping rate: energy +12.5/hr)
+    if (needs.energy <= T.ENERGY_LOW && !character.sleep_lock && !activity.includes('sleep')) {
+      return { current_activity: 'sleeping — recovering in hospital bed' };
+    }
+    // Energy recovered — transition from sleep to rest
+    if (activity.includes('sleep') && needs.energy >= 85) {
+      return { current_activity: 'resting — recovering in hospital bed' };
+    }
+    // Rest activity — health/mental/comfort recovery (existing resting rate:
+    // health +1/hr, mental +3/hr, comfort +3/hr). This is the default recovery
+    // activity for hospitalized characters whose energy is sufficient.
+    if (needs.energy > T.ENERGY_LOW && !activity.includes('rest') && !activity.includes('sleep')) {
+      return { current_activity: 'resting — recovering in hospital bed' };
+    }
+    // All activity-recoverable needs met — clear activity so RC3b discharge can fire
+    if ((activity.includes('rest') || activity.includes('sleep')) &&
+        needs.energy >= 85 && needs.health >= 85 && needs.mental >= 85 && needs.comfort >= 85) {
+      return { current_activity: '' };
+    }
+    return null;
+  }
 
   // PASS-OUT (≤10%): bypass pipeline — involuntary physical collapse. NOT sleeping.
   // ── DISABLED: Exhaustion-threshold pass-out is blocked per mandatory shutdown.
@@ -936,14 +961,12 @@ Deno.serve(async (req) => {
         if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
         if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
 
-        // Hospitalized characters are in a protected recovery state receiving care.
-        // The hospitalized context rate already trends ALL recoverable needs toward
-        // recovery (feeding, rest, hygiene, treatment, comfort). Cross-need infection
-        // decay would reverse that recovery — a stabilized need must not begin decaying
-        // again merely because another need is still recovering. Ordinary unattended
-        // life-need decay does not occur during hospitalization. This is the existing
-        // protected-state integration, not a new rate or threshold.
-        if (context !== 'hospitalized') {
+        // Hospitalized characters are in a protected recovery state. Cross-need
+        // infection decay would reverse recovery — a stabilized need must not
+        // begin decaying again merely because another need is still recovering.
+        // This check uses presence (not context) so it applies regardless of
+        // which activity context the character is currently in (sleeping/resting).
+        if (char.resolved_presence_status !== 'hospitalized') {
           newNeeds = applyStatInfection(newNeeds, elapsedHours);
         }
 
