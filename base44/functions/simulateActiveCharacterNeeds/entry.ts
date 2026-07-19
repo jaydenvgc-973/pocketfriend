@@ -40,13 +40,16 @@ const RATES = {
   // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
   // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  // HOSPITAL TENDING: A hospitalized character is a patient — nurses feed them
-  // (meals on trays), restore energy (rest/sleep in a hospital bed), treat health
-  // (medical care), clean them (sponge bath / nurse washes face & body), and
-  // provide comfort and reassurance. ALL needs are tended so they increase.
-  // hunger +8 = fed (hospital meals); hygiene +4 = sponge bath / nurse cleanup;
-  // mental +1 = reassurance; social +1 = nurse/doctor/visitor contact.
-  hospitalized:    { hunger: +8,  energy: +5,  social: +1,   health: +5,   mental: +1,   hygiene: +4,   comfort: +2   },
+  // HOSPITAL: A patient resting in a hospital bed. The hospital's defining
+  // functions are rest (energy recovery) and medical care (health recovery) —
+  // NOT duplicates of everyday activities (there is no at-home "medical care"
+  // activity). Hunger and hygiene are NOT recovered here: they are tended by
+  // the EXISTING eating and hygiene activity systems firing at the hospital
+  // (the hospital is another location where existing activities occur, not a
+  // special exception to the needs system). Hunger decays normally (the
+  // existing eating activity feeds them); hygiene is neutral (the existing
+  // hygiene activities clean them).
+  hospitalized:    { hunger: -1,   energy: +4,  social:  0,   health: +5,   mental: +0.5, hygiene: 0,    comfort: +1   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
   at_work_service: { hunger: -5,   energy: -6,  social: +3,   health: -1,   mental: -0.75,hygiene: -3,   comfort: -3   },
@@ -818,12 +821,18 @@ Deno.serve(async (req) => {
         // hunger is low and the character is awake at their home location or on
         // shift; it never depends on a pantry balance.
         if (!hungerLocked && !char.needs_locks?.hunger && (needs.hunger ?? 70) < 50) {
-          const _awake = !['sleeping','napping','passed_out','hospitalized'].includes(char.resolved_presence_status || '');
+          // Hospitalized characters are alive and are fed by the hospital through
+          // the EXISTING eating activity (hospital meals). 'hospitalized' is a
+          // presence status (at the hospital), not an unconscious state, so it is
+          // not excluded from eating. The hospital is another location where the
+          // existing eating activity occurs — not a special exception.
+          const _awake = !['sleeping','napping','passed_out'].includes(char.resolved_presence_status || '');
           const _atHome = _awake && !!char.resolved_current_location_id &&
             (char.resolved_current_location_id === char.current_home_location_id ||
              char.resolved_current_location_id === char.temporary_housing_location_id);
           const _atWork = _awake && isOnShift(char, locationMap);
-          if (_atHome || _atWork) {
+          const _hospitalized = char.resolved_presence_status === 'hospitalized';
+          if (_atHome || _atWork || _hospitalized) {
             const isMeal = (needs.hunger ?? 70) < 30;
             const hungerRestore = isMeal ? 33 : 16.5;
             // Home: deplete pantry if a HouseholdResource food record exists,
@@ -844,7 +853,7 @@ Deno.serve(async (req) => {
               } catch (e) { /* Non-fatal — eating still proceeds at $0 */ }
             }
             needs.hunger = clamp((needs.hunger ?? 70) + hungerRestore);
-            results.push({ character: charName, event: isMeal ? (_atHome ? 'home_meal_consumed' : 'work_meal_consumed') : (_atHome ? 'home_snack_consumed' : 'work_snack_consumed'), eating_location: _atHome ? 'home' : 'work', cost: 0, hunger_before: char.hunger_value ?? 70, hunger_after: Math.round(needs.hunger) });
+            results.push({ character: charName, event: isMeal ? (_atHome ? 'home_meal_consumed' : _atWork ? 'work_meal_consumed' : 'hospital_meal_consumed') : (_atHome ? 'home_snack_consumed' : _atWork ? 'work_snack_consumed' : 'hospital_snack_consumed'), eating_location: _atHome ? 'home' : _atWork ? 'work' : 'hospital', cost: 0, hunger_before: char.hunger_value ?? 70, hunger_after: Math.round(needs.hunger) });
           }
         }
 
