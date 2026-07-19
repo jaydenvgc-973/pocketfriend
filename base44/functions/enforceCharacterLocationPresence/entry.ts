@@ -31,6 +31,17 @@
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ═════════════════════════════════════════════════════════════════════════════
+// HOSPITAL STABILIZATION — one-time amounts applied at admission commit.
+// Repurposed from the former recurring RATES.hospitalized. Applied exactly
+// once when the authoritative hospitalization transition is committed (new
+// admission only — not the reconciliation path for already-hospitalized chars).
+// Continued recovery while hospitalized is handled by simulateActiveCharacterNeeds
+// through existing activity effects, NOT by reapplying these values.
+// ═════════════════════════════════════════════════════════════════════════════
+const HOSPITAL_STABILIZATION = { hunger: 8, energy: 5, social: 1, health: 5, mental: 1, hygiene: 4, comfort: 2 };
+const _clampNeed = (v) => Math.max(0, Math.min(100, v));
+
 // ── HELPERS (aligned with src/lib/locationResolutionEngine.js) ────────────────
 
 function isOnShiftNow(shift, etTime) {
@@ -362,6 +373,10 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   // enforceCharacterWorkSchedule requests at_work when its rules determine
   // the active work obligation requires that transition.
   if (requestedStatus === 'at_work') {
+    // Hospitalized characters are in protected recovery — work cannot pull them out.
+    if (character.resolved_presence_status === 'hospitalized') {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_work_blocked' };
+    }
     const workLocId = requestedLocId || character.occupation_location_id;
     if (!workLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
@@ -477,6 +492,10 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
 
   // ── SCHOOL REQUESTED (at_school) ───────────────────────────────────────────
   if (requestedStatus === 'at_school') {
+    // Hospitalized characters are in protected recovery — school cannot pull them out.
+    if (character.resolved_presence_status === 'hospitalized') {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_school_blocked' };
+    }
     const schoolLocId = requestedLocId || character.education_location_id;
     if (!schoolLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_school_location' };
@@ -521,9 +540,12 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (!destLoc) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
     }
-    // Incarcerated/house-arrest characters cannot relocate
+    // Incarcerated/house-arrest/hospitalized characters cannot be relocated
     if (character.is_jailed || character.house_arrest_active) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'confinement_block' };
+    }
+    if (character.resolved_presence_status === 'hospitalized') {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_relocation_blocked' };
     }
     const canonicalFields = {
       resolved_current_location_id: destLocId,
@@ -617,6 +639,16 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       canonicalFields.resolved_current_location_name = hospitalLoc?.name || 'Hospital';
       canonicalFields.resolved_location_type = 'medical';
     }
+    // One-time stabilization — applied exactly once at the admission commit.
+    // These are fixed amounts, NOT recurring rates. Remaining hospitalized
+    // never re-triggers this; only a new admission (after discharge) does.
+    canonicalFields.hunger_value  = _clampNeed((character.hunger_value  ?? 70) + HOSPITAL_STABILIZATION.hunger);
+    canonicalFields.energy_value  = _clampNeed((character.energy_value  ?? 75) + HOSPITAL_STABILIZATION.energy);
+    canonicalFields.social_value  = _clampNeed((character.social_value  ?? 65) + HOSPITAL_STABILIZATION.social);
+    canonicalFields.health_value  = _clampNeed((character.health_value  ?? 80) + HOSPITAL_STABILIZATION.health);
+    canonicalFields.mental_value  = _clampNeed((character.mental_value  ?? 70) + HOSPITAL_STABILIZATION.mental);
+    canonicalFields.hygiene_value = _clampNeed((character.hygiene_value ?? 75) + HOSPITAL_STABILIZATION.hygiene);
+    canonicalFields.comfort_value  = _clampNeed((character.comfort_value  ?? 70) + HOSPITAL_STABILIZATION.comfort);
     return {
       disposition: 'accepted',
       canonicalFields,

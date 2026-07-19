@@ -40,12 +40,10 @@ const RATES = {
   // INVOLUNTARY collapse: passed_out is NOT sleeping. Distinct rate (+8 NOT +12.5), distinct cap (12h),
   // distinct completion (energy > 35 OR 12h → home, NEVER → sleeping), distinct event/memory records.
   passed_out:      { hunger: -0.5, energy: +8.0,  social:  0,   health: +0.5, mental: +0.5, hygiene: 0,    comfort: +1   },
-  // HOSPITAL TENDING: A hospitalized character is a patient — nurses feed them
-  // (meals on trays), restore energy (rest/sleep in a hospital bed), treat health
-  // (medical care), clean them (sponge bath / nurse washes face & body), and
-  // provide comfort and reassurance. ALL needs are tended so they increase.
-  // hunger +8 = fed (hospital meals); hygiene +4 = sponge bath / nurse cleanup;
-  // mental +1 = reassurance; social +1 = nurse/doctor/visitor contact.
+  // HOSPITAL STABILIZATION (one-time): Repurposed as fixed stabilization amounts
+  // applied exactly once at admission in enforceCharacterLocationPresence.
+  // NOT applied as recurring recovery here — see applyElapsedTime hospitalized
+  // context for continued recovery through existing activity effects.
   hospitalized:    { hunger: +8,  energy: +5,  social: +1,   health: +5,   mental: +1,   hygiene: +4,   comfort: +2   },
   at_work:         { hunger: -4,   energy: -5,  social: +2,   health: -0.5, mental: -0.5, hygiene: -2,   comfort: -2   },
   at_work_medical: { hunger: -5,   energy: -7,  social: +2,   health: -0.5, mental: -1,   hygiene: -3,   comfort: -4   },
@@ -420,6 +418,28 @@ function computeMentalModifier(char, context, locationMap) {
 }
 
 function applyElapsedTime(needs, elapsedHours, context) {
+  // HOSPITALIZED: RATES.hospitalized is repurposed as one-time stabilization
+  // (applied at admission in enforceCharacterLocationPresence). Continued recovery
+  // here reuses EXISTING activity effects — no hospital-specific duplicate rate:
+  //   resting   → health +1, mental +3, comfort +3 (existing resting rate)
+  //   sleeping  → energy +12.5 (hospital bed rest — existing sleeping rate)
+  //   hospital  → health +3 (medical treatment — existing hospital rate)
+  //   nursing   → social +1, hygiene +4 (no existing resting/sleeping equivalent)
+  // Hunger decay (resting -1) is offset by the eating block (extended to hospitalized).
+  if (context === 'hospitalized') {
+    const r = RATES.resting;
+    const s = RATES.sleeping;
+    const h = RATES.hospital;
+    return {
+      hunger:  clamp((needs.hunger  ?? 70) + r.hunger  * elapsedHours),
+      energy:  clamp((needs.energy  ?? 75) + s.energy  * elapsedHours),
+      social:  clamp((needs.social  ?? 65) + 1          * elapsedHours),
+      health:  clamp((needs.health  ?? 80) + h.health  * elapsedHours),
+      mental:  clamp((needs.mental  ?? 70) + r.mental  * elapsedHours),
+      hygiene: clamp((needs.hygiene ?? 75) + 4          * elapsedHours),
+      comfort: clamp((needs.comfort ?? 70) + r.comfort * elapsedHours),
+    };
+  }
   const rates = RATES[context] || RATES.default;
   return {
     hunger:  clamp((needs.hunger  ?? 70) + rates.hunger  * elapsedHours),
@@ -818,12 +838,13 @@ Deno.serve(async (req) => {
         // hunger is low and the character is awake at their home location or on
         // shift; it never depends on a pantry balance.
         if (!hungerLocked && !char.needs_locks?.hunger && (needs.hunger ?? 70) < 50) {
-          const _awake = !['sleeping','napping','passed_out','hospitalized'].includes(char.resolved_presence_status || '');
+          const _awake = !['sleeping','napping','passed_out'].includes(char.resolved_presence_status || '');
           const _atHome = _awake && !!char.resolved_current_location_id &&
             (char.resolved_current_location_id === char.current_home_location_id ||
              char.resolved_current_location_id === char.temporary_housing_location_id);
           const _atWork = _awake && isOnShift(char, locationMap);
-          if (_atHome || _atWork) {
+          const _atHospital = _awake && char.resolved_presence_status === 'hospitalized';
+          if (_atHome || _atWork || _atHospital) {
             const isMeal = (needs.hunger ?? 70) < 30;
             const hungerRestore = isMeal ? 33 : 16.5;
             // Home: deplete pantry if a HouseholdResource food record exists,
@@ -1282,24 +1303,22 @@ Deno.serve(async (req) => {
           });
         }
 
-        // RC3b: Hospital discharge — the medical crisis that caused hospitalization
-        // has cleared. Uses the existing HEALTH_ER threshold (the inverse of the RC3
-        // admission condition) and the existing COMPOUND_CRISIS threshold — no new
-        // threshold or formula. Routes home through the authority's existing
-        // home/wake transition (the travel/location transition that sends the
-        // character home from the hospital), which records a hospitalized_end
-        // transition via the existing transition system. The discharge LifeEvent
-        // is written through the existing Recent Activity system. No instant
-        // refill — recovery already happened via the hospitalized context rates
-        // over elapsed time. A character still in a compound crisis is NOT
-        // discharged and remains hospitalized.
-        if (char.resolved_presence_status === 'hospitalized' && newNeeds.health > T.HEALTH_ER) {
-          const _dischCritical = [newNeeds.hunger, newNeeds.energy, newNeeds.health, newNeeds.social, newNeeds.mental].filter(v => v < 20).length;
-          if (_dischCritical < T.COMPOUND_CRISIS) {
+        // RC3b: Hospital discharge — AND gate across the complete approved
+        // hospitalization-recovery dimensions. Discharge only when every need
+        // governed by hospitalization reaches the approved 85% threshold.
+        // Uses the full canonical life-needs set: hunger, energy, social,
+        // health, mental, hygiene, comfort. No reduced subset.
+        if (char.resolved_presence_status === 'hospitalized') {
+          const DISCHARGE_THRESHOLD = 85;
+          const _allRecovered = [
+            newNeeds.hunger, newNeeds.energy, newNeeds.social,
+            newNeeds.health, newNeeds.mental, newNeeds.hygiene, newNeeds.comfort,
+          ].every(v => v >= DISCHARGE_THRESHOLD);
+          if (_allRecovered) {
             transitionCandidates.push({
               priority: 1,
               payload: { resolved_presence_status: 'home', current_activity: '' },
-              transition: { transition_type: 'hospitalized_end', from_status: 'hospitalized', to_status: 'home', authority: 'energy_medical', reason: 'Medical crisis resolved — discharged and sent home.' },
+              transition: { transition_type: 'hospitalized_end', from_status: 'hospitalized', to_status: 'home', authority: 'energy_medical', reason: 'All recovery dimensions reached threshold — discharged and sent home.' },
               consequence: { type: 'hospital_discharge' },
             });
           }
