@@ -810,20 +810,6 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
-  // Sleep state lock — preserve DB truth
-  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
-  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
-  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
-  if (dbSleeping && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: character.resolved_presence_status,
-      resolved_source_reason: 'energy_driven_sleep_preserved',
-    };
-  }
-
   // Work schedule
   const todayET = etTime.toISOString().slice(0, 10);
   const hasValidCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
@@ -878,6 +864,62 @@ function computeResolvedLocation(character, locationMap, etTime) {
         resolved_location_type: 'school',
         resolved_presence_status: 'at_school',
         resolved_source_reason: 'school_schedule',
+      };
+    }
+  }
+
+  // Sleep state lock — preserve DB truth (AFTER work/school obligations)
+  // A stale DB 'sleeping'/'napping' must NOT override an active work shift or
+  // school session. Work and school are checked above first; only when no
+  // obligation is active does the committed sleep state get preserved. This
+  // aligns the authority's inline resolver with the client-side
+  // resolveCharacterLocation (which uses isCharacterAsleepFromUtils with a
+  // work/school blocker). Without this order, a character whose DB says
+  // napping while they are actually on shift is left napping at home — the
+  // One Truth violation where Chat/Text believe home while Homepage/Travel
+  // show at_work.
+  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
+  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  if (dbSleeping && sleepHomeId) {
+    return {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: character.resolved_presence_status,
+      resolved_source_reason: 'energy_driven_sleep_preserved',
+    };
+  }
+
+  // Visiting / social-visit preservation (aligned with client-side Layer 3.5D)
+  // A character placed at a non-home location by the system (autonomous
+  // movement, scheduled relocation, user travel) must NOT be sent home by
+  // the legacy recompute. The client-side resolveCharacterLocation preserves
+  // these visits (Layer 3.5D); the authority must do the same so Chat/Text
+  // see the same visiting location as Homepage/Travel. Without this layer,
+  // the authority's recompute falls through to home base and undoes the
+  // visit — the One Truth violation where Chat/Text show home while
+  // Homepage/Travel show the visited location.
+  const visitHomeId = character.current_home_location_id || character.home_location_id || null;
+  const visitLocId = character.resolved_current_location_id || null;
+  const visitIsAwayFromHome = visitLocId && visitHomeId && visitLocId !== visitHomeId;
+  const visitIsSystemPlaced =
+    character.presence_state === 'social_visit' ||
+    character.resolved_presence_status === 'visiting' ||
+    character.resolved_source_reason === 'autonomous_needs_driven' ||
+    character.resolved_source_reason === 'autonomous_movement' ||
+    character.resolved_source_reason === 'user_travel' ||
+    character.resolved_source_reason === 'scheduled_user_confirmed_relocation' ||
+    character.resolved_source_reason === 'social_visit_from_system';
+  if (visitIsAwayFromHome && visitIsSystemPlaced) {
+    const visitLocation = visitLocId ? locationMap[visitLocId] : null;
+    if (visitLocation) {
+      return {
+        resolved_current_location_id: visitLocId,
+        resolved_current_location_name: visitLocation.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
       };
     }
   }

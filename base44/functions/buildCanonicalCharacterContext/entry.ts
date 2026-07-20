@@ -971,6 +971,47 @@ Deno.serve(async (req) => {
       emotionalState: character.emotional_state,
     });
 
+    // ── Step 1b: Reconnect to the One Truth location authority ───────────────
+    // buildCanonicalCharacterContext must NOT trust raw DB resolved_presence_status
+    // / resolved_current_location_* fields when they may be stale. The DB can
+    // say 'napping' at home while the character is actually on an active work
+    // shift — the exact One Truth violation where Chat/Text conversational
+    // context believes home while Homepage/Travel show at_work.
+    //
+    // Call the existing authority (enforceCharacterLocationPresence) with no
+    // requested transition. Its legacy recompute path evaluates work, school,
+    // sleep, and home — and commits the correct canonical state. Overlay the
+    // committed result onto the character object so every downstream consumer
+    // (buildHardFacts, buildCoPresenceBlock, world state reconciliation) reads
+    // the same authoritative resolved live-presence result used by Homepage
+    // and Travel. This is the existing authority — no new resolver, no second
+    // canonical state, no cache, no sync layer.
+    try {
+      const authRes = await base44.functions.invoke('enforceCharacterLocationPresence', {
+        character_id: character.id,
+        owner_email: character.owner_email || resolvedEmail || null,
+      });
+      const authData = authRes?.data || authRes;
+      const committed = authData?.committed_result;
+      if (committed) {
+        character = {
+          ...character,
+          resolved_current_location_id: committed.resolved_current_location_id ?? character.resolved_current_location_id,
+          resolved_current_location_name: committed.resolved_current_location_name ?? character.resolved_current_location_name,
+          resolved_location_type: committed.resolved_location_type ?? character.resolved_location_type,
+          resolved_presence_status: committed.resolved_presence_status ?? character.resolved_presence_status,
+          resolved_source_reason: committed.resolved_source_reason ?? character.resolved_source_reason,
+        };
+        contextLog.push({ step: 'location_authority_reconnect', disposition: authData?.disposition || 'accepted', overlaid: true });
+      } else {
+        contextLog.push({ step: 'location_authority_reconnect', disposition: authData?.disposition || 'no_change', overlaid: false });
+      }
+    } catch (authErr) {
+      // Non-blocking: fall back to the DB fields. The authority may be rate-limited.
+      contextLog.push({ step: 'location_authority_reconnect', status: 'error', error: authErr.message });
+      console.warn(`[buildCanonicalCharacterContext] location authority reconnect failed (non-blocking): ${authErr.message}`);
+    }
+
     // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
     const settingsList = resolvedEmail
       ? await base44.asServiceRole.entities.UserSettings.filter({ owner_email: resolvedEmail }).catch(() => [])
