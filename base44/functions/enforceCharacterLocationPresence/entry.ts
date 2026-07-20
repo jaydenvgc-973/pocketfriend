@@ -179,6 +179,46 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     };
   }
 
+  // ── HOSPITALIZED — discharge gate (movement lock until recovery) ──────────
+  // A hospitalized character cannot leave the hospital until discharged. The
+  // ONLY exit is 'home' (discharge), and only when ALL canonical life-needs
+  // (hunger, energy, social, health, mental, hygiene, comfort) meet the
+  // discharge threshold (85 — minimum of the approved 85–90% recovery range).
+  // This is the same AND gate used by simulateActiveCharacterNeeds RC3b,
+  // enforced at the authority so no caller (processScheduledRelocations,
+  // enforceCharacterWorkSchedule, chat, manual) can bypass recovery by
+  // requesting a non-hospitalized presence. Work, school, visiting, and all
+  // other transitions are blocked outright — the character must be discharged
+  // to home first, then resume normal scheduling in a subsequent cycle.
+  if (currentStatus === 'hospitalized' && requestedStatus && requestedStatus !== 'hospitalized') {
+    if (requestedStatus !== 'home') {
+      return {
+        disposition: 'rejected',
+        reason: 'hospitalized_movement_blocked',
+        canonicalFields: {},
+      };
+    }
+    const _DISCHARGE_THRESHOLD = 85;
+    const _needsReady = [
+      character.hunger_value ?? 70,
+      character.energy_value ?? 75,
+      character.social_value ?? 65,
+      character.health_value ?? 80,
+      character.mental_value ?? 70,
+      character.hygiene_value ?? 75,
+      character.comfort_value ?? 70,
+    ].every(v => v >= _DISCHARGE_THRESHOLD);
+    if (!_needsReady) {
+      return {
+        disposition: 'rejected',
+        reason: 'hospitalized_discharge_not_ready',
+        canonicalFields: {},
+      };
+    }
+    // All needs ≥ 85 and request is 'home' — discharge proceeds through the
+    // normal transition path below. Do not return; fall through.
+  }
+
   // ── SLEEP REQUESTED AT WORK — movement first, sleep after arrival ──────────
   // The character may never be canonically sleeping while at the workplace.
   // If sleeping is requested and the current location is a work location,
