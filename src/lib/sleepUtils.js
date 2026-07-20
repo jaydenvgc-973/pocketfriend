@@ -634,13 +634,14 @@ function computeAdaptiveSleepWindow(character, locationMap) {
 export function isCharacterAsleep(character, locationMap) {
   if (!character) return false;
 
-  // ── ACTIVE_CREATED_CHARACTER: schedule-anchored sleep validation ──────────
-  // Ordinary sleep is valid ONLY when ALL of the following pass:
-  //   1. Explicit sleep_start_time + wake_up_time window exists and current time is inside it
-  //   2. Sleep duration has not reached 8 hours
-  //   3. No active work shift
-  //   4. No active school window
-  // passed_out is a consequence state — not ordinary sleep — and is returned separately.
+  // ── ACTIVE_CREATED_CHARACTER: DB-truth sleep (One Truth) ──────────────────
+  // resolved_presence_status is the committed sleep state, written solely by the
+  // authority (enforceCharacterLocationPresence). The UI displays it as-is — it does
+  // NOT locally re-validate the sleep window or 8h cap and hide a committed sleep
+  // state as "awake" (that hides DB truth, unblocks travel, breaks One Truth). The
+  // ONLY UI-side override is an active scheduled obligation (work shift / school
+  // window), mirroring the authority's obligation-first ordering. passed_out is a
+  // medical consequence state, not ordinary sleep, and is returned separately.
   if (!isNPCCharacterType(character)) {
     const status = character.resolved_presence_status || '';
 
@@ -655,27 +656,14 @@ export function isCharacterAsleep(character, locationMap) {
     const dayOfWeek = nowET.getDay();
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
 
-    // RULE 1: Explicit sleep window is required. No window = not valid sleep.
-    const sleepStartMin = toMin(character.sleep_start_time);
-    const wakeMin = toMin(character.wake_up_time);
-    if (sleepStartMin === null || wakeMin === null) return false;
-
-    const insideWindow = sleepStartMin > wakeMin
-      ? (currentMin >= sleepStartMin || currentMin < wakeMin)
-      : (currentMin >= sleepStartMin && currentMin < wakeMin);
-    if (!insideWindow) return false;
-
-    // RULE 2: 8-hour cap — reject if sleep started 8+ hours ago
-    const sleepStartCandidates = [
-      character.last_sleep_start,
-      character.resolved_last_updated_at,
-      character.last_need_simulated_at,
-    ].filter(Boolean);
-    if (sleepStartCandidates.length > 0) {
-      const sleepStartMs = Math.min(...sleepStartCandidates.map(t => new Date(t).getTime()));
-      if ((nowET.getTime() - sleepStartMs) / 3_600_000 >= 8) return false;
-    }
-
+    // ONE TRUTH: DB resolved_presence_status is the committed sleep state. The UI
+    // must NOT locally re-validate the sleep window or 8h cap and hide a committed
+    // sleep state as "awake" — that hides DB truth, unblocks travel, and breaks One
+    // Truth (DB says sleeping, UI says awake, character travels and violates sleep
+    // rules). The authority (enforceCharacterLocationPresence) is the sole writer
+    // and corrects stale sleep; the UI reflects the DB until it does. The ONLY
+    // UI-side override is an active scheduled obligation (work shift / school
+    // window), mirroring the authority's own obligation-first ordering.
     // RULE 3: OBLIGATION GUARD (One Truth) — an active scheduled obligation overrides a
     // stale DB sleeping state. A resolved_presence_status='sleeping' that the work/school
     // automation has not yet overwritten must NOT suppress the live schedule: if the
@@ -739,7 +727,7 @@ export function isCharacterAsleep(character, locationMap) {
       if (sStart !== null && sEnd !== null && currentMin >= sStart && currentMin < sEnd) return false;
     }
 
-    return true; // All rules passed — ordinary sleep is valid
+    return true; // DB says sleeping/napping and no active obligation — asleep (One Truth)
   }
 
   // ── NPC types: evaluate clock window as before ────────────────────────────

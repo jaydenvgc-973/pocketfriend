@@ -355,47 +355,16 @@ export function getCharacterSleepState(character, locationMap) {
       };
     }
 
-    // ── SLEEPING VALIDATION: require sleep window ────────────────────
+    // ── SLEEPING: DB truth is authoritative (One Truth) ──────────────
+    // The authority (enforceCharacterLocationPresence) is the sole writer of
+    // resolved_presence_status. It preserves a committed 'sleeping' state when no
+    // work/school obligation is active. The UI must display that committed state —
+    // NOT locally re-validate the sleep window or 8h cap and hide it as "stale".
+    // Locally hiding a DB sleep state breaks One Truth: DB says sleeping, UI says
+    // awake, travel is not blocked → the character travels and violates sleep rules.
+    // The ONLY UI-side override is an active scheduled obligation (work shift /
+    // school window), which mirrors the authority's own obligation-first ordering.
     if (status === 'sleeping') {
-      const sleepStartMin = toMinLocal(character.sleep_start_time);
-      const wakeMin = toMinLocal(character.wake_up_time);
-
-      // No explicit window → sleep is invalid
-      if (sleepStartMin === null || wakeMin === null) {
-        return {
-          isSleeping: false, isNapping: false, displayLabel: 'awake',
-          contextLabel: null, visible_label: null, confidence: 1,
-          stale_risk: false, isLikelyStale: false, blockingCondition: 'no_explicit_sleep_window',
-        };
-      }
-
-      // Check if inside window
-      const insideWindow = sleepStartMin > wakeMin
-        ? (nowMin >= sleepStartMin || nowMin < wakeMin)
-        : (nowMin >= sleepStartMin && nowMin < wakeMin);
-
-      if (!insideWindow) {
-        return {
-          isSleeping: false, isNapping: false, displayLabel: 'awake',
-          contextLabel: null, visible_label: null, confidence: 1,
-          stale_risk: false, isLikelyStale: false, blockingCondition: 'outside_sleep_window',
-        };
-      }
-
-      // 8-hour cap (uses last_sleep_start only — authoritative sleep timestamp)
-      if (character.last_sleep_start) {
-        const sleepDuration = (nowET.getTime() - new Date(character.last_sleep_start).getTime()) / 3_600_000;
-        if (sleepDuration >= 8) {
-          return {
-            isSleeping: false, isNapping: false, displayLabel: 'awake',
-            contextLabel: null, visible_label: null, confidence: 1,
-            stale_risk: false, isLikelyStale: false, blockingCondition: 'sleep_cap_8h',
-          };
-        }
-      }
-
-      // OBLIGATION OVERRIDE (One Truth): active work shift (not blocked) or school window
-      // overrides a stale DB sleeping state — the schedule is authoritative.
       if (obligationAwake.awake) {
         return {
           isSleeping: false, isNapping: false, displayLabel: 'awake',
@@ -404,8 +373,6 @@ export function getCharacterSleepState(character, locationMap) {
           blockingCondition: `obligation_${obligationAwake.reason}`,
         };
       }
-
-      // All checks passed — sleep is valid
       return {
         isSleeping: true,
         isNapping: false,
@@ -413,41 +380,21 @@ export function getCharacterSleepState(character, locationMap) {
         displayLabel: 'sleeping',
         contextLabel: 'Sleeping',
         visible_label: 'Sleeping',
-        confirmed_reason: reason || 'db_sleeping_window_valid',
-        evidence_source: 'sleep_window_validated',
-        confidence: 0.95,
+        confirmed_reason: reason || 'db_sleeping',
+        evidence_source: 'resolved_presence_status',
+        confidence: 1,
         stale_risk: false,
         isLikelyStale: false,
         blockingCondition: null,
       };
     }
 
-    // ── NAPPING VALIDATION: nap-specific (NO sleep window) ──────────
+    // ── NAPPING: DB truth is authoritative (One Truth) ───────────────
+    // Same rule as sleeping: the authority commits 'napping' and the UI must show
+    // it. Do NOT locally hide a DB nap as "awake" via missing-timestamp or 3h-cap
+    // checks — that hides the committed state, unblocks travel, and breaks One
+    // Truth. The authority corrects stale naps; the UI reflects the DB until then.
     if (status === 'napping') {
-      // ── NAP REQUIRES last_nap_time ─────────────────────────────────
-      // Without last_nap_time, the nap start is unverifiable → stale
-      if (!character.last_nap_time) {
-        return {
-          isSleeping: false, isNapping: false, displayLabel: 'awake',
-          contextLabel: null, visible_label: null, confidence: 1,
-          stale_risk: true, isLikelyStale: true,
-          blockingCondition: 'missing_last_nap_time',
-        };
-      }
-
-      // ── 3-HOUR NAP CAP ────────────────────────────────────────────
-      const napDuration = (nowET.getTime() - new Date(character.last_nap_time).getTime()) / 3_600_000;
-      if (napDuration >= 3) {
-        return {
-          isSleeping: false, isNapping: false, displayLabel: 'awake',
-          contextLabel: null, visible_label: null, confidence: 1,
-          stale_risk: true, isLikelyStale: true,
-          blockingCondition: `nap_cap_3h_exceeded`,
-        };
-      }
-
-      // OBLIGATION OVERRIDE (One Truth): active work shift (not blocked) or school window
-      // overrides a stale DB napping state.
       if (obligationAwake.awake) {
         return {
           isSleeping: false, isNapping: false, displayLabel: 'awake',
@@ -456,8 +403,8 @@ export function getCharacterSleepState(character, locationMap) {
           blockingCondition: `obligation_${obligationAwake.reason}`,
         };
       }
-
-      // Jail / house arrest blocker
+      // Confinement — the authority commits incarcerated/house_arrest, so a DB
+      // 'napping' here is a contradiction; confinement wins (treat as awake).
       if (character.is_jailed || character.house_arrest_active) {
         return {
           isSleeping: false, isNapping: false, displayLabel: 'awake',
@@ -465,10 +412,6 @@ export function getCharacterSleepState(character, locationMap) {
           stale_risk: false, isLikelyStale: false, blockingCondition: 'confinement',
         };
       }
-
-      // ── VALID NAP ─────────────────────────────────────────────────
-      // Nap passed all checks: has last_nap_time, within 3h cap, no blockers.
-      // NO sleep-window proximity check — naps are valid any time of day.
       return {
         isSleeping: false,
         isNapping: true,
@@ -476,9 +419,9 @@ export function getCharacterSleepState(character, locationMap) {
         displayLabel: 'napping',
         contextLabel: 'Napping',
         visible_label: 'Napping',
-        confirmed_reason: reason || 'db_napping_nap_validated',
-        evidence_source: 'nap_validated',
-        confidence: 0.95,
+        confirmed_reason: reason || 'db_napping',
+        evidence_source: 'resolved_presence_status',
+        confidence: 1,
         stale_risk: false,
         isLikelyStale: false,
         blockingCondition: null,
