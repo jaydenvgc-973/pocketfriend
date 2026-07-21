@@ -185,23 +185,28 @@ export function useChatBackgroundTasks({
     // The CHARACTER'S OWN REPLY is the trigger authority — not the user's
     // command. When the character acknowledges a present-intent sleep/nap
     // commitment ("I'm going to bed", "good night", "half gone", "taking a
-    // nap"), this routes the canonical transition through
+    // nap"), the backend routes the canonical transition through
     // enforceCharacterLocationPresence. Fatigue-only / prep-only / plan-only
-    // phrases do NOT trigger (handled server-side). 3-min cooldown per character.
+    // phrases do NOT trigger (classified server-side).
+    //
+    // NO FRONTEND PHASE PRE-FILTER: the backend is pure regex (no LLM cost)
+    // and is the SOLE phrase authority. A frontend pre-filter was removed
+    // because it was narrower than the backend in reachable cases (bare
+    // "Night.", "hitting this mattress", "still asleep") and silently blocked
+    // commitments the backend would have honored — the same failure mode as
+    // the original missed-sleep bug. The 3-min cooldown prevents spam; the
+    // backend cheaply returns `detected:false` for non-commitments.
     if (responseText && !isOnCooldown(characterId, 'sleepCommit', 180000)) {
-      const sleepCommitQuickCheck = /\b(going\s+to\s+(sleep|bed|lie\s+down\s+and\s+sleep|get\s+some\s+sleep|get\s+some\s+rest|crash|catch\s+some\s+sleep|take\s+a\s+nap|rest\s+for\s+a\s+bit|sleep\s+for\s+an\s+hour)|heading\s+to\s+(bed|sleep)|off\s+to\s+(bed|sleep)|calling\s+it\s+a\s+night|turning\s+in|hitting\s+the\s+(hay|sack|sheets|mattress|pillow)|time\s+for\s+bed|bedtime|good\s*night|night\s*night|\bnite\b|getting\s+into\s+bed|climbing\s+into\s+bed|tucked\s+in|under\s+the\s+covers|laying\s+down\s+for\s+the\s+night|lying\s+down\s+for\s+the\s+night|settling\s+into\s+bed|curling\s+up\s+in\s+bed|putting\s+(my|her|his)\s+phone\s+down\s+for\s+the\s+night|half\s+gone|out\s+like\s+a\s+light|talk\s+tomorrow|text\s+you\s+in\s+the\s+morning|see\s+you\s+in\s+the\s+morning|falling\s+asleep|about\s+to\s+fall\s+asleep|closing\s+(my|her|his)\s+eyes|dozing\s+off|drifting\s+off|nodding\s+off|taking\s+a\s+(quick\s+|power\s+)?nap|lie\s+down\s+for\s+a\s+nap|rest\s+for\s+a\s+bit|wake\s+me\s+up\s+in\s+a\s+little\s+while|falls?\s+asleep|fast\s+asleep|sound\s+asleep|already\s+asleep|snoring|zzz)\b/i;
-      if (sleepCommitQuickCheck.test(responseText)) {
-        safeInvoke('detectSleepCommitmentFromMessage', {
-          characterId,
-          characterReply: responseText,
-          conversationId: convoId,
-        }, characterId, 'sleepCommit').then(res => {
-          if (res?.data?.committed) {
-            console.log(`[Governor] SLEEP COMMIT for "${character?.name}": ${res.data.presence_status} (${res.data.commitment_phrase})`);
-            queryClient.invalidateQueries({ queryKey: ['character', characterId] });
-          }
-        });
-      }
+      safeInvoke('detectSleepCommitmentFromMessage', {
+        characterId,
+        characterReply: responseText,
+        conversationId: convoId,
+      }, characterId, 'sleepCommit').then(res => {
+        if (res?.data?.committed) {
+          console.log(`[Governor] SLEEP COMMIT for "${character?.name}": ${res.data.presence_status} (${res.data.commitment_phrase})`);
+          queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+        }
+      });
     }
 
     if (!isOnCooldown(characterId, 'activityUpdate', 30000)) {
