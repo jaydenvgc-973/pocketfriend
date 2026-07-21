@@ -186,6 +186,20 @@ If a death is mentioned but ${characterName} did not personally know the decease
 Instead use: emotional_exchange (if ${characterName} offered support), supportive_event (if they comforted the user), or no event at all.
 Hearing about a stranger's death, death discussed in passing, or another person grieving nearby does NOT qualify as ${characterName}'s grief_event.
 
+STATE TRANSITION FIELD — READ CAREFULLY:
+Each event object includes a "state_transition" field that signals an authoritative character state change.
+Set state_transition to "sleep_start" ONLY when this turn establishes that ${characterName} has ACTUALLY BEGUN SLEEPING — they have gotten into bed and are now asleep or actively falling asleep in THIS turn.
+Set state_transition to null for ALL of these (do NOT flag them as sleep_start):
+  - merely intending to sleep, planning to sleep later, or saying they will sleep
+  - agreeing to lie down or going to bed but not actually doing it yet
+  - preparing for bed, getting ready for bed, changing into sleep clothes
+  - expressing tiredness, fatigue, or exhaustion without actually sleeping
+  - resting while awake, relaxing, taking a break, lying on a couch
+  - prioritizing self-care or rest in general
+  - continued or descriptive sleep narratives where ${characterName} was already asleep
+  - napping (do not use sleep_start for naps)
+At most one event in a turn may carry state_transition = "sleep_start", and only when sleep has genuinely begun.
+
 Return JSON:
 {
   "events": [
@@ -197,7 +211,8 @@ Return JSON:
       "description": string,
       "emotional_impact": string,
       "context_tags": string[],
-      "meal_size": "snack" | "meal" | "large_meal"
+      "meal_size": "snack" | "meal" | "large_meal",
+      "state_transition": "sleep_start" | null
     }
   ]
 }
@@ -222,6 +237,7 @@ If nothing meaningful happened, return: { "events": [] }`;
                 emotional_impact: { type: 'string' },
                 context_tags: { type: 'array', items: { type: 'string' } },
                 meal_size: { type: 'string' },
+                state_transition: { type: 'string' },
               },
               required: ['event_type', 'valence', 'severity', 'title', 'description'],
             },
@@ -259,121 +275,6 @@ If nothing meaningful happened, return: { "events": [] }`;
       base44.asServiceRole.entities.Character.filter({ id: characterId }).then(r => r[0]),
     ]);
     const existingAchievementIds = new Set(existingAchievements.map(a => a.achievement_id));
-
-    // ── SLEEP-OCCURRENCE → AUTHORITATIVE STATE HANDOFF (One Truth) ──────────
-    // When the character's reply contains an explicit sleep COMMITMENT (not mere
-    // fatigue), the canonical 'sleeping' state is committed through the existing
-    // enforceCharacterLocationPresence authority BEFORE the occurrence is written
-    // to Recent Activity. If the authority cannot commit 'sleeping' (not at home,
-    // obligation active, sleep_lock, etc.), the sleep/rest occurrence is NOT
-    // recorded to Recent Activity — the occurrence and the authoritative state
-    // are one atomic event. "If the state cannot be committed, the occurrence
-    // must not be committed either."
-    //
-    // This does NOT change chat recognition (the LLM classification prompt is
-    // untouched), narratives, location handling, scene generation, sleep-window
-    // rules, or sleep-eligibility rules — the authority enforces all existing
-    // conditions. No polling, no runner, no new system. Distinction (per
-    // production evidence): "I'm tired" / "I should rest" are fatigue feelings,
-    // NOT sleep commitments. "I'm going to sleep", "I'm going to bed", "I'm
-    // already half gone the second I touched these sheets" ARE commitments.
-    const _SLEEP_COMMITMENT_PATTERNS = [
-      /\bi'?m\s+going\s+to\s+(sleep|bed|lie\s+down|crash)\b/i,
-      /\bgoing\s+to\s+(sleep|bed)\b/i,
-      /\bheading\s+(to\s+bed|to\s+sleep)\b/i,
-      /\bheaded\s+to\s+bed\b/i,
-      /\bcalling\s+it\s+a\s+night\b/i,
-      /\bturning\s+in\b/i,
-      /\bhitting\s+the\s+(sack|hay)\b/i,
-      /\bgetting\s+into\s+(the\s+)?bed\b/i,
-      /\bclimbing\s+into\s+bed\b/i,
-      /\b(lying|laying)\s+down\s+(to\s+sleep|for\s+the\s+night)\b/i,
-      /\bfalling\s+asleep\b/i,
-      /\b(half\s+asleep|half\s+gone|already\s+asleep|already\s+in\s+(the\s+)?bed)\b/i,
-      /\b(touched|hit)\s+the\s+sheets\b/i,
-      /\bin\s+the\s+sheets\b/i,
-      /\bgonna\s+(sleep|crash|go\s+to\s+bed)\b/i,
-      /\bbedtime\b/i,
-      /\bi'?ll\s+sleep\s+now\b/i,
-      /\bgoing\s+to\s+sleep\s+now\b/i,
-    ];
-    const _isSleepCommitment = characterReply
-      ? _SLEEP_COMMITMENT_PATTERNS.some(p => p.test(characterReply))
-      : false;
-
-    let _sleepStateCommitted = false;
-    if (_isSleepCommitment && character) {
-      const _isAcc = character.character_type === 'active_created_character'
-        || (!character.character_type && character.status === 'active');
-      const _alreadySleeping = character.resolved_presence_status === 'sleeping'
-        || character.resolved_presence_status === 'napping';
-      if (_isAcc && !_alreadySleeping) {
-        const _nowIso = new Date().toISOString();
-        const _homeLocId = character.current_home_location_id
-          || character.resolved_current_location_id
-          || null;
-        let _sleepAuth = null;
-        try {
-          const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
-            character_id: characterId,
-            owner_email: character.owner_email,
-            requested_presence_status: 'sleeping',
-            requested_location_id: _homeLocId,
-            requested_source_reason: 'conversation_sleep_commitment',
-            requested_authority: 'classifyConversationEvent',
-            requested_timestamp: _nowIso,
-          });
-          _sleepAuth = _ir?.data || _ir;
-        } catch (invokeErr) {
-          console.warn(`[classifyConversationEvent] sleep authority invoke failed for ${characterName}: ${invokeErr.message}`);
-        }
-        const _committedSleeping = _sleepAuth?.committed_result?.resolved_presence_status === 'sleeping';
-        if (_sleepAuth?.disposition === 'accepted' && _committedSleeping) {
-          _sleepStateCommitted = true;
-          // Authoritative proof record (existing SleepTransition sleep_start pattern,
-          // same as scheduleNap / processScheduledCharacterAlarms). Canonical state
-          // already committed by the authority — proof failure is reported, not
-          // reverted (consistent with scheduleNap).
-          try {
-            await base44.asServiceRole.entities.SleepTransition.create({
-              character_id: characterId,
-              character_name: characterName || character.name || '',
-              owner_email: character.owner_email,
-              transition_type: 'sleep_start',
-              from_status: character.resolved_presence_status || 'unknown',
-              to_status: 'sleeping',
-              authority: 'conversation_sleep_commitment',
-              reason: `Character committed to sleep in conversation. Authority committed 'sleeping'.`,
-              timestamp: _nowIso,
-            });
-          } catch (proofErr) {
-            console.warn(`[classifyConversationEvent] sleep_start proof write failed for ${characterName}: ${proofErr.message}`);
-          }
-          console.log(`[classifyConversationEvent] sleep-state committed for ${characterName} via authority (conversation sleep commitment) — occurrence will be recorded to Recent Activity.`);
-        } else {
-          // Authority did not commit 'sleeping' — the existing production conditions
-          // did not permit sleep. Per atomicity, the sleep/rest occurrence must NOT
-          // be recorded to Recent Activity. Rest/sleep-flavored events are suppressed
-          // below (other events — eating, bonding, etc. — still record normally).
-          console.log(`[classifyConversationEvent] sleep-state NOT committed for ${characterName} (authority disposition=${_sleepAuth?.disposition || 'none'}) — rest/sleep occurrence will be suppressed per atomicity.`);
-        }
-      } else if (_alreadySleeping) {
-        // Already sleeping — authoritative state is already consistent with the
-        // occurrence; record the occurrence normally (continuation, not new onset).
-        _sleepStateCommitted = true;
-      }
-    }
-
-    // If a sleep commitment was detected but the authority did NOT commit 'sleeping',
-    // suppress rest/sleep-flavored occurrences from Recent Activity (atomicity:
-    // occurrence + state are one event). Other events record normally.
-    if (_isSleepCommitment && !_sleepStateCommitted && events.length > 0) {
-      const _restFlavor = (e) => {
-        const t = `${e.title || ''} ${e.description || ''} ${(e.context_tags || []).join(' ')}`.toLowerCase();
-        return /\b(sleep|asleep|bed|rest|nap|lie\s+down|lying\s+down|turning\s+in|calling\s+it\s+a\s+night)\b/.test(t);
-      };
-      events = events.filter(e => !_restFlavor(e));
-    }
 
     for (const event of events) {
       if (!event.event_type || !event.title || !event.description) continue;
@@ -555,6 +456,54 @@ If nothing meaningful happened, return: { "events": [] }`;
       await base44.asServiceRole.entities.LifeEvent.update(lifeEvent.id, {
         systems_updated: audit.systems,
       });
+
+      // ── 9. Authoritative sleep-start state handoff (One Truth) ──────────
+      // The classifier returns a constrained state_transition field per accepted
+      // event. When the accepted event establishes the character has ACTUALLY
+      // BEGUN sleeping, request the canonical 'sleeping' presence through the
+      // existing authority (enforceCharacterLocationPresence). The LifeEvent
+      // above is already written and remains intact regardless of the authority
+      // outcome — a rejected or failed request is surfaced/logged, never
+      // suppressed or rolled back. No SleepTransition is written here; the
+      // existing authoritative transition owner owns proof records.
+      if (event.state_transition === 'sleep_start' && character) {
+        const _isAcc = character.character_type === 'active_created_character'
+          || (!character.character_type && character.status === 'active');
+        const _alreadySleeping = character.resolved_presence_status === 'sleeping'
+          || character.resolved_presence_status === 'napping';
+        if (_isAcc && !_alreadySleeping) {
+          const _nowIso = new Date().toISOString();
+          const _homeLocId = character.current_home_location_id
+            || character.resolved_current_location_id
+            || null;
+          let _sleepAuth = null;
+          try {
+            const _ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: characterId,
+              owner_email: character.owner_email,
+              requested_presence_status: 'sleeping',
+              requested_location_id: _homeLocId,
+              requested_source_reason: 'conversation_sleep_start',
+              requested_authority: 'classifyConversationEvent',
+              requested_timestamp: _nowIso,
+            });
+            _sleepAuth = _ir?.data || _ir;
+          } catch (invokeErr) {
+            console.error(`[classifyConversationEvent] sleep-start authority invoke FAILED for ${characterName}: ${invokeErr.message} — LifeEvent ${lifeEvent.id} remains recorded.`);
+          }
+          if (_sleepAuth?.disposition === 'accepted' && _sleepAuth?.committed_result?.resolved_presence_status === 'sleeping') {
+            console.log(`[classifyConversationEvent] sleep-start committed for ${characterName} via authority (conversation sleep start). LifeEvent ${lifeEvent.id} recorded.`);
+          } else {
+            console.error(`[classifyConversationEvent] sleep-start NOT committed for ${characterName} (disposition=${_sleepAuth?.disposition || 'none'}, reason=${_sleepAuth?.reason || 'none'}) — LifeEvent ${lifeEvent.id} remains recorded (failed state handoff surfaced).`);
+          }
+        } else if (_alreadySleeping) {
+          // Duplicate guard: character is already authoritatively sleeping — do
+          // not request another sleep_start. This guard only prevents duplicate
+          // start transitions; it does not reinterpret narratives or suppress
+          // the accepted LifeEvent.
+          console.log(`[classifyConversationEvent] sleep-start not re-requested for ${characterName} (already sleeping/napping). LifeEvent ${lifeEvent.id} recorded.`);
+        }
+      }
 
       console.log(`[classifyConversationEvent] char=${characterName} event=${event.event_type} valence=${event.valence} severity=${event.severity} systems=[${audit.systems.join(',')}] achievements=[${(audit.achievements_granted||[]).join(',')}]`);
       audit_log.push(audit);
