@@ -41,7 +41,28 @@ Deno.serve(async (req) => {
 
     let payload = {};
     try { payload = await req.json(); } catch (_) { /* no body */ }
-    const { character_id, alarm_time, owner_email } = payload;
+
+    // ── ENTITY AUTOMATION ADAPTER ─────────────────────────────────────────
+    // This function accepts TWO invocation contracts:
+    //   1. Direct/targeted: { character_id, alarm_time, owner_email }
+    //   2. Entity event (Character update automation):
+    //      { event: { entity_id }, data: { pending_alarm_time, owner_email } }
+    //
+    // The entity automation fires on Character record updates — NOT on a
+    // recurring cadence. When a character with a pending_alarm_time is updated
+    // by any system, this function checks whether the alarm time has arrived.
+    // If the alarm is still in the future it exits cleanly (see the "not yet
+    // due" gate below). If the alarm time has passed, it commits the wake.
+    // This is event-driven, not polling — no recurring scheduler wakes it.
+    let character_id = payload.character_id;
+    let alarm_time = payload.alarm_time;
+    let owner_email = payload.owner_email;
+
+    if (!character_id && payload.event?.entity_id) {
+      character_id = payload.event.entity_id;
+      alarm_time = payload.data?.pending_alarm_time || null;
+      owner_email = payload.data?.owner_email || owner_email;
+    }
 
     // ── GUARD: this function is NOT a scanner ───────────────────────────────
     // Without a specific character_id + alarm_time it has nothing to validate.
@@ -83,6 +104,21 @@ Deno.serve(async (req) => {
         success: true, executed: false, reason: 'alarm_no_longer_current',
         character_id, supplied_alarm_time: alarm_time, current_alarm_time: currentAlarm,
         message: 'Alarm was cancelled, replaced, cleared, or already completed — no state changed.',
+      });
+    }
+
+    // ── ENTITY AUTOMATION GATE: alarm not yet due ──────────────────────────
+    // When invoked via the entity automation, the alarm time may still be in
+    // the future (the automation fires on Character updates, which can happen
+    // before the alarm is due). Exit cleanly — the alarm will be re-checked on
+    // the next Character update after the alarm time arrives. This is NOT
+    // polling: no recurring cadence wakes this function; it only fires when a
+    // Character record is updated by another system.
+    if (new Date(alarm_time).getTime() > Date.now()) {
+      return Response.json({
+        success: true, executed: false, reason: 'alarm_not_yet_due',
+        character_id, alarm_time,
+        message: 'Alarm time has not arrived yet — no wake committed.',
       });
     }
 
