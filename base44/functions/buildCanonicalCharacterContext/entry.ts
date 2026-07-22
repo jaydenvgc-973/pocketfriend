@@ -587,8 +587,15 @@ function buildHardFacts(character) {
     lines.push(`EDUCATION STATUS: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
   }
 
-  // Travel
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
+  // Travel — only emit when the authoritative presence confirms travel.
+  // travel_status is a non-canonical display field that can persist after arrival
+  // (orphaned by cancelled TravelSessions). The committed resolved_presence_status
+  // (overlaid from enforceCharacterLocationPresence in Step 1b) is the single source
+  // of truth. When it is not 'traveling', the character has arrived — injecting a
+  // stale TRAVEL hard fact here would contradict their authoritative presence
+  // (at_work, at_school, home, visiting) and make the character believe they are
+  // still on the way to a location they already reached.
+  if (character.travel_status && character.travel_status !== 'not_traveling' && character.resolved_presence_status === 'traveling') {
     lines.push(`TRAVEL: Currently traveling${character.traveling_to_location_name ? ` to ${character.traveling_to_location_name}` : ''}.`);
   }
 
