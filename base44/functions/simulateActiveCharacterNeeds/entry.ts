@@ -563,7 +563,7 @@ function computeCorrectiveState(needs, character, locationMap) {
   }
 
   // ENERGY 25-50%: DECISION PIPELINE REQUIRED — state only if at home + no obligations
-  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_MEDICAL && !isInRestState) {
+  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const overnightDrive = overnightSleepDriveMultiplier(nowET, character);
     const hasOvernightReason = hasMeaningfulOvernightActivity(character);
@@ -1269,18 +1269,6 @@ Deno.serve(async (req) => {
               payload: { ...corrective, last_pass_out_at: nowIso, pass_out_count: (char.pass_out_count ?? 0) + 1, presence_stay_lock: true, presence_stay_lock_reason: 'pass_out_recovery', presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation', presence_stay_lock_release_condition: 'energy_above_35' },
               transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'passed_out', authority: 'compound_crisis', reason: 'Corrective state: critical need pressure forced involuntary collapse.' },
               consequence: null,
-            });
-          } else if (cs === 'hospitalized') {
-            // Energy ≤ ENERGY_MEDICAL (5) — sustained energy collapse requiring
-            // medical intervention. PRESERVED per shutdown rules (medical, not
-            // pass-out). This wires the corrective's hospitalized return (line 558)
-            // into the transition builder — without it, zero-energy characters at
-            // home were left awake because the return was silently dropped.
-            transitionCandidates.push({
-              priority: 1,
-              payload: { ...corrective },
-              transition: { transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'hospitalized', authority: 'energy_medical', reason: 'Corrective state: energy collapse (≤ ENERGY_MEDICAL) required hospitalization.' },
-              consequence: { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
             });
           }
         }
