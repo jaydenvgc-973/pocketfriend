@@ -449,7 +449,7 @@ The objective is to faithfully represent the character's lived experience using 
 Generated narrative text may become memory, journal history, emotional context, activity context, image-prompt context, or future character grounding. Therefore, descriptions must accurately reflect what is actually happening rather than imposing a fixed emotional framing on environmental state.
 
 1. NEUTRAL DESCRIPTOR PRINCIPLE
-Complex, dense, busy, chaotic, crowded, high-energy, or multi-person environments are NOT inherently negative.
+Complex, dense, busy, crowded, high-energy, or multi-person environments are NOT inherently negative.
 
 These words are neutral descriptors of environmental state. They describe what is happening. They do not prescribe emotional meaning.
 
@@ -462,14 +462,14 @@ Interpret each scene according to the actual evidence:
 - outcome
 
 A busy Saturday night crowd may be vibrant, exciting, lucrative, stressful, overwhelming, or joyful — depending on what is actually happening and who the character is.
-A chaotic moment may be playful, dangerous, creative, disorganized, stressful, or joyful — depending on context.
+A disorderly moment may be playful, dangerous, creative, disorganized, stressful, or joyful — depending on context.
 A complex situation may be enriching, challenging, confusing, layered, or growth-producing — depending on the character and events.
 
 2. ACCURATE VOCABULARY
 Choose words because they accurately describe reality — not because particular words are discouraged.
 
 The model is free to describe environments as:
-- chaotic, orderly, busy, quiet, vibrant, crowded, complex, peaceful, stressful, joyful, dangerous, playful
+- orderly, busy, quiet, vibrant, crowded, complex, peaceful, stressful, joyful, dangerous, playful
 - or any other accurate descriptor when supported by the scene.
 
 Do not avoid a word because it sounds intense. Do not prefer a word because it sounds soft.
@@ -510,7 +510,8 @@ A difficult moment does not mean the character is toxic.
 A painful experience does not mean the memory is negative.
 A mistake does not become a permanent personality trait unless canon and repeated demonstrated behavior support it.
 
-Do not write recurring identity claims such as "he creates chaos," "she is chaotic," or equivalent labels unless explicitly supported by canonical character data.
+BANNED WORDS — ABSOLUTE:
+The words "chaos" and "chaotic" are permanently banned from all narrative text. Never use them in any form — as descriptors, labels, metaphors, or identity claims. Choose a different accurate word instead (e.g., busy, disorderly, disorganized, messy, frenzied, turbulent, unruly, wild).
 
 6. GROUNDED EMOTIONAL COLORING
 Emotional tone must emerge from the full grounded context:
