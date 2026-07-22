@@ -128,17 +128,38 @@ export default function validatePresenceStayLock(character, context) {
     }
   }
 
-  // ── EMERGENCY NEEDS OVERRIDE ────────────────────────────────────────────
+  // ── EMERGENCY NEEDS OVERRIDE — PRESERVE SLEEP LOCK ─────────────────────
+  // When the lock reason is 'sleep_state' or 'nap_state', the character is in
+  // the authoritative recovery state that directly addresses low energy/health.
+  // Releasing the lock cancels the recovery and leaves the character awake while
+  // needs continue deteriorating (the failed Andre pathway). Sleep IS the
+  // treatment for low energy/health; it must not be canceled because the
+  // condition it is treating has become severe. Only a valid wake condition or a
+  // fully committed higher-priority transition (e.g. hospitalization) may
+  // release the lock. Low mental health or any other critical need likewise
+  // must not release a legitimate sleep lock — sleep deprivation is the active
+  // root cause and sleep is the recovery response.
   const energyVal = character.energy_value ?? 75;
   const healthVal = character.health_value ?? 80;
-  if (energyVal < 10 || healthVal < 25) {
+  const mentalVal = character.mental_value ?? 70;
+  if (energyVal < 10 || healthVal < 25 || mentalVal < 25) {
+    if (lockReason === 'sleep_state' || lockReason === 'nap_state') {
+      return {
+        shouldRespectLock: true,
+        shouldReleaseLock: false,
+        reason: 'valid_active_lock',
+        authority: lockAuthority,
+        lockReason: lockReason,
+        proof: `Sleep/nap lock preserved — low energy/health/mental is the active root cause and sleep is the recovery response (Energy: ${energyVal}, Health: ${healthVal}, Mental: ${mentalVal})`,
+      };
+    }
     return {
       shouldRespectLock: false,
       shouldReleaseLock: true,
       releaseReason: 'emergency_need_override',
       authority: 'needs_system',
       lockReason: lockReason,
-      proof: `Energy: ${energyVal}, Health: ${healthVal}`,
+      proof: `Energy: ${energyVal}, Health: ${healthVal}, Mental: ${mentalVal}`,
     };
   }
 
@@ -158,6 +179,32 @@ export default function validatePresenceStayLock(character, context) {
         authority: lockAuthority,
         lockReason: lockReason,
         proof: `No longer sleeping (status=${status})`,
+      };
+    }
+  }
+
+  if (lockReason === 'nap_state') {
+    if (status !== 'napping') {
+      return {
+        shouldRespectLock: false,
+        shouldReleaseLock: true,
+        releaseReason: 'nap_obligation_completed',
+        authority: lockAuthority,
+        lockReason: lockReason,
+        proof: `No longer napping (status=${status})`,
+      };
+    }
+  }
+
+  if (lockReason === 'pass_out_recovery') {
+    if (status !== 'passed_out') {
+      return {
+        shouldRespectLock: false,
+        shouldReleaseLock: true,
+        releaseReason: 'pass_out_recovery_completed',
+        authority: lockAuthority,
+        lockReason: lockReason,
+        proof: `No longer passed out (status=${status})`,
       };
     }
   }

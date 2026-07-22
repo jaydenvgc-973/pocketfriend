@@ -35,19 +35,23 @@ function validateStayLock(char, nowET) {
     return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'expired', authority: lockAuthority, lockReason: lockReason, proof: `Expired at ${lockExpiresAt}` };
   }
 
-  // Emergency override — PRESERVE SLEEP LOCK
-  // When the lock reason is 'sleep_state', the character is in the authoritative
-  // recovery state that directly addresses low energy/health. Releasing the lock
+  // Emergency override — PRESERVE RECOVERY LOCKS
+  // When the lock reason is a recovery state (sleep_state, nap_state, or
+  // pass_out_recovery), the character is in the authoritative recovery state
+  // that directly addresses low energy/health/mental. Releasing the lock
   // cancels the recovery and leaves the character awake while needs continue
-  // deteriorating (the failed Andre pathway). Sleep IS the treatment for low
-  // energy/health; it must not be canceled because the condition it is treating
-  // has become severe. Only a valid wake condition or a fully committed
-  // higher-priority transition (e.g. hospitalization) may release the lock.
-  if ((char.energy_value ?? 75) < 10 || (char.health_value ?? 80) < 25) {
-    if (lockReason === 'sleep_state') {
-      return { shouldRespectLock: true, shouldReleaseLock: false, reason: 'valid_active_lock', authority: lockAuthority, lockReason: lockReason, proof: `Sleep lock preserved — low energy/health is the active root cause and sleep is the recovery response (Energy: ${char.energy_value}, Health: ${char.health_value})` };
+  // deteriorating (the failed Andre pathway). Sleep/nap/pass-out IS the
+  // treatment for low energy/health/mental; it must not be canceled because
+  // the condition it is treating has become severe. Only a valid wake
+  // condition or a fully committed higher-priority transition (e.g.
+  // hospitalization) may release the lock. Low mental health caused by sleep
+  // deprivation must not create a destructive loop that repeatedly ejects the
+  // character from the recovery that would restore it.
+  if ((char.energy_value ?? 75) < 10 || (char.health_value ?? 80) < 25 || (char.mental_value ?? 70) < 25) {
+    if (lockReason === 'sleep_state' || lockReason === 'nap_state' || lockReason === 'pass_out_recovery') {
+      return { shouldRespectLock: true, shouldReleaseLock: false, reason: 'valid_active_lock', authority: lockAuthority, lockReason: lockReason, proof: `Recovery lock preserved — low energy/health/mental is the active root cause and ${lockReason} is the recovery response (Energy: ${char.energy_value}, Health: ${char.health_value}, Mental: ${char.mental_value})` };
     }
-    return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'emergency_need_override', authority: 'needs_system', lockReason: lockReason, proof: `Energy: ${char.energy_value}, Health: ${char.health_value}` };
+    return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'emergency_need_override', authority: 'needs_system', lockReason: lockReason, proof: `Energy: ${char.energy_value}, Health: ${char.health_value}, Mental: ${char.mental_value}` };
   }
 
   // Observe authoritative state — do NOT duplicate sleep/work/school logic
@@ -57,6 +61,16 @@ function validateStayLock(char, nowET) {
   if (lockReason === 'sleep_state') {
     if (status !== 'sleeping' && status !== 'napping') {
       return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'sleep_obligation_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer sleeping (status=${status})` };
+    }
+  }
+  if (lockReason === 'nap_state') {
+    if (status !== 'napping') {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'nap_obligation_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer napping (status=${status})` };
+    }
+  }
+  if (lockReason === 'pass_out_recovery') {
+    if (status !== 'passed_out') {
+      return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'pass_out_recovery_completed', authority: lockAuthority, lockReason: lockReason, proof: `No longer passed out (status=${status})` };
     }
   }
   if (lockReason === 'work_shift') {

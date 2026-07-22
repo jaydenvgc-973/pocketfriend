@@ -673,6 +673,19 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       resolved_last_updated_at: etTime.toISOString(),
       current_activity: 'hospitalized — health collapsed',
+      // Hospitalization is a complete higher-priority transition that REPLACES the
+      // sleep authority. The sleep stay-lock must release as part of this committed
+      // replacement — never in a separate step that could leave the character awake
+      // without a valid authority. Clearing the lock here guarantees the one-truth
+      // requirement: sleep authority is replaced AND lock releases in one write.
+      presence_stay_lock: false,
+      presence_stay_lock_reason: null,
+      presence_stay_lock_authority: null,
+      presence_stay_lock_location_id: null,
+      presence_stay_lock_set_at: null,
+      presence_stay_lock_expires_at: null,
+      presence_stay_lock_release_condition: null,
+      presence_stay_lock_created_by: null,
     };
     if (hospitalLocId) {
       canonicalFields.resolved_current_location_id = hospitalLocId;
