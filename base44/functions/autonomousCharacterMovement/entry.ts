@@ -1162,7 +1162,34 @@ Deno.serve(async (req) => {
         }
       } catch { /* non-fatal — default to enabled */ }
 
-      for (const char of userChars) {
+      // ── RECONNECTED: needs-driven sleep evaluation (existing owner) ─────────
+      // simulateActiveCharacterNeeds owns needs/sleep evaluation and the
+      // authoritative sleeping commitment (via enforceCharacterLocationPresence).
+      // Its prior dedicated triggers are archived, so this existing active
+      // scheduled run re-invokes the existing needs owner per user. This caller
+      // only initiates the existing process; it does not absorb thresholds,
+      // eligibility, or sleep ownership. Fresh state is re-fetched so the
+      // movement loop below cannot overwrite a freshly committed 'sleeping'
+      // presence with a stale 'home' move.
+      try {
+        await base44.asServiceRole.functions.invoke('simulateActiveCharacterNeeds', { ownerEmail: userEmail });
+        const _refreshed = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'active_created_character', status: 'active', owner_email: userEmail },
+          '-updated_date', 100
+        ).catch(() => null);
+        if (_refreshed && _refreshed.length > 0) {
+          byUser[userEmail] = _refreshed.filter(c =>
+            c.owner_email &&
+            c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'moved_away' &&
+            !c.is_test_character && !c.diagnostic_only && !c.exclude_from_homepage &&
+            (c.current_home_location_id || (c.resolved_current_location_id && c.resolved_location_type === 'home'))
+          );
+        }
+      } catch (_needsErr) {
+        console.warn(`[autonomousMovement] simulateActiveCharacterNeeds invoke failed for ${userEmail}: ${_needsErr?.message || 'unknown'}`);
+      }
+
+      for (const char of (byUser[userEmail] || userChars)) {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));

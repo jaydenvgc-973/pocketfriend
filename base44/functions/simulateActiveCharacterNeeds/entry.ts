@@ -795,7 +795,7 @@ Deno.serve(async (req) => {
       c.status === 'active' &&
       c.character_type === 'active_created_character' &&
       !c.is_world_service &&
-      (c.owner_email === ownerEmail || ownerEmailOverride)
+      c.owner_email === ownerEmail
     );
 
     if (characters.length === 0) {
