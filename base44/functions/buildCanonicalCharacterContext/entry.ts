@@ -533,9 +533,16 @@ function buildHardFacts(character) {
     lines.push("HOUSING: Home not yet confirmed in system records.");
   }
 
-  // Current location / presence
+  // Current location / presence — TRAVELING IS NOT A PRESENCE.
+  // Characters teleport to their destination at the time they are meant to be there.
+  // Their authoritative presence is always the destination state (at_work, at_school,
+  // home, visiting). A stale "traveling" value must never be surfaced to the LLM as
+  // a presence — it is treated as no presence so the character is never told they
+  // are "traveling" as a state. Characters may talk about traveling in dialogue, but
+  // that is conversation, not a presence.
   if (character.resolved_current_location_name) {
-    const ps = character.resolved_presence_status;
+    const rawPs = character.resolved_presence_status;
+    const ps = rawPs === 'traveling' ? null : rawPs;
     lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}.`);
   }
 
@@ -587,17 +594,11 @@ function buildHardFacts(character) {
     lines.push(`EDUCATION STATUS: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
   }
 
-  // Travel — only emit when the authoritative presence confirms travel.
-  // travel_status is a non-canonical display field that can persist after arrival
-  // (orphaned by cancelled TravelSessions). The committed resolved_presence_status
-  // (overlaid from enforceCharacterLocationPresence in Step 1b) is the single source
-  // of truth. When it is not 'traveling', the character has arrived — injecting a
-  // stale TRAVEL hard fact here would contradict their authoritative presence
-  // (at_work, at_school, home, visiting) and make the character believe they are
-  // still on the way to a location they already reached.
-  if (character.travel_status && character.travel_status !== 'not_traveling' && character.resolved_presence_status === 'traveling') {
-    lines.push(`TRAVEL: Currently traveling${character.traveling_to_location_name ? ` to ${character.traveling_to_location_name}` : ''}.`);
-  }
+  // Travel — REMOVED. Traveling is not a presence. Characters teleport to their
+  // destination; their presence is always the destination state. The travel_status
+  // display field may persist as metadata but it is never injected as a presence
+  // fact. Characters may talk about traveling in dialogue — that is conversation,
+  // not a system presence state.
 
   // Emotional state
   if (character.emotional_state) {
