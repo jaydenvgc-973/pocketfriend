@@ -35,8 +35,18 @@ function validateStayLock(char, nowET) {
     return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'expired', authority: lockAuthority, lockReason: lockReason, proof: `Expired at ${lockExpiresAt}` };
   }
 
-  // Emergency override
+  // Emergency override — PRESERVE SLEEP LOCK
+  // When the lock reason is 'sleep_state', the character is in the authoritative
+  // recovery state that directly addresses low energy/health. Releasing the lock
+  // cancels the recovery and leaves the character awake while needs continue
+  // deteriorating (the failed Andre pathway). Sleep IS the treatment for low
+  // energy/health; it must not be canceled because the condition it is treating
+  // has become severe. Only a valid wake condition or a fully committed
+  // higher-priority transition (e.g. hospitalization) may release the lock.
   if ((char.energy_value ?? 75) < 10 || (char.health_value ?? 80) < 25) {
+    if (lockReason === 'sleep_state') {
+      return { shouldRespectLock: true, shouldReleaseLock: false, reason: 'valid_active_lock', authority: lockAuthority, lockReason: lockReason, proof: `Sleep lock preserved — low energy/health is the active root cause and sleep is the recovery response (Energy: ${char.energy_value}, Health: ${char.health_value})` };
+    }
     return { shouldRespectLock: false, shouldReleaseLock: true, releaseReason: 'emergency_need_override', authority: 'needs_system', lockReason: lockReason, proof: `Energy: ${char.energy_value}, Health: ${char.health_value}` };
   }
 
