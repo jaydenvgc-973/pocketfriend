@@ -1162,6 +1162,34 @@ Deno.serve(async (req) => {
         }
       } catch { /* non-fatal — default to enabled */ }
 
+      // ── NEEDS/SLEEP BRIDGE ────────────────────────────────────────────────
+      // Fire the authoritative needs + energy→nap/sleep/health-crisis simulation
+      // (simulateActiveCharacterNeeds) for this owner, piggybacking on this
+      // already-active 2h run. That function is the SOLE writer of the
+      // sleeping/napping state for active_created_characters — without it,
+      // exhausted characters at home in a sleep window never transition to sleep
+      // (ENERGY_CRITICAL 25 → sleep if in/near window + at home + no obligation;
+      //  ENERGY_LOW 35 → nap; ENERGY_MEDICAL 5 → hospitalize).
+      //
+      // Compliant: no new automation, no polling, no archived item restored.
+      // The function is pre-existing and live; only its automation trigger was
+      // archived. Invoking it here reuses this run's existing cadence.
+      try {
+        await base44.asServiceRole.functions.invoke('simulateActiveCharacterNeeds', { ownerEmail: userEmail });
+        // Reload this owner's active chars so the movement loop below sees any
+        // sleep/nap state the sim just committed (avoid acting on stale awake state).
+        const _freshChars = await base44.asServiceRole.entities.Character.filter(
+          { character_type: 'active_created_character', status: 'active', owner_email: userEmail },
+          '-updated_date', 100
+        ).catch(() => null);
+        if (Array.isArray(_freshChars) && _freshChars.length > 0) {
+          userChars.length = 0;
+          userChars.push(..._freshChars);
+        }
+      } catch (_simErr) {
+        console.warn(`[autonomousMovement] needs-sim bridge failed for ${userEmail}: ${_simErr?.message || _simErr}`);
+      }
+
       for (const char of userChars) {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
