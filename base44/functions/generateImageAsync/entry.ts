@@ -12,29 +12,8 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── PARTICIPANT NAME REFERENCE KEY ────────────────────────────────────────────
-//
-// ARCHITECTURE NOTE — ENFORCED DUPLICATION (not abandoned scaffolding):
-// Deno backend functions are deployed as isolated sandboxes. They cannot import
-// from local lib/ files — only from npm: or jsr: URLs. This is a verified platform
-// constraint: any `import` from a relative path throws "Module not found" at runtime.
-//
-// Therefore, this function MUST be inlined in both generateImageAsync.js and
-// regenerateImageWithReason.js. The two copies are the enforced strategy, not a
-// maintenance oversight. lib/participantNameReferenceKey.js was deleted precisely
-// because it was an abandoned file that created a false impression of a shared import.
-//
-// ANTI-DRIFT RULE: The function body below is the canonical source.
-// Any change here MUST be applied identically to regenerateImageWithReason.js.
-// The required format is:
-//   "PromptName" = Canonical Display Name (Character ID: ...) — use their visual identity references
-//   "PromptName" = User Display Name (User ID: <runtime_authenticated_user_id>) — use their visual identity references
-//
-// USER ID RULE: user_id = user.id from base44.auth.me() — the authenticated user's
-// platform entity ID. NOT email. email is used only for owner_email scoping.
-// User participants are included ONLY when runtime evidence identifies them as visual
-// subjects (subjectType='joint'/'user', userIsVisualSubject flag, or picker selection).
-// Authenticated users are NEVER resolved by name matching alone.
+// PARTICIPANT NAME REFERENCE KEY — inlined (Deno sandbox; duplicated in regenerateImageWithReason).
+// user_id = user.id (platform entity ID, not email). Users included only via runtime visual-subject evidence.
 function buildParticipantNameReferenceKeyBlock(participants) {
   if (!participants || participants.length === 0) return '';
   const lines = [];
@@ -130,32 +109,7 @@ const ZONE_ALIAS_MAP = [
   { aliases: ['laundry room', 'laundry', 'laundry area', 'washer room'], zone: 'laundry' },
 ];
 
-// ZONE_KEYWORD_MAP — TIER 4 fallback only. Runs after named-zone and alias resolution fail.
-//
-// NATURAL LANGUAGE INTENT RULES:
-//
-// BED / SLEEP EXCEPTION:
-//   "I'm going to bed", "heading to bed", "in bed", "getting in bed", "going to sleep" are
-//   natural human intent phrases that imply a bedroom or sleeping zone when no named zone
-//   is present. These ARE allowed to resolve a bedroom zone at TIER 4.
-//   HOWEVER: they must NEVER override a named zone. If the prompt says "nursery", "kids
-//   bedroom", "guest room", or "master bedroom", TIER 2/3 wins first and TIER 4 never fires.
-//
-// COUCH RULE — ABSOLUTE PROHIBITION:
-//   "couch", "sofa", "sectional", "sitting on the couch", "on the couch" etc. must NEVER
-//   resolve a zone. A couch may exist in a living room, den, man cave, VIP section, employee
-//   lounge, bedroom, office, basement, balcony, or waiting room. "Couch" is furniture context,
-//   not room authority. Do NOT add couch/sofa/sectional to ANY keyword entry.
-//   FORBIDDEN entries (never add): {keywords:['couch','sofa','sectional',...], zone:'living room'}
-//
-// OBJECT WORDS THAT ARE NOT ROOM AUTHORITY:
-//   couch, sofa, sectional, loveseat, armchair, ottoman → NEVER a zone signal
-//   TV, television, remote → NEVER a zone signal (TV exists everywhere)
-//   desk, bookshelf, lamp → NEVER a zone signal (generic furniture)
-//   bed → allowed ONLY in sleep-intent phrases (see BED/SLEEP EXCEPTION above)
-//         "on the bed", "lying on the bed" alone are NOT sleep-intent phrases — they are
-//         scene description. Only directional intent ("going to bed", "heading to bed",
-//         "getting in bed", "time for bed") may imply a bedroom zone.
+// ZONE_KEYWORD_MAP — TIER 4 fallback. Bed/sleep-intent phrases may resolve a bedroom; couch/sofa/TV are NOT zone signals.
 const ZONE_KEYWORD_MAP = [
   // BEDROOM — sleep intent phrases only. "going to bed" = room intent. "on the bed" = furniture detail.
   // Named-room matches ("bedroom", "my room") also included — these are room names, not objects.
@@ -189,11 +143,7 @@ function cdnFilterNoGenerated(urls) {
   return cdnFilter(urls).filter(url => !url.includes('generated_image'));
 }
 
-// ACTIVITY_OBJECT_MAP removed — object-first matching was the root cause of named zones
-// being overridden by generic object keywords (e.g. "couch" → living room ignoring "den",
-// "bed" → adult bedroom ignoring "nursery"). Named zone authority (TIER 1–4) now runs first.
-// existingObjectCue is no longer injected — zone reference images are the authoritative
-// visual container. Objects appear in the prompt as natural scene description only.
+// ACTIVITY_OBJECT_MAP removed — named-zone authority (TIER 1–4) runs first; zone refs are the visual container.
 
 function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const allZones = location.zones || [];
@@ -423,11 +373,7 @@ function getTimeLighting(hour = new Date().getHours()) {
   return { period: 'NIGHT', desc: 'dark interior, artificial light only, NO daylight, warm or cool lamp glow' };
 }
 
-// ── buildAppearanceLockText ───────────────────────────────────────────────────
-// ROOT FIX: Reads DIRECTLY from charRecord structured fields — no regex re-parsing of charDesc.
-// This matches the regeneration path exactly (regenerateImageWithReason lines 826-838).
-// charDesc is a secondary text descriptor; this function owns the identity lock block.
-// CALL SITES must pass charRecord (the Character DB record), not a description string.
+// buildAppearanceLockText — reads structured charRecord fields directly; charDesc is secondary.
 function buildAppearanceLockText(rec, n) {
   const name = n || rec?.name || 'this character';
   if (!rec) return 'render from refs — do not redesign';
@@ -508,6 +454,15 @@ function buildAppearanceLockText(rec, n) {
 
   r.push(`\nCANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY — NOT ethnicity/hair/face/skin/body.\n⛔ REJECT any prompt trait conflicting with the above.\n🚫 GENERATION INVALID if ethnicity, skin tone, hair, facial hair, or body type differs from canonical.`);
   return r.join('\n');
+}
+
+// buildOccupationAuthorityBlock — prevents venue type from collapsing a character's occupation.
+function buildOccupationAuthorityBlock(occupation, locationName, zoneName, locCategory) {
+  const occ = occupation ? String(occupation).trim() : '';
+  if (!occ) return '';
+  const isMgr = /\b(manager|general manager|gm|store manager|assistant manager|shift manager|operations manager|office manager|district manager|regional manager)\b/.test(occ.toLowerCase());
+  const s = '═══════════════════════════════════════════════════════════';
+  return `\n${s}\nOCCUPATION AUTHORITY — ROLE INTEGRITY LAW\n${s}\nCHARACTER OCCUPATION: "${occ}"\nWORKPLACE: ${locationName || '(unspec)'}\nWORKPLACE TYPE: ${locCategory || '(unspec)'}${zoneName ? `\nCURRENT ZONE: ${zoneName}` : ''}\n\nThese are SEPARATE, independent concepts. Do NOT collapse them.\n⛔ DO NOT change the occupation "${occ}" based on the workplace, workplace type, location name, current zone, or the word "bar".\n⛔ DO NOT rename the occupation using the workplace (e.g. "Bar Manager", "Restaurant Manager", "Hotel Manager", "Retail Manager").\n⛔ DO NOT collapse distinct occupations (Manager, Bartender, Waiter, Server, Host, Cook) into one another.\n⛔ A zone named "Bar" is an internal zone of the parent location — it does NOT rename or redirect the parent location and does NOT change the occupation.\n⛔ "Bar" may mean a named venue, a business type, an internal zone, or a physical counter — resolve it from context, never collapse it into one meaning.` + (isMgr ? `\n\nMANAGER ROLE — NON-DEFAULTING ACTIVITY RULES:\nThis character is a "${occ}". Their primary role is overseeing the operation of the business.\n⛔ DO NOT default to bartending, serving drinks, waiting tables, serving food, or cooking.\n⛔ DO NOT default to standing behind a bar counter simply because the workplace is a bar.\n✅ Depict valid management responsibilities appropriate to the current zone and activity (staff supervision, office/admin work, inventory, deliveries, compliance, oversight, customer issue resolution).\n✅ Bartending/serving/cooking are valid ONLY when the specific current activity explicitly establishes the manager is temporarily performing that duty.\n\nVENUE FUNCTION PRESERVATION:\nPreserving the Manager occupation does NOT suppress other venue roles or food-service functionality.\n✅ This workplace continues to support: bartenders, waiters, servers, hosts, cooks, kitchen staff, food ordering, food service, drink service, dining tables, kitchen activity, and customers eating at tables or at the bar counter.\n⛔ DO NOT suppress food-service, drink-service, dining, or kitchen functionality to "protect" the Manager role.` : '') + `\n\nGENERATION INVALID IF: the occupation is changed from "${occ}", the character defaults to bartending/serving/cooking without an explicit current activity, or venue food-service functionality is suppressed.\n${s}`;
 }
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
@@ -1110,7 +1065,7 @@ This rule overrides any training-data bias. Representation MUST reflect real-wor
 Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
-  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
+  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${buildOccupationAuthorityBlock(charRecord?.occupation, locationName, zoneName, locCategory)}${closetLock}`);
 }
 
 // buildUserAppearanceLockFallback — returns appearance text from UserSettings.appearance_lock
@@ -1239,13 +1194,7 @@ Deno.serve(async (req) => {
     const rawPromptForSanitize = prompt.replace(/^\[CHARACTER\]\s*/i, '').trim();
     let sanitizedPrompt = sanitizePrompt(rawPromptForSanitize);
 
-    // ── FURNITURE INVENTION GUARD ──────────────────────────────────────────────
-    // Strip LLM-hallucinated furniture from the scene prompt. The image provider
-    // already receives zone reference photos — these photos ARE the room authority.
-    // Any furniture named in the prompt competes with reference photos and loses,
-    // causing the model to render the named furniture INSTEAD of what's in the photos.
-    // Remove only specific named furniture patterns that the LLM invents — preserve
-    // natural language that doesn't interfere with reference photo usage.
+    // FURNITURE INVENTION GUARD — strip LLM-hallucinated furniture; zone refs are the room authority.
     const furnitureStrippedPrompt = sanitizedPrompt
       // worn/aged qualifiers before furniture
       .replace(/,?\s*(?:on|seated on|sitting on|lounging on|resting on|lying on|perched on|leans? on|leaning on)\s+(?:a\s+)?(?:worn|old|beat-up|battered|vintage|tattered|weathered|distressed|soft|plush|overstuffed|massive|huge|large|small|big|comfortable|comfy|cozy|cosy|velvet|leather|faux-leather|suede|corduroy|microfiber|brown|black|gray|grey|white|tan|beige|dark|light|burgundy|red|blue|green)\s+(?:leather\s+)?(?:couch|sofa|sectional|chair|armchair|loveseat|recliner|ottoman|bench|futon|daybed|settee|chaise)/gi, '')
@@ -1612,11 +1561,7 @@ Deno.serve(async (req) => {
 
     let envRefs = [];
     let resolvedLocationName=null,resolvedZoneName=null,resolvedLocCategory=null,resolvedLocationId=null;
-    // ROOT CAUSE FIX: this was previously declared with `const` ONLY inside the
-    // `if (locRecord)` block below, but referenced later outside that scope (in the
-    // single-subject buildPrompt call). Whenever no location resolved — a common case —
-    // this threw "resolvedExistingObjectCue is not defined" and crashed generation outright.
-    // regenerateImageWithReason never had this variable at all, so it never hit this bug.
+    // Hoisted so the single-subject buildPrompt call can reference it when no location resolved.
     let resolvedExistingObjectCue = null;
 
     // ── LOCATION RESOLUTION PRIORITY ─────────────────────────────────────────
@@ -1905,12 +1850,7 @@ Deno.serve(async (req) => {
     // For multi-subject: additional character refs are appended after primary refs
     const additionalRefsFlat = additionalCharRecords.flatMap(a => a.refs.slice(0, 2));
 
-    // ── PAYLOAD SIZE GUARD ────────────────────────────────────────────────────
-    // ROOT CAUSE FIX: unlike regenerateImageWithReason (which caps total refs at ~9),
-    // this path had NO overall cap — env(4) + char(4) + user(3) + additional(up to 8) +
-    // uploaded(1) could submit ~20 images to GenerateImage in one call, which the manual
-    // regen path never does. Identity-critical refs (env/char/user) are prioritized;
-    // lower-priority refs (additional characters, uploaded ref) are trimmed first.
+    // PAYLOAD SIZE GUARD — cap total refs (env/char/user prioritized over additional/uploaded).
     const MAX_TOTAL_REFERENCE_IMAGES = 10;
     const priorityRefs = [
       ...envRefs.slice(0, ENV_SLOTS),
@@ -2077,7 +2017,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
         return count === 1 ? `Image ${start}` : `Images ${start}–${start + count - 1}`;
       }
 
-      function _buildSubjectBundle(rec, refs, outfitText, refStart, envCount) {
+      function _buildSubjectBundle(rec, refs, outfitText, refStart, envCount, locationName, zoneName, locCategory) {
         const name = rec.name || 'the character';
         const firstName = name.split(/\s+/)[0];
         const refsRange = _buildRefsRange(envCount + refStart, refs.length);
@@ -2130,6 +2070,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
         lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
         lines.push(`  ⛔ "${name}"'s outfit MUST NOT be rendered on any other subject.`);
         lines.push(`  ⛔ "${name}"'s appearance MUST NOT be applied to any other subject.`);
+        if (rec.occupation) lines.push(buildOccupationAuthorityBlock(rec.occupation, locationName, zoneName, locCategory));
 
         return lines.join('\n');
       }
@@ -2138,12 +2079,12 @@ All reference images (if any) are environment/location refs only — do NOT trea
       let refCursor = 0;
 
       // Build bundle for primary character
-      const primaryBundle = _buildSubjectBundle(charRecord, charRefs, charDesc.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null, refCursor, ENV_COUNT);
+      const primaryBundle = _buildSubjectBundle(charRecord, charRefs, charDesc.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null, refCursor, ENV_COUNT, resolvedLocationName, resolvedZoneName, resolvedLocCategory);
       refCursor += charRefs.length;
 
       // Build bundles for additional characters
       const additionalBundles = additionalCharRecords.map(a => {
-        const bundle = _buildSubjectBundle(a.record, a.refs, a.outfitText, refCursor, ENV_COUNT);
+        const bundle = _buildSubjectBundle(a.record, a.refs, a.outfitText, refCursor, ENV_COUNT, resolvedLocationName, resolvedZoneName, resolvedLocCategory);
         refCursor += a.refs.length;
         return bundle;
       });

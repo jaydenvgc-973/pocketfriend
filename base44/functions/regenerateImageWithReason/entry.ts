@@ -182,8 +182,77 @@ function buildAppearanceLockTextRegen(rec, n) {
   return r.join('\n');
 }
 
+// ── OCCUPATION AUTHORITY BLOCK ──────────────────────────────────────────────
+// Prevents the image model from collapsing a character's occupation into a
+// venue-derived role (e.g. a "Manager" working at a bar → "Bartender" / standing
+// behind the bar counter). Carries the authoritative occupation, workplace,
+// workplace type, and current zone as SEPARATE concepts and forbids defaulting a
+// Manager to bartending/serving/cooking without an explicit current activity.
+// Also preserves venue food-service functionality (waiters, servers, bartenders,
+// kitchen staff, dining, customers eating) — protecting the Manager role must
+// NOT suppress other established roles.
+function buildOccupationAuthorityBlock(occupation, locationName, zoneName, locCategory) {
+  const occ = occupation ? String(occupation).trim() : '';
+  if (!occ) return '';
+  const occLower = occ.toLowerCase();
+  const isManager = /\b(manager|general manager|gm|store manager|assistant manager|shift manager|operations manager|office manager|district manager|regional manager)\b/.test(occLower);
+
+  const lines = [];
+  lines.push('');
+  lines.push('═══════════════════════════════════════════════════════════');
+  lines.push('OCCUPATION AUTHORITY — ROLE INTEGRITY LAW');
+  lines.push('═══════════════════════════════════════════════════════════');
+  lines.push(`CHARACTER OCCUPATION: "${occ}"`);
+  lines.push(`WORKPLACE: ${locationName || '(unspecified)'}`);
+  lines.push(`WORKPLACE TYPE: ${locCategory || '(unspecified)'}`);
+  if (zoneName) lines.push(`CURRENT ZONE: ${zoneName}`);
+  lines.push('');
+  lines.push('These are SEPARATE, independent concepts. Do NOT collapse them:');
+  lines.push("- Occupation answers \"What is this character's job?\"");
+  lines.push('- Workplace answers "Where does this character work?"');
+  lines.push('- Workplace type answers "What kind of place is the workplace?"');
+  lines.push('- Current zone answers "Where is the character inside the workplace?"');
+  lines.push('');
+  lines.push(`⛔ DO NOT change the occupation "${occ}" based on the workplace, workplace type, location name, current zone, or the word "bar".`);
+  lines.push('⛔ DO NOT rename the occupation using the workplace (e.g. "Bar Manager", "Restaurant Manager", "Hotel Manager", "Retail Manager", "Grocery Store Manager").');
+  lines.push('⛔ DO NOT collapse distinct occupations (Manager, Bartender, Waiter, Server, Host, Cook) into one another.');
+  lines.push('⛔ A zone named "Bar" is an internal zone of the parent location — it does NOT rename or redirect the parent location and does NOT change the occupation.');
+  lines.push('⛔ "Bar" may mean a named venue, a business type, an internal zone, or a physical counter — resolve it from context, never collapse it into one meaning.');
+  lines.push('⛔ A Bartender does not become a Manager because they occasionally supervise; a Manager does not become a Bartender because they occasionally bartend.');
+  lines.push('');
+
+  if (isManager) {
+    lines.push(`MANAGER ROLE — NON-DEFAULTING ACTIVITY RULES:`);
+    lines.push(`This character is a "${occ}". Their primary role is overseeing the operation of the business.`);
+    lines.push('⛔ DO NOT default this character to bartending, serving drinks, waiting tables, serving food, or cooking.');
+    lines.push('⛔ DO NOT default this character to standing behind a bar counter simply because the workplace is a bar.');
+    lines.push('✅ Depict this character performing valid management responsibilities appropriate to the current zone and current activity, such as:');
+    lines.push('   - Staff supervision, team meetings, pre-shift huddles');
+    lines.push('   - Office or administrative work (schedules, payroll, invoices, reports, compliance, vendor orders)');
+    lines.push('   - Inventory review in the stock room or storage areas');
+    lines.push('   - Receiving or supervising deliveries; waiting outside for vendors or shipments');
+    lines.push('   - Counting registers or preparing deposits');
+    lines.push('   - Inspecting the dining room, lounge, patio, entrance, kitchen, or other established zones');
+    lines.push('   - Resolving customer concerns');
+    lines.push('   - Supervising opening or closing procedures');
+    lines.push('   - Walking through the establishment overseeing operations');
+    lines.push('✅ Bartending / serving / cooking are valid ONLY when the specific current activity explicitly establishes the manager is temporarily performing that duty.');
+    lines.push('');
+    lines.push('VENUE FUNCTION PRESERVATION:');
+    lines.push('Preserving the Manager occupation does NOT remove or suppress other venue roles or food-service functionality.');
+    lines.push('✅ This workplace continues to support: bartenders, waiters, servers, hosts, cooks, kitchen staff, food ordering, food service, drink service, dining tables, kitchen activity, and customers eating at tables or at the bar counter.');
+    lines.push('✅ Background staff may perform their own established roles (bartending, serving, cooking) — the Manager oversees them.');
+    lines.push('⛔ DO NOT suppress food-service, drink-service, dining, or kitchen functionality to "protect" the Manager role.');
+    lines.push('');
+  }
+
+  lines.push(`GENERATION INVALID IF: the occupation is changed from "${occ}", the character defaults to bartending/serving/cooking without an explicit current activity, or venue food-service functionality is suppressed.`);
+  lines.push('═══════════════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
 // ── SEALED SUBJECT BUNDLE BUILDER ────────────────────────────────────────────
-function buildRegenSubjectBundle(p, envCount) {
+function buildRegenSubjectBundle(p, envCount, locationName, zoneName, locCategory) {
   const startIdx = envCount + p.refStart;
   const endIdx   = envCount + p.refStart + p.refCount - 1;
   const isUser   = p.subjectRole === 'user';
@@ -270,6 +339,9 @@ function buildRegenSubjectBundle(p, envCount) {
   lines.push(`  ⛔ "${nameDisplay}"'s height, body type, and skin tone MUST NOT be applied to any other subject.`);
   lines.push(`  ⛔ "${nameDisplay}"'s reference images MUST NOT influence any other subject's appearance.`);
 
+  const _occBlockRegen = buildOccupationAuthorityBlock(p.occupation, locationName, zoneName, locCategory);
+  if (_occBlockRegen) lines.push(_occBlockRegen);
+
   return lines.join('\n');
 }
 
@@ -306,7 +378,7 @@ function buildMultiSubjectRegenPrompt({
   // Also build the plain joined string for inline use in the prompt template below
   const nameRefKey = nameRefKeyBlock.replace(/^[\n═]+\n/, '').replace(/\n═+\n$/, '').trim();
 
-  const subjectBundleBlocks = subjectBundles.map(b => buildRegenSubjectBundle(b, envCount)).join('\n\n');
+  const subjectBundleBlocks = subjectBundles.map(b => buildRegenSubjectBundle(b, envCount, locationName, zoneName, locCategory)).join('\n\n');
 
   // Reason-specific block (simplified for multi-subject — focuses on correct-render intent)
   let reasonBlock = '';
@@ -710,7 +782,8 @@ This rule overrides any training-data bias. Representation MUST reflect real-wor
 Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
-  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}`;
+  const occupationBlockRegen = buildOccupationAuthorityBlock(charRecord?.occupation, locationName, zoneName, locCategory);
+  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}${occupationBlockRegen}`;
 }
 
 // ── ZONE RESOLUTION ──────────────────────────────────────────────────────────
@@ -1769,7 +1842,7 @@ Deno.serve(async (req) => {
         } catch (bundleErr) {
           console.warn(`[regenerateImageWithReason] Bundle resolution for char ${sid}: ${bundleErr?.message}`);
         }
-        return { sid, subjectDisplayName, subjectRefs, outfitText, appearanceLock };
+        return { sid, subjectDisplayName, subjectRefs, outfitText, appearanceLock, occupation: rec?.occupation || null };
       }
 
       // Helpers inlined (Deno cannot import local lib)
@@ -1800,7 +1873,7 @@ Deno.serve(async (req) => {
         if (!sid) continue;
         // Find the matching stored ctx entry (for reference_images fallback if fresh lookup fails)
         const ctxEntry = ctxSubjects.find(s => s.subject_id === sid) || null;
-        const { subjectDisplayName, subjectRefs, outfitText, appearanceLock } = await resolveCharBundleForRegen(sid, ctxEntry);
+        const { subjectDisplayName, subjectRefs, outfitText, appearanceLock, occupation } = await resolveCharBundleForRegen(sid, ctxEntry);
 
         console.log(`[regenerateImageWithReason] ✅ Bundle resolved: "${subjectDisplayName}" refs=${subjectRefs.length} outfit="${outfitText?.substring(0,60) || 'none'}"`);
 
@@ -1814,6 +1887,7 @@ Deno.serve(async (req) => {
           refCount: subjectRefs.length,
           outfitText,
           appearanceLock,
+          occupation,
           _refs: subjectRefs,
         });
         refCursor += subjectRefs.length;

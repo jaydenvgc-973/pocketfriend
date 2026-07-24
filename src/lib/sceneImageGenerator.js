@@ -56,6 +56,45 @@ export function buildAvatarIdentityBlock(characters) {
 }
 
 /**
+ * Builds an occupation authority block for a single character.
+ * Prevents the image model from collapsing a character's occupation into a
+ * venue-derived role (e.g. a "Manager" working at a bar → "Bartender" / standing
+ * behind the bar counter). Keeps occupation, workplace, workplace type, and
+ * current zone as SEPARATE concepts and preserves venue food-service functionality.
+ */
+function buildSceneOccupationBlock(occupation, locationName) {
+  const occ = occupation ? String(occupation).trim() : '';
+  if (!occ) return '';
+  const occLower = occ.toLowerCase();
+  const isManager = /\b(manager|general manager|gm|store manager|assistant manager|shift manager|operations manager|office manager|district manager|regional manager)\b/.test(occLower);
+
+  const lines = [];
+  lines.push('');
+  lines.push('═══════════════════════════════════════════════════════════');
+  lines.push('OCCUPATION AUTHORITY — ROLE INTEGRITY LAW');
+  lines.push('═══════════════════════════════════════════════════════════');
+  lines.push(`CHARACTER OCCUPATION: "${occ}"`);
+  lines.push(`WORKPLACE: ${locationName || '(unspecified)'}`);
+  lines.push('Occupation and workplace are SEPARATE concepts. Do NOT collapse them.');
+  lines.push(`⛔ DO NOT change the occupation "${occ}" based on the workplace, workplace type, location name, current zone, or the word "bar".`);
+  lines.push('⛔ DO NOT rename the occupation using the workplace (e.g. "Bar Manager", "Restaurant Manager", "Hotel Manager").');
+  lines.push('⛔ DO NOT collapse distinct occupations (Manager, Bartender, Waiter, Server, Host, Cook) into one another.');
+  lines.push('⛔ A zone named "Bar" is an internal zone of the parent location — it does NOT rename or redirect the parent location and does NOT change the occupation.');
+  lines.push('⛔ "Bar" may mean a named venue, a business type, an internal zone, or a physical counter — resolve it from context, never collapse it into one meaning.');
+  if (isManager) {
+    lines.push(`This character is a "${occ}" — their primary role is overseeing the operation of the business.`);
+    lines.push('⛔ DO NOT default to bartending, serving drinks, waiting tables, serving food, or cooking.');
+    lines.push('⛔ DO NOT default to standing behind a bar counter simply because the workplace is a bar.');
+    lines.push('✅ Depict valid management responsibilities appropriate to the current zone and activity (staff supervision, office/admin work, inventory, deliveries, compliance, oversight, customer issue resolution).');
+    lines.push('✅ Bartending/serving/cooking are valid ONLY when the specific current activity explicitly establishes the manager is temporarily performing that duty.');
+    lines.push('Preserving the Manager role does NOT suppress venue functionality — bartenders, waiters, servers, cooks, kitchen staff, food ordering, dining, and customers eating remain valid for the venue.');
+  }
+  lines.push(`GENERATION INVALID IF: the occupation is changed from "${occ}" or the character defaults to a venue-derived role without an explicit current activity.`);
+  lines.push('═══════════════════════════════════════════════════════════');
+  return lines.join('\n');
+}
+
+/**
  * Constructs the full scene image generation prompt with all enforcement rules.
  * CRITICAL: Validates appearance_lock and outfit separation before returning.
  */
@@ -102,6 +141,13 @@ ${expectedCount === 0 ? 'ZERO HUMANS. No people of any kind. No bodies. No hands
       }
     }
   }
-  
+
+  // OCCUPATION AUTHORITY — prevent venue type from collapsing a character's occupation
+  for (const char of characters) {
+    if (char?.occupation) {
+      basePrompt += buildSceneOccupationBlock(char.occupation, locationName);
+    }
+  }
+
   return basePrompt;
 }
