@@ -10,6 +10,7 @@ import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import { enforceValidation } from "@/lib/appearanceLockValidator";
 import { resolveHousingLocationForCharacter } from "@/lib/resolveHousingLocationForCharacter";
+import { buildOccupationImageContext, resolveWorkplaceLocation } from "@/lib/occupationImageContextBuilder";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -113,9 +114,24 @@ export async function dispatchImageGeneration({
     const publicCharRefs = rawCharRefs.map(toPublicCDN).filter(isProviderAccessible);
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
 
+    // ── OCCUPATION CONTEXT INJECTION ──────────────────────────────────────
+    // Prepend the occupation context block to the image prompt so the image
+    // provider knows the character's actual job (occupation), workplace, location
+    // type, and current zone as independent concepts. This prevents the generator
+    // from collapsing a Manager at a bar into a Bartender behind the bar counter.
+    const workplaceLocation = resolveWorkplaceLocation(character, locationMap);
+    const occupationContextBlock = buildOccupationImageContext({
+      character,
+      workplaceLocation,
+      currentZoneName: null, // zone is resolved server-side from the location
+    });
+    const finalImagePrompt = occupationContextBlock
+      ? `${occupationContextBlock}\n${imageGenPrompt}`
+      : imageGenPrompt;
+
     const res = await base44.functions.invoke('generateImageAsync', {
       messageId: targetMsgId,
-      prompt: imageGenPrompt,
+      prompt: finalImagePrompt,
       characterReferenceImages: publicCharRefs,
       userReferenceImages: useUserRefs ? publicUserRefs : [],
       // characterName: use the SUBJECT's name when different from sender
