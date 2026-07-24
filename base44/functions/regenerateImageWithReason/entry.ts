@@ -732,50 +732,6 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ['balcony', 'on the balcony'], zone: 'balcony' },
   ];
 
-  // ── ZONE-NAME REFERENT RESOLUTION ───────────────────────────────────────────
-  // A zone name (e.g. "bar", "kitchen") that also appears in the venue's OWN name
-  // (e.g. "Anderson's Bar") is ambiguous: a bare mention of that word may refer to
-  // the venue, not the internal zone. We resolve the referent from the established
-  // venue name — occurrences of the zone name INSIDE a full venue-name mention are
-  // venue references and do NOT select the internal zone. Only an occurrence
-  // OUTSIDE any venue-name mention is treated as a genuine internal-zone reference.
-  // This resolves the word from context (the established venue) instead of
-  // assigning it a default meaning — "bar" is handled the same way as "kitchen" or
-  // any other zone name. No word is given a special default.
-  function getVenueNameSpans(promptLower, locationName) {
-    const spans = [];
-    if (!promptLower || !locationName) return spans;
-    const vn = locationName.toLowerCase().trim();
-    if (!vn) return spans;
-    let from = 0;
-    while (true) {
-      const idx = promptLower.indexOf(vn, from);
-      if (idx === -1) break;
-      spans.push([idx, idx + vn.length]);
-      from = idx + vn.length;
-    }
-    return spans;
-  }
-  function isInsideAnySpan(idx, len, spans) {
-    for (const s of spans) {
-      if (idx >= s[0] && (idx + len) <= s[1]) return true;
-    }
-    return false;
-  }
-  // True if the zone name occurs in the prompt at a word boundary OUTSIDE any
-  // venue-name mention (i.e. a genuine internal-zone reference).
-  function hasZoneRefOutsideVenueName(promptLower, zn, venueSpans) {
-    let from = 0;
-    while (true) {
-      const idx = promptLower.indexOf(zn, from);
-      if (idx === -1) return false;
-      const before = idx === 0 ? true : !/\w/.test(promptLower[idx - 1]);
-      const after = (idx + zn.length) >= promptLower.length ? true : !/\w/.test(promptLower[idx + zn.length]);
-      if (before && after && !isInsideAnySpan(idx, zn.length, venueSpans)) return true;
-      from = idx + zn.length;
-    }
-  }
-
   function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
   if (zones.length === 0) {
@@ -794,18 +750,26 @@ const ZONE_KEYWORD_MAP = [
     }
   }
 
-  // 1. Exact zone name in prompt (referent resolution — see getVenueNameSpans)
-  const venueSpansRegen = getVenueNameSpans(promptLower, location.name);
+  // 1. Exact zone name in prompt
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
       const zn = zone.zone_name.toLowerCase().trim();
-      // REFERENT RESOLUTION: a zone name that also appears in the venue's own
-      // name is ambiguous. Only match when the zone name occurs OUTSIDE a full
-      // venue-name mention — otherwise the reference is to the venue, not the
-      // internal zone. No word is given a special default meaning.
-      if (!hasZoneRefOutsideVenueName(promptLower, zn, venueSpansRegen)) {
-        console.log(`[resolveZone] skip "${zone.zone_name}" — matched only inside venue name "${location.name}"`);
-        continue;
+      const idx = promptLower.indexOf(zn);
+      // Resolve ambiguous zone names the same way as any other term: if this zone
+      // name also appears in the venue's own name, a mention that sits inside a
+      // full venue-name mention refers to the venue, not the internal zone.
+      const _vn = (location.name || '').toLowerCase().trim();
+      if (_vn && _vn.includes(zn) && promptLower.includes(_vn)) {
+        let _i = promptLower.indexOf(_vn);
+        let _inside = false;
+        while (_i !== -1) {
+          if (idx >= _i && idx + zn.length <= _i + _vn.length) { _inside = true; break; }
+          _i = promptLower.indexOf(_vn, _i + _vn.length);
+        }
+        if (_inside) {
+          console.log(`[resolveZone] skip "${zone.zone_name}" — matched inside venue name "${location.name}"`);
+          continue;
+        }
       }
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
