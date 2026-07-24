@@ -732,26 +732,48 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ['balcony', 'on the balcony'], zone: 'balcony' },
   ];
 
-  // ── BAR / GENERIC-VENUE-WORD CONTEXT RESOLUTION ─────────────────────────────
-  // Resolves what a generic venue-type word ("bar", "gym", etc.) means before it
-  // becomes a scene element. When the word is part of the venue's OWN name (e.g.
-  // "Anderson's Bar"), a bare mention in the prompt usually refers to the venue,
-  // not the internal counter zone — so the internal zone is only resolved when an
-  // explicit counter/bartending signal is present. This stops every "bar" from
-  // becoming the physical bar counter / bartending scene.
-  const GENERIC_VENUE_WORDS = ['bar', 'gym', 'office', 'kitchen', 'lounge', 'club', 'studio', 'shop', 'store', 'diner', 'cafe', 'pub', 'tavern'];
-  const EXPLICIT_BAR_COUNTER_SIGNALS = ['bar area', 'bar counter', 'behind the bar', 'bartending', 'bartending area', 'tending bar', 'bar stool', 'bar stools', 'behind the bar counter', 'pouring drinks', 'mixing drinks', 'serving drinks behind'];
-  function locationNameContainsWord(locationName, word) {
-  if (!locationName || !word) return false;
-  const ln = locationName.toLowerCase();
-  const idx = ln.indexOf(word);
-  if (idx === -1) return false;
-  const before = idx === 0 ? true : !/\w/.test(ln[idx - 1]);
-  const after = (idx + word.length) >= ln.length ? true : !/\w/.test(ln[idx + word.length]);
-  return before && after;
+  // ── ZONE-NAME REFERENT RESOLUTION ───────────────────────────────────────────
+  // A zone name (e.g. "bar", "kitchen") that also appears in the venue's OWN name
+  // (e.g. "Anderson's Bar") is ambiguous: a bare mention of that word may refer to
+  // the venue, not the internal zone. We resolve the referent from the established
+  // venue name — occurrences of the zone name INSIDE a full venue-name mention are
+  // venue references and do NOT select the internal zone. Only an occurrence
+  // OUTSIDE any venue-name mention is treated as a genuine internal-zone reference.
+  // This resolves the word from context (the established venue) instead of
+  // assigning it a default meaning — "bar" is handled the same way as "kitchen" or
+  // any other zone name. No word is given a special default.
+  function getVenueNameSpans(promptLower, locationName) {
+    const spans = [];
+    if (!promptLower || !locationName) return spans;
+    const vn = locationName.toLowerCase().trim();
+    if (!vn) return spans;
+    let from = 0;
+    while (true) {
+      const idx = promptLower.indexOf(vn, from);
+      if (idx === -1) break;
+      spans.push([idx, idx + vn.length]);
+      from = idx + vn.length;
+    }
+    return spans;
   }
-  function promptHasExplicitBarCounterSignal(promptLower) {
-  return EXPLICIT_BAR_COUNTER_SIGNALS.some(sig => promptLower.includes(sig));
+  function isInsideAnySpan(idx, len, spans) {
+    for (const s of spans) {
+      if (idx >= s[0] && (idx + len) <= s[1]) return true;
+    }
+    return false;
+  }
+  // True if the zone name occurs in the prompt at a word boundary OUTSIDE any
+  // venue-name mention (i.e. a genuine internal-zone reference).
+  function hasZoneRefOutsideVenueName(promptLower, zn, venueSpans) {
+    let from = 0;
+    while (true) {
+      const idx = promptLower.indexOf(zn, from);
+      if (idx === -1) return false;
+      const before = idx === 0 ? true : !/\w/.test(promptLower[idx - 1]);
+      const after = (idx + zn.length) >= promptLower.length ? true : !/\w/.test(promptLower[idx + zn.length]);
+      if (before && after && !isInsideAnySpan(idx, zn.length, venueSpans)) return true;
+      from = idx + zn.length;
+    }
   }
 
   function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
@@ -772,16 +794,17 @@ const ZONE_KEYWORD_MAP = [
     }
   }
 
-  // 1. Exact zone name in prompt
+  // 1. Exact zone name in prompt (referent resolution — see getVenueNameSpans)
+  const venueSpansRegen = getVenueNameSpans(promptLower, location.name);
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
       const zn = zone.zone_name.toLowerCase().trim();
-      // GENERIC-VENUE-WORD GUARD: a zone named "bar" (or "gym", etc.) at a venue
-      // whose own name contains that word should NOT resolve from a bare mention —
-      // "bar" in "at Anderson's Bar" means the venue, not the counter zone. Require
-      // an explicit counter/bartending signal before selecting this internal zone.
-      if (GENERIC_VENUE_WORDS.includes(zn) && locationNameContainsWord(location.name, zn) && !promptHasExplicitBarCounterSignal(promptLower)) {
-        console.log(`[resolveZone] skip "${zone.zone_name}" — generic word "${zn}" appears in venue name "${location.name}" with no explicit counter signal`);
+      // REFERENT RESOLUTION: a zone name that also appears in the venue's own
+      // name is ambiguous. Only match when the zone name occurs OUTSIDE a full
+      // venue-name mention — otherwise the reference is to the venue, not the
+      // internal zone. No word is given a special default meaning.
+      if (!hasZoneRefOutsideVenueName(promptLower, zn, venueSpansRegen)) {
+        console.log(`[resolveZone] skip "${zone.zone_name}" — matched only inside venue name "${location.name}"`);
         continue;
       }
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
