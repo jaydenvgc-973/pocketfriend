@@ -182,77 +182,8 @@ function buildAppearanceLockTextRegen(rec, n) {
   return r.join('\n');
 }
 
-// ── OCCUPATION AUTHORITY BLOCK ──────────────────────────────────────────────
-// Prevents the image model from collapsing a character's occupation into a
-// venue-derived role (e.g. a "Manager" working at a bar → "Bartender" / standing
-// behind the bar counter). Carries the authoritative occupation, workplace,
-// workplace type, and current zone as SEPARATE concepts and forbids defaulting a
-// Manager to bartending/serving/cooking without an explicit current activity.
-// Also preserves venue food-service functionality (waiters, servers, bartenders,
-// kitchen staff, dining, customers eating) — protecting the Manager role must
-// NOT suppress other established roles.
-function buildOccupationAuthorityBlock(occupation, locationName, zoneName, locCategory) {
-  const occ = occupation ? String(occupation).trim() : '';
-  if (!occ) return '';
-  const occLower = occ.toLowerCase();
-  const isManager = /\b(manager|general manager|gm|store manager|assistant manager|shift manager|operations manager|office manager|district manager|regional manager)\b/.test(occLower);
-
-  const lines = [];
-  lines.push('');
-  lines.push('═══════════════════════════════════════════════════════════');
-  lines.push('OCCUPATION AUTHORITY — ROLE INTEGRITY LAW');
-  lines.push('═══════════════════════════════════════════════════════════');
-  lines.push(`CHARACTER OCCUPATION: "${occ}"`);
-  lines.push(`WORKPLACE: ${locationName || '(unspecified)'}`);
-  lines.push(`WORKPLACE TYPE: ${locCategory || '(unspecified)'}`);
-  if (zoneName) lines.push(`CURRENT ZONE: ${zoneName}`);
-  lines.push('');
-  lines.push('These are SEPARATE, independent concepts. Do NOT collapse them:');
-  lines.push("- Occupation answers \"What is this character's job?\"");
-  lines.push('- Workplace answers "Where does this character work?"');
-  lines.push('- Workplace type answers "What kind of place is the workplace?"');
-  lines.push('- Current zone answers "Where is the character inside the workplace?"');
-  lines.push('');
-  lines.push(`⛔ DO NOT change the occupation "${occ}" based on the workplace, workplace type, location name, current zone, or the word "bar".`);
-  lines.push('⛔ DO NOT rename the occupation using the workplace (e.g. "Bar Manager", "Restaurant Manager", "Hotel Manager", "Retail Manager", "Grocery Store Manager").');
-  lines.push('⛔ DO NOT collapse distinct occupations (Manager, Bartender, Waiter, Server, Host, Cook) into one another.');
-  lines.push('⛔ A zone named "Bar" is an internal zone of the parent location — it does NOT rename or redirect the parent location and does NOT change the occupation.');
-  lines.push('⛔ "Bar" may mean a named venue, a business type, an internal zone, or a physical counter — resolve it from context, never collapse it into one meaning.');
-  lines.push('⛔ A Bartender does not become a Manager because they occasionally supervise; a Manager does not become a Bartender because they occasionally bartend.');
-  lines.push('');
-
-  if (isManager) {
-    lines.push(`MANAGER ROLE — NON-DEFAULTING ACTIVITY RULES:`);
-    lines.push(`This character is a "${occ}". Their primary role is overseeing the operation of the business.`);
-    lines.push('⛔ DO NOT default this character to bartending, serving drinks, waiting tables, serving food, or cooking.');
-    lines.push('⛔ DO NOT default this character to standing behind a bar counter simply because the workplace is a bar.');
-    lines.push('✅ Depict this character performing valid management responsibilities appropriate to the current zone and current activity, such as:');
-    lines.push('   - Staff supervision, team meetings, pre-shift huddles');
-    lines.push('   - Office or administrative work (schedules, payroll, invoices, reports, compliance, vendor orders)');
-    lines.push('   - Inventory review in the stock room or storage areas');
-    lines.push('   - Receiving or supervising deliveries; waiting outside for vendors or shipments');
-    lines.push('   - Counting registers or preparing deposits');
-    lines.push('   - Inspecting the dining room, lounge, patio, entrance, kitchen, or other established zones');
-    lines.push('   - Resolving customer concerns');
-    lines.push('   - Supervising opening or closing procedures');
-    lines.push('   - Walking through the establishment overseeing operations');
-    lines.push('✅ Bartending / serving / cooking are valid ONLY when the specific current activity explicitly establishes the manager is temporarily performing that duty.');
-    lines.push('');
-    lines.push('VENUE FUNCTION PRESERVATION:');
-    lines.push('Preserving the Manager occupation does NOT remove or suppress other venue roles or food-service functionality.');
-    lines.push('✅ This workplace continues to support: bartenders, waiters, servers, hosts, cooks, kitchen staff, food ordering, food service, drink service, dining tables, kitchen activity, and customers eating at tables or at the bar counter.');
-    lines.push('✅ Background staff may perform their own established roles (bartending, serving, cooking) — the Manager oversees them.');
-    lines.push('⛔ DO NOT suppress food-service, drink-service, dining, or kitchen functionality to "protect" the Manager role.');
-    lines.push('');
-  }
-
-  lines.push(`GENERATION INVALID IF: the occupation is changed from "${occ}", the character defaults to bartending/serving/cooking without an explicit current activity, or venue food-service functionality is suppressed.`);
-  lines.push('═══════════════════════════════════════════════════════════');
-  return lines.join('\n');
-}
-
 // ── SEALED SUBJECT BUNDLE BUILDER ────────────────────────────────────────────
-function buildRegenSubjectBundle(p, envCount, locationName, zoneName, locCategory) {
+function buildRegenSubjectBundle(p, envCount) {
   const startIdx = envCount + p.refStart;
   const endIdx   = envCount + p.refStart + p.refCount - 1;
   const isUser   = p.subjectRole === 'user';
@@ -339,9 +270,6 @@ function buildRegenSubjectBundle(p, envCount, locationName, zoneName, locCategor
   lines.push(`  ⛔ "${nameDisplay}"'s height, body type, and skin tone MUST NOT be applied to any other subject.`);
   lines.push(`  ⛔ "${nameDisplay}"'s reference images MUST NOT influence any other subject's appearance.`);
 
-  const _occBlockRegen = buildOccupationAuthorityBlock(p.occupation, locationName, zoneName, locCategory);
-  if (_occBlockRegen) lines.push(_occBlockRegen);
-
   return lines.join('\n');
 }
 
@@ -378,7 +306,7 @@ function buildMultiSubjectRegenPrompt({
   // Also build the plain joined string for inline use in the prompt template below
   const nameRefKey = nameRefKeyBlock.replace(/^[\n═]+\n/, '').replace(/\n═+\n$/, '').trim();
 
-  const subjectBundleBlocks = subjectBundles.map(b => buildRegenSubjectBundle(b, envCount, locationName, zoneName, locCategory)).join('\n\n');
+  const subjectBundleBlocks = subjectBundles.map(b => buildRegenSubjectBundle(b, envCount)).join('\n\n');
 
   // Reason-specific block (simplified for multi-subject — focuses on correct-render intent)
   let reasonBlock = '';
@@ -782,8 +710,7 @@ This rule overrides any training-data bias. Representation MUST reflect real-wor
 Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
-  const occupationBlockRegen = buildOccupationAuthorityBlock(charRecord?.occupation, locationName, zoneName, locCategory);
-  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}${occupationBlockRegen}`;
+  return `${fictionalCharacterDeclarationRegen}${caucasianGuardRegen}${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${occupancyBlock}${reasonBlock}${identityLock}`;
 }
 
 // ── ZONE RESOLUTION ──────────────────────────────────────────────────────────
@@ -803,9 +730,31 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ['rooftop', 'roof deck', 'rooftop bar'], zone: 'rooftop' },
   { keywords: ['hallway', 'corridor', 'entryway', 'front door', 'foyer'], zone: 'hallway' },
   { keywords: ['balcony', 'on the balcony'], zone: 'balcony' },
-];
+  ];
 
-function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
+  // ── BAR / GENERIC-VENUE-WORD CONTEXT RESOLUTION ─────────────────────────────
+  // Resolves what a generic venue-type word ("bar", "gym", etc.) means before it
+  // becomes a scene element. When the word is part of the venue's OWN name (e.g.
+  // "Anderson's Bar"), a bare mention in the prompt usually refers to the venue,
+  // not the internal counter zone — so the internal zone is only resolved when an
+  // explicit counter/bartending signal is present. This stops every "bar" from
+  // becoming the physical bar counter / bartending scene.
+  const GENERIC_VENUE_WORDS = ['bar', 'gym', 'office', 'kitchen', 'lounge', 'club', 'studio', 'shop', 'store', 'diner', 'cafe', 'pub', 'tavern'];
+  const EXPLICIT_BAR_COUNTER_SIGNALS = ['bar area', 'bar counter', 'behind the bar', 'bartending', 'bartending area', 'tending bar', 'bar stool', 'bar stools', 'behind the bar counter', 'pouring drinks', 'mixing drinks', 'serving drinks behind'];
+  function locationNameContainsWord(locationName, word) {
+  if (!locationName || !word) return false;
+  const ln = locationName.toLowerCase();
+  const idx = ln.indexOf(word);
+  if (idx === -1) return false;
+  const before = idx === 0 ? true : !/\w/.test(ln[idx - 1]);
+  const after = (idx + word.length) >= ln.length ? true : !/\w/.test(ln[idx + word.length]);
+  return before && after;
+  }
+  function promptHasExplicitBarCounterSignal(promptLower) {
+  return EXPLICIT_BAR_COUNTER_SIGNALS.some(sig => promptLower.includes(sig));
+  }
+
+  function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
   if (zones.length === 0) {
     return { images: cdnFilter(location.image_urls || []).slice(0, 4), zoneName: null };
@@ -826,6 +775,15 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   // 1. Exact zone name in prompt
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
+      const zn = zone.zone_name.toLowerCase().trim();
+      // GENERIC-VENUE-WORD GUARD: a zone named "bar" (or "gym", etc.) at a venue
+      // whose own name contains that word should NOT resolve from a bare mention —
+      // "bar" in "at Anderson's Bar" means the venue, not the counter zone. Require
+      // an explicit counter/bartending signal before selecting this internal zone.
+      if (GENERIC_VENUE_WORDS.includes(zn) && locationNameContainsWord(location.name, zn) && !promptHasExplicitBarCounterSignal(promptLower)) {
+        console.log(`[resolveZone] skip "${zone.zone_name}" — generic word "${zn}" appears in venue name "${location.name}" with no explicit counter signal`);
+        continue;
+      }
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
         console.log(`[resolveZone] Exact name match: "${zone.zone_name}"`);
@@ -1842,7 +1800,7 @@ Deno.serve(async (req) => {
         } catch (bundleErr) {
           console.warn(`[regenerateImageWithReason] Bundle resolution for char ${sid}: ${bundleErr?.message}`);
         }
-        return { sid, subjectDisplayName, subjectRefs, outfitText, appearanceLock, occupation: rec?.occupation || null };
+        return { sid, subjectDisplayName, subjectRefs, outfitText, appearanceLock };
       }
 
       // Helpers inlined (Deno cannot import local lib)
@@ -1873,7 +1831,7 @@ Deno.serve(async (req) => {
         if (!sid) continue;
         // Find the matching stored ctx entry (for reference_images fallback if fresh lookup fails)
         const ctxEntry = ctxSubjects.find(s => s.subject_id === sid) || null;
-        const { subjectDisplayName, subjectRefs, outfitText, appearanceLock, occupation } = await resolveCharBundleForRegen(sid, ctxEntry);
+        const { subjectDisplayName, subjectRefs, outfitText, appearanceLock } = await resolveCharBundleForRegen(sid, ctxEntry);
 
         console.log(`[regenerateImageWithReason] ✅ Bundle resolved: "${subjectDisplayName}" refs=${subjectRefs.length} outfit="${outfitText?.substring(0,60) || 'none'}"`);
 
@@ -1887,7 +1845,6 @@ Deno.serve(async (req) => {
           refCount: subjectRefs.length,
           outfitText,
           appearanceLock,
-          occupation,
           _refs: subjectRefs,
         });
         refCursor += subjectRefs.length;

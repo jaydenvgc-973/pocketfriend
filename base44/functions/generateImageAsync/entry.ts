@@ -145,6 +145,28 @@ function cdnFilterNoGenerated(urls) {
 
 // ACTIVITY_OBJECT_MAP removed — named-zone authority (TIER 1–4) runs first; zone refs are the visual container.
 
+// ── BAR / GENERIC-VENUE-WORD CONTEXT RESOLUTION ─────────────────────────────
+// Resolves what a generic venue-type word ("bar", "gym", etc.) means before it
+// becomes a scene element. When the word is part of the venue's OWN name (e.g.
+// "Anderson's Bar"), a bare mention in the prompt usually refers to the venue,
+// not the internal counter zone — so the internal zone is only resolved when an
+// explicit counter/bartending signal is present. This stops every "bar" from
+// becoming the physical bar counter / bartending scene.
+const GENERIC_VENUE_WORDS = ['bar', 'gym', 'office', 'kitchen', 'lounge', 'club', 'studio', 'shop', 'store', 'diner', 'cafe', 'pub', 'tavern'];
+const EXPLICIT_BAR_COUNTER_SIGNALS = ['bar area', 'bar counter', 'behind the bar', 'bartending', 'bartending area', 'tending bar', 'bar stool', 'bar stools', 'behind the bar counter', 'pouring drinks', 'mixing drinks', 'serving drinks behind'];
+function locationNameContainsWord(locationName, word) {
+  if (!locationName || !word) return false;
+  const ln = locationName.toLowerCase();
+  const idx = ln.indexOf(word);
+  if (idx === -1) return false;
+  const before = idx === 0 ? true : !/\w/.test(ln[idx - 1]);
+  const after = (idx + word.length) >= ln.length ? true : !/\w/.test(ln[idx + word.length]);
+  return before && after;
+}
+function promptHasExplicitBarCounterSignal(promptLower) {
+  return EXPLICIT_BAR_COUNTER_SIGNALS.some(sig => promptLower.includes(sig));
+}
+
 function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const allZones = location.zones || [];
   const zones = allZones.filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
@@ -203,6 +225,14 @@ function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
       const after = (idx + zn.length) >= promptLower.length ? true : !/\w/.test(promptLower[idx + zn.length]);
       if (!before || !after) {
         console.log(`[resolveZone] TIER-2 skip "${zone.zone_name}" — matched as substring fragment (no word boundary)`);
+        continue;
+      }
+      // GENERIC-VENUE-WORD GUARD: a zone named "bar" (or "gym", etc.) at a venue
+      // whose own name contains that word should NOT resolve from a bare mention —
+      // "bar" in "at Anderson's Bar" means the venue, not the counter zone. Require
+      // an explicit counter/bartending signal before selecting this internal zone.
+      if (GENERIC_VENUE_WORDS.includes(zn) && locationNameContainsWord(location.name, zn) && !promptHasExplicitBarCounterSignal(promptLower)) {
+        console.log(`[resolveZone] TIER-2 skip "${zone.zone_name}" — generic word "${zn}" appears in venue name "${location.name}" with no explicit counter signal`);
         continue;
       }
       const imgs = cdnFilterNoGenerated(zone.image_urls).slice(0, 4);
@@ -454,15 +484,6 @@ function buildAppearanceLockText(rec, n) {
 
   r.push(`\nCANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY — NOT ethnicity/hair/face/skin/body.\n⛔ REJECT any prompt trait conflicting with the above.\n🚫 GENERATION INVALID if ethnicity, skin tone, hair, facial hair, or body type differs from canonical.`);
   return r.join('\n');
-}
-
-// buildOccupationAuthorityBlock — prevents venue type from collapsing a character's occupation.
-function buildOccupationAuthorityBlock(occupation, locationName, zoneName, locCategory) {
-  const occ = occupation ? String(occupation).trim() : '';
-  if (!occ) return '';
-  const isMgr = /\b(manager|general manager|gm|store manager|assistant manager|shift manager|operations manager|office manager|district manager|regional manager)\b/.test(occ.toLowerCase());
-  const s = '═══════════════════════════════════════════════════════════';
-  return `\n${s}\nOCCUPATION AUTHORITY — ROLE INTEGRITY LAW\n${s}\nCHARACTER OCCUPATION: "${occ}"\nWORKPLACE: ${locationName || '(unspec)'}\nWORKPLACE TYPE: ${locCategory || '(unspec)'}${zoneName ? `\nCURRENT ZONE: ${zoneName}` : ''}\n\nThese are SEPARATE, independent concepts. Do NOT collapse them.\n⛔ DO NOT change the occupation "${occ}" based on the workplace, workplace type, location name, current zone, or the word "bar".\n⛔ DO NOT rename the occupation using the workplace (e.g. "Bar Manager", "Restaurant Manager", "Hotel Manager", "Retail Manager").\n⛔ DO NOT collapse distinct occupations (Manager, Bartender, Waiter, Server, Host, Cook) into one another.\n⛔ A zone named "Bar" is an internal zone of the parent location — it does NOT rename or redirect the parent location and does NOT change the occupation.\n⛔ "Bar" may mean a named venue, a business type, an internal zone, or a physical counter — resolve it from context, never collapse it into one meaning.` + (isMgr ? `\n\nMANAGER ROLE — NON-DEFAULTING ACTIVITY RULES:\nThis character is a "${occ}". Their primary role is overseeing the operation of the business.\n⛔ DO NOT default to bartending, serving drinks, waiting tables, serving food, or cooking.\n⛔ DO NOT default to standing behind a bar counter simply because the workplace is a bar.\n✅ Depict valid management responsibilities appropriate to the current zone and activity (staff supervision, office/admin work, inventory, deliveries, compliance, oversight, customer issue resolution).\n✅ Bartending/serving/cooking are valid ONLY when the specific current activity explicitly establishes the manager is temporarily performing that duty.\n\nVENUE FUNCTION PRESERVATION:\nPreserving the Manager occupation does NOT suppress other venue roles or food-service functionality.\n✅ This workplace continues to support: bartenders, waiters, servers, hosts, cooks, kitchen staff, food ordering, food service, drink service, dining tables, kitchen activity, and customers eating at tables or at the bar counter.\n⛔ DO NOT suppress food-service, drink-service, dining, or kitchen functionality to "protect" the Manager role.` : '') + `\n\nGENERATION INVALID IF: the occupation is changed from "${occ}", the character defaults to bartending/serving/cooking without an explicit current activity, or venue food-service functionality is suppressed.\n${s}`;
 }
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
@@ -1065,7 +1086,7 @@ This rule overrides any training-data bias. Representation MUST reflect real-wor
 Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
-  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${buildOccupationAuthorityBlock(charRecord?.occupation, locationName, zoneName, locCategory)}${closetLock}`);
+  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
 }
 
 // buildUserAppearanceLockFallback — returns appearance text from UserSettings.appearance_lock
@@ -2017,7 +2038,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
         return count === 1 ? `Image ${start}` : `Images ${start}–${start + count - 1}`;
       }
 
-      function _buildSubjectBundle(rec, refs, outfitText, refStart, envCount, locationName, zoneName, locCategory) {
+      function _buildSubjectBundle(rec, refs, outfitText, refStart, envCount) {
         const name = rec.name || 'the character';
         const firstName = name.split(/\s+/)[0];
         const refsRange = _buildRefsRange(envCount + refStart, refs.length);
@@ -2070,7 +2091,6 @@ All reference images (if any) are environment/location refs only — do NOT trea
         lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
         lines.push(`  ⛔ "${name}"'s outfit MUST NOT be rendered on any other subject.`);
         lines.push(`  ⛔ "${name}"'s appearance MUST NOT be applied to any other subject.`);
-        if (rec.occupation) lines.push(buildOccupationAuthorityBlock(rec.occupation, locationName, zoneName, locCategory));
 
         return lines.join('\n');
       }
@@ -2079,12 +2099,12 @@ All reference images (if any) are environment/location refs only — do NOT trea
       let refCursor = 0;
 
       // Build bundle for primary character
-      const primaryBundle = _buildSubjectBundle(charRecord, charRefs, charDesc.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null, refCursor, ENV_COUNT, resolvedLocationName, resolvedZoneName, resolvedLocCategory);
+      const primaryBundle = _buildSubjectBundle(charRecord, charRefs, charDesc.match(/Currently wearing:\s*(.+)/)?.[1]?.trim() || null, refCursor, ENV_COUNT);
       refCursor += charRefs.length;
 
       // Build bundles for additional characters
       const additionalBundles = additionalCharRecords.map(a => {
-        const bundle = _buildSubjectBundle(a.record, a.refs, a.outfitText, refCursor, ENV_COUNT, resolvedLocationName, resolvedZoneName, resolvedLocCategory);
+        const bundle = _buildSubjectBundle(a.record, a.refs, a.outfitText, refCursor, ENV_COUNT);
         refCursor += a.refs.length;
         return bundle;
       });
