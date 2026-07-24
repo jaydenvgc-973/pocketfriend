@@ -755,22 +755,6 @@ const ZONE_KEYWORD_MAP = [
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
       const zn = zone.zone_name.toLowerCase().trim();
       const idx = promptLower.indexOf(zn);
-      // Resolve ambiguous zone names the same way as any other term: if this zone
-      // name also appears in the venue's own name, a mention that sits inside a
-      // full venue-name mention refers to the venue, not the internal zone.
-      const _vn = (location.name || '').toLowerCase().trim();
-      if (_vn && _vn.includes(zn) && promptLower.includes(_vn)) {
-        let _i = promptLower.indexOf(_vn);
-        let _inside = false;
-        while (_i !== -1) {
-          if (idx >= _i && idx + zn.length <= _i + _vn.length) { _inside = true; break; }
-          _i = promptLower.indexOf(_vn, _i + _vn.length);
-        }
-        if (_inside) {
-          console.log(`[resolveZone] skip "${zone.zone_name}" — matched inside venue name "${location.name}"`);
-          continue;
-        }
-      }
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
         console.log(`[resolveZone] Exact name match: "${zone.zone_name}"`);
