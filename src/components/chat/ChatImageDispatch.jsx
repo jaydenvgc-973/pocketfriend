@@ -10,7 +10,7 @@ import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import { enforceValidation } from "@/lib/appearanceLockValidator";
 import { resolveHousingLocationForCharacter } from "@/lib/resolveHousingLocationForCharacter";
-import { buildOccupationImageContext, resolveWorkplaceLocation } from "@/lib/occupationImageContextBuilder";
+import { buildOccupationImageContext, resolveWorkplaceLocation, resolveCurrentLocation } from "@/lib/occupationImageContextBuilder";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -115,16 +115,22 @@ export async function dispatchImageGeneration({
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
 
     // ── OCCUPATION CONTEXT INJECTION ──────────────────────────────────────
-    // Prepend the occupation context block to the image prompt so the image
-    // provider knows the character's actual job (occupation), workplace, location
-    // type, and current zone as independent concepts. This prevents the generator
-    // from collapsing a Manager at a bar into a Bartender behind the bar counter.
+    // Prepend the occupation context block to the image prompt. This preserves
+    // Occupation, Workplace, Location Type, Current Location, Available Zones,
+    // and Current Activity as independent concepts. Grounds in the authoritative
+    // resolved location (not presence status alone). Uses the location's real
+    // available zones (not a hard-coded list). Distinguishes Bar-as-zone from
+    // Bar-as-venue. Preserves food-service functionality for bar/food venues.
     const workplaceLocation = resolveWorkplaceLocation(character, locationMap);
-    const occupationContextBlock = buildOccupationImageContext({
+    const currentLocation = resolveCurrentLocation(character, locationMap);
+    const { block: occupationContextBlock, context: occupationContext } = buildOccupationImageContext({
       character,
+      currentLocation,
       workplaceLocation,
-      currentZoneName: null, // zone is resolved server-side from the location
     });
+    if (occupationContextBlock) {
+      console.log(`[ChatImageDispatch] Occupation context injected: occupation="${occupationContext?.occupation}" workplace="${occupationContext?.workplace_name}" isAtWork=${occupationContext?.isAtWork} zones=[${occupationContext?.available_zones?.join(', ')}]`);
+    }
     const finalImagePrompt = occupationContextBlock
       ? `${occupationContextBlock}\n${imageGenPrompt}`
       : imageGenPrompt;
