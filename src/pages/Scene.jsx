@@ -43,6 +43,7 @@ import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTr
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -112,13 +113,13 @@ export default function Scene() {
   const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settingsList, isLoading: isUserSettingsLoading } = useQuery({
-    queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => base44.entities.UserSettings.filter({ owner_email: currentUser.email }),
-    enabled: !!currentUser?.email
-  });
-  const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
-  const settings = safeSettingsList[0] || {};
+  // Use the shared useUserSettings hook (same as Home, Travel, MyProfile) so the
+  // ["userSettings", email] cache always holds a single object — never an array.
+  // Scene previously used an inline array-returning query that clashed with the
+  // hook's object-returning queryFn on the SAME cache key: when the cache held the
+  // object form, Array.isArray() failed here, settings became {}, and the user
+  // closet resolved empty in the Change Clothes modal.
+  const { settings, isLoading: isUserSettingsLoading } = useUserSettings(currentUser?.email || null);
   // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
   // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
