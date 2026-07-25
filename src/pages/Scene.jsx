@@ -311,6 +311,29 @@ export default function Scene() {
     return onShift;
   })();
 
+  // ── CHANGE CLOTHES: eligible real characters present in the scene ───────────
+  // Only active_created_character records with a persistent closet are offered as
+  // clothing targets. Ambient NPC templates / temporary scene staff are excluded.
+  // The user is NOT listed here — they are represented by "Me" in the modal selector.
+  // This selector is independent of the conversation target and does not alter
+  // occupancy, conversation eligibility, location, or sleep state.
+  const changeClothesEligibleCharacters = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    const add = (c) => {
+      if (!c || !c.id) return;
+      if (seen.has(c.id)) return;
+      // Only active_created_character records carry an authoritative closet.
+      if (c.character_type && c.character_type !== 'active_created_character') return;
+      seen.add(c.id);
+      list.push(c);
+    };
+    broughtCharacters.forEach(add);
+    homeResidentsPresent.forEach(add);
+    workerCharacters.forEach(add);
+    return list;
+  }, [broughtCharacters, homeResidentsPresent, workerCharacters]);
+
   // VGC Towers NPC characters distributed to this location (authoritative presence)
   // These are Character entity records with resolved_current_location_id === locationId
   const vgcDistributedNpcs = characters.filter((c) => {
@@ -2207,14 +2230,25 @@ Return JSON:
           setPendingPurchase(null);
         }} />
       
-      {/* Change Clothes — reuses existing user closet/outfit systems */}
+      {/* Change Clothes — explicit per-person targeting via existing outfit authorities */}
       <ChangeClothesModal
         isOpen={showChangeClothesModal}
         onClose={() => setShowChangeClothesModal(false)}
         settings={settings}
-        onOutfitChanged={() => {
-          queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] });
-          // Refresh the scene image so the new outfit is reflected immediately
+        presentCharacters={changeClothesEligibleCharacters}
+        userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null}
+        userName={displayName}
+        onOutfitChanged={(targetType) => {
+          // Refresh the targeted owner's authoritative outfit data.
+          if (targetType === 'user') {
+            queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] });
+          } else {
+            queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
+          }
+          // Regenerate the scene so the selected person's new clothing is visible.
+          // The image generator re-resolves every participant's outfit through the
+          // backend authority (resolveUserOutfitContext / resolveCharacterOutfitContext),
+          // so each person is bound to their own current outfit — no cross-contamination.
           setHasUserRequestedImage(true);
           setSceneImage(null);
         }} />
