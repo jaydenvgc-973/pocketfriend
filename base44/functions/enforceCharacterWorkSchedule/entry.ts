@@ -291,6 +291,12 @@ Deno.serve(async (req) => {
 
       // Which job's workplace is the character currently at (any active job).
       const singleCurrentWorkLocId = (resolvedLocId && singleAllWorkLocIds.includes(resolvedLocId)) ? resolvedLocId : null;
+      // Schedule-authority lock validity: a work_shift lock is stale when the
+      // authoritative schedule says no shift is active. Workplace presence must
+      // NOT gate release of an expired work lock.
+      const _singleHasStaleWorkLock = character.presence_stay_lock === true &&
+        (character.presence_stay_lock_reason === 'work_shift' ||
+         character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -402,11 +408,34 @@ Deno.serve(async (req) => {
         return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: committedLocId, reason: 'On shift — moved to work (via authority)' });
       }
 
-      // Not on any active shift — if still showing at a work location, send home.
-      // Route work-end through the sole canonical writer. Work end is an obligation
-      // ending, not a canonical presence state. The authority determines the valid
-      // resulting canonical location and presence. Work end does NOT automatically mean "home".
-      if (singleCurrentWorkLocId) {
+      // Not on any active shift. If the character carries a stale work_shift lock,
+      // the schedule authority has ended the shift — release it regardless of
+      // workplace presence. If the character IS at a workplace, route work-end
+      // through the sole canonical writer (existing movement-home pathway).
+      if (singleCurrentWorkLocId || _singleHasStaleWorkLock) {
+        if (!singleCurrentWorkLocId) {
+          // Character is NOT at a workplace but carries a stale work_shift lock.
+          // The schedule authority has ended the shift. Release the expired lock
+          // through the existing release pathway — do NOT attempt a work_end
+          // movement since the character is already elsewhere.
+          let _singleLockRelRes = null;
+          try {
+            _singleLockRelRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: characterId, owner_email: character.owner_email,
+              requested_lock_release: true,
+              requested_source_reason: 'stale_work_lock_released_shift_ended',
+              requested_authority: 'enforceCharacterWorkSchedule',
+            });
+          } catch (_singleLockRelErr) {
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: stale work lock release FAILED (not at workplace): ${_singleLockRelErr.message}`);
+            return Response.json({ updated: false, reason: 'stale_work_lock_release_failed', error: _singleLockRelErr.message });
+          }
+          return Response.json({
+            updated: _singleLockRelRes?.disposition === 'accepted',
+            reason: 'Stale work lock released — shift ended, not at workplace',
+            disposition: _singleLockRelRes?.disposition,
+          });
+        }
         // Before sending home, check whether another active job has a current or
         // immediately-following shift — if so, hold for the next tick instead of a
         // home detour between back-to-back shifts at different jobs.
@@ -682,6 +711,13 @@ Deno.serve(async (req) => {
         // active jobs, not only the primary). Used for post-shift return logic.
         const currentWorkLocId = (resolvedLocId && allWorkLocIds.includes(resolvedLocId)) ? resolvedLocId : null;
         const onShift = !!activeWorkLocId;
+        // Schedule-authority lock validity: a work_shift lock is stale when the
+        // authoritative schedule (isLocationShiftActiveNow) says no shift is active.
+        // Workplace presence must NOT gate release of an expired work lock — the
+        // lock is temporally valid only while the schedule authority says so.
+        const _gHasStaleWorkLock = char.presence_stay_lock === true &&
+          (char.presence_stay_lock_reason === 'work_shift' ||
+           char.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
 
         if (onShift && activeWorkLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope
@@ -721,8 +757,36 @@ Deno.serve(async (req) => {
               issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
             }
           }
-        } else if (!onShift && currentWorkLocId) {
-          // Character is at a job's workplace but that job's shift has ended. Work
+        } else if (!onShift && (currentWorkLocId || _gHasStaleWorkLock)) {
+          // Schedule authority says no shift is active. The work lock is temporally
+          // invalid. Release it regardless of workplace presence — the existing
+          // release pathway (enforceCharacterLocationPresence) handles both the
+          // at-workplace movement-home case and the not-at-workplace lock-only case.
+          if (!currentWorkLocId) {
+            // Character is NOT at a workplace but carries a stale work_shift lock.
+            // The schedule authority has ended the shift. Release the expired lock
+            // through the existing release pathway (requested_lock_release) — do NOT
+            // attempt a work_end movement since the character is already elsewhere.
+            try {
+              const _lockRelRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: char.id, owner_email: ownerEmail,
+                requested_lock_release: true,
+                requested_source_reason: 'stale_work_lock_released_shift_ended',
+                requested_authority: 'enforceCharacterWorkSchedule',
+              });
+              if (_lockRelRes?.disposition === 'accepted') {
+                fixes_applied.push(`${char.name}: stale work lock released (shift ended, not at workplace)`);
+                fixCount++;
+              } else {
+                issues_found.push(`${char.name}: stale work lock release — ${_lockRelRes?.disposition || 'unknown'}`);
+              }
+            } catch (_lockRelErr) {
+              console.error(`[enforceCharacterWorkSchedule] ${char.name}: stale work lock release FAILED (not at workplace): ${_lockRelErr.message}`);
+              issues_found.push(`${char.name}: stale work lock release FAILED — ${_lockRelErr.message}`);
+            }
+            continue;
+          }
+          // Character IS at a job's workplace and that job's shift has ended. Work
           // end is an obligation ending, not a canonical presence state. Before
           // sending home, check whether ANOTHER active job has a current or
           // immediately-following scheduled shift — if so, hold (do not send home)
