@@ -417,6 +417,19 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (character.resolved_presence_status === 'hospitalized') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_work_blocked' };
     }
+    // Passed-out characters are in an involuntary recovery state with its own
+    // existing release condition (energy_above_35). A stale or continuous
+    // "00:00–23:59" work-schedule lock must not override that existing
+    // recovery authority. Disregard the invalid work request and let the
+    // existing recovery pathway (the pass-out handler in this same function,
+    // or simulateActiveCharacterNeeds) retain authority until the release
+    // condition is met. The location enforcer does not gain new lock-clearing
+    // authority here — it simply refuses to enforce the invalid work lock and
+    // allows the existing owning pathway to release it through its own
+    // existing release mechanism.
+    if (character.resolved_presence_status === 'passed_out') {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'passed_out_work_blocked' };
+    }
     const workLocId = requestedLocId || character.occupation_location_id;
     if (!workLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };

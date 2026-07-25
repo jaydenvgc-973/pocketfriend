@@ -206,6 +206,22 @@ Only include entries with confidence >= 0.6. If no confident matches, return emp
         continue;
       }
 
+      // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────
+      // Use the existing authoritative classification (is_test_character) on
+      // both participants. If one is a disposable test character and the other
+      // is an actual (non-test) character, skip ALL prospective writes for
+      // this pair (fictional_relationships, transient_encounters,
+      // CharacterMemory). Only this pair's writes are skipped; the loop
+      // continues to process other detected relationships. This is an inline
+      // condition within the existing write-owning function — not a new
+      // helper, guard, or abstraction.
+      const _senderIsTest = char.is_test_character === true;
+      const _matchedIsTest = matchedChar.is_test_character === true;
+      if (_senderIsTest !== _matchedIsTest) {
+        console.warn(`[detectAndSyncRelationship] BLOCKED test-to-real write: ${char.name} (test=${_senderIsTest}) ↔ ${matchedChar.name} (test=${_matchedIsTest})`);
+        continue;
+      }
+
       const depth = det.interaction_depth || 'established';
 
       // ── RULE: co-location alone ("none") writes nothing ────────────────────

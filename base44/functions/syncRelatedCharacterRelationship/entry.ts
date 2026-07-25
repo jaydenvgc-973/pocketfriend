@@ -148,6 +148,21 @@ Deno.serve(async (req) => {
     ? existing.map(r => r.related_character_id === characterId ? { ...r, ...safeEntry } : r)
     : [...existing, safeEntry];
 
+  // STEP 7.5: BOUNDARY CHECK — Test Character Safety Addendum
+  // Before the reciprocal write completes, use the existing authoritative
+  // classification (is_test_character) on both participants. If one is a
+  // disposable test character and the other is an actual (non-test) character,
+  // skip only this prohibited reciprocal write and return. The surrounding
+  // operation is not aborted — this function owns only this single write.
+  // This is an inline condition within the existing write-owning function —
+  // not a new helper, guard, or abstraction.
+  const _primaryIsTest = primary.is_test_character === true;
+  const _relatedIsTest = related.is_test_character === true;
+  if (_primaryIsTest !== _relatedIsTest) {
+    console.warn(`[syncRelatedCharacterRelationship] BLOCKED test-to-real reciprocal write: ${primary.name} (test=${_primaryIsTest}) ↔ ${related.name} (test=${_relatedIsTest})`);
+    return Response.json({ success: false, skipped: true, reason: 'test_character_isolation_blocked' });
+  }
+
   // STEP 8: WRITE — ONLY fictional_relationships, nothing else
   await base44.asServiceRole.entities.Character.update(relatedCharacterId, {
     fictional_relationships: updatedRels,

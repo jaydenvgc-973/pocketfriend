@@ -42,6 +42,23 @@ Deno.serve(async (req) => {
 
     let newPeopleDetected = [];
 
+    // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────────
+    // Use the existing authoritative classification (is_test_character) on
+    // both participants. If one is a disposable test character and the other
+    // is an actual (non-test) character, skip the cross-character writes
+    // (fictional_relationships links and cross-referenced memories) but still
+    // allow single-character writes that do not reference the other
+    // character. Only the prohibited cross-character writes are skipped; the
+    // surrounding function continues its unrelated work. This is an inline
+    // condition within the existing write-owning function — not a new
+    // helper, guard, or abstraction.
+    const _testBoundaryBlocked = targetChar && playingAsChar
+      ? (targetChar.is_test_character === true) !== (playingAsChar.is_test_character === true)
+      : false;
+    if (_testBoundaryBlocked) {
+      console.warn(`[extractMemoriesFromTurn] BLOCKED test-to-real cross-character writes: ${targetChar?.name} (test=${targetChar?.is_test_character === true}) ↔ ${playingAsChar?.name} (test=${playingAsChar?.is_test_character === true})`);
+    }
+
     // ── TARGET CHARACTER: memory + new people detection + played-as-character cross-memory ─────────────────
     if (targetChar && characterReply) {
       const senderLabel = playingAsChar ? playingAsChar.name : 'someone';
@@ -110,7 +127,7 @@ Return JSON only.`,
         : [];
       const targetMemExists = recentTargetMems.length > 0 &&
         (Date.now() - new Date(recentTargetMems[0].created_date || recentTargetMems[0].timestamp || 0).getTime()) < 30000;
-      if (!targetMemExists) {
+      if (!targetMemExists && !_testBoundaryBlocked) {
         await base44.entities.Memory.create({
           character_id: characterId,
           title: playingAsChar ? `Interaction with ${playingAsChar.name}` : `Conversation moment`,
@@ -122,7 +139,7 @@ Return JSON only.`,
       }
 
       // If being addressed by a known active character, update the target's last_interaction_summary for that relationship
-      if (playingAsChar) {
+      if (playingAsChar && !_testBoundaryBlocked) {
         const existingRels = targetChar.fictional_relationships || [];
         const relIdx = existingRels.findIndex(r => r.related_character_id === playingAsCharacterId);
         const interactionSummary = `${playingAsChar.name} reached out: "${userMessage?.substring(0, 100)}"`;
@@ -157,7 +174,7 @@ Return JSON only.`,
     // ── PLAYED CHARACTER: full multi-dimensional memory extraction ─────────────
     // This is the core fix: the played character retains meaningful outcomes
     // from the interaction as if they lived through it — because they did.
-    if (playingAsChar && targetChar && (userMessage || characterReply)) {
+    if (playingAsChar && targetChar && (userMessage || characterReply) && !_testBoundaryBlocked) {
       const extraction = await base44.integrations.Core.InvokeLLM({
         prompt: `You are analyzing a real interaction that ${playingAsChar.name} just had with ${targetChar.name}.
 

@@ -331,6 +331,26 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
+    // ── BOUNDARY CHECK — Test Character Safety Addendum ────────────────────
+    // Before the outbound Message write completes, use the existing
+    // authoritative classification (is_test_character) on both participants.
+    // If one is a disposable test character and the other is an actual
+    // (non-test) character, block only this prohibited message write and
+    // return. The surrounding operation is not aborted beyond this single
+    // write. This is an inline condition within the existing write-owning
+    // function — not a new helper, guard, or abstraction.
+    const _wpSenderIsTest = sender.is_test_character === true;
+    const _wpRecipientIsTest = recipient.is_test_character === true;
+    if (_wpSenderIsTest !== _wpRecipientIsTest) {
+      console.warn(`[sendWorldPhoneMessage] BLOCKED test-to-real message write: ${sender.name} (test=${_wpSenderIsTest}) → ${recipient.name} (test=${_wpRecipientIsTest})`);
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'test_character_isolation_blocked',
+        message: `Message blocked: test character isolation prevents writes between disposable test characters and actual characters.`,
+      });
+    }
+
     // ── SLEEP AUTHORITY GUARD — RECIPIENT ──────────────────────────────────────
     // Canonical rule: a sleeping/napping/passed_out character cannot generate an
     // immediate World Phone reply. The outbound message IS saved so the sender's

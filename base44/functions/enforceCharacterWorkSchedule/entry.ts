@@ -69,11 +69,21 @@ Deno.serve(async (req) => {
       const activity = (character.current_activity || '').toLowerCase();
 
       // Helper: Check if character is blocked from work
+      // Work authority is a temporary, re-validatable claim. The work lock must
+      // yield to higher-priority states that already own the character's
+      // recovery. These checks use existing authoritative state — no new
+      // thresholds are introduced here.
       const isBlockedFromWork = (char) => {
         // Hospitalized characters are in a protected recovery state — work must
         // not interrupt medical care. The existing discharge pathway restores
         // presence once medically stable.
         if (char.resolved_presence_status === 'hospitalized') return true;
+        // Passed-out characters are in an involuntary recovery state with its
+        // own existing release condition (energy_above_35). Work authority must
+        // yield to that existing recovery pathway — the work lock is temporary
+        // and must not be renewed while a higher-priority state owns the
+        // character.
+        if (char.resolved_presence_status === 'passed_out') return true;
         const isCriticallyIll = char.health_value !== undefined && char.health_value < 20;
         const isInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
         return isCriticallyIll || isInEmergency;
@@ -428,6 +438,28 @@ Deno.serve(async (req) => {
         // not interrupt medical care. The existing discharge pathway restores
         // presence to home once medically stable.
         if (char.resolved_presence_status === 'hospitalized') {
+          continue;
+        }
+        // Passed-out characters are in an involuntary recovery state with its
+        // own existing release condition (energy_above_35). Work authority must
+        // yield to that existing recovery pathway — the work lock is temporary
+        // and must not be renewed while a higher-priority state owns the
+        // character. This mirrors the same existing authority used in
+        // single-char mode (isBlockedFromWork), applied here so the global
+        // scheduler respects the same protected states and does not treat a
+        // continuous "00:00–23:59" schedule as authorization to renew a stale
+        // work lock over a passed-out character.
+        if (char.resolved_presence_status === 'passed_out') {
+          continue;
+        }
+        // Existing health-critical and emergency checks — same thresholds
+        // already used in single-char mode isBlockedFromWork. Inlined here so
+        // the global scheduler does not renew a work lock when the character
+        // is critically ill or in an active emergency. This is the same
+        // existing authority, not a new threshold.
+        const _gIsCriticallyIll = char.health_value !== undefined && char.health_value < 20;
+        const _gIsInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
+        if (_gIsCriticallyIll || _gIsInEmergency) {
           continue;
         }
 
