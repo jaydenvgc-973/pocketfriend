@@ -239,6 +239,24 @@ Deno.serve(async (req) => {
       return Response.json({ text: null, source: 'character_not_found', category: null });
     }
 
+    // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
+    // Honored ABOVE all automatic logic (uniform, special occasion, rotation,
+    // category fallback) for the exact location where the user manually chose it
+    // via Scene > Change Clothes. Scope: the stored location_id must match the
+    // request locationId. Null/absent = automatic selection applies normally.
+    // This is the ONLY path that lets a user wear an out-of-category outfit.
+    const explicitSceneOutfit = character.scene_explicit_outfit;
+    if (explicitSceneOutfit?.outfit_id && locationId && explicitSceneOutfit.location_id === locationId) {
+      const explicitOutfit = (character.character_closet || []).find((o: any) => o.outfit_id === explicitSceneOutfit.outfit_id);
+      if (explicitOutfit) {
+        const t = buildOutfitText(explicitOutfit) || explicitOutfit.label?.trim() || null;
+        if (t) {
+          console.log(`[resolveCharacterOutfitContext] ✅ SCENE_EXPLICIT outfit_id="${explicitSceneOutfit.outfit_id}" at location="${locationId}" (category="${explicitOutfit.category || 'none'}")`);
+          return Response.json({ text: t, source: 'scene_explicit_outfit', category: explicitOutfit.category || null, outfit_id: explicitOutfit.outfit_id });
+        }
+      }
+    }
+
     // ── PRIORITY 1: UNIFORM (work/school/jail) ───────────────────────────────
     // Resolve the effective location ID: passed locationId, then work/school/jail from presence.
     const presence = character.resolved_presence_status || character.location_status || '';

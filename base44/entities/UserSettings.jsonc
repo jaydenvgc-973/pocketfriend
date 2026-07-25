@@ -333,6 +333,23 @@
         "type": "string"
       }
     },
+    "scene_explicit_outfit": {
+      "type": "object",
+      "description": "Explicit manual outfit chosen via Scene > Change Clothes. Honored ABOVE all automatic outfit logic for image generation at the matching location only. Null/absent = automatic selection applies. Does NOT touch user_today_category_outfit_overrides, user_manual_category_selections, user_current_outfit, or the closet \u2014 the Profile closet's category behavior is unaffected.",
+      "properties": {
+        "outfit_id": {
+          "type": "string"
+        },
+        "location_id": {
+          "type": "string",
+          "description": "Location ID where this explicit outfit applies. Resolver honors it only when the request locationId matches."
+        },
+        "set_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "daily_weather_cache": {
       "type": "object",
       "description": "Cached daily weather data (sunrise, sunset, conditions) fetched at 4 AM ET",

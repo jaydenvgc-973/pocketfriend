@@ -82,6 +82,23 @@ Deno.serve(async (req) => {
     const closet = settings.user_closet || [];
     const outfits = closet.filter((o: any) => o.outfit_id);
 
+    // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
+    // Honored ABOVE all automatic logic (special occasion, rotation, category
+    // fallback) for the exact location where the user manually chose it via
+    // Scene > Change Clothes. Scope: stored location_id must match request locationId.
+    // Null/absent = automatic selection applies normally.
+    const explicitSceneOutfit = settings.scene_explicit_outfit;
+    if (explicitSceneOutfit?.outfit_id && locationId && explicitSceneOutfit.location_id === locationId) {
+      const explicitOutfit = outfits.find((o: any) => o.outfit_id === explicitSceneOutfit.outfit_id);
+      if (explicitOutfit) {
+        const t = buildOutfitText(explicitOutfit) || explicitOutfit.label?.trim() || null;
+        if (t) {
+          console.log(`[resolveUserOutfitContext] ✅ SCENE_EXPLICIT outfit_id="${explicitSceneOutfit.outfit_id}" at location="${locationId}" (category="${explicitOutfit.category || 'none'}")`);
+          return Response.json({ text: t, source: 'scene_explicit_outfit', category: explicitOutfit.category || null, outfit_id: explicitOutfit.outfit_id });
+        }
+      }
+    }
+
     if (!outfits.length) {
       const co = settings.user_current_outfit;
       const t = co ? buildOutfitText(co) || co.label?.trim() || null : null;

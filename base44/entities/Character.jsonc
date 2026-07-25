@@ -448,6 +448,23 @@
       "default": true,
       "description": "When true, outfit is resolved from closet rotation rules. When false, current_outfit is the manual authority."
     },
+    "scene_explicit_outfit": {
+      "type": "object",
+      "description": "Explicit manual outfit chosen via Scene > Change Clothes. Honored ABOVE all automatic outfit logic (uniform, special occasion, rotation, category fallback) for image generation at the matching location only. Null/absent = automatic selection applies. Does NOT touch today_category_outfit_overrides, manual_category_selections, current_outfit, or the closet \u2014 the Profile closet's category behavior is unaffected.",
+      "properties": {
+        "outfit_id": {
+          "type": "string"
+        },
+        "location_id": {
+          "type": "string",
+          "description": "Location ID where this explicit outfit applies. Resolver honors it only when the request locationId matches."
+        },
+        "set_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "current_home_location_id": {
       "type": "string"
     },

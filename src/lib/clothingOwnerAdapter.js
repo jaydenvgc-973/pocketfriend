@@ -1,38 +1,41 @@
 /**
  * clothingOwnerAdapter.js
  *
- * Owner-aware adapter for the Scene "Change Clothes" action.
+ * Owner-aware adapter for the Scene "Change Clothes" EXPLICIT manual selection.
  *
- * The Scene modal must NOT know field names like `user_closet` or `character_closet`.
- * It asks this adapter for: the owner's normalized closet, the currently-active outfit
- * id, an apply-outfit mutation, and a canonical active-outfit resolver — each routed
- * through the ESTABLISHED authority for that owner kind.
+ * The Scene modal must NOT know field names. It asks this adapter for the owner's
+ * normalized closet, the currently-active outfit id, an apply-outfit mutation, and
+ * a canonical active-outfit resolver — each routed through the ESTABLISHED authority
+ * for that owner kind.
+ *
+ * EXPLICIT SCENE OUTFIT:
+ *   The Scene Change Clothes action writes `scene_explicit_outfit` (a location-scoped
+ *   explicit outfit reference) on the owner record. The backend resolvers
+ *   (resolveUserOutfitContext / resolveCharacterOutfitContext) honor this field
+ *   ABOVE all automatic logic (uniform, special occasion, rotation, category
+ *   fallback) for the matching location only. This lets the user manually wear ANY
+ *   complete stored outfit regardless of its category.
+ *
+ *   This pathway does NOT touch today_category_outfit_overrides, manual_category_selections,
+ *   current_outfit, or the closet — so the Profile closet's automatic category behavior
+ *   remains fully intact. When scene_explicit_outfit is absent or its location_id does not
+ *   match the request location, the automatic wardrobe system selects normally.
  *
  * Supported owner kinds:
- *   - user     → UserSettings (user_closet / user_today_category_outfit_overrides /
- *                user_manual_category_selections / user_outfit_rotation_enabled)
- *   - character→ Character entity (character_closet / today_category_outfit_overrides /
- *                manual_category_selections / outfit_rotation_enabled / current_outfit)
+ *   - user      → UserSettings
+ *   - character → Character entity (ALL persistent types: active_created_character,
+ *                 npc_fictitious, npc_family_member, etc. — they share the same closet fields)
  *
- * ALL persistent character types share the same Character-entity closet fields, so
- * active_created_character, npc_fictitious, npc_family_member, etc. are all supported
- * through the SAME character branch. Only non-persistent scene constructs (venue
- * templates, temp staff, synthesized presence objects) are unsupported — and those
- * never reach this adapter because they are excluded upstream by the eligible list.
- *
- * TIMEZONE: date comparisons use America/New_York (Eastern Time). UTC is forbidden.
+ * TIMEZONE: set_at uses ISO (UTC infrastructure metadata). Date comparisons in the
+ * resolvers use America/New_York (Eastern Time). UTC is never an application time reference.
  */
 import { base44 } from '@/api/base44Client';
 import {
-  applyUserManualCategoryOverride,
-  applyManualCategoryOverride,
   getTodayUserOverrides,
   getTodayCharacterOverrides,
 } from './activeOutfitResolver';
 
 // ── CANONICAL OUTFIT TEXT (mirrors backend buildOutfitText) ──────────────────
-// Used to verify that the backend resolver actually returned the selected outfit.
-// Must match resolveCharacterOutfitContext/resolveUserOutfitContext buildOutfitText.
 export function buildOutfitCanonicalText(outfit) {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
@@ -50,20 +53,23 @@ export function buildOutfitCanonicalText(outfit) {
   if (fd && !/\b(cinematic|chiaroscuro|dramatic lighting|editorial photography|fine art|low-key lighting|sculptural anatomy|artistic composition|museum.quality|photorealistic|ultra.detailed|high.resolution|bokeh|dramatic shadow|noir atmosphere|hyper.realistic|studio lighting|professional photography|stock photo)\b/i.test(fd)) {
     return fd;
   }
-  // Resolver falls back to label when no text is usable.
   return (outfit.label || '').trim() || null;
 }
 
-// ── CLOSET NORMALIZATION ─────────────────────────────────────────────────────
-// Outfits only — exclude standalone "piece" records (type === 'piece' or piece_id).
 function normalizeClosetItems(rawCloset) {
   return (rawCloset || [])
     .filter((o) => o && o.outfit_id && (o.type === 'outfit' || (!o.piece_id?.startsWith('piece_') && o.outfit_id)));
 }
 
 // ── ACTIVE OUTFIT ID (for "Wearing" highlight in the modal) ──────────────────
-function deriveActiveOutfitId(kind, record, rotationEnabled) {
+// Priority: explicit scene outfit (matching this location) > category-based active id.
+function deriveActiveOutfitId(kind, record, locationId) {
+  const explicit = record?.scene_explicit_outfit;
+  if (explicit?.outfit_id && locationId && explicit.location_id === locationId) {
+    return explicit.outfit_id;
+  }
   if (kind === 'user') {
+    const rotationEnabled = record?.user_outfit_rotation_enabled === true;
     if (rotationEnabled) {
       const ov = getTodayUserOverrides(record);
       const ids = Object.values(ov || {});
@@ -74,7 +80,7 @@ function deriveActiveOutfitId(kind, record, rotationEnabled) {
     if (ids.length) return ids[ids.length - 1];
     return record?.user_current_outfit?.outfit_id || null;
   }
-  // character
+  const rotationEnabled = record?.outfit_rotation_enabled !== false;
   if (rotationEnabled) {
     const ov = getTodayCharacterOverrides(record);
     const ids = Object.values(ov || {});
@@ -88,30 +94,34 @@ function deriveActiveOutfitId(kind, record, rotationEnabled) {
 
 /**
  * resolveClothingOwner
- *
- * Returns the owner adapter for a target. Pure function — no hooks.
- *
  * @param {{type:'user'|'character', id?:string}} target
- * @param {{settings?:object, presentCharacters?:object[]}} records
- * @returns {object} owner adapter
+ * @param {{settings?:object, presentCharacters?:object[], locationId?:string}} records
  */
 export function resolveClothingOwner(target, records) {
-  const { settings, presentCharacters } = records || {};
+  const { settings, presentCharacters, locationId } = records || {};
 
   if (target.type === 'user') {
     const closet = normalizeClosetItems(settings?.user_closet);
-    const rotationEnabled = settings?.user_outfit_rotation_enabled === true;
     return {
       kind: 'user',
       ownerId: settings?.id || null,
       label: 'Me',
       record: settings || null,
       closet,
-      rotationEnabled,
-      activeOutfitId: deriveActiveOutfitId('user', settings, rotationEnabled),
-      async applyOverride(outfit) {
+      activeOutfitId: deriveActiveOutfitId('user', settings, locationId),
+      /**
+       * Write the EXPLICIT scene outfit for this owner. Does NOT touch category
+       * overrides, manual selections, current_outfit, or the closet.
+       */
+      async applyOverride(outfit, ctx) {
         if (!settings?.id) throw new Error('Your settings are still loading. Try again in a moment.');
-        const patch = applyUserManualCategoryOverride(settings, outfit.category, outfit.outfit_id);
+        const patch = {
+          scene_explicit_outfit: {
+            outfit_id: outfit.outfit_id,
+            location_id: ctx?.locationId || null,
+            set_at: new Date().toISOString(),
+          },
+        };
         await base44.entities.UserSettings.update(settings.id, patch);
         return patch;
       },
@@ -126,10 +136,8 @@ export function resolveClothingOwner(target, records) {
     };
   }
 
-  // character
   const char = (presentCharacters || []).find((c) => c.id === target.id);
   const closet = normalizeClosetItems(char?.character_closet);
-  const rotationEnabled = char?.outfit_rotation_enabled !== false;
   return {
     kind: 'character',
     ownerId: char?.id || target.id,
@@ -137,11 +145,16 @@ export function resolveClothingOwner(target, records) {
     record: char || null,
     avatar: char?.avatar_url || char?.image_avatar_url || null,
     closet,
-    rotationEnabled,
-    activeOutfitId: deriveActiveOutfitId('character', char, rotationEnabled),
-    async applyOverride(outfit) {
+    activeOutfitId: deriveActiveOutfitId('character', char, locationId),
+    async applyOverride(outfit, ctx) {
       if (!char?.id) throw new Error('That character is no longer in the scene.');
-      const patch = applyManualCategoryOverride(char, outfit.category, outfit.outfit_id);
+      const patch = {
+        scene_explicit_outfit: {
+          outfit_id: outfit.outfit_id,
+          location_id: ctx?.locationId || null,
+          set_at: new Date().toISOString(),
+        },
+      };
       await base44.entities.Character.update(char.id, patch);
       return patch;
     },
@@ -160,42 +173,24 @@ export function resolveClothingOwner(target, records) {
 /**
  * verifySelectedOutfitActive
  *
- * After writing the override, confirm the canonical resolver now returns the
- * selected outfit. Uses source + category (the resolver returns the winning
- * override's category) and falls back to canonical-text comparison.
- *
- * Returns { verified: boolean, resolved: object, mismatchReason: string|null }.
+ * Verify the EXACT selected outfit is now the resolved active outfit by outfit_id.
+ * Category, source name, and text similarity are NOT sufficient proof — only an
+ * exact outfit_id match is accepted. This never blocks on category appropriateness;
+ * it only fails on real persistence/ownership errors (outfit deleted, record not found).
  */
 export function verifySelectedOutfitActive(resolved, outfit) {
   if (!resolved) return { verified: false, mismatchReason: 'No response from the outfit resolver.' };
-  const src = resolved.source || '';
-  // The override must have been the winning source.
-  const overrideWon =
-    src === 'today_category_override' ||
-    src === 'rotation_off_manual_category';
-  if (overrideWon && resolved.category === outfit.category) {
+  if (resolved.outfit_id && resolved.outfit_id === outfit.outfit_id) {
     return { verified: true, resolved };
   }
-  // Secondary: canonical text match (handles resolvers that re-label sources).
-  const selectedText = buildOutfitCanonicalText(outfit);
-  const resolvedText = (resolved.text || '').trim();
-  if (selectedText && resolvedText && selectedText.toLowerCase() === resolvedText.toLowerCase()) {
-    return { verified: true, resolved };
-  }
-  // Not verified — explain why.
-  const winningCat = resolved.category || 'unknown category';
-  const selectedCat = outfit.category || 'unknown';
   let reason;
-  if (src === 'uniform') {
-    reason = 'A required uniform applies at this location and overrides clothing selections.';
-  } else if (src === 'today_category_override' || src === 'rotation_off_manual_category') {
-    reason = 'Another outfit selection (' + winningCat + ') takes priority for this scene. The selected ' + selectedCat + ' outfit will not be visible here.';
-  } else if (src === 'closet_rotation' || src === 'rotation_off_current_outfit') {
-    reason = 'This scene calls for a different outfit category than ' + selectedCat + '. The selected outfit will not be visible here. Try an outfit whose category matches this location.';
-  } else if (src === 'no_closet' || src === 'no_settings' || src === 'character_not_found') {
+  const src = resolved.source || '';
+  if (src === 'character_not_found' || src === 'no_settings') {
     reason = 'The owner record could not be read back after the update.';
+  } else if (src === 'no_closet') {
+    reason = 'The selected outfit was not found in the owner\'s closet after the update. It may have been removed.';
   } else {
-    reason = 'The selected outfit could not be confirmed as active (resolver source: ' + (src || 'unknown') + ').';
+    reason = 'The selected outfit could not be confirmed as the active scene outfit. Please try again.';
   }
   return { verified: false, resolved, mismatchReason: reason };
 }

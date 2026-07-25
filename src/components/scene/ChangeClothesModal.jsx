@@ -80,8 +80,8 @@ export default function ChangeClothesModal({
 
   // ── SELECTED PERSON: authoritative closet via the owner adapter ──────────────
   const owner = useMemo(
-    () => resolveClothingOwner(selectedTarget, { settings, presentCharacters }),
-    [selectedTarget, settings, presentCharacters]
+    () => resolveClothingOwner(selectedTarget, { settings, presentCharacters, locationId: location?.id }),
+    [selectedTarget, settings, presentCharacters, location?.id]
   );
 
   // Loading: user target uses the real query loading flag (not !settings.id).
@@ -120,10 +120,12 @@ export default function ChangeClothesModal({
       return;
     }
 
-    // ── 2. APPLY: write through the owner's own outfit authority ───────────────
+    // ── 2. APPLY: write the EXPLICIT scene outfit for this owner ──────────────
+    // This writes scene_explicit_outfit (location-scoped) — it does NOT touch
+    // category overrides, manual selections, current_outfit, or the closet.
     setStage(STAGE.applying);
     try {
-      await owner.applyOverride(outfit);
+      await owner.applyOverride(outfit, { locationId: location?.id });
     } catch (e) {
       setError(e?.message || "Could not apply that outfit. Please try again.");
       setStage(STAGE.failed);
@@ -131,6 +133,8 @@ export default function ChangeClothesModal({
     }
 
     // ── 3. VERIFY: read back through the canonical backend resolver ───────────
+    // The resolver now honors scene_explicit_outfit ABOVE all automatic logic.
+    // We verify by EXACT outfit_id match — category/text/source are not proof.
     setStage(STAGE.verifying);
     let resolved = null;
     try {
@@ -149,9 +153,8 @@ export default function ChangeClothesModal({
 
     const { verified, mismatchReason } = verifySelectedOutfitActive(resolved, outfit);
     if (!verified) {
-      // The write succeeded but the selected outfit did NOT win (uniform, special
-      // occasion, or a higher-priority category override took precedence). Keep
-      // the modal open; do NOT regenerate with fallback clothing.
+      // Real failure only (outfit deleted, record not found). This never blocks
+      // on category appropriateness — the explicit scene outfit overrides category.
       setError(mismatchReason || "The selected outfit could not be confirmed as active.");
       setStage(STAGE.failed);
       return;
