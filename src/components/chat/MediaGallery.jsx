@@ -371,7 +371,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     const timer = setTimeout(() => {
       setIsFetchingImages(true);
       base44.entities.Message.filter(
-        { conversation_id: conversationId },
+        { conversation_id: conversationId, owner_email: userEmailRef.current || userEmail },
         "-created_date",
         500
       )
