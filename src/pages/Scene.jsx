@@ -28,6 +28,7 @@ import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import ProductPurchaseModal from "@/components/scene/ProductPurchaseModal";
+import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
@@ -101,6 +102,7 @@ export default function Scene() {
   // Watch Video / Watch Party — ephemeral session state only, never persisted to entities.
   const [watchVideoActive, setWatchVideoActive] = useState(false);
   const [watchContext, setWatchContext] = useState(null); // { provider, title, videoType }
+  const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -699,14 +701,21 @@ export default function Scene() {
     if (!location || broughtCharacters.length === 0) return;
 
     // Update brought characters — they have traveled here, so this IS their current location now.
+    // OBSERVATIONAL RULE: Scene loading must NOT change a character's canonical state.
+    // A sleeping/napping/passed_out character keeps that status — only the location fields
+    // sync. Waking is the sole responsibility of the existing sleep/authority systems
+    // (explicit interaction, scheduled routines, simulation updates). Scene arrival is a
+    // read-only consumer of presence, never a second wake authority.
     broughtCharacters.forEach((char) => {
+      const isAsleep = ['sleeping', 'napping', 'passed_out'].includes(char.resolved_presence_status);
       base44.entities.Character.update(char.id, {
         // AUTHORITATIVE fields — these are what every UI surface reads
         resolved_current_location_id: location.id,
         resolved_current_location_name: location.name,
         resolved_location_type: location.category === 'home' ? 'home' : 'visit',
-        resolved_presence_status: location.category === 'home' ? 'home' : 'visiting',
-        resolved_source_reason: 'user_travel',
+        // Preserve the canonical rest state — arriving at a scene must not wake a sleeping character.
+        resolved_presence_status: isAsleep ? char.resolved_presence_status : (location.category === 'home' ? 'home' : 'visiting'),
+        resolved_source_reason: isAsleep ? char.resolved_source_reason : 'user_travel',
         resolved_last_updated_at: new Date().toISOString(),
         // Clear any stale travel transit state
         travel_status: 'not_traveling',
@@ -842,6 +851,33 @@ export default function Scene() {
   }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
   // Duplicate ensureChildCaregiverPresence removed — see comment above.
+
+  // ── SLEEP/REST STATE DESCRIPTOR ──────────────────────────────────────────────
+  // Scene rendering is OBSERVATIONAL: it reflects each character's authoritative
+  // resolved_presence_status (sleeping / napping / passed_out) so the image depicts
+  // them in their canonical rest state — never awake/active while the simulation says
+  // they are asleep. Reuses isCharacterAsleep (the existing single sleep truth) and the
+  // DB status; it introduces no new sleep flags or parallel tracking. A character shown
+  // asleep here remains asleep until an existing authority changes their state.
+  const buildSleepDescriptor = (people) => {
+    const asleep = [];
+    const napping = [];
+    const passedOut = [];
+    for (const p of people || []) {
+      if (!p || p.isUser) continue;
+      const rec = characters.find((c) => c.id === p.id);
+      if (!rec) continue;
+      const status = rec.resolved_presence_status;
+      if (status === 'passed_out') passedOut.push(p.name);
+      else if (status === 'napping') napping.push(p.name);
+      else if (status === 'sleeping' || isCharacterAsleep(rec, locationMap)) asleep.push(p.name);
+    }
+    const parts = [];
+    if (asleep.length) parts.push(`${asleep.join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep — depict sleeping with eyes closed, in bed or wherever they fell asleep, NOT awake, NOT active, NOT talking`);
+    if (napping.length) parts.push(`${napping.join(', ')} ${napping.length === 1 ? 'is' : 'are'} napping — drowsy, eyes closed, resting`);
+    if (passedOut.length) parts.push(`${passedOut.join(', ')} ${passedOut.length === 1 ? 'is' : 'are'} passed out unconscious from exhaustion — slumped, unresponsive`);
+    return parts.length ? ` SLEEP/REST STATE (authoritative — do not contradict): ${parts.join('. ')}.` : '';
+  };
 
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
@@ -980,6 +1016,8 @@ export default function Scene() {
       if (userAppearanceBlock) {
         finalPrompt += userAppearanceBlock;
       }
+      // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
+      finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
       try {
         // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
         const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
@@ -1072,7 +1110,7 @@ export default function Scene() {
       ...envRefs.filter((u) => !residentAvatarUrls.includes(u))];
 
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
@@ -1099,7 +1137,7 @@ export default function Scene() {
         const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
@@ -1114,7 +1152,7 @@ export default function Scene() {
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 
@@ -1946,6 +1984,18 @@ Return JSON:
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
           {/* All contextual actions are shown — strip is horizontally scrollable, no artificial cap */}
+          {/* Change Clothes — reuses the user's existing closet/outfit systems */}
+          <button
+            onClick={() => setShowChangeClothesModal(true)}
+            disabled={actionCooldown}
+            className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${
+              actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"
+            }`}
+            title="Change your outfit"
+          >
+            <span className="text-base leading-none">👕</span>
+            <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span>
+          </button>
         {actions.map((action) => {
             const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             const isDisabled = action.disabled || actionCooldown;
@@ -2155,6 +2205,18 @@ Return JSON:
             timestamp: new Date().toISOString()
           }]);
           setPendingPurchase(null);
+        }} />
+      
+      {/* Change Clothes — reuses existing user closet/outfit systems */}
+      <ChangeClothesModal
+        isOpen={showChangeClothesModal}
+        onClose={() => setShowChangeClothesModal(false)}
+        settings={settings}
+        onOutfitChanged={() => {
+          queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] });
+          // Refresh the scene image so the new outfit is reflected immediately
+          setHasUserRequestedImage(true);
+          setSceneImage(null);
         }} />
       
 
