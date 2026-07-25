@@ -57,6 +57,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────
+      // The target character is the one receiving NPC relationship links. If
+      // it is classified as a test character, skip ALL relationship writes for
+      // it — the NPCs created here have is_test_character=false, so linking
+      // them to a test target would create test-to-non-test contamination.
+      // This is an inline condition within the existing write-owning function.
+      if (character.is_test_character === true) {
+        console.warn(`[addNPCRelationships] BLOCKED test-character relationship links: "${charName}" (test=true)`);
+        results[charName] = { status: 'skipped_test_character' };
+        continue;
+      }
+
       const currentRels = character.fictional_relationships || [];
       const existingIds = new Set(currentRels.filter(r => r.related_character_id).map(r => r.related_character_id));
       const existingNameSet = new Set(currentRels.map(r => r.person_name?.toLowerCase()));

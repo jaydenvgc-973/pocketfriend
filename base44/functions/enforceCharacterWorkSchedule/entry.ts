@@ -90,7 +90,37 @@ Deno.serve(async (req) => {
       };
 
       if (isBlockedFromWork(character)) {
-        return Response.json({ updated: false, reason: 'Character blocked from work (sick/emergency)' });
+        // The work lock is a temporary, re-validatable claim. When the existing
+        // authoritative state (resolved_presence_status / isBlockedFromWork)
+        // shows the character is in a protected recovery state that supersedes
+        // work authority, any stale persisted work lock must be released through
+        // the existing authorized release pathway (requested_lock_release →
+        // enforceCharacterLocationPresence lines 718-742). A continuous
+        // "00:00–23:59" schedule cannot maintain or renew the work lock while
+        // the character remains in a protected state — the lock is released
+        // here and cannot be re-acquired until the character exits the
+        // protected state through its own existing release condition (e.g.
+        // hospital discharge gate at line 201, pass-out energy_above_35).
+        // Only a stale WORK lock is released — a pass-out or hospital lock
+        // (reason 'pass_out_recovery' etc.) is preserved so the owning
+        // recovery pathway retains its release authority.
+        const hasStaleWorkLock = character.presence_stay_lock === true &&
+          (character.presence_stay_lock_reason === 'work_shift' ||
+           character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+        if (hasStaleWorkLock) {
+          try {
+            await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+              character_id: characterId, owner_email: character.owner_email,
+              requested_lock_release: true,
+              requested_source_reason: 'stale_work_lock_released_protected_state',
+              requested_authority: 'enforceCharacterWorkSchedule',
+            });
+          } catch (_releaseErr) {
+            // Non-fatal — the protected state already controls presence; the
+            // stale lock release retries on the next tick.
+          }
+        }
+        return Response.json({ updated: false, reason: 'Character blocked from work (protected recovery state)', stale_work_lock_released: hasStaleWorkLock });
       }
 
       // Work is an authorized wake source. Track if character was sleeping so the
@@ -434,32 +464,50 @@ Deno.serve(async (req) => {
           continue; // Called out — do not force to work
         }
 
-        // Hospitalized characters are in a protected recovery state — work must
-        // not interrupt medical care. The existing discharge pathway restores
-        // presence to home once medically stable.
-        if (char.resolved_presence_status === 'hospitalized') {
-          continue;
-        }
-        // Passed-out characters are in an involuntary recovery state with its
-        // own existing release condition (energy_above_35). Work authority must
-        // yield to that existing recovery pathway — the work lock is temporary
-        // and must not be renewed while a higher-priority state owns the
-        // character. This mirrors the same existing authority used in
-        // single-char mode (isBlockedFromWork), applied here so the global
-        // scheduler respects the same protected states and does not treat a
-        // continuous "00:00–23:59" schedule as authorization to renew a stale
-        // work lock over a passed-out character.
-        if (char.resolved_presence_status === 'passed_out') {
-          continue;
-        }
-        // Existing health-critical and emergency checks — same thresholds
-        // already used in single-char mode isBlockedFromWork. Inlined here so
-        // the global scheduler does not renew a work lock when the character
-        // is critically ill or in an active emergency. This is the same
-        // existing authority, not a new threshold.
-        const _gIsCriticallyIll = char.health_value !== undefined && char.health_value < 20;
-        const _gIsInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
-        if (_gIsCriticallyIll || _gIsInEmergency) {
+        // ── PROTECTED-STATE REVALIDATION (existing authority) ──────────────
+        // The work lock is a temporary, re-validatable claim. The existing
+        // authoritative protected states (resolved_presence_status) owned by
+        // enforceCharacterLocationPresence and simulateActiveCharacterNeeds
+        // supersede work authority: 'hospitalized' (medical recovery, discharge
+        // gate at line 201) and 'passed_out' (involuntary collapse, release
+        // condition energy_above_35). These are the EXISTING authoritative
+        // results — no needs/emergency thresholds are reproduced here.
+        //
+        // When the character is in one of these protected states AND carries a
+        // stale WORK lock (reason 'work_shift' / authority
+        // 'enforceCharacterWorkSchedule'), the scheduler releases that stale
+        // lock through the existing authorized release pathway
+        // (requested_lock_release → enforceCharacterLocationPresence lines
+        // 718-742). This prevents a continuous "00:00–23:59" schedule from
+        // maintaining or repeatedly reclaiming stale work authority merely
+        // because the clock remains inside the configured schedule: the lock
+        // is released here, and the at_work transition is rejected by the
+        // authority (lines 430-432) while the protected state persists, so the
+        // lock cannot be re-acquired until the character exits the protected
+        // state through its own existing release condition.
+        //
+        // Only a stale WORK lock is released — a pass-out or hospital lock
+        // (reason 'pass_out_recovery' etc.) is preserved so the owning
+        // recovery pathway retains its release authority. Sleeping/napping
+        // characters are NOT blocked — work remains an authorized wake source
+        // (existing production behavior preserved at lines 442-459).
+        const _gProtectedPresence = char.resolved_presence_status === 'hospitalized' || char.resolved_presence_status === 'passed_out';
+        if (_gProtectedPresence) {
+          const _gHasStaleWorkLock = char.presence_stay_lock === true &&
+            (char.presence_stay_lock_reason === 'work_shift' ||
+             char.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+          if (_gHasStaleWorkLock) {
+            try {
+              await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: char.id, owner_email: char.owner_email,
+                requested_lock_release: true,
+                requested_source_reason: 'stale_work_lock_released_protected_state',
+                requested_authority: 'enforceCharacterWorkSchedule',
+              });
+            } catch (_gReleaseErr) {
+              // Non-fatal — retries next tick.
+            }
+          }
           continue;
         }
 

@@ -420,13 +420,13 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     // Passed-out characters are in an involuntary recovery state with its own
     // existing release condition (energy_above_35). A stale or continuous
     // "00:00–23:59" work-schedule lock must not override that existing
-    // recovery authority. Disregard the invalid work request and let the
-    // existing recovery pathway (the pass-out handler in this same function,
-    // or simulateActiveCharacterNeeds) retain authority until the release
-    // condition is met. The location enforcer does not gain new lock-clearing
-    // authority here — it simply refuses to enforce the invalid work lock and
-    // allows the existing owning pathway to release it through its own
-    // existing release mechanism.
+    // recovery authority. This handler rejects the invalid at_work request;
+    // the calling scheduler (enforceCharacterWorkSchedule) releases any stale
+    // persisted work lock through the existing authorized release pathway
+    // (requested_lock_release → lines 718-742 of this function) so the lock
+    // is actually cleared rather than merely ignored. The recovery pathway
+    // (pass-out handler / simulateActiveCharacterNeeds) retains authority
+    // until the existing release condition is met.
     if (character.resolved_presence_status === 'passed_out') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'passed_out_work_blocked' };
     }

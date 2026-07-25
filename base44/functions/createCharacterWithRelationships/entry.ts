@@ -150,6 +150,18 @@ Deno.serve(async (req) => {
       for (const rel of characterRelationships) {
         const relatedChar = await base44.entities.Character.filter({ id: rel.related_character_id });
         if (relatedChar[0]) {
+          // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────
+          // The reciprocal relationship links the new character to an existing
+          // character. If their is_test_character classifications differ, skip
+          // only this prohibited reciprocal write — the new character record
+          // itself was already created above. This is an inline condition
+          // within the existing write-owning function.
+          const _newIsTest = newChar.is_test_character === true;
+          const _relatedIsTest = relatedChar[0].is_test_character === true;
+          if (_newIsTest !== _relatedIsTest) {
+            console.warn(`[createCharacterWithRelationships] BLOCKED test-to-real reciprocal: new "${newChar.name}" (test=${_newIsTest}) ↔ existing "${relatedChar[0].name}" (test=${_relatedIsTest})`);
+            continue;
+          }
           const existingRels = relatedChar[0].fictional_relationships || [];
           const filtered = existingRels.filter(r => r.person_name !== rel.person_name);
           const reciprocal = {

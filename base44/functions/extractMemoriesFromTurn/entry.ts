@@ -332,7 +332,35 @@ Return JSON.`,
     // Failures are collected and reported explicitly — never silently swallowed.
     const witnessMemoryFailures = [];
     if (witnessCharacterIds?.length > 0 && characterReply && targetChar) {
-      const witnessResults = await Promise.allSettled(witnessCharacterIds.map(wid =>
+      // ── WITNESS BOUNDARY CHECK — Test Character Safety Addendum ──────────
+      // Each witness memory involves the witness and the target character.
+      // Evaluate each witness independently against the target using the
+      // existing is_test_character classification. A witness whose
+      // classification differs from the target is skipped — only that
+      // witness's memory is suppressed; matching witnesses still receive
+      // their memory. Uses the existing Character read pathway already
+      // used by this function.
+      const targetIsTest = targetChar.is_test_character === true;
+      const witnessRecs = await Promise.all(
+        witnessCharacterIds.map(wid =>
+          base44.entities.Character.filter({ id: wid }, null, 1).then(c => c?.[0] || null).catch(() => null)
+        )
+      );
+      const eligibleWitnessIds = [];
+      const skippedWitnessIds = [];
+      for (let _wi = 0; _wi < witnessCharacterIds.length; _wi++) {
+        const _wRec = witnessRecs[_wi];
+        const _wIsTest = _wRec ? _wRec.is_test_character === true : false;
+        if (_wIsTest !== targetIsTest) {
+          skippedWitnessIds.push(witnessCharacterIds[_wi]);
+        } else {
+          eligibleWitnessIds.push(witnessCharacterIds[_wi]);
+        }
+      }
+      if (skippedWitnessIds.length > 0) {
+        console.warn(`[extractMemoriesFromTurn] BLOCKED test-to-real witness memory: witnesses ${skippedWitnessIds.join(', ')} ↔ target ${targetChar.name} (test=${targetIsTest})`);
+      }
+      const witnessResults = await Promise.allSettled(eligibleWitnessIds.map(wid =>
         base44.entities.Memory.create({
           character_id: wid,
           title: `Scene exchange — ${targetChar.name}`,
@@ -344,8 +372,8 @@ Return JSON.`,
       ));
       witnessResults.forEach((r, i) => {
         if (r.status === 'rejected') {
-          witnessMemoryFailures.push({ character_id: witnessCharacterIds[i], error: r.reason?.message });
-          console.error(`[extractMemoriesFromTurn] Witness memory write FAILED for ${witnessCharacterIds[i]}: ${r.reason?.message}`);
+          witnessMemoryFailures.push({ character_id: eligibleWitnessIds[i], error: r.reason?.message });
+          console.error(`[extractMemoriesFromTurn] Witness memory write FAILED for ${eligibleWitnessIds[i]}: ${r.reason?.message}`);
         }
       });
     }
