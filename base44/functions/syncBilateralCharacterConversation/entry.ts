@@ -92,6 +92,25 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────
+    // Every write in this function (bilateral memories, life events,
+    // fictional_relationships entries) involves the SAME sender↔receiver
+    // pair. If one is test-class and the other is not, ALL bilateral writes
+    // are prohibited — each references the other participant. Block the
+    // cross-boundary writes and return. This is an inline condition within
+    // the existing write-owning function.
+    const _sIsTest = senderChar.is_test_character === true || senderChar.diagnostic_only === true || senderChar.test_character === true;
+    const _rIsTest = receiverChar.is_test_character === true || receiverChar.diagnostic_only === true || receiverChar.test_character === true;
+    if (_sIsTest !== _rIsTest) {
+      console.warn(`[syncBilateralCharacterConversation] BLOCKED test-to-real bilateral: ${senderChar.name} (test=${_sIsTest}) ↔ ${receiverChar.name} (test=${_rIsTest})`);
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'test_character_isolation_blocked',
+        message: `Blocked: test character isolation prevents cross-boundary conversation sync between ${senderChar.name} and ${receiverChar.name}.`,
+      });
+    }
+
     // ── SHARED CONVERSATION KEY ───────────────────────────────────────────────────
     // CRITICAL: Honor the canonical key sent from the frontend (world_phone::A::B).
     // NEVER regenerate a legacy bilateral_X_Y key here — that would overwrite the

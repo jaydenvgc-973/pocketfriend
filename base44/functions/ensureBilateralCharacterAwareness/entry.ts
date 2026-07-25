@@ -59,6 +59,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Ownership violation' }, { status: 403 });
     }
 
+    // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────
+    // Every write in this function (A→B and B→A fictional_relationships
+    // entries) involves the SAME A↔B pair. If one is test-class and the other
+    // is not, ALL bilateral writes are prohibited — each entry references the
+    // other participant. Block the cross-boundary writes and return. This is
+    // an inline condition within the existing write-owning function.
+    const _aIsTest = charA.is_test_character === true || charA.diagnostic_only === true || charA.test_character === true;
+    const _bIsTest = charB.is_test_character === true || charB.diagnostic_only === true || charB.test_character === true;
+    if (_aIsTest !== _bIsTest) {
+      console.warn(`[ensureBilateralCharacterAwareness] BLOCKED test-to-real bilateral: ${charA.name} (test=${_aIsTest}) ↔ ${charB.name} (test=${_bIsTest})`);
+      return Response.json({
+        success: false,
+        blocked: true,
+        reason: 'test_character_isolation_blocked',
+        message: `Blocked: test character isolation prevents cross-boundary awareness writes between ${charA.name} and ${charB.name}.`,
+      });
+    }
+
     // PROOF: character_type for both
     const charAType = charA.character_type || 'unknown';
     const charBType = charB.character_type || 'unknown';

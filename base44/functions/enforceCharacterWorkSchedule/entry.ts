@@ -26,6 +26,37 @@ function isLocationShiftActiveNow(shift, nowET) {
   }
 }
 
+// Detect if a work shift is a continuous/all-day schedule (e.g. 00:00–23:59)
+// that perpetually asserts "on shift." Such a schedule cannot produce a
+// genuine shift-start wake event — it is always "on" and therefore is a
+// stale continuous claim against sleep/recovery.
+function isContinuousShift(shift) {
+  if (!shift?.start || !shift?.end) return false;
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const [eh, em] = shift.end.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  const spanMin = endMin < startMin ? (endMin + 1440) - startMin : endMin - startMin;
+  // Continuous = spans 23h58m or more (essentially the whole day)
+  return spanMin >= (23 * 60 + 58);
+}
+
+// Detect if the current time is within the valid shift-start wake window.
+// A bounded shift genuinely "starts" at its start time — that is the only
+// moment a sleeping character should be woken for work. Well past the start
+// (e.g. 6 hours into a 9–17 shift) the character fell asleep during the
+// shift — the work claim is stale and must not override sleep.
+function isWithinShiftStartWakeWindow(shift, nowET) {
+  if (!shift?.start) return false;
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
+  let diff = nowMin - startMin;
+  if (diff < 0) diff += 1440;
+  // Valid wake window: 0–15 minutes after shift start (the genuine start moment)
+  return diff >= 0 && diff <= 15;
+}
+
 /**
  * OWNERSHIP-ISOLATED SCHEDULER
  * 
@@ -70,23 +101,26 @@ Deno.serve(async (req) => {
 
       // Helper: Check if character is blocked from work
       // Work authority is a temporary, re-validatable claim. The work lock must
-      // yield to higher-priority states that already own the character's
-      // recovery. These checks use existing authoritative state — no new
-      // thresholds are introduced here.
+      // yield to established biological-recovery authorities that already own
+      // the character. These checks use existing authoritative state fields —
+      // resolved_presence_status for committed canonical states, and
+      // critical-need thresholds for biological emergencies.
       const isBlockedFromWork = (char) => {
-        // Hospitalized characters are in a protected recovery state — work must
-        // not interrupt medical care. The existing discharge pathway restores
-        // presence once medically stable.
+        // Hospitalized — medical recovery. Existing discharge gate restores
+        // presence once all life-needs ≥ 85.
         if (char.resolved_presence_status === 'hospitalized') return true;
-        // Passed-out characters are in an involuntary recovery state with its
-        // own existing release condition (energy_above_35). Work authority must
-        // yield to that existing recovery pathway — the work lock is temporary
-        // and must not be renewed while a higher-priority state owns the
-        // character.
+        // Passed-out — involuntary collapse. Existing release condition
+        // (energy_above_35) controls recovery.
         if (char.resolved_presence_status === 'passed_out') return true;
-        const isCriticallyIll = char.health_value !== undefined && char.health_value < 20;
-        const isInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
-        return isCriticallyIll || isInEmergency;
+        // Critically ill — health below 20 is a biological emergency.
+        if (char.health_value !== undefined && char.health_value < 20) return true;
+        // Emergency activity — current_activity explicitly marks an emergency.
+        if (char.current_activity && char.current_activity.toLowerCase().includes('emergency')) return true;
+        // Hunger-driven recovery — hunger below 10 is a biological emergency.
+        // The character must eat, not work. Uses the existing authoritative
+        // hunger_value field, consistent with the health_value threshold above.
+        if (char.hunger_value !== undefined && char.hunger_value < 10) return true;
+        return false;
       };
 
       if (isBlockedFromWork(character)) {
@@ -107,20 +141,29 @@ Deno.serve(async (req) => {
         const hasStaleWorkLock = character.presence_stay_lock === true &&
           (character.presence_stay_lock_reason === 'work_shift' ||
            character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+        let releaseSucceeded = false;
+        let releaseError = null;
         if (hasStaleWorkLock) {
           try {
-            await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+            const releaseRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
               character_id: characterId, owner_email: character.owner_email,
               requested_lock_release: true,
               requested_source_reason: 'stale_work_lock_released_protected_state',
               requested_authority: 'enforceCharacterWorkSchedule',
             });
-          } catch (_releaseErr) {
-            // Non-fatal — the protected state already controls presence; the
-            // stale lock release retries on the next tick.
+            releaseSucceeded = releaseRes?.disposition === 'accepted';
+          } catch (releaseErr) {
+            releaseError = releaseErr.message;
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: stale work lock release FAILED: ${releaseErr.message}`);
           }
         }
-        return Response.json({ updated: false, reason: 'Character blocked from work (protected recovery state)', stale_work_lock_released: hasStaleWorkLock });
+        return Response.json({
+          updated: false,
+          reason: 'Character blocked from work (protected recovery state)',
+          stale_work_lock_present: hasStaleWorkLock,
+          stale_work_lock_released: releaseSucceeded,
+          stale_work_lock_release_error: releaseError,
+        });
       }
 
       // Work is an authorized wake source. Track if character was sleeping so the
@@ -187,18 +230,63 @@ Deno.serve(async (req) => {
       // Find which job has an active shift right now. Evaluate EVERY active job's
       // schedule — not only the primary or first job.
       let singleActiveWorkLocId = null;
+      let singleActiveShift = null;
       for (const locId of singleAllWorkLocIds) {
         const loc = singleLocMap[locId];
         if (!loc) continue;
         const locationShift = loc.worker_shifts?.[characterId];
         if (locationShift && locationShift.start && locationShift.end) {
-          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = locId; break; }
+          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = locId; singleActiveShift = locationShift; break; }
           continue; // location-specific shift defined but not active — do not fall back
         }
         const jobShift = singleJobSchedules[locId];
         if (jobShift && jobShift.start && jobShift.end) {
-          if (isLocationShiftActiveNow(jobShift, singleClock)) { singleActiveWorkLocId = locId; break; }
+          if (isLocationShiftActiveNow(jobShift, singleClock)) { singleActiveWorkLocId = locId; singleActiveShift = jobShift; break; }
         }
+      }
+
+      // ── CONTINUOUS-SCHEDULE DISTINCTION — valid-work-wake vs stale-continuous-claim ──
+      // A sleeping/napping character must not be woken by a stale continuous
+      // work schedule (e.g. 00:00–23:59) that perpetually asserts "on shift."
+      // Work is a valid wake source ONLY when a bounded shift genuinely starts
+      // (within its shift-start wake window). A continuous schedule or a bounded
+      // schedule well past its start is a stale claim: release the stale work
+      // lock and let sleep continue. The lock release is reported as actual
+      // success/failure — a failed release is NOT treated as non-fatal, because
+      // releasing that lock is the required correction.
+      if (isSleeping && singleActiveWorkLocId && singleActiveShift) {
+        const _isCont = isContinuousShift(singleActiveShift);
+        const _inWindow = isWithinShiftStartWakeWindow(singleActiveShift, singleClock);
+        if (_isCont || !_inWindow) {
+          const _staleReason = _isCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
+          const _hasStaleLock = character.presence_stay_lock === true &&
+            (character.presence_stay_lock_reason === 'work_shift' ||
+             character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+          let _relOK = false;
+          let _relErr = null;
+          if (_hasStaleLock) {
+            try {
+              const _rr = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: characterId, owner_email: character.owner_email,
+                requested_lock_release: true,
+                requested_source_reason: _staleReason,
+                requested_authority: 'enforceCharacterWorkSchedule',
+              });
+              _relOK = _rr?.disposition === 'accepted';
+            } catch (e) {
+              _relErr = e.message;
+              console.error(`[enforceCharacterWorkSchedule] ${character.name}: stale work lock release FAILED (${_staleReason}): ${e.message}`);
+            }
+          }
+          return Response.json({
+            updated: false,
+            reason: `Sleeping character not woken — ${_staleReason}`,
+            stale_work_lock_present: _hasStaleLock,
+            stale_work_lock_released: _relOK,
+            stale_work_lock_release_error: _relErr,
+          });
+        }
+        // Bounded schedule AND within shift-start wake window — valid wake. Proceed below.
       }
 
       // Which job's workplace is the character currently at (any active job).
@@ -466,33 +554,29 @@ Deno.serve(async (req) => {
 
         // ── PROTECTED-STATE REVALIDATION (existing authority) ──────────────
         // The work lock is a temporary, re-validatable claim. The existing
-        // authoritative protected states (resolved_presence_status) owned by
-        // enforceCharacterLocationPresence and simulateActiveCharacterNeeds
-        // supersede work authority: 'hospitalized' (medical recovery, discharge
-        // gate at line 201) and 'passed_out' (involuntary collapse, release
-        // condition energy_above_35). These are the EXISTING authoritative
-        // results — no needs/emergency thresholds are reproduced here.
+        // authoritative protected states supersede work authority: hospitalized,
+        // passed_out, critically ill (health < 20), emergency activity, and
+        // hunger-driven recovery (hunger < 10). These use existing authoritative
+        // fields — no new thresholds are introduced beyond the existing
+        // health_value < 20 and the hunger_value < 10 biological emergency
+        // threshold (consistent with the health threshold).
         //
         // When the character is in one of these protected states AND carries a
-        // stale WORK lock (reason 'work_shift' / authority
-        // 'enforceCharacterWorkSchedule'), the scheduler releases that stale
-        // lock through the existing authorized release pathway
-        // (requested_lock_release → enforceCharacterLocationPresence lines
-        // 718-742). This prevents a continuous "00:00–23:59" schedule from
-        // maintaining or repeatedly reclaiming stale work authority merely
-        // because the clock remains inside the configured schedule: the lock
-        // is released here, and the at_work transition is rejected by the
-        // authority (lines 430-432) while the protected state persists, so the
-        // lock cannot be re-acquired until the character exits the protected
-        // state through its own existing release condition.
-        //
-        // Only a stale WORK lock is released — a pass-out or hospital lock
-        // (reason 'pass_out_recovery' etc.) is preserved so the owning
-        // recovery pathway retains its release authority. Sleeping/napping
-        // characters are NOT blocked — work remains an authorized wake source
-        // (existing production behavior preserved at lines 442-459).
-        const _gProtectedPresence = char.resolved_presence_status === 'hospitalized' || char.resolved_presence_status === 'passed_out';
-        if (_gProtectedPresence) {
+        // stale WORK lock, the scheduler releases that stale lock through the
+        // existing authorized release pathway (requested_lock_release →
+        // enforceCharacterLocationPresence). The release is reported as actual
+        // success/failure — a failed release is logged as an error, NOT treated
+        // as non-fatal. Only a stale WORK lock is released — pass-out/hospital
+        // locks are preserved so the owning recovery pathway retains release
+        // authority. Sleeping/napping characters are NOT blocked here — they
+        // are handled by the continuous-schedule distinction below.
+        const _gBlockedFromWork =
+          char.resolved_presence_status === 'hospitalized' ||
+          char.resolved_presence_status === 'passed_out' ||
+          (char.health_value !== undefined && char.health_value < 20) ||
+          (char.current_activity && char.current_activity.toLowerCase().includes('emergency')) ||
+          (char.hunger_value !== undefined && char.hunger_value < 10);
+        if (_gBlockedFromWork) {
           const _gHasStaleWorkLock = char.presence_stay_lock === true &&
             (char.presence_stay_lock_reason === 'work_shift' ||
              char.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
@@ -505,7 +589,7 @@ Deno.serve(async (req) => {
                 requested_authority: 'enforceCharacterWorkSchedule',
               });
             } catch (_gReleaseErr) {
-              // Non-fatal — retries next tick.
+              console.error(`[enforceCharacterWorkSchedule] ${char.name}: stale work lock release FAILED (global protected-state): ${_gReleaseErr.message}`);
             }
           }
           continue;
@@ -548,18 +632,50 @@ Deno.serve(async (req) => {
         // active job's schedule — not only the primary or first job — so a current
         // shift is found even when it belongs to the second, third, or later job.
         let activeWorkLocId = null;
+        let activeShiftObj = null;
         for (const locId of allWorkLocIds) {
           const loc = locMap[locId];
           if (!loc) continue;
           const locationShift = loc.worker_shifts?.[char.id];
           if (locationShift && locationShift.start && locationShift.end) {
-            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = locId; break; }
+            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = locId; activeShiftObj = locationShift; break; }
             continue; // location-specific shift defined but not active — do not fall back
           }
           const jobShift = jobSchedules[locId];
           if (jobShift && jobShift.start && jobShift.end) {
-            if (isLocationShiftActiveNow(jobShift, globalClock)) { activeWorkLocId = locId; break; }
+            if (isLocationShiftActiveNow(jobShift, globalClock)) { activeWorkLocId = locId; activeShiftObj = jobShift; break; }
           }
+        }
+
+        // ── CONTINUOUS-SCHEDULE DISTINCTION (global path) ─────────────────
+        // Same logic as the single-char path: a sleeping character must not be
+        // woken by a stale continuous schedule or a bounded schedule past its
+        // shift-start wake window. Release the stale work lock and skip this
+        // character — let sleep/recovery continue.
+        if (isSleeping && activeWorkLocId && activeShiftObj) {
+          const _gIsCont = isContinuousShift(activeShiftObj);
+          const _gInWindow = isWithinShiftStartWakeWindow(activeShiftObj, globalClock);
+          if (_gIsCont || !_gInWindow) {
+            const _gStaleReason = _gIsCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
+            const _gHasStaleLock = char.presence_stay_lock === true &&
+              (char.presence_stay_lock_reason === 'work_shift' ||
+               char.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+            if (_gHasStaleLock) {
+              try {
+                await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: char.id, owner_email: char.owner_email,
+                  requested_lock_release: true,
+                  requested_source_reason: _gStaleReason,
+                  requested_authority: 'enforceCharacterWorkSchedule',
+                });
+              } catch (_gRelErr) {
+                console.error(`[enforceCharacterWorkSchedule] ${char.name}: stale work lock release FAILED (global ${_gStaleReason}): ${_gRelErr.message}`);
+              }
+            }
+            issues_found.push(`${char.name}: sleeping — ${_gStaleReason}, not woken for work`);
+            continue;
+          }
+          // Bounded schedule AND within shift-start wake window — valid wake. Proceed below.
         }
 
         // Identify which job's workplace the character is currently at (any of their

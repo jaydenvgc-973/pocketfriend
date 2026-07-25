@@ -215,8 +215,8 @@ Only include entries with confidence >= 0.6. If no confident matches, return emp
       // continues to process other detected relationships. This is an inline
       // condition within the existing write-owning function — not a new
       // helper, guard, or abstraction.
-      const _senderIsTest = char.is_test_character === true;
-      const _matchedIsTest = matchedChar.is_test_character === true;
+      const _senderIsTest = char.is_test_character === true || char.diagnostic_only === true || char.test_character === true;
+      const _matchedIsTest = matchedChar.is_test_character === true || matchedChar.diagnostic_only === true || matchedChar.test_character === true;
       if (_senderIsTest !== _matchedIsTest) {
         console.warn(`[detectAndSyncRelationship] BLOCKED test-to-real write: ${char.name} (test=${_senderIsTest}) ↔ ${matchedChar.name} (test=${_matchedIsTest})`);
         continue;

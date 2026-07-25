@@ -59,14 +59,15 @@ Deno.serve(async (req) => {
 
       // ── BOUNDARY CHECK — Test Character Safety Addendum ──────────────────
       // The target character is the one receiving NPC relationship links. If
-      // it is classified as a test character, skip ALL relationship writes for
-      // it — the NPCs created here have is_test_character=false, so linking
-      // them to a test target would create test-to-non-test contamination.
-      // This is an inline condition within the existing write-owning function.
-      if (character.is_test_character === true) {
-        console.warn(`[addNPCRelationships] BLOCKED test-character relationship links: "${charName}" (test=true)`);
-        results[charName] = { status: 'skipped_test_character' };
-        continue;
+      // it is classified as test-class, the relationship LINK is a prohibited
+      // cross-boundary write (non-test NPCs linked to a test target). NPC
+      // creation itself is NOT prohibited — NPCs are non-test standalone
+      // entities. Only the fictional_relationships write to the test character
+      // is skipped below. This is an inline condition within the existing
+      // write-owning function — not a new helper.
+      const _targetIsTestClass = character.is_test_character === true || character.diagnostic_only === true || character.test_character === true;
+      if (_targetIsTestClass) {
+        console.warn(`[addNPCRelationships] Test-character target detected: "${charName}" — NPCs will be created but relationship links to this character will be skipped`);
       }
 
       const currentRels = character.fictional_relationships || [];
@@ -171,12 +172,21 @@ Deno.serve(async (req) => {
         added.push(npcName);
       }
 
-      // Save updated fictional_relationships back to the character
+      // Save updated fictional_relationships back to the character.
+      // For test-class target characters, skip the relationship link write
+      // (cross-boundary contamination) — NPCs were created as independent
+      // non-test entities above, but are NOT linked to the test character.
       if (added.length > 0) {
-        await base44.entities.Character.update(character.id, { fictional_relationships: newRels });
+        if (_targetIsTestClass) {
+          console.warn(`[addNPCRelationships] BLOCKED test-character relationship links: "${charName}" — ${added.length} NPCs created but not linked to test character`);
+          results[charName] = { status: 'skipped_test_character_links', added, skipped };
+        } else {
+          await base44.entities.Character.update(character.id, { fictional_relationships: newRels });
+          results[charName] = { status: 'processed', added, skipped };
+        }
+      } else {
+        results[charName] = { status: 'processed', added, skipped };
       }
-
-      results[charName] = { status: 'processed', added, skipped };
     }
 
     return Response.json({ success: true, results });

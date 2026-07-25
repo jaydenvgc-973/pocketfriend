@@ -156,8 +156,8 @@ Deno.serve(async (req) => {
           // only this prohibited reciprocal write — the new character record
           // itself was already created above. This is an inline condition
           // within the existing write-owning function.
-          const _newIsTest = newChar.is_test_character === true;
-          const _relatedIsTest = relatedChar[0].is_test_character === true;
+          const _newIsTest = newChar.is_test_character === true || newChar.diagnostic_only === true || newChar.test_character === true;
+          const _relatedIsTest = relatedChar[0].is_test_character === true || relatedChar[0].diagnostic_only === true || relatedChar[0].test_character === true;
           if (_newIsTest !== _relatedIsTest) {
             console.warn(`[createCharacterWithRelationships] BLOCKED test-to-real reciprocal: new "${newChar.name}" (test=${_newIsTest}) ↔ existing "${relatedChar[0].name}" (test=${_relatedIsTest})`);
             continue;

@@ -80,8 +80,8 @@ Deno.serve(async (req) => {
     // references both participants, so there are no unrelated operations to
     // preserve. Block the cross-boundary writes and return. This is an inline
     // condition within the existing write-owning function — not a new helper.
-    const _senderIsTest = sender.is_test_character === true;
-    const _receiverIsTest = receiver.is_test_character === true;
+    const _senderIsTest = sender.is_test_character === true || sender.diagnostic_only === true || sender.test_character === true;
+    const _receiverIsTest = receiver.is_test_character === true || receiver.diagnostic_only === true || receiver.test_character === true;
     if (_senderIsTest !== _receiverIsTest) {
       console.warn(`[syncWorldPhoneMemory] BLOCKED test-to-real memory+relationship: ${sender.name} (test=${_senderIsTest}) ↔ ${receiver.name} (test=${_receiverIsTest})`);
       return Response.json({
