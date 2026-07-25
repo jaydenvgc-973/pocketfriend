@@ -34,14 +34,13 @@ import SceneInputBar from "@/components/scene/SceneInputBar";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { getEnvironmentTypeForZone } from "@/components/location/EnvironmentSelectorModal";
-import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
+import { prioritizeAvatarReferences } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { extractSceneItemLabel } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
-import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
-import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
+import { buildSceneHeaderBinding } from "@/lib/sceneHeaderIdentityBinding";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
@@ -933,32 +932,37 @@ export default function Scene() {
     const hour = nowET.getHours();
     const lightingDesc = getLightingDescriptor(hour);
 
-    // ── OUTFIT AUTHORITY (user + characters, single backend path) ─────────────
-    // BOTH the user and each brought character resolve their outfit through the
-    // single backend authority (resolveUserOutfitContext / resolveCharacterOutfitContext).
-    // Stale frontend reads of current_outfit / character_closet are forbidden — they
-    // bypass rotation, daily overrides, manual category selections, and uniforms.
-    // Null (empty closet / no selection) is a valid preference, not an error.
-    // Temporary in-scene changes (take off coat, change shirt) are handled by the
-    // action prompt override and do NOT mutate the stored outfit rotation.
-    const outfitLines = [];
+    // ── OUTFIT AUTHORITY (user + ALL visible real characters, single backend path) ─
+    // Resolve the outfit for the user AND every visible real Character record
+    // (brought companions, on-shift workers, home residents, distributed NPCs)
+    // through the single backend authority so each participant can be bound to
+    // their own outfit in the per-participant binding below. Stale frontend reads
+    // of current_outfit / character_closet are forbidden — they bypass rotation,
+    // daily overrides, manual category selections, and uniforms. Null (empty
+    // closet / no selection) is a valid preference, not an error. Temporary
+    // in-scene changes (take off coat, change shirt) are handled by the action
+    // prompt override and do NOT mutate the stored outfit rotation.
+    const outfitByName = {};
 
-    // Characters: resolve each through resolveCharacterOutfitContext
-    const charOutfitResults = await Promise.all(
-      broughtCharacters.map((c) =>
+    // Visible real characters = participants whose id maps to a real Character
+    // record (excludes pseudo-constructs like venue templates / npc_family_*).
+    const _charIdSet = new Set(characters.map((c) => c.id));
+    const visibleRealChars = resolvedWhosHereList
+      .filter((p) => p?.id && _charIdSet.has(p.id))
+      .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i);
+
+    await Promise.all(
+      visibleRealChars.map((c) =>
         base44.functions.invoke('resolveCharacterOutfitContext', {
           characterId: c.id,
           locationCategory: location?.category,
           locationId: location?.id,
           ownerEmail: currentUser?.email,
         })
-          .then((res) => ({ name: c.name, text: res?.data?.text || res?.text || null }))
-          .catch(() => ({ name: c.name, text: null }))
+          .then((res) => { const t = res?.data?.text || res?.text || null; if (t) outfitByName[c.name] = t; })
+          .catch(() => {})
       )
     );
-    charOutfitResults.forEach((r) => {
-      if (r.text) outfitLines.push(`${r.name} is wearing: ${r.text}`);
-    });
 
     // User: resolve through resolveUserOutfitContext
     try {
@@ -968,24 +972,24 @@ export default function Scene() {
         locationId: location?.id,
       });
       const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
-      if (userOutfitText) {
-        outfitLines.push(`${displayName} is wearing: ${userOutfitText}`);
-      }
+      if (userOutfitText) outfitByName[displayName] = userOutfitText;
     } catch (e) {
-      // non-blocking — null outfit is a valid preference
+      // non-blocking — null user outfit is a valid preference
     }
 
-    const outfitSuffix = outfitLines.length > 0
-      ? ` OUTFIT REQUIREMENT — PER-PERSON ASSIGNMENT (NO CROSS-CONTAMINATION): ${outfitLines.join('. ')}. Each outfit is assigned to the named person ONLY. The user wears the user's outfit; each character wears their own outfit. Do NOT swap, blend, or transfer clothing between identities. Do NOT use avatar/reference photo clothing. Reproduce each exact outfit on its assigned person.`
-      : '';
-
-    // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
-    // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
-    // dropping the user's hair_type, appearance_age, custom_keywords, and height lock.
-    // buildAppearanceLockBlock is the full identity authority — inject it for the user so
-    // their face/body identity stays intact alongside the closet-driven outfit.
-    // The avatar remains the visual identity anchor; this text reinforces it.
-    const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
+    // ── HEADER BINDING HELPER ───────────────────────────────────────────────────
+    // Build per-participant identity+outfit binding for a given people list.
+    // User is always participant 1 (primary identity anchor). Each participant
+    // becomes a single owned unit (identity ref + appearance + outfit + exclusive
+    // ownership), and the reference stack is ordered to match the participant
+    // numbering so the model can map image[N] → participant[N].
+    const buildHeaderBinding = (people, envRefImages) =>
+      buildSceneHeaderBinding({
+        userParticipant,
+        characters: people,
+        outfitByName,
+        envRefs: envRefImages,
+      });
 
     // ── REFERENCE IMAGE ASSEMBLY: AVATARS FIRST (IDENTITY SOURCE) ──────────────
     // Prioritize character avatars for identity locking, then location environment refs
@@ -1031,30 +1035,25 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
-            finalPrompt += buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
           }
         }
       }
       if (authoratativeEnvRefs.length > 0) {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
-      // AVATAR IDENTITY LOCK: enforce full identity matching for all visible people
-      if (visiblePeopleForScene.length > 0) {
-        finalPrompt += buildAvatarIdentityEnforcementBlock(visiblePeopleForScene);
-      }
-      // USER IDENTITY: full appearance lock (face/body) — keeps the user's identity intact
-      if (userAppearanceBlock) {
-        finalPrompt += userAppearanceBlock;
-      }
+      // HEADER BINDING: per-participant identity+outfit owned units for every
+      // visible person (user is participant 1). Replaces the old scattered
+      // identity-lock / avatar-enforcement / outfit-suffix fragments with a
+      // single bound unit per participant + an ordered reference stack.
+      const actionBinding = buildHeaderBinding(visiblePeopleForScene, envRefs);
+      finalPrompt += actionBinding.bindings + actionBinding.orderDeclaration;
       // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
       finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
       try {
-        // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-        const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-        console.log('[Scene action] Passing visual references:', actionVisualRefs);
+        console.log('[Scene action] Passing visual references:', actionBinding.referenceStack);
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
-          existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined
+          existing_image_urls: actionBinding.referenceStack.length > 0 ? actionBinding.referenceStack : undefined
         });
         setSceneImage(result.url);
       } catch {setSceneImage(firstImage);} finally
@@ -1111,8 +1110,6 @@ export default function Scene() {
 
       const visibleNames = residentialPeople.map((c) => c.name);
 
-      const identityLockBlock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser);
-
       const strictPeopleRule = visibleNames.length > 0 ?
       `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
       `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
@@ -1121,33 +1118,22 @@ export default function Scene() {
       " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
       "";
 
-      // IDENTITY LOCK ENFORCEMENT: Each character's avatar is the sole visual source of truth
-      const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(residentialPeople);
-
       // Build the residential constraint using the correct people list
       const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
 
-      // Extract avatar URLs DIRECTLY from resolved people (allPossibleNpcs matched)
-      const residentAvatarUrls = residentialPeople.
-      map((c) => c.avatar_url || c.image_avatar_url).
-      filter((url) => url && url.trim().length > 0);
+      // HEADER BINDING: per-participant identity+outfit owned units (user is
+      // participant 1) + ordered, deduped reference stack. Replaces the old
+      // identity-lock / avatar-enforcement / outfit-suffix fragments.
+      const residentialBinding = buildHeaderBinding(residentialPeople, envRefs);
 
-      console.log('[Scene] Avatar URLs from allPossibleNpcs source:', residentAvatarUrls);
-
-      // Build final visual refs: avatar images FIRST (identity authority), then environment
-      const residentialVisualRefs = [
-      ...residentAvatarUrls,
-      ...envRefs.filter((u) => !residentAvatarUrls.includes(u))];
-
-
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialBinding.bindings}${residentialBinding.orderDeclaration}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
-        console.log('[Scene residential] Avatar refs:', residentialVisualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
+        console.log('[Scene residential] Avatar refs:', residentialBinding.referenceStack.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
-          existing_image_urls: residentialVisualRefs.length > 0 ? residentialVisualRefs : undefined
+          existing_image_urls: residentialBinding.referenceStack.length > 0 ? residentialBinding.referenceStack : undefined
         });
         setSceneImage(result.url);
       } catch {
@@ -1159,15 +1145,17 @@ export default function Scene() {
     }
 
     // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
+    let nonResidentialRefs = [];
     {
       if (isGlobal) {
         const globalPeople = [...sceneCharacters.slice(0, 3), ...(userParticipant ? [userParticipant] : [])];
         const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
-        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        // HEADER BINDING for the global foreground participants.
+        const globalBinding = buildHeaderBinding(globalPeople, envRefs);
+        nonResidentialRefs = globalBinding.referenceStack;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${globalBinding.bindings}${globalBinding.orderDeclaration}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
@@ -1180,19 +1168,18 @@ export default function Scene() {
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
         `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
 
-        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
-        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        // HEADER BINDING: per-participant identity+outfit owned units + ordered refs.
+        const specificBinding = buildHeaderBinding(physicallyPresent, envRefs);
+        nonResidentialRefs = specificBinding.referenceStack;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${specificBinding.bindings}${specificBinding.orderDeclaration}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 
     try {
-      // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-      const finalVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-      console.log('[Scene main] Passing visual references:', finalVisualRefs, 'for characters:', visiblePeopleForScene.map((c) => c.name));
+      console.log('[Scene main] Passing visual references:', nonResidentialRefs);
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined
+        existing_image_urls: nonResidentialRefs.length > 0 ? nonResidentialRefs : undefined
       });
       setSceneImage(result.url);
     } catch {
