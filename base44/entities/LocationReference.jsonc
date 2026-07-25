@@ -558,9 +558,10 @@
             "type": "string",
             "enum": [
               "operational",
-              "residential"
+              "residential",
+              "restricted"
             ],
-            "description": "operational = subject to business hours; residential = always available regardless of business hours"
+            "description": "operational = subject to business hours; residential = always available regardless of business hours; restricted = suppresses general ambient population, scene built from user + companions + explicitly included + contextually required occupants only"
           },
           "follows_business_hours": {
             "type": "boolean",

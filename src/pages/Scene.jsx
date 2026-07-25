@@ -32,6 +32,7 @@ import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
+import { getEnvironmentTypeForZone } from "@/components/location/EnvironmentSelectorModal";
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
@@ -163,6 +164,12 @@ export default function Scene() {
   const location = locationsData.find((l) => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
   const locationZones = location?.zones || [];
+  // Resolve the active zone's environment type (operational / residential / restricted).
+  // Restricted environments suppress general ambient population — the scene is built
+  // from the user, the active interaction target, explicitly included companions,
+  // and any contextually required occupants (on-shift workers, real characters present).
+  const activeEnvType = getEnvironmentTypeForZone(location, activeZone || locationZones[0]?.zone_name);
+  const isRestrictedEnv = activeEnvType === 'restricted';
 
   // Active characters explicitly brought (from URL params) — must be before useMemo that uses it
   const broughtCharacters = characters.filter((c) => characterIds.includes(c.id));
@@ -470,61 +477,76 @@ export default function Scene() {
     // TEMPORARY SCENE STAFF: Fill roles not covered by a real on-shift worker.
     // Priority: real on-shift → real off-shift (temp fills in) → no assignment (temp fills in).
     // Temp staff are scene-only and never overwrite Locations page data.
-    const onShiftIds = workerCharacters.map((w) => w.id);
-    const tempSceneStaff = getTemporarySceneStaff(location, onShiftIds);
-    tempSceneStaff.forEach((tmpNpc) => {
-      if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc);
-    });
+    // Restricted environments suppress general ambient population — skip temp staff.
+    if (!isRestrictedEnv) {
+      const onShiftIds = workerCharacters.map((w) => w.id);
+      const tempSceneStaff = getTemporarySceneStaff(location, onShiftIds);
+      tempSceneStaff.forEach((tmpNpc) => {
+        if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc);
+      });
+    }
 
     // NPC staff workers defined on the location record — check if on shift
-    const npcWorkerKeys = Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_"));
-    npcWorkerKeys.forEach((key) => {
-      // Only add if on shift at this location
-      if (isNPCOnShift(location, key)) {
-        const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-        const jobTitle = location.worker_job_titles[key];
-        if (!npcs.find((x) => x.id === key)) {
-          npcs.push({
-            id: key,
-            name: npcName,
-            role: jobTitle || "Staff",
-            isNpc: true,
-            npcType: "staff",
-            avatar_url: null
-          });
+    // Restricted environments suppress ambient NPC staff.
+    if (!isRestrictedEnv) {
+      const npcWorkerKeys = Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_"));
+      npcWorkerKeys.forEach((key) => {
+        // Only add if on shift at this location
+        if (isNPCOnShift(location, key)) {
+          const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
+          const jobTitle = location.worker_job_titles[key];
+          if (!npcs.find((x) => x.id === key)) {
+            npcs.push({
+              id: key,
+              name: npcName,
+              role: jobTitle || "Staff",
+              isNpc: true,
+              npcType: "staff",
+              avatar_url: null
+            });
+          }
         }
-      }
-    });
+      });
+    }
 
     // Generic venue NPCs — loaded from extracted constant (lib/sceneVenueNPCs.js)
-    const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
-    venueDefaults.forEach((n) => {
-      if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
-    });
+    // Restricted environments suppress general ambient population.
+    if (!isRestrictedEnv) {
+      const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
+      venueDefaults.forEach((n) => {
+        if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
+      });
+    }
 
     // Add NPCs currently traveling to this location (presence sync — legacy fictional_relationships)
-    npcsTravelingHere.forEach((n) => {
-      if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
-    });
+    // Restricted environments suppress ambient traveling NPCs.
+    if (!isRestrictedEnv) {
+      npcsTravelingHere.forEach((n) => {
+        if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
+      });
+    }
 
     // Add VGC Towers distributed NPC Character entities at this location
     // These have authoritative resolved_current_location_id === locationId
-    vgcDistributedNpcs.forEach((n) => {
-      if (!npcs.find((x) => x.id === n.id)) {
-        npcs.push({
-          id: n.id,
-          name: n.name,
-          role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ?
-          'Visiting' :
-          n.character_type === 'family_npc' ? 'Family' : 'NPC',
-          isNpc: true,
-          npcType: 'customer',
-          avatar_url: n.avatar_url || null,
-          personality_summary: n.personality_summary,
-          emotional_state: n.emotional_state
-        });
-      }
-    });
+    // Restricted environments suppress ambient distributed NPCs.
+    if (!isRestrictedEnv) {
+      vgcDistributedNpcs.forEach((n) => {
+        if (!npcs.find((x) => x.id === n.id)) {
+          npcs.push({
+            id: n.id,
+            name: n.name,
+            role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ?
+            'Visiting' :
+            n.character_type === 'family_npc' ? 'Family' : 'NPC',
+            isNpc: true,
+            npcType: 'customer',
+            avatar_url: n.avatar_url || null,
+            personality_summary: n.personality_summary,
+            emotional_state: n.emotional_state
+          });
+        }
+      });
+    }
 
     // Add "Here Now" real characters from unified presence resolver
     // These MUST be in allPossibleNpcs so selectedNpcIds can find them
@@ -561,11 +583,12 @@ export default function Scene() {
     // Section 4: Workers on-shift with confirmed live presence — NOT traveled-with
     ...workerCharacters.filter((w) => !traveledWithChars.find((t) => t.id === w.id)),
     // Section 5: VGC Towers / traveling NPCs — excluded from auto-scene, require explicit pick
-    ...(isVGCTowers ? [] : vgcDistributedNpcs.filter((n) =>
+    // Restricted environments suppress ambient distributed / traveling NPCs.
+    ...((isVGCTowers || isRestrictedEnv) ? [] : vgcDistributedNpcs.filter((n) =>
     !traveledWithChars.find((b) => b.id === n.id) &&
     !workerCharacters.find((w) => w.id === n.id)
     )),
-    ...(isVGCTowers ? [] : npcsTravelingHere.filter((n) =>
+    ...((isVGCTowers || isRestrictedEnv) ? [] : npcsTravelingHere.filter((n) =>
     !traveledWithChars.find((b) => b.id === n.id) &&
     !familyNpcSceneObjects.find((fn) => fn.name === n.name)
     )),
@@ -921,9 +944,9 @@ export default function Scene() {
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
-      let finalPrompt = actionOverridePrompt;
-      // isGlobal must NEVER be true for residential/home locations
-      const isGlobal = !isHomeLocation && location.location_type === "global";
+    let finalPrompt = actionOverridePrompt;
+    // isGlobal must NEVER be true for residential/home locations, or restricted environments
+    const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
 
       if (!isGlobal) {
         // Use resolvedWhosHereList directly — already properly resolved with avatars.
@@ -974,8 +997,8 @@ export default function Scene() {
     // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
     const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
     const activeZoneName = currentZoneForAction?.zone_name || "this area";
-    // isGlobal must NEVER be true for residential locations — home scenes always use the strict resident path
-    const isGlobal = !isHomeLocation && location.location_type === "global";
+    // isGlobal must NEVER be true for residential locations or restricted environments — they use the strict explicit-people path
+    const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
     const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
     const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
 
@@ -1084,9 +1107,10 @@ export default function Scene() {
         ...(userParticipant ? [userParticipant] : [])].
         filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 4); // cap at 4 (includes user)
 
-        const peopleDesc = physicallyPresent.length > 0 ?
+        const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
+        const peopleDesc = (physicallyPresent.length > 0 ?
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
-        `The space is completely empty — no silhouettes, no background figures, nobody.`;
+        `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);

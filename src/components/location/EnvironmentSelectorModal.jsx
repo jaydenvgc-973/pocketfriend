@@ -1,6 +1,6 @@
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Building2, Home, Clock } from "lucide-react";
+import { X, Building2, Home, Lock, Clock } from "lucide-react";
 import { createPortal } from "react-dom";
 
 /**
@@ -16,6 +16,19 @@ export function getLocationEnvironments(location) {
   const envs = location.environments;
   if (!Array.isArray(envs) || envs.length === 0) return [];
   return envs;
+}
+
+/**
+ * Resolves the environment type for a given zone name.
+ * Returns 'operational' | 'residential' | 'restricted' | null.
+ * Used by the Scene page to drive population behavior per the active zone's environment.
+ */
+export function getEnvironmentTypeForZone(location, zoneName) {
+  if (!location || !zoneName) return null;
+  const envs = getLocationEnvironments(location);
+  if (envs.length === 0) return null;
+  const env = envs.find(e => Array.isArray(e.zone_names) && e.zone_names.includes(zoneName));
+  return env?.type || null;
 }
 
 /**
@@ -73,6 +86,7 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
             <div className="px-4 pb-5 space-y-3">
               {environments.map((env) => {
                 const isResidential = env.type === "residential";
+                const isRestricted = env.type === "restricted";
                 const isBlocked = !isResidential && env.follows_business_hours !== false && isLocationOpenNow === false;
 
                 return (
@@ -92,9 +106,11 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
                     }`}
                   >
                     <div className="flex items-center gap-2">
-                      {!isResidential
-                        ? <Building2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
-                        : <Home className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                      {isResidential
+                        ? <Home className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                        : isRestricted
+                        ? <Lock className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                        : <Building2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
                       }
                       <span className="text-sm font-semibold text-foreground">{env.name}</span>
                       {isResidential && (
