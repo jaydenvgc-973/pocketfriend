@@ -112,7 +112,7 @@ export default function Scene() {
   const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settingsList } = useQuery({
+  const { data: settingsList, isLoading: isUserSettingsLoading } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
     queryFn: () => base44.entities.UserSettings.filter({ owner_email: currentUser.email }),
     enabled: !!currentUser?.email
@@ -311,29 +311,6 @@ export default function Scene() {
     return onShift;
   })();
 
-  // ── CHANGE CLOTHES: eligible real characters present in the scene ───────────
-  // Only active_created_character records with a persistent closet are offered as
-  // clothing targets. Ambient NPC templates / temporary scene staff are excluded.
-  // The user is NOT listed here — they are represented by "Me" in the modal selector.
-  // This selector is independent of the conversation target and does not alter
-  // occupancy, conversation eligibility, location, or sleep state.
-  const changeClothesEligibleCharacters = useMemo(() => {
-    const seen = new Set();
-    const list = [];
-    const add = (c) => {
-      if (!c || !c.id) return;
-      if (seen.has(c.id)) return;
-      // Only active_created_character records carry an authoritative closet.
-      if (c.character_type && c.character_type !== 'active_created_character') return;
-      seen.add(c.id);
-      list.push(c);
-    };
-    broughtCharacters.forEach(add);
-    homeResidentsPresent.forEach(add);
-    workerCharacters.forEach(add);
-    return list;
-  }, [broughtCharacters, homeResidentsPresent, workerCharacters]);
-
   // VGC Towers NPC characters distributed to this location (authoritative presence)
   // These are Character entity records with resolved_current_location_id === locationId
   const vgcDistributedNpcs = characters.filter((c) => {
@@ -347,6 +324,35 @@ export default function Scene() {
     if (c.presence_state === 'in_transit') return false;
     return true;
   });
+
+  // ── CHANGE CLOTHES: eligible persistent characters present in the scene ─────
+  // Any persistent Character entity record present at this location is a valid
+  // clothing target — active_created_character, npc_fictitious, npc_family_member,
+  // etc. All share the same Character-entity closet fields (character_closet,
+  // today_category_outfit_overrides, outfit_rotation_enabled, current_outfit) and
+  // the same applyManualCategoryOverride activation pathway.
+  // Non-persistent scene constructs (venue templates, temp staff, synthesized
+  // presence objects) are plain objects without DB identity and never reach this
+  // list because they are not in the `characters` array.
+  // The user is NOT listed here — they are represented by "Me" in the modal.
+  // This selector is independent of the conversation target and does not alter
+  // occupancy, conversation eligibility, location, sleep, or character type.
+  const changeClothesEligibleCharacters = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    const add = (c) => {
+      if (!c || !c.id || seen.has(c.id)) return;
+      seen.add(c.id);
+      list.push(c);
+    };
+    broughtCharacters.forEach(add);
+    homeResidentsPresent.forEach(add);
+    workerCharacters.forEach(add);
+    vgcDistributedNpcs.forEach(add);
+    // Any other real Character records resolved present at this location
+    characters.filter((c) => c.resolved_current_location_id === locationId).forEach(add);
+    return list;
+  }, [broughtCharacters, homeResidentsPresent, workerCharacters, vgcDistributedNpcs, characters, locationId]);
 
   // PRESENCE SYNC: Scan all characters for NPCs currently at this location (legacy fictional_relationships)
   const npcsTravelingHere = (() => {
@@ -2230,25 +2236,28 @@ Return JSON:
           setPendingPurchase(null);
         }} />
       
-      {/* Change Clothes — explicit per-person targeting via existing outfit authorities */}
+      {/* Change Clothes — explicit per-person targeting via established outfit authorities */}
       <ChangeClothesModal
         isOpen={showChangeClothesModal}
         onClose={() => setShowChangeClothesModal(false)}
         settings={settings}
+        isUserSettingsLoading={isUserSettingsLoading}
         presentCharacters={changeClothesEligibleCharacters}
+        location={location}
+        currentUser={currentUser}
         userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null}
         userName={displayName}
         onOutfitChanged={(targetType) => {
-          // Refresh the targeted owner's authoritative outfit data.
+          // The modal has already persisted the override AND verified via the
+          // canonical backend resolver that the selected outfit won. Now refresh
+          // the owner's query (for UI consistency) and regenerate the scene —
+          // image generation re-resolves every participant's outfit through the
+          // backend authority, so each person is bound to their own current outfit.
           if (targetType === 'user') {
             queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] });
           } else {
             queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
           }
-          // Regenerate the scene so the selected person's new clothing is visible.
-          // The image generator re-resolves every participant's outfit through the
-          // backend authority (resolveUserOutfitContext / resolveCharacterOutfitContext),
-          // so each person is bound to their own current outfit — no cross-contamination.
           setHasUserRequestedImage(true);
           setSceneImage(null);
         }} />
