@@ -1159,9 +1159,15 @@ export default function Scene() {
     }
 
     // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
+    // Participants named in the prompt's strict people rule. ALSO used for the
+    // visual reference stack below so avatars of unnamed people never enter the
+    // request as competing face references (which contaminate the user's identity).
+    // Mirrors the working residential branch (residentialPeople → residentialVisualRefs).
+    let nonResidentialParticipants = visiblePeopleForScene;
     {
       if (isGlobal) {
         const globalPeople = [...sceneCharacters.slice(0, 3), ...(userParticipant ? [userParticipant] : [])];
+        nonResidentialParticipants = globalPeople;
         const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
@@ -1174,6 +1180,7 @@ export default function Scene() {
         ...(selectedNpcIds ? selectedNpcs : []),
         ...(userParticipant ? [userParticipant] : [])].
         filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 4); // cap at 4 (includes user)
+        nonResidentialParticipants = physicallyPresent;
 
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
         const peopleDesc = (physicallyPresent.length > 0 ?
@@ -1187,9 +1194,17 @@ export default function Scene() {
     }
 
     try {
-      // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-      const finalVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-      console.log('[Scene main] Passing visual references:', finalVisualRefs, 'for characters:', visiblePeopleForScene.map((c) => c.name));
+      // AVATAR IDENTITY LOCK: Build the reference stack from the SAME participants
+      // the prompt names (nonResidentialParticipants), NOT the broader
+      // visiblePeopleForScene. Sending avatars of unnamed people as face references
+      // lets the model blend extra faces into the named participants — the user
+      // becomes a generic substitute wearing the correct outfit. Env images stay
+      // environment-only (excluded if they match a participant avatar URL).
+      const participantAvatarUrls = nonResidentialParticipants
+        .map((c) => c.avatar_url || c.image_avatar_url)
+        .filter((u) => u && u.trim().length > 0);
+      const finalVisualRefs = [...participantAvatarUrls, ...envRefs.filter((u) => !participantAvatarUrls.includes(u))];
+      console.log('[Scene main] Passing visual references:', finalVisualRefs.length, 'for participants:', nonResidentialParticipants.map((c) => c.name).join(', ') || 'none');
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
         existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined
