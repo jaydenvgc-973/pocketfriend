@@ -130,46 +130,6 @@ function isOnShift(character, locationMap) {
   return false;
 }
 
-// ── LIVE SCHOOL SCHEDULE CHECK ──────────────────────────────────────────────
-// Mirrors isOnShift for work: a time-based check that returns true ONLY while the
-// authoritative school schedule is in session. Replaces the former stale
-// `presence === 'at_school'` DB-status check that blocked sleep indefinitely
-// when resolved_presence_status remained 'at_school' after school hours ended.
-// Resolution order (no invented hours): enrollment override → school location
-// operating hours → not in session. Uses America/New_York (UTC forbidden).
-function isInSchoolWindow(character, locationMap) {
-  if (!character || character.student_status !== 'enrolled') return false;
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const dayOfWeek = nowET.getDay();
-  if (![1, 2, 3, 4, 5].includes(dayOfWeek)) return false;
-  const currentMin = nowET.getHours() * 60 + nowET.getMinutes();
-  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
-  // Priority 1: enrollment override times
-  if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
-    const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
-    if (active) {
-      const sStart = toMin(active.start_time);
-      const sEnd = toMin(active.end_time);
-      if (sStart !== null && sEnd !== null && currentMin >= sStart && currentMin < sEnd) return true;
-    }
-  }
-  // Priority 2: school location operating hours
-  if (character.education_location_id && locationMap && locationMap[character.education_location_id]) {
-    const schoolLoc = locationMap[character.education_location_id];
-    if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
-      const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);
-      const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
-      const entry = todayEntries[0] || dayAgnosticEntries[0];
-      if (entry) {
-        const sStart = toMin(entry.open_time);
-        const sEnd = toMin(entry.close_time);
-        if (sStart !== null && sEnd !== null && currentMin >= sStart && currentMin < sEnd) return true;
-      }
-    }
-  }
-  return false;
-}
-
 function getWorkContextFromLocation(loc) {
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
@@ -620,19 +580,12 @@ function computeCorrectiveState(needs, character, locationMap) {
 
     const effectiveEnergy = (needs.energy / effectiveDrive) * passOutAmp;
 
-    // LIVE school check (mirrors isOnShift): blocks sleep only while school is
-      // actually in session, not when a stale resolved_presence_status='at_school'
-      // remains after school hours ended.
-      const inObligation = isOnShift(character, locationMap) ||
-      isInSchoolWindow(character, locationMap) ||
+    const inObligation = isOnShift(character, locationMap) ||
+      presence === 'at_school' ||
       character.is_jailed ||
       character.house_arrest_active;
 
-    // temporary_housing_location_id is an existing home-equivalent location (the
-      // eating block already treats it as home). An exhausted character at
-      // temporary housing must not be blocked from sleeping.
-      const atHome = character.resolved_current_location_id === character.current_home_location_id ||
-      (!!character.temporary_housing_location_id && character.resolved_current_location_id === character.temporary_housing_location_id) ||
+    const atHome = character.resolved_current_location_id === character.current_home_location_id ||
       presence === 'home' ||
       (character.resolved_location_type || '').toLowerCase() === 'home';
 
