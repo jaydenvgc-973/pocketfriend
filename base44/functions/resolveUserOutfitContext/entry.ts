@@ -86,11 +86,10 @@ Deno.serve(async (req) => {
     // Honored ABOVE all automatic logic (special occasion, rotation, category
     // fallback) for the exact location where the user manually chose it via
     // Scene > Change Clothes. Scope: the stored location_id must match the request
-    // locationId. When both are null/absent (scene with no specific location), the
-    // explicit outfit is still honored. Category is NEVER considered here — the
-    // user may wear any stored outfit regardless of the location's expected category.
+    // locationId. Category is NEVER considered here — the user may wear any stored
+    // outfit regardless of the location's expected category.
     const explicitSceneOutfit = settings.scene_explicit_outfit;
-    if (explicitSceneOutfit?.outfit_id && (explicitSceneOutfit.location_id || null) === (locationId || null)) {
+    if (explicitSceneOutfit?.outfit_id && locationId && explicitSceneOutfit.location_id === locationId) {
       const explicitOutfit = outfits.find((o: any) => o.outfit_id === explicitSceneOutfit.outfit_id);
       if (explicitOutfit) {
         const t = buildOutfitText(explicitOutfit) || explicitOutfit.label?.trim() || null;

@@ -63,11 +63,9 @@ function normalizeClosetItems(rawCloset) {
 
 // ── ACTIVE OUTFIT ID (for "Wearing" highlight in the modal) ──────────────────
 // Priority: explicit scene outfit (matching this location) > category-based active id.
-// Matches when the stored location_id equals the request locationId, including
-// when both are null/absent (scene with no specific location). Never category-based.
 function deriveActiveOutfitId(kind, record, locationId) {
   const explicit = record?.scene_explicit_outfit;
-  if (explicit?.outfit_id && (explicit.location_id || null) === (locationId || null)) {
+  if (explicit?.outfit_id && locationId && explicit.location_id === locationId) {
     return explicit.outfit_id;
   }
   if (kind === 'user') {

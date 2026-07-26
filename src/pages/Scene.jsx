@@ -985,7 +985,14 @@ export default function Scene() {
     // buildAppearanceLockBlock is the full identity authority — inject it for the user so
     // their face/body identity stays intact alongside the closet-driven outfit.
     // The avatar remains the visual identity anchor; this text reinforces it.
-    const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
+    // Bind the full appearance-lock output EXPLICITLY to the user by name so the
+    // model cannot apply the user's skin tone / hair / facial-hair / age / body
+    // descriptors to any other participant, and cannot substitute a generic
+    // person for the user. The buildAppearanceLockBlock output below is included
+    // verbatim — nothing is stripped or rewritten. This only adds name ownership.
+    const userAppearanceBlock = userParticipant
+      ? `\n\n════════════════════════════════════════════════════════════════════════════════\nUSER IDENTITY OWNERSHIP — ${displayName} (the user)\n════════════════════════════════════════════════════════════════════════════════\nThe appearance lock below applies to ${displayName} ONLY — the person named "${displayName}".\nDo NOT apply any of these features to any other person in the image.\nDo NOT replace ${displayName} with a generic person, a model from an outfit preview, or another participant.\n${displayName}'s face, complexion, hair, facial-hair state, age, and body MUST come from this lock and ${displayName}'s avatar ONLY.\nThe correct outfit for ${displayName} is assigned separately — it belongs on ${displayName}, not on any other person.\n${buildAppearanceLockBlock(userParticipant)}`
+      : '';
 
     // ── REFERENCE IMAGE ASSEMBLY: AVATARS FIRST (IDENTITY SOURCE) ──────────────
     // Prioritize character avatars for identity locking, then location environment refs
