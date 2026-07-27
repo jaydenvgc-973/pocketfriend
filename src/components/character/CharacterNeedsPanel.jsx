@@ -44,10 +44,19 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
     (!character?.character_type && character?.status === 'active')
   ) && character?.status === 'active';
 
-  // NOTE: No automatic simulation polling. The needs simulation runs ONLY via the
-  // 2-hour backend automation. This panel does NOT trigger the sim on mount or on
-  // any interval. The "refresh" button and handleNeedChange are the only user-initiated
-  // sim invocations (explicit manual actions, not polling).
+  // Run simulation on mount — staggered 3s to avoid 429 alongside other profile queries
+  useEffect(() => {
+    if (!isActiveCreated || !character?.id) return;
+    const timer = setTimeout(runSimulation, 3000);
+    return () => clearTimeout(timer);
+  }, [character?.id]);
+
+  // Auto-refresh every 5 minutes while panel is visible
+  useEffect(() => {
+    if (!isActiveCreated || !character?.id) return;
+    const interval = setInterval(runSimulation, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [character?.id, isActiveCreated]);
 
   // While sleeping: re-render every 60 seconds so the live energy bar visibly ticks up
   const isSleepingForTick = ['sleeping', 'napping'].includes(character?.resolved_presence_status || '');
