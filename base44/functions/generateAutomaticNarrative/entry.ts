@@ -130,23 +130,35 @@ Deno.serve(async (req) => {
     const isAsleep = hour >= sleepHour || hour < wakeHour;
     const sleepState = isAsleep ? 'asleep' : 'awake';
 
-    // Work state — check schedule fields
+    // Work state — AUTHORITATIVE PRESENCE IS THE DECIDING FACTOR.
+    // The schedule fields (work_days/work_start_time/work_end_time) indicate when
+    // work SHOULD happen, but they do NOT override where the character actually is.
+    // A character who is home (resolved_presence_status='home', location=home) but
+    // whose schedule says they "should" be at work must NOT be narrated as at work —
+    // that would hallucinate them into their workplace against the authoritative state.
+    // isAtWork is true ONLY when the authoritative presence confirms work
+    // (resolved_presence_status === 'at_work') OR the authoritative resolved location
+    // IS their work location AND the schedule is currently active.
     let workState = 'off_work';
     let isAtWork = false;
-    if (character.work_days && character.work_start_time && character.work_end_time) {
+    if (character.resolved_presence_status === 'at_work') {
+      workState = 'at_work';
+      isAtWork = true;
+    }
+    if (!isAtWork && character.work_days && character.work_start_time && character.work_end_time) {
       const dayOfWeek = nowET.getDay();
       const [wsh, wsm] = character.work_start_time.split(':').map(Number);
       const [weh, wem] = character.work_end_time.split(':').map(Number);
       const workStart = wsh * 60 + wsm;
       const workEnd = weh * 60 + wem;
-      if (character.work_days.includes(dayOfWeek) && currentMinutes >= workStart && currentMinutes < workEnd) {
+      const scheduleActive = character.work_days.includes(dayOfWeek) && currentMinutes >= workStart && currentMinutes < workEnd;
+      // Only treat as at-work if the authoritative location IS the work location.
+      const workLocId = character.occupation_location_id || character.current_work_location_id;
+      const atWorkLocation = workLocId && locationId === workLocId;
+      if (scheduleActive && atWorkLocation) {
         workState = 'at_work';
         isAtWork = true;
       }
-    }
-    if (character.resolved_presence_status === 'at_work') {
-      workState = 'at_work';
-      isAtWork = true;
     }
 
     // Travel state
@@ -578,6 +590,11 @@ WHAT IS FORBIDDEN:
   — A residential home location must be described as residential, not industrial or commercial
   — A workplace location must be described as that specific workplace, not generalized
   — Do NOT blend two locations together
+• Referencing the character's workplace, occupation, job title, or work duties IN THE NARRATIVE
+  when the authoritative location above is NOT their workplace. A character's job is part of
+  their identity, but if they are at home (or anywhere that is not their workplace), the
+  narrative must NOT depict them at work, doing work tasks, or in their work environment.
+  The occupation may color their thoughts but must NOT dictate the physical scene.
 
 CHARACTER PRESENCE RULE — ABSOLUTE:
 A character (family member, coworker, friend, romantic partner, neighbor, anyone) may only appear in this
