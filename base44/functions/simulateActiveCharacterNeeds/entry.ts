@@ -1340,6 +1340,19 @@ Deno.serve(async (req) => {
               transition: { transition_type: 'pass_out_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'passed_out', authority: 'compound_crisis', reason: 'Corrective state: critical need pressure forced involuntary collapse.' },
               consequence: null,
             });
+          } else if (cs === 'hospitalized') {
+            // Energy-collapse hospitalization (computeCorrectiveState: energy ≤ ENERGY_MEDICAL).
+            // Without this branch the corrective state is computed but silently dropped —
+            // a character with energy ≤ 5 but health > 15 never gets hospitalized via this
+            // path and remains stuck at home where home_resting energy rate is 0 (no
+            // recovery). Wiring it into the existing transition pipeline lets the authority
+            // commit the hospitalization so the character enters sleeping-context recovery.
+            transitionCandidates.push({
+              priority: 1,
+              payload: { ...corrective },
+              transition: { transition_type: 'hospitalized_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'hospitalized', authority: 'energy_medical', reason: `Corrective state: energy collapse (energy ${Math.round(newNeeds.energy)} ≤ ${T.ENERGY_MEDICAL}).` },
+              consequence: { type: 'er_escalation', healthValue: Math.round(newNeeds.health) },
+            });
           }
         }
 
