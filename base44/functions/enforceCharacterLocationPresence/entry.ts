@@ -686,11 +686,11 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       resolved_last_updated_at: etTime.toISOString(),
       current_activity: 'hospitalized — health collapsed',
+      resolved_location_type: 'medical',
     };
     if (hospitalLocId) {
       canonicalFields.resolved_current_location_id = hospitalLocId;
       canonicalFields.resolved_current_location_name = hospitalLoc?.name || 'Hospital';
-      canonicalFields.resolved_location_type = 'medical';
     }
     // One-time stabilization — applied exactly once at the admission commit.
     // These are fixed amounts, NOT recurring rates. Remaining hospitalized

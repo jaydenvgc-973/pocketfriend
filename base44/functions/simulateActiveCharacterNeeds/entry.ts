@@ -266,7 +266,13 @@ function getLocationContext(character, locationMap, now) {
     if (activity.includes('sleep') || activity.includes('asleep')) return 'sleeping';
     if (activity.includes('rest') || activity.includes('relax') || activity.includes('recover')) return 'resting';
     if (activity.includes('eat') || activity.includes('food') || activity.includes('meal')) return 'eating';
-    return 'default';
+    // Hospitalized characters with no explicit recovery activity are recovering
+    // through sleep — the medical emergency requires rest. The existing 'sleeping'
+    // context rate applies (+12.5 energy, +0.5 health, +3 mental, +4 comfort per
+    // hour). The 8h sleep cap explicitly excludes hospitalized characters, so the
+    // rate applies without being capped. 'default' (decay) must never apply to a
+    // hospitalized character — that traps them in a non-recovery loop.
+    return 'sleeping';
   }
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
@@ -1502,6 +1508,21 @@ Deno.serve(async (req) => {
             }
           } catch (invokeErr) {
             results.push({ character: charName, context, event: 'authority_invoke_failed', error: invokeErr.message });
+          }
+        }
+
+        // CORRECTION 3: When the authority commits a fresh hospitalization, it
+        // applies one-time HOSPITAL_STABILIZATION amounts to the character's needs.
+        // The updatePayload below would overwrite those stabilized values with the
+        // pre-stabilization newNeeds. Remove need values from updatePayload so the
+        // stabilization committed by the authority persists. Only last_need_simulated_at
+        // is written for this tick. The reconciliation path (_staleHospitalLocation)
+        // does not apply stabilization — its transition is null — so need values are
+        // preserved for that case.
+        if (authorityCommittedResult?.resolved_presence_status === 'hospitalized' &&
+            selectedTransition?.transition?.transition_type === 'hospitalized_start') {
+          for (const k of ['hunger_value','energy_value','social_value','health_value','mental_value','hygiene_value','comfort_value']) {
+            delete updatePayload[k];
           }
         }
 
