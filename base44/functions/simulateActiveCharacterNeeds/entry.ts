@@ -1019,14 +1019,26 @@ Deno.serve(async (req) => {
         const comfortMod = computeComfortModifier(char, context, locationMap);
         newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * elapsedHours);
 
-        // Hospitalized characters receive hygiene maintenance from medical staff
-        // (clean gowns, sponge baths, assisted care). The sleeping context forced
-        // by getLocationContext has hygiene: 0 (normal sleep doesn't improve
-        // hygiene), but a hospital environment actively maintains patient
-        // hygiene. Uses the existing direct-adjustment pattern (same as the
-        // eating block) — no new rate or modifier system.
+        // Hospitalized characters recover across ALL life-needs simultaneously —
+        // no need decays while admitted. The hospital environment provides:
+        // energy (bed rest), health (medical care), hunger (meals/IV fluids),
+        // hygiene (staff-assisted care), mental (stable supervised environment),
+        // comfort (hospital bed rest). Social is excluded — it measures external
+        // fulfillment (visitors/interaction), which a hospital cannot provide at
+        // the same rate; social recovery occurs post-discharge via existing
+        // triggerAutonomousActions. The discharge gate (RC3b) requires all 7
+        // needs ≥ 85 — social reaches 85 through the stabilization boost at
+        // admission (enforceCharacterLocationPresence HOSPITAL_STABILIZATION)
+        // and holds until discharge. Uses the existing direct-adjustment pattern
+        // (same as the eating block) — no new rate table or modifier system.
         if (char.resolved_presence_status === 'hospitalized') {
-          newNeeds.hygiene = clamp(newNeeds.hygiene + 2 * elapsedHours);
+          const HOSP_RATES = { hunger: +2, energy: +12.5, health: +3, hygiene: +2, mental: +3, comfort: +4 };
+          newNeeds.hunger  = clamp((needs.hunger  ?? 70) + HOSP_RATES.hunger  * elapsedHours);
+          newNeeds.energy  = clamp((needs.energy  ?? 75) + HOSP_RATES.energy  * elapsedHours);
+          newNeeds.health  = clamp((needs.health  ?? 80) + HOSP_RATES.health  * elapsedHours);
+          newNeeds.hygiene = clamp((needs.hygiene ?? 75) + HOSP_RATES.hygiene * elapsedHours);
+          newNeeds.mental  = clamp((needs.mental  ?? 70) + HOSP_RATES.mental  * elapsedHours);
+          newNeeds.comfort = clamp((needs.comfort ?? 70) + HOSP_RATES.comfort * elapsedHours);
         }
 
         const hasStayLock = char.presence_stay_lock === true;
