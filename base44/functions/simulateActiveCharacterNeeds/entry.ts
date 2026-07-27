@@ -1019,6 +1019,16 @@ Deno.serve(async (req) => {
         const comfortMod = computeComfortModifier(char, context, locationMap);
         newNeeds.comfort = clamp(newNeeds.comfort + comfortMod * elapsedHours);
 
+        // Hospitalized characters receive hygiene maintenance from medical staff
+        // (clean gowns, sponge baths, assisted care). The sleeping context forced
+        // by getLocationContext has hygiene: 0 (normal sleep doesn't improve
+        // hygiene), but a hospital environment actively maintains patient
+        // hygiene. Uses the existing direct-adjustment pattern (same as the
+        // eating block) — no new rate or modifier system.
+        if (char.resolved_presence_status === 'hospitalized') {
+          newNeeds.hygiene = clamp(newNeeds.hygiene + 2 * elapsedHours);
+        }
+
         const hasStayLock = char.presence_stay_lock === true;
         let nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
