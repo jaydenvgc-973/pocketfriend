@@ -130,6 +130,55 @@ function isOnShift(character, locationMap) {
   return false;
 }
 
+// ── LIVE SCHOOL-SESSION AUTHORITY ─────────────────────────────────────────
+// Mirrors the canonical resolution in src/lib/schoolScheduleResolver.js
+// (resolveSchoolSchedule): enrollment override → school location operating
+// hours → unresolved. A persisted 'at_school' presence label is NOT schedule
+// authority — a character may live at a school location and be outside class
+// hours. This function returns true ONLY when the current Eastern Time falls
+// within the resolved live school session window.
+function isInSchoolSession(character, locationMap) {
+  if (!character || character.student_status !== 'enrolled') return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const cur = nowET.getHours() * 60 + nowET.getMinutes();
+  const dow = nowET.getDay();
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+  // PRIORITY 1: Enrollment override times on character
+  if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+    const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+    if (active) {
+      const s = toMin(active.start_time);
+      const e = toMin(active.end_time);
+      if (s !== null && e !== null) {
+        const inWindow = e < s ? (cur >= s || cur < e) : (cur >= s && cur < e);
+        if (inWindow) return true;
+      }
+    }
+  }
+
+  // PRIORITY 2: School location operating hours (from LocationReference)
+  if (character.education_location_id && locationMap && locationMap[character.education_location_id]) {
+    const schoolLoc = locationMap[character.education_location_id];
+    if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
+      const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dow);
+      const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
+      const entry = todayEntries[0] || dayAgnosticEntries[0];
+      if (entry) {
+        const s = toMin(entry.open_time);
+        const e = toMin(entry.close_time);
+        if (s !== null && e !== null) {
+          const inWindow = e < s ? (cur >= s || cur < e) : (cur >= s && cur < e);
+          if (inWindow) return true;
+        }
+      }
+    }
+  }
+
+  // PRIORITY 3: No valid school schedule resolved — not an active obligation
+  return false;
+}
+
 function getWorkContextFromLocation(loc) {
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
@@ -581,7 +630,7 @@ function computeCorrectiveState(needs, character, locationMap) {
     const effectiveEnergy = (needs.energy / effectiveDrive) * passOutAmp;
 
     const inObligation = isOnShift(character, locationMap) ||
-      presence === 'at_school' ||
+      isInSchoolSession(character, locationMap) ||
       character.is_jailed ||
       character.house_arrest_active;
 
