@@ -558,9 +558,9 @@ function applyStatInfection(needs, elapsedHours) {
   if (needs.social < 15) needs.mental = clamp(needs.mental - 0.15 * elapsedHours);
   if (needs.mental < 40) {
     const severity = (40 - needs.mental) / 40;
-    needs.hunger  = clamp(needs.hunger  - 0.2 * severity * elapsedHours);
-    needs.hygiene = clamp(needs.hygiene - 0.2 * severity * elapsedHours);
-    needs.health  = clamp(needs.health  - 0.15 * severity * elapsedHours);
+    needs.hunger  = clamp(needs.hunger  - 0.05 * severity * elapsedHours);
+    needs.hygiene = clamp(needs.hygiene - 0.05 * severity * elapsedHours);
+    needs.health  = clamp(needs.health  - 0.03 * severity * elapsedHours);
   }
   const bodyCriticalCount = [needs.hunger, needs.energy, needs.health].filter(v => v < 20).length;
   if (bodyCriticalCount >= 2) needs.health = clamp(needs.health - 0.5 * elapsedHours);
