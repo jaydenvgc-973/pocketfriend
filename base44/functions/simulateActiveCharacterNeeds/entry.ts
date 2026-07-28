@@ -604,53 +604,15 @@ function needsAreUninitialized(needs) {
   return Object.values(needs).every(v => v === null);
 }
 
-// ── AUTHORIZED SLEEP ENVIRONMENT CHECK ──────────────────────────────────
-// Uses the established authoritative sleep-environment category set from
-// enforceCharacterLocationPresence (VALID_SLEEP_CATEGORIES). Does not
-// invent new categories, feature-name heuristics, or broadened eligibility
-// beyond the application's existing authoritative source.
-const VALID_SLEEP_CATEGORIES = new Set([
-  'home', 'hotel', 'shelter', 'generic',
-  'jail', 'prison', 'detention_center', 'correctional_facility',
-  'juvenile_detention', 'halfway_house', 'holding_cell'
-]);
-
-function isAtAuthorizedSleepEnvironment(character, locationMap) {
-  const locId = character.resolved_current_location_id;
-  const presence = character.resolved_presence_status || '';
-  const locType = (character.resolved_location_type || '').toLowerCase();
-
-  // Primary home
-  if (locId && locId === character.current_home_location_id) return true;
-  if (presence === 'home' || locType === 'home') return true;
-
-  // Temporary housing, recovery, supervision, halfway house
-  if (['temporary_housing', 'recovery_nap', 'supervision_home', 'halfway_house'].includes(locType)) return true;
-  if (locId && locId === character.temporary_housing_location_id) return true;
-
-  // No resolved location but presence indicates home
-  if (!locId && presence === 'home') return true;
-
-  // Look up the location record
-  const loc = locId ? locationMap[locId] : null;
-  if (!loc) return false;
-
-  // Established authoritative sleep-environment categories (aligned with
-  // enforceCharacterLocationPresence.VALID_SLEEP_CATEGORIES)
-  if (VALID_SLEEP_CATEGORIES.has((loc.category || '').toLowerCase())) return true;
-
-  // Confinement facilities (LocationReference.is_confinement_facility)
-  // capture jail_prison-category locations per the established intent
-  if (loc.is_confinement_facility) return true;
-
-  // Mixed-use buildings with user-configured residential environments
-  if (Array.isArray(loc.environments) && loc.environments.length > 0) {
-    const hasResidential = loc.environments.some(e => e.type === 'residential');
-    if (hasResidential) return true;
-  }
-
-  return false;
-}
+// ── SLEEP-LOCATION AUTHORITY ─────────────────────────────────────────────
+// Sleep-location validity is NOT determined locally. The canonical authority
+// enforceCharacterLocationPresence owns this determination through its
+// isValidSleepLocation(location) / VALID_SLEEP_CATEGORIES. simulateActiveCharacterNeeds
+// routes every sleep/nap request through that authority, passing the character's
+// current resolved location as the requested location. The authority accepts a
+// valid sleep location (home, hotel, shelter, generic, confinement categories)
+// or redirects to a valid sleep home when the current location is invalid.
+// No duplicate category list, helper, or parallel source of truth is maintained here.
 
 // ── CORRECTIVE STATE RESOLVER ────────────────────────────────────────────
 function computeCorrectiveState(needs, character, locationMap) {
@@ -723,14 +685,13 @@ function computeCorrectiveState(needs, character, locationMap) {
       character.is_jailed ||
       character.house_arrest_active;
 
-    // LOCATION CHECK — authorized sleep environment, not just primary home.
-    // Includes hotels, shelters, parks, mixed-use residential, and other
-    // established sleep-permissive locations.
-    const atSleepEnv = isAtAuthorizedSleepEnvironment(character, locationMap);
-
-    // The live schedule result is authoritative. No arbitrary time window
-    // may override a confirmed live obligation.
-    const isBlocked = inObligation || !atSleepEnv || character.sleep_lock;
+    // LOCATION CHECK — delegated to the canonical authority. The sleep/nap
+    // request is routed through enforceCharacterLocationPresence, which applies
+    // its own isValidSleepLocation determination to the character's current
+    // resolved location. A valid non-primary-home sleep location (hotel, shelter,
+    // generic, confinement) is accepted by the authority; an invalid location is
+    // redirected to a valid sleep home. No local duplicate of that authority runs here.
+    const isBlocked = inObligation || character.sleep_lock;
 
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
@@ -1402,14 +1363,14 @@ Deno.serve(async (req) => {
           if (cs === 'sleeping') {
             transitionCandidates.push({
               priority: 3,
-              payload: { ...corrective, last_sleep_start: nowIso, presence_stay_lock: true, presence_stay_lock_reason: 'sleep_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation', resolved_current_location_id: char.current_home_location_id, resolved_current_location_name: locationMap[char.current_home_location_id]?.name || char.resolved_current_location_name || 'Home', resolved_location_type: 'home', resolved_source_reason: 'sleep_state', resolved_last_updated_at: nowIso },
+              payload: { ...corrective, last_sleep_start: nowIso, presence_stay_lock: true, presence_stay_lock_reason: 'sleep_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation', resolved_current_location_id: char.resolved_current_location_id, resolved_current_location_name: char.resolved_current_location_name || (locationMap[char.resolved_current_location_id]?.name) || 'Home', resolved_location_type: 'home', resolved_source_reason: 'sleep_state', resolved_last_updated_at: nowIso },
               transition: { transition_type: 'sleep_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'sleeping', authority: 'wake_time_boundary', reason: 'Corrective state: energy pressure triggered voluntary sleep decision.' },
               consequence: { type: 'sleep_start', energyValue: Math.round(newNeeds.energy) },
             });
           } else if (cs === 'napping') {
             transitionCandidates.push({
               priority: 4,
-              payload: { ...corrective, last_nap_time: nowIso, presence_stay_lock: true, presence_stay_lock_reason: 'nap_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation', resolved_current_location_id: char.current_home_location_id, resolved_current_location_name: locationMap[char.current_home_location_id]?.name || char.resolved_current_location_name || 'Home', resolved_location_type: 'home', resolved_source_reason: 'nap_state', resolved_last_updated_at: nowIso },
+              payload: { ...corrective, last_nap_time: nowIso, presence_stay_lock: true, presence_stay_lock_reason: 'nap_state', presence_stay_lock_authority: 'simulateActiveCharacterNeeds', presence_stay_lock_set_at: nowIso, presence_stay_lock_created_by: 'system_automation', resolved_current_location_id: char.resolved_current_location_id, resolved_current_location_name: char.resolved_current_location_name || (locationMap[char.resolved_current_location_id]?.name) || 'Home', resolved_location_type: 'home', resolved_source_reason: 'nap_state', resolved_last_updated_at: nowIso },
               transition: { transition_type: 'nap_start', from_status: char.resolved_presence_status || 'unknown', to_status: 'napping', authority: 'wake_time_boundary', reason: 'Corrective state: energy pressure triggered nap decision.' },
               consequence: { type: 'nap_start', energyValue: Math.round(newNeeds.energy) },
             });
