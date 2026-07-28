@@ -104,7 +104,7 @@ function isOnShift(character, locationMap) {
     const [eh, em = 0] = character.work_end_time.split(':').map(Number);
     const startMin = sh * 60 + sm;
     const endMin = eh * 60 + em;
-    if (endMin <= startMin) {
+    if (endMin < startMin) {
       // Overnight interval — crosses midnight. The shift starts on the day
       // listed in work_days and continues past midnight into the next day.
       if (cur >= startMin && character.work_days.includes(dow)) return true;
@@ -128,7 +128,7 @@ function isOnShift(character, locationMap) {
         const sMin = sh * 60 + sm;
         const eMin = eh * 60 + em;
         const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
-        if (eMin <= sMin) {
+        if (eMin < sMin) {
           if (cur >= sMin && (!shiftDays || shiftDays.includes(dow))) return true;
           if (cur < eMin && (!shiftDays || shiftDays.includes(prevDow))) return true;
         } else {
@@ -140,7 +140,7 @@ function isOnShift(character, locationMap) {
         const [eh, em = 0] = entry.work_end_time.split(':').map(Number);
         const sMin = sh * 60 + sm;
         const eMin = eh * 60 + em;
-        if (eMin <= sMin) {
+        if (eMin < sMin) {
           if (cur >= sMin && entry.work_days.includes(dow)) return true;
           if (cur < eMin && entry.work_days.includes(prevDow)) return true;
         } else {
@@ -191,7 +191,7 @@ function isInSchoolSession(character, locationMap) {
         if (s === null || e === null) continue;
         const dayMatches = h.day_of_week == null || h.day_of_week === dow;
         const prevDayMatches = h.day_of_week == null || h.day_of_week === prevDow;
-        if (e <= s) {
+        if (e < s) {
           // Overnight interval — crosses midnight
           if (cur >= s && dayMatches) return true;
           if (cur < e && prevDayMatches) return true;
@@ -605,10 +605,16 @@ function needsAreUninitialized(needs) {
 }
 
 // ── AUTHORIZED SLEEP ENVIRONMENT CHECK ──────────────────────────────────
-// Determines whether the character's current location is an authorized
-// sleeping environment. NOT limited to the primary home — includes hotels,
-// shelters, parks, mixed-use residential environments, and other
-// established sleep-permissive locations.
+// Uses the established authoritative sleep-environment category set from
+// enforceCharacterLocationPresence (VALID_SLEEP_CATEGORIES). Does not
+// invent new categories, feature-name heuristics, or broadened eligibility
+// beyond the application's existing authoritative source.
+const VALID_SLEEP_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter', 'generic',
+  'jail', 'prison', 'detention_center', 'correctional_facility',
+  'juvenile_detention', 'halfway_house', 'holding_cell'
+]);
+
 function isAtAuthorizedSleepEnvironment(character, locationMap) {
   const locId = character.resolved_current_location_id;
   const presence = character.resolved_presence_status || '';
@@ -629,23 +635,19 @@ function isAtAuthorizedSleepEnvironment(character, locationMap) {
   const loc = locId ? locationMap[locId] : null;
   if (!loc) return false;
 
-  const cat = (loc.category || '').toLowerCase();
+  // Established authoritative sleep-environment categories (aligned with
+  // enforceCharacterLocationPresence.VALID_SLEEP_CATEGORIES)
+  if (VALID_SLEEP_CATEGORIES.has((loc.category || '').toLowerCase())) return true;
 
-  // Hotels, shelters, parks (outdoor), and home-category locations
-  if (['home', 'hotel', 'shelter', 'outdoor'].includes(cat)) return true;
+  // Confinement facilities (LocationReference.is_confinement_facility)
+  // capture jail_prison-category locations per the established intent
+  if (loc.is_confinement_facility) return true;
 
-  // Generic, community, and public locations may be authorized sleeping spaces
-  if (['generic', 'community', 'public'].includes(cat)) return true;
-
-  // Mixed-use buildings with residential environments
+  // Mixed-use buildings with user-configured residential environments
   if (Array.isArray(loc.environments) && loc.environments.length > 0) {
     const hasResidential = loc.environments.some(e => e.type === 'residential');
     if (hasResidential) return true;
   }
-
-  // Sleep-permissive features
-  const features = (loc.features || []).map(f => (f || '').toLowerCase());
-  if (features.some(f => f.includes('sleep') || f.includes('bed') || f.includes('lodging') || f.includes('rest area'))) return true;
 
   return false;
 }
