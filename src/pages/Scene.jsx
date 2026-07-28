@@ -944,8 +944,15 @@ export default function Scene() {
     const outfitLines = [];
 
     // Characters: resolve each through resolveCharacterOutfitContext
+    // Include hospitalized characters present at the scene who were NOT explicitly
+    // brought — admitted patients must render in a hospital gown regardless of how
+    // they entered the scene (brought via URL, or present as a hospital occupant).
+    const broughtIds = new Set(broughtCharacters.map((c) => c.id));
+    const hospitalizedPresent = (resolvedWhosHereList || []).filter(
+      (p) => p && p.id && !p.isUser && !broughtIds.has(p.id) && p.resolved_presence_status === 'hospitalized'
+    );
     const charOutfitResults = await Promise.all(
-      broughtCharacters.map((c) =>
+      [...broughtCharacters, ...hospitalizedPresent].map((c) =>
         base44.functions.invoke('resolveCharacterOutfitContext', {
           characterId: c.id,
           locationCategory: location?.category,

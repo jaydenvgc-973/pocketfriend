@@ -239,6 +239,20 @@ Deno.serve(async (req) => {
       return Response.json({ text: null, source: 'character_not_found', category: null });
     }
 
+    // ── PRIORITY -1: HOSPITALIZED PATIENT (admission gown) ──────────────────────
+    // A hospitalized character (resolved_presence_status === 'hospitalized') is an
+    // admitted patient. During admission they MUST be depicted in a hospital gown —
+    // this is identity/medical state, not a fashion choice. It overrides EVERYTHING
+    // below: manual Change-Clothes selections, uniforms, closet rotation, and
+    // category fallbacks. No closet outfit, no scene_explicit_outfit, and no daily
+    // wear may replace the gown while the character remains admitted.
+    const _presenceStatus = character.resolved_presence_status || character.location_status || '';
+    if (_presenceStatus === 'hospitalized') {
+      const gownText = 'a hospital patient gown — light blue, short-sleeve V-neck front, open back with tie closures, standard admitted-patient attire, hospital wristband on one wrist';
+      console.log(`[resolveCharacterOutfitContext] ✅ HOSPITALIZED patient gown for "${character.name}" (presence=hospitalized) — overrides all other outfit logic`);
+      return Response.json({ text: gownText, source: 'hospitalized_patient', category: 'medical' });
+    }
+
     // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
     // Honored ABOVE all automatic logic (uniform, special occasion, rotation,
     // category fallback) for the exact location where the user manually chose it
