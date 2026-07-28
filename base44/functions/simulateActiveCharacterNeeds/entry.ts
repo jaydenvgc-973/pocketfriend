@@ -99,30 +99,53 @@ function isOnShift(character, locationMap) {
   const dow = nowET.getDay();
 
   // SOURCE 1: Character-level work_days/work_start_time/work_end_time (primary job fields)
-  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.includes(dow)) {
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days) && character.work_days.length > 0) {
     const [sh, sm = 0] = character.work_start_time.split(':').map(Number);
     const [eh, em = 0] = character.work_end_time.split(':').map(Number);
-    if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    if (endMin <= startMin) {
+      // Overnight interval — crosses midnight. The shift starts on the day
+      // listed in work_days and continues past midnight into the next day.
+      if (cur >= startMin && character.work_days.includes(dow)) return true;
+      if (cur < endMin && character.work_days.includes((dow + 6) % 7)) return true;
+    } else {
+      if (cur >= startMin && cur < endMin && character.work_days.includes(dow)) return true;
+    }
   }
 
   // SOURCE 2: additional_occupation_locations — check location-side worker_shifts[char.id]
   if (Array.isArray(character.additional_occupation_locations) && locationMap) {
+    const prevDow = (dow + 6) % 7;
     for (const entry of character.additional_occupation_locations) {
       if (!entry.location_id) continue;
       const loc = locationMap[entry.location_id];
       if (!loc) continue;
       const shift = loc.worker_shifts?.[character.id];
       if (shift?.start && shift?.end) {
-        const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
-        if (shiftDays && !shiftDays.includes(dow)) continue;
         const [sh, sm = 0] = shift.start.split(':').map(Number);
         const [eh, em = 0] = shift.end.split(':').map(Number);
-        if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+        const sMin = sh * 60 + sm;
+        const eMin = eh * 60 + em;
+        const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+        if (eMin <= sMin) {
+          if (cur >= sMin && (!shiftDays || shiftDays.includes(dow))) return true;
+          if (cur < eMin && (!shiftDays || shiftDays.includes(prevDow))) return true;
+        } else {
+          if (cur >= sMin && cur < eMin && (!shiftDays || shiftDays.includes(dow))) return true;
+        }
       }
-      if (!loc.worker_shifts?.[character.id] && entry.work_start_time && entry.work_end_time && Array.isArray(entry.work_days) && entry.work_days.includes(dow)) {
+      if (!loc.worker_shifts?.[character.id] && entry.work_start_time && entry.work_end_time && Array.isArray(entry.work_days) && entry.work_days.length > 0) {
         const [sh, sm = 0] = entry.work_start_time.split(':').map(Number);
         const [eh, em = 0] = entry.work_end_time.split(':').map(Number);
-        if (cur >= sh * 60 + sm && cur < eh * 60 + em) return true;
+        const sMin = sh * 60 + sm;
+        const eMin = eh * 60 + em;
+        if (eMin <= sMin) {
+          if (cur >= sMin && entry.work_days.includes(dow)) return true;
+          if (cur < eMin && entry.work_days.includes(prevDow)) return true;
+        } else {
+          if (cur >= sMin && cur < eMin && entry.work_days.includes(dow)) return true;
+        }
       }
     }
   }
@@ -161,15 +184,19 @@ function isInSchoolSession(character, locationMap) {
   if (character.education_location_id && locationMap && locationMap[character.education_location_id]) {
     const schoolLoc = locationMap[character.education_location_id];
     if (schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
-      const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dow);
-      const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
-      const entry = todayEntries[0] || dayAgnosticEntries[0];
-      if (entry) {
-        const s = toMin(entry.open_time);
-        const e = toMin(entry.close_time);
-        if (s !== null && e !== null) {
-          const inWindow = e < s ? (cur >= s || cur < e) : (cur >= s && cur < e);
-          if (inWindow) return true;
+      const prevDow = (dow + 6) % 7;
+      for (const h of schoolLoc.operating_hours) {
+        const s = toMin(h.open_time);
+        const e = toMin(h.close_time);
+        if (s === null || e === null) continue;
+        const dayMatches = h.day_of_week == null || h.day_of_week === dow;
+        const prevDayMatches = h.day_of_week == null || h.day_of_week === prevDow;
+        if (e <= s) {
+          // Overnight interval — crosses midnight
+          if (cur >= s && dayMatches) return true;
+          if (cur < e && prevDayMatches) return true;
+        } else {
+          if (cur >= s && cur < e && dayMatches) return true;
         }
       }
     }
@@ -699,15 +726,9 @@ function computeCorrectiveState(needs, character, locationMap) {
     // established sleep-permissive locations.
     const atSleepEnv = isAtAuthorizedSleepEnvironment(character, locationMap);
 
-    // Overnight safety net: 3-6am, if live check says obligation but no
-    // overnight reason exists, the obligation is stale — do not block sleep.
-    const hour = nowET.getHours();
-    const isOvernightViolationWindow = hour >= 3 && hour < 6;
-    const staleOvernightObligation = isOvernightViolationWindow &&
-      inObligation && !hasOvernightReason;
-
-    const effectiveInObligation = staleOvernightObligation ? false : inObligation;
-    const isBlocked = effectiveInObligation || !atSleepEnv || character.sleep_lock;
+    // The live schedule result is authoritative. No arbitrary time window
+    // may override a confirmed live obligation.
+    const isBlocked = inObligation || !atSleepEnv || character.sleep_lock;
 
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
