@@ -1007,8 +1007,14 @@ Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. No
       lines.push('⛔ Do NOT substitute a different style of the same item.');
     }
     if (userOutfitText) lines.push(`\n${userWorldName||'User'} OUTFIT: ${userOutfitText} — render exactly.`);
+    lines.push('');
+    lines.push('CROSS-ASSIGNMENT PROHIBITION — ABSOLUTE LAW:');
+    lines.push(`  ⛔ ${charName}'s outfit MUST NOT be rendered on ${userWorldName||'the user'} or any other subject.`);
+    lines.push(`  ⛔ ${userWorldName||'User'}'s outfit MUST NOT be rendered on ${charName} or any other subject.`);
+    lines.push('  ⛔ NEVER swap, blend, transfer, or mix outfits between subjects.');
+    lines.push('  ⛔ Each named person wears ONLY their own outfit listed above.');
     lines.push('════════════════════════════════════════════════════════════');
-    lines.push('FAIL: wrong clothing | added clothing | removed clothing | invented outfit | outfit from scene prompt');
+    lines.push('FAIL: wrong clothing | added clothing | removed clothing | invented outfit | outfit from scene prompt | outfit drifted onto another subject');
     closetLock = lines.join('\n');
   }
 

@@ -16,20 +16,30 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    // ── SLEEP AUTHORITY GUARD ──────────────────────────────────────────────
+    // ── PROTECTED REST-STATE GUARD (sleep + hospitalization) ───────────────
     // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
     // activities. When a character enters a sleep or nap state, character-driven
     // activities STOP." Chat dialogue is not a valid source of current_activity
     // for a sleeping character. Activities resume after waking naturally.
-    const SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
-    if (SLEEP_STATES.has(character.resolved_presence_status)) {
+    //
+    // HOSPITALIZED characters are in protected medical recovery. Their
+    // current_activity is the recovery state set by the authority ("hospitalized
+    // — health collapsed"). Chat dialogue must NOT overwrite it with a present-
+    // tense activity ("at home relaxing") — that would visually imply discharge
+    // while the character is still an admitted patient. Activity resumes only
+    // after the discharge authority releases them.
+    const PROTECTED_REST_STATES = new Set(['sleeping', 'napping', 'passed_out', 'hospitalized']);
+    if (PROTECTED_REST_STATES.has(character.resolved_presence_status)) {
+      const _isHospital = character.resolved_presence_status === 'hospitalized';
       return Response.json({
         success: false,
         blocked: true,
-        reason: 'sleep_authority_guard',
+        reason: _isHospital ? 'hospitalized_authority_guard' : 'sleep_authority_guard',
         characterId,
         presence_status: character.resolved_presence_status,
-        message: `${character.name} is ${character.resolved_presence_status} — chat activity update blocked. Activities are suspended during sleep.`,
+        message: _isHospital
+          ? `${character.name} is hospitalized — chat activity update blocked. Hospitalized characters are admitted patients; their activity is the recovery state set by the authority, not chat dialogue.`
+          : `${character.name} is ${character.resolved_presence_status} — chat activity update blocked. Activities are suspended during sleep.`,
       });
     }
 

@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
     const character = charArr?.[0];
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
 
-    // ── SLEEP AUTHORITY GUARD ──────────────────────────────────────────────
+    // ── PROTECTED REST-STATE GUARD (sleep + hospitalization) ───────────────
     // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
     // activities. When a character enters a sleep or nap state, character-driven
     // activities STOP. Social, travel, entertainment, and activity systems do
@@ -118,16 +118,26 @@ Deno.serve(async (req) => {
     // must NOT overwrite a sleeping/napping/passed_out character's presence.
     // Normal sleep requires 6–8 hours; chat cannot cut it short. The character
     // addresses location/activity needs after waking naturally.
-    const SLEEP_STATES = new Set(['sleeping', 'napping', 'passed_out']);
-    if (SLEEP_STATES.has(character.resolved_presence_status)) {
+    //
+    // HOSPITALIZED characters are in protected medical recovery. The ONLY exit
+    // is discharge through enforceCharacterLocationPresence's needs-based gate
+    // (all canonical life-needs ≥ 85). A chat mention of "home" or any other
+    // place is NOT a discharge order — it must NOT move a hospitalized character
+    // or change their presence. They remain at the hospital as a patient until
+    // the discharge authority releases them.
+    const PROTECTED_REST_STATES = new Set(['sleeping', 'napping', 'passed_out', 'hospitalized']);
+    if (PROTECTED_REST_STATES.has(character.resolved_presence_status)) {
+      const _isHospital = character.resolved_presence_status === 'hospitalized';
       return Response.json({
         success: false,
         updated: false,
         blocked: true,
-        reason: 'sleep_authority_guard',
+        reason: _isHospital ? 'hospitalized_authority_guard' : 'sleep_authority_guard',
         character_id: characterId,
         presence_status: character.resolved_presence_status,
-        message: `${character.name} is ${character.resolved_presence_status} — chat location update blocked. Sleep is the suspension of activities; chat is not a valid wake authority.`,
+        message: _isHospital
+          ? `${character.name} is hospitalized — chat location update blocked. Hospitalized characters are in protected medical recovery and can only be discharged by the recovery authority (all needs ≥ 85), never by a chat mention of a location.`
+          : `${character.name} is ${character.resolved_presence_status} — chat location update blocked. Sleep is the suspension of activities; chat is not a valid wake authority.`,
       });
     }
 
