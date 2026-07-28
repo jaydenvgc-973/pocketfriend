@@ -338,6 +338,15 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
       ? `\nCURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.`
       : '';
 
+    // ── QUIRK TENDENCIES — influence narrative tone, never force activities ─
+    const quirkHints = [];
+    if (character.trait_clean_freak) quirkHints.push('they keep their living space tidy and feel bothered by clutter');
+    if (character.trait_self_care_focused) quirkHints.push('they are meticulous about personal grooming and hygiene');
+    if (character.trait_health_conscious) quirkHints.push('they are mindful of their health and make generally healthy choices');
+    const quirkLine = quirkHints.length > 0
+      ? `\nPERSONAL TENDENCIES: ${quirkHints.join('; ')}. Let these naturally color what they are doing without forcing a specific activity.`
+      : '';
+
     // Resolve pronouns from character profile — never infer from name or appearance
     const charGender = character.gender || '';
     const charPronouns = charGender === 'male' ? 'he/him' : charGender === 'female' ? 'she/her' : 'they/them';
@@ -526,7 +535,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
 ${situationBlock}
-${needsLine}${householdActivityBlock}${healthActivityBlock}
+${needsLine}${quirkLine}${householdActivityBlock}${healthActivityBlock}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
 Gender: ${charGender || 'unknown — use they/them'}

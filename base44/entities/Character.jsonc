@@ -1175,6 +1175,21 @@
       "type": "boolean",
       "default": false
     },
+    "trait_clean_freak": {
+      "type": "boolean",
+      "default": false,
+      "description": "Clean Freak (Extra Clean). Character is more likely to clean, organize, do laundry, and keep their living space tidy. Influences home/chores activity weights and hygiene retention; never forces a specific action."
+    },
+    "trait_self_care_focused": {
+      "type": "boolean",
+      "default": false,
+      "description": "Self-Care Focused (Meticulous Grooming). Character maintains personal hygiene and grooming consistently. Influences hygiene/grooming activity weights and hygiene retention; distinct from Clean Freak which targets the environment."
+    },
+    "trait_health_conscious": {
+      "type": "boolean",
+      "default": false,
+      "description": "Health Conscious. Character makes generally healthier choices without becoming obsessive. Nudges care-seeking, rest, and wellness above average; influences health activity weights and health retention."
+    },
     "merged_into_character_id": {
       "type": "string"
     },

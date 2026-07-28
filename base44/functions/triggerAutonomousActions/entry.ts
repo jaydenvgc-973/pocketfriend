@@ -427,6 +427,11 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   const isHomebody       = personalityText.includes('homebody') || personalityText.includes('cozy') || personalityText.includes('private');
   const isNightlifeChar  = personalityText.includes('nightlife') || personalityText.includes('club') || personalityText.includes('party') || personalityText.includes('bar');
 
+  // Quirk flags — influence behavior via existing candidate weights, never force
+  const isCleanFreak      = character.trait_clean_freak === true;
+  const isSelfCareFocused = character.trait_self_care_focused === true;
+  const isHealthConscious = character.trait_health_conscious === true;
+
   const isEvening   = currentHour >= 17 && currentHour < 23;
   const isAfternoon = currentHour >= 12 && currentHour < 17;
   const isMorning   = currentHour >= 7  && currentHour < 12;
@@ -460,10 +465,13 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   }
 
   // ── HEALTH — activity pressure only ──────────────────────────────────────
+  // Health Conscious quirk nudges care-seeking earlier and adds preventive maintenance.
   if (healthNeed < 35) {
-    candidates.push({ weight: 65, label: 'seeking medical care', type: 'health_activity', needsEffect: { health: 20 } });
+    candidates.push({ weight: isHealthConscious ? 75 : 65, label: 'seeking medical care', type: 'health_activity', needsEffect: { health: 20 } });
   } else if (healthNeed < 50) {
-    candidates.push({ weight: 35, label: 'health maintenance', type: 'health_activity', needsEffect: { health: 10 } });
+    candidates.push({ weight: isHealthConscious ? 45 : 35, label: 'health maintenance', type: 'health_activity', needsEffect: { health: 10 } });
+  } else if (isHealthConscious && healthNeed < 70) {
+    candidates.push({ weight: 22, label: 'health maintenance', type: 'health_activity', needsEffect: { health: 8 } });
   }
 
   // ── GYM / FITNESS — activity pressure, not a destination ─────────────────
@@ -612,8 +620,14 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
 
   // ── HYGIENE / GROOMING / SELF-CARE — activity, NOT destination ────────────
   // Hygiene at home (shower, grooming) is preferred. Supplies purchase is secondary.
-  if (hygiene < 45) {
-    candidates.push({ weight: 40, label: 'hygiene care', type: 'hygiene_activity', needsEffect: { hygiene: 20 } });
+  // Self-Care Focused quirk nudges hygiene care earlier and stronger.
+  {
+    const _hygThresh = isSelfCareFocused ? 55 : 45;
+    const _hygW = isSelfCareFocused ? 50 : 40;
+    const _hygGain = isSelfCareFocused ? 25 : 20;
+    if (hygiene < _hygThresh) {
+      candidates.push({ weight: _hygW, label: 'hygiene care', type: 'hygiene_activity', needsEffect: { hygiene: _hygGain } });
+    }
   }
 
   // ── ERRANDS / PRACTICAL LIFE — activities, not destinations ──────────────
@@ -628,8 +642,23 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
   }
 
   // ── SELF-CARE / GROOMING — activity, not destination ─────────────────────
-  if (isImageConscious && Math.random() < 0.4) {
-    candidates.push({ weight: 30, label: 'grooming / self-care', type: 'hygiene_activity', needsEffect: { hygiene: 10 } });
+  // Self-Care Focused quirk makes grooming more likely even without image-consciousness.
+  {
+    const _groomGate = isSelfCareFocused || isImageConscious;
+    const _groomChance = isSelfCareFocused ? 0.6 : 0.4;
+    const _groomW = isSelfCareFocused ? 40 : 30;
+    if (_groomGate && Math.random() < _groomChance) {
+      candidates.push({ weight: _groomW, label: 'grooming / self-care', type: 'hygiene_activity', needsEffect: { hygiene: 10 } });
+    }
+  }
+
+  // ── CLEAN FREAK — household cleaning & organization (home activity) ───────
+  // Clean Freak quirk makes tidying, cleaning, and laundry eligible more often.
+  // These are home activities (no travel) that improve comfort and mental state.
+  if (isCleanFreak) {
+    candidates.push({ weight: 38, label: 'cleaning the house', type: 'home', needsEffect: { comfort: 10, mental: 8 } });
+    candidates.push({ weight: 28, label: 'doing laundry and tidying up', type: 'home', needsEffect: { comfort: 8, mental: 6 } });
+    candidates.push({ weight: 24, label: 'organizing and putting things away', type: 'home', needsEffect: { comfort: 6, mental: 7 } });
   }
 
   // ── AMBITIOUS / NETWORKING — activity ────────────────────────────────────

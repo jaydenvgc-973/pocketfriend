@@ -1045,6 +1045,15 @@ Deno.serve(async (req) => {
         if(char.needs_locks?.mental) newNeeds.mental = needs.mental ?? 70;
         if(char.needs_locks?.health) newNeeds.health = needs.health ?? 80;
 
+        // ── QUIRK NUDGES — influence need decay, never force ──────────────────
+        // Self-Care Focused maintains personal hygiene consistently → slower net hygiene decay.
+        // Clean Freak keeps environment (and self after dirty activities) tidy → slower hygiene decay.
+        // Health Conscious makes generally healthier choices → slightly slower health decay.
+        // Subtle retention bonuses per elapsed hour; locks above still win.
+        if (char.trait_self_care_focused) newNeeds.hygiene = clamp(newNeeds.hygiene + 1.5 * elapsedHours);
+        if (char.trait_clean_freak) newNeeds.hygiene = clamp(newNeeds.hygiene + 0.75 * elapsedHours);
+        if (char.trait_health_conscious) newNeeds.health = clamp(newNeeds.health + 0.5 * elapsedHours);
+
         // Hospitalized characters are in a protected recovery state. Cross-need
         // infection decay would reverse recovery — a stabilized need must not
         // begin decaying again merely because another need is still recovering.
