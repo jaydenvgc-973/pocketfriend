@@ -129,8 +129,14 @@ export function buildAppearanceLockBlock(character) {
   const appearanceAge = lock.appearance_age ? ` appearance age ${lock.appearance_age}` : '';
   const customKeywords = lock.custom_keywords?.length > 0 ? ` ${lock.custom_keywords.join(', ')}` : '';
   
+  // Gender is a top-level identity field (character.gender / user settings user_gender).
+  // It is IDENTITY, not flavor — it must not change between generations and must never
+  // be overridden by the prompt, the avatar, or the outfit layer.
+  const genderValue = character.gender || character.appearance_lock?.gender || null;
+
   // Build exact appearance string using literal field values
   const parts = [
+    genderValue ? `gender: ${genderValue}` : null,
     requiredFields.skin_tone ? `skin tone: ${requiredFields.skin_tone}` : null,
     requiredFields.hair_type ? `hair type: ${requiredFields.hair_type}` : null,
     requiredFields.hairstyle ? `hairstyle: ${requiredFields.hairstyle}` : null,
