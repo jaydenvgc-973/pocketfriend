@@ -140,6 +140,114 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// ── LOCATION FACILITIES & HEALTH-ACTIVITY ELIGIBILITY ────────────────────
+// Supplemental health-activity system. Being at a supporting location makes
+// health-improving activities ELIGIBLE candidates, not automatic assignments.
+// Selection still passes through the weighted-random gate in resolveCurrentActivity.
+// Existing pressure-driven health/gym/outdoor candidates remain fully functional.
+// Activities are facility-gated and role-appropriate; ordinary movement (walking
+// between rooms, passing through) is never treated as exercise.
+function locationFacilities(loc) {
+  if (!loc) return [];
+  const f = (loc.features || []).map(s => (s || '').toLowerCase());
+  const st = (loc.subtype || []).map(s => (s || '').toLowerCase());
+  return [...f, ...st].filter(Boolean);
+}
+
+function hasFacility(facilities, keywords) {
+  return facilities.some(fac => keywords.some(kw => fac.includes(kw)));
+}
+
+function resolveCurrentLocationObj(character, allLocations) {
+  const id = character.resolved_current_location_id;
+  if (!id || !allLocations) return null;
+  return allLocations.find(l => l.id === id) || null;
+}
+
+function buildLocationHealthCandidates(character, currentLoc, ctx) {
+  if (!currentLoc) return [];
+  const cat = (currentLoc.category || '').toLowerCase();
+  const facilities = locationFacilities(currentLoc);
+  const out = [];
+  const energy = ctx.energy;
+  const healthNeed = ctx.healthNeed;
+  const isEnrolled = character.student_status === 'enrolled';
+  const isDaytime = ctx.isDaytime;
+
+  const addFac = (keywords, activities) => {
+    if (hasFacility(facilities, keywords)) out.push(...activities);
+  };
+
+  if (cat === 'gym') {
+    if (energy >= 45) {
+      out.push({ weight: 28, label: 'working out at the gym', type: 'fitness_activity', needsEffect: { health: 14, mental: 8 } });
+      addFac(['weight room', 'weight'], [{ weight: 30, label: 'strength training in the weight room', type: 'fitness_activity', needsEffect: { health: 14, mental: 5 } }]);
+      addFac(['cardio'], [{ weight: 30, label: 'cardio workout on the machines', type: 'fitness_activity', needsEffect: { health: 13, mental: 7 } }]);
+      addFac(['track'], [{ weight: 26, label: 'walking laps on the indoor track', type: 'fitness_activity', needsEffect: { health: 10, mental: 6 } }]);
+      addFac(['treadmill'], [{ weight: 26, label: 'running on the treadmill', type: 'fitness_activity', needsEffect: { health: 13 } }]);
+      addFac(['pool', 'swimming'], [{ weight: 28, label: 'swimming laps in the pool', type: 'fitness_activity', needsEffect: { health: 14, mental: 8 } }]);
+      addFac(['basketball'], [{ weight: 24, label: 'shooting hoops on the court', type: 'fitness_activity', needsEffect: { health: 11, social: 6 } }]);
+      addFac(['stretch'], [{ weight: 22, label: 'stretching in the stretching area', type: 'fitness_activity', needsEffect: { health: 6, mental: 5 } }]);
+      out.push({ weight: 18, label: 'cooling down after a workout', type: 'fitness_activity', needsEffect: { health: 5, mental: 5 } });
+    }
+  } else if (cat === 'outdoor') {
+    if (energy >= 45) {
+      out.push({ weight: 24, label: 'walking for exercise', type: 'fitness_activity', needsEffect: { health: 10, mental: 8 } });
+      addFac(['trail'], [{ weight: 28, label: 'walking the trail', type: 'fitness_activity', needsEffect: { health: 11, mental: 8 } }]);
+      addFac(['fitness'], [{ weight: 26, label: 'using the outdoor fitness equipment', type: 'fitness_activity', needsEffect: { health: 12 } }]);
+      addFac(['basketball'], [{ weight: 22, label: 'playing basketball on the outdoor court', type: 'fitness_activity', needsEffect: { health: 11, social: 8 } }]);
+      addFac(['soccer', 'field'], [{ weight: 22, label: 'playing soccer on the field', type: 'fitness_activity', needsEffect: { health: 12, social: 8 } }]);
+      out.push({ weight: 20, label: 'jogging', type: 'fitness_activity', needsEffect: { health: 12, mental: 7 } });
+      out.push({ weight: 18, label: 'stretching outdoors', type: 'fitness_activity', needsEffect: { health: 5, mental: 6 } });
+    }
+  } else if (cat === 'home') {
+    if (energy >= 45) {
+      addFac(['treadmill', 'walking pad'], [{ weight: 26, label: 'walking on the treadmill at home', type: 'fitness_activity', needsEffect: { health: 11, mental: 7 } }]);
+      addFac(['exercise bike', 'stationary'], [{ weight: 26, label: 'riding the exercise bike at home', type: 'fitness_activity', needsEffect: { health: 11, mental: 6 } }]);
+      addFac(['home gym', 'home fitness'], [{ weight: 28, label: 'working out in the home gym', type: 'fitness_activity', needsEffect: { health: 13, mental: 7 } }]);
+      addFac(['yoga'], [{ weight: 22, label: 'doing yoga on the mat at home', type: 'fitness_activity', needsEffect: { health: 8, mental: 9 } }]);
+      addFac(['weights', 'dumbbell', 'kettlebell', 'resistance'], [{ weight: 24, label: 'strength training at home', type: 'fitness_activity', needsEffect: { health: 12 } }]);
+      const hasAnyFitness = hasFacility(facilities, ['treadmill', 'walking pad', 'exercise bike', 'stationary', 'home gym', 'home fitness', 'yoga', 'weights', 'dumbbell', 'kettlebell', 'resistance', 'pull-up', 'pull up']);
+      if (hasAnyFitness) {
+        out.push({ weight: 22, label: 'home workout', type: 'fitness_activity', needsEffect: { health: 12, mental: 7 } });
+      }
+      out.push({ weight: 16, label: 'stretching at home', type: 'fitness_activity', needsEffect: { health: 5, mental: 6 } });
+    }
+  } else if (cat === 'medical') {
+    // Medical activities only eligible when there is a health need. A character
+    // at a medical location with full health does not auto-receive treatment.
+    if (healthNeed < 70) {
+      out.push({ weight: healthNeed < 40 ? 55 : 35, label: 'attending a medical appointment', type: 'health_activity', needsEffect: { health: 18 } });
+      out.push({ weight: healthNeed < 40 ? 40 : 25, label: 'receiving treatment', type: 'health_activity', needsEffect: { health: 15 } });
+      addFac(['physical therapy', 'rehab', 'rehabilitation'], [{ weight: 38, label: 'in physical therapy', type: 'health_activity', needsEffect: { health: 16 } }]);
+      out.push({ weight: 30, label: 'picking up a prescription', type: 'health_activity', needsEffect: { health: 8 } });
+      out.push({ weight: 26, label: 'completing lab work', type: 'health_activity', needsEffect: { health: 6 } });
+      out.push({ weight: 24, label: 'preventive care visit', type: 'health_activity', needsEffect: { health: 12 } });
+    }
+  } else if (cat === 'education' || cat === 'school') {
+    // School health activities only for enrolled students, during daytime.
+    if (isEnrolled && energy >= 45 && isDaytime) {
+      out.push({ weight: 22, label: 'participating in Physical Education', type: 'fitness_activity', needsEffect: { health: 11, social: 5 } });
+      out.push({ weight: 20, label: 'athletic practice', type: 'fitness_activity', needsEffect: { health: 12, social: 6 } });
+      addFac(['nurse'], [{ weight: 30, label: 'visiting the school nurse', type: 'health_activity', needsEffect: { health: 10 } }]);
+      addFac(['gym', 'fitness'], [{ weight: 24, label: 'working out in the school gym', type: 'fitness_activity', needsEffect: { health: 12 } }]);
+    }
+  } else if (cat === 'workplace' || cat === 'business' || cat === 'government') {
+    // Workplace wellness only when the workplace legitimately provides the
+    // facility. Medical/therapy at work requires the workplace to actually
+    // offer those services — a bartender does not receive a preventive exam
+    // simply by being at work.
+    addFac(['fitness', 'gym'], [{ weight: 22, label: 'using the employee fitness facility', type: 'fitness_activity', needsEffect: { health: 11, mental: 7 } }]);
+    addFac(['wellness'], [{ weight: 20, label: 'participating in a workplace wellness activity', type: 'fitness_activity', needsEffect: { health: 8, mental: 6 } }]);
+    if (hasFacility(facilities, ['break room', 'breakroom'])) {
+      out.push({ weight: 18, label: 'stretching during a break', type: 'fitness_activity', needsEffect: { health: 6, mental: 5 } });
+      out.push({ weight: 16, label: 'taking a walking break', type: 'fitness_activity', needsEffect: { health: 7, mental: 6 } });
+    }
+  }
+
+  return out;
+}
+
 /**
  * Determine what a character is actually doing right now.
  * Full life engine: work, school, needs, stress, social, errands, self-care, fun.
@@ -584,6 +692,20 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
       // Add budget-conscious alternatives
       candidates.push({ weight: 30, label: pickRandom(['out running errands — keeping it budget', 'at the grocery store — sticking to basics', 'out — handling necessities']), type: 'out', needsEffect: { hunger: 10 } });
     }
+  }
+
+  // ── LOCATION-ELIGIBLE HEALTH ACTIVITIES (supplemental) ──────────────────
+  // Being at a supporting location makes health-improving activities AVAILABLE.
+  // These are eligible candidates, not automatic — they pass through the same
+  // weighted-random gate below. Existing pressure-driven health/gym/outdoor
+  // candidates above remain fully functional. Activities are facility-gated and
+  // role-appropriate; ordinary movement is never treated as exercise.
+  const _curLoc = resolveCurrentLocationObj(character, allLocations);
+  if (_curLoc) {
+    const _healthCands = buildLocationHealthCandidates(character, _curLoc, {
+      energy, healthNeed, isDaytime: isMorning || isAfternoon,
+    });
+    for (const _hc of _healthCands) candidates.push(_hc);
   }
 
   // ── HOMEBODY ADJUSTMENT ───────────────────────────────────────────────────

@@ -345,6 +345,88 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     const objectPronoun = charGender === 'male' ? 'him' : charGender === 'female' ? 'her' : 'them';
     const possessivePronoun = charGender === 'male' ? 'his' : charGender === 'female' ? 'her' : 'their';
 
+    // ── HEALTH-ACTIVITY INSPIRATION (location + facilities) ───────────────────
+    // Supplemental: makes health-improving activities ELIGIBLE narrative
+    // possibilities when the character's current location supports them.
+    // These are inspirations, not mandatory. The LLM selects naturally based on
+    // the character's health, energy, schedule, role, and the facilities listed.
+    // Existing recovery pathways (hunger routing, hygiene guarantee, action_effects)
+    // remain fully functional — this only broadens what the LLM may narrate.
+    const HEALTH_ACTIVITY_INSPIRATION = {
+      medical: [
+        "They wait quietly for their appointment to be called.",
+        "They sit with the doctor during a medical appointment, going over their symptoms.",
+        "They receive preventive care as part of a routine checkup.",
+        "They work through a physical therapy session, following the therapist's guidance.",
+        "They complete a rehabilitation exercise as part of their recovery program.",
+        "They attend a follow-up appointment to review their progress.",
+        "They receive treatment while admitted, resting as the care takes effect.",
+        "They pick up a prescription from the pharmacy counter.",
+        "They complete laboratory work and diagnostic testing.",
+      ],
+      gym: [
+        "They spend time on the exercise equipment, working through a full routine.",
+        "They focus on strength training, moving through their sets.",
+        "They settle into a cardio workout, keeping a steady pace.",
+        "They join a fitness class, following the instructor's lead.",
+        "They walk laps on the indoor track before cooling down.",
+        "They run on the treadmill, tracking their time and distance.",
+        "They stretch before their workout to warm up.",
+        "They play a pickup game on the basketball court.",
+        "They cool down with a stretching routine after finishing their workout.",
+      ],
+      outdoor: [
+        "They go for a brisk walk through the park.",
+        "They walk for exercise, keeping a steady pace.",
+        "They jog along the path, settling into a rhythm.",
+        "They run, pushing themselves a little further than last time.",
+        "They stretch outdoors before starting their activity.",
+        "They use the outdoor fitness equipment for a circuit.",
+        "They play a recreational sport with others nearby.",
+        "They walk the trail, taking it at their own pace.",
+      ],
+      education: [
+        "They participate in Physical Education class.",
+        "They attend athletic practice, running drills with the team.",
+        "They play an organized sport during the school period.",
+        "They stop by the school nurse's office.",
+        "They take part in a school wellness activity.",
+      ],
+      workplace: [
+        "They take an intentional walking break to clear their head.",
+        "They do a few stretching exercises during a scheduled break.",
+        "They participate in a workplace wellness activity.",
+        "They use the employee fitness facility during their break.",
+      ],
+      home: [
+        "They complete a home workout, working through each exercise.",
+        "They walk on the treadmill at home.",
+        "They walk on the walking pad while watching something.",
+        "They follow prescribed rehabilitation exercises at home.",
+        "They stretch at home before moving on with the day.",
+        "They use their home fitness equipment for a session.",
+        "They complete an approved home recovery program.",
+      ],
+    };
+
+    function buildFacilityDescriptor(loc) {
+      if (!loc) return '';
+      const features = loc.features || [];
+      const subtypes = loc.subtype || [];
+      const all = [...features, ...subtypes].map(s => (s || '').toLowerCase()).filter(Boolean);
+      if (all.length === 0) return '';
+      return `FACILITIES AVAILABLE AT THIS LOCATION: ${all.join(', ')}.`;
+    }
+
+    const healthActivityBlock = (() => {
+      const cat = (locationCategory || '').toLowerCase();
+      const pool = HEALTH_ACTIVITY_INSPIRATION[cat] || [];
+      if (pool.length === 0) return '';
+      const selected = [...pool].sort(() => Math.random() - 0.5).slice(0, 3);
+      const facilityDesc = buildFacilityDescriptor(location);
+      return `\n\nHEALTH & WELLNESS ACTIVITY INSPIRATION (eligible possibilities at this location — use as inspiration, generate a NEW variation, never copy verbatim; select naturally based on the character's health, energy, schedule, role, and available facilities; do NOT depict an activity just because the location supports it):\n${selected.map(e => `  • ${e}`).join('\n')}${facilityDesc ? `\n${facilityDesc}` : ''}\nELIGIBILITY: These activities are AVAILABLE here, not mandatory. Only depict one if it fits the character's current circumstances, energy, schedule, and role. Ordinary movement (walking between rooms, passing through) is NOT exercise. Use the facilities listed above when describing the activity specifically rather than a generic "exercised".`;
+    })();
+
     // ── HOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (additive) ───────────────────
     // Additional narrative-style patterns. Inspiration only — the generator must
     // expand them into complete narrative beats, never copy verbatim.
@@ -432,6 +514,7 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     const householdActivityBlock = _combinedAuto.length > 0
       ? `\n\nHOUSEHOLD & SEASONAL ACTIVITY INSPIRATION (use as inspiration — generate a NEW variation, never copy verbatim):\n${_combinedAuto.map(e => `  • ${e}`).join('\n')}\n\nCLOTHING-AWARE NOTE: For wardrobe activities, if Outfit Rotation is enabled and today's outfit is available, use the current scheduled outfit. If Character Closet data exists, use the appropriate clothing from the closet. If neither is available, keep the narrative general — do NOT invent clothing items or wardrobe details.\nMUSIC PREFERENCE NOTE: When authoritative music preference data exists, naturally incorporate favorite artists, genres, styles, or playlists into music narratives. If none exists, keep music narratives general.`
       : '';
+    // healthActivityBlock is computed above (near HEALTH_ACTIVITY_INSPIRATION).
 
     const narrativePrompt = `${canonicalSystemPrompt}
 
@@ -443,7 +526,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
 ${situationBlock}
-${needsLine}${householdActivityBlock}
+${needsLine}${householdActivityBlock}${healthActivityBlock}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
 Gender: ${charGender || 'unknown — use they/them'}
