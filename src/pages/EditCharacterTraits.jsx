@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import CharacterTraitsStep, { CHARACTER_TRAITS } from "@/components/character/CharacterTraitsStep";
+import SettingsQuirksStep from "@/components/settings/SettingsQuirksStep";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
 import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
@@ -15,6 +16,7 @@ export default function EditCharacterTraits() {
   const queryClient = useQueryClient();
   const [selectedCharId, setSelectedCharId] = useState(null);
   const [localTraits, setLocalTraits] = useState({});
+  const [localQuirks, setLocalQuirks] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -29,10 +31,11 @@ export default function EditCharacterTraits() {
 
   const selectChar = (char) => {
     setSelectedCharId(char.id);
-    // Seed local state from character fields
+    // Seed local state from character fields + quirks array
     const seed = {};
     CHARACTER_TRAITS.forEach(t => { seed[t.key] = !!char[t.key]; });
     setLocalTraits(seed);
+    setLocalQuirks(Array.isArray(char.quirks) ? char.quirks.map(q => ({ ...q })) : []);
     setSaved(false);
   };
 
@@ -41,19 +44,26 @@ export default function EditCharacterTraits() {
     setSaved(false);
   };
 
+  const handleQuirksChange = (newQuirks) => {
+    setLocalQuirks(newQuirks);
+    setSaved(false);
+  };
+
   const handleSave = async () => {
     if (!selectedChar) return;
     setSaving(true);
     const updates = {};
     CHARACTER_TRAITS.forEach(t => { updates[t.key] = !!localTraits[t.key]; });
+    updates.quirks = localQuirks;
     await base44.entities.Character.update(selectedChar.id, updates);
     queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
     setSaving(false);
     setSaved(true);
   };
 
-  const hasChanges = selectedChar && CHARACTER_TRAITS.some(
-    t => !!localTraits[t.key] !== !!selectedChar[t.key]
+  const quirksChanged = JSON.stringify(localQuirks) !== JSON.stringify(selectedChar.quirks || []);
+  const hasChanges = selectedChar && (
+    CHARACTER_TRAITS.some(t => !!localTraits[t.key] !== !!selectedChar[t.key]) || quirksChanged
   );
 
   return (
@@ -75,7 +85,12 @@ export default function EditCharacterTraits() {
             <SettingsCharacterList
               sections={sections}
               onSelect={selectChar}
-              renderSubtitle={char => CHARACTER_TRAITS.filter(t => !!char[t.key]).map(t => t.label).join(", ") || "No traits set"}
+              renderSubtitle={char => {
+                const traitLabels = CHARACTER_TRAITS.filter(t => !!char[t.key]).map(t => t.label);
+                const quirkLabels = (char.quirks || []).filter(q => q.active).map(q => q.label);
+                const all = [...traitLabels, ...quirkLabels];
+                return all.join(", ") || "No traits or quirks set";
+              }}
               emptyMessage="No characters yet."
             />
           )}
@@ -86,6 +101,10 @@ export default function EditCharacterTraits() {
           <>
             <div className="border-t border-border pt-4">
               <CharacterTraitsStep data={localTraits} onChange={handleChange} />
+            </div>
+
+            <div className="border-t border-border pt-4">
+              <SettingsQuirksStep data={localQuirks} onChange={handleQuirksChange} />
             </div>
 
             <Button
