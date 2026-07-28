@@ -292,11 +292,11 @@ function getLocationContext(character, locationMap, now) {
   // when the live school session check confirms an active obligation.
   if (presenceStatus === 'at_school' && isInSchoolSession(character, locationMap)) return 'at_school';
 
+  // Stale "at_work" presence must NOT establish work_off_shift context when
+  // isOnShift returns false. The authoritative live schedule controls work
+  // status. Fall through to location-based context resolution regardless of
+  // where the character is — home, hotel, shelter, park, or any other place.
   const locId = character.resolved_current_location_id;
-
-  // If presence says at_work but the character is actually at home (stale
-  // presence), do not apply work_off_shift draining context — fall through.
-  if (presenceStatus === 'at_work' && locId && locId !== character.current_home_location_id) return 'work_off_shift';
   if (!locId) {
     if (presenceIsStale) return 'default';
     if (presenceStatus === 'home' || !presenceStatus) return 'home_resting';
