@@ -288,10 +288,15 @@ function getLocationContext(character, locationMap, now) {
     return 'at_work';
   }
 
-  if (presenceStatus === 'at_school') return 'at_school';
-  if (presenceStatus === 'at_work') return 'work_off_shift';
+  // Persisted presence is not schedule authority. Only use at_school context
+  // when the live school session check confirms an active obligation.
+  if (presenceStatus === 'at_school' && isInSchoolSession(character, locationMap)) return 'at_school';
 
   const locId = character.resolved_current_location_id;
+
+  // If presence says at_work but the character is actually at home (stale
+  // presence), do not apply work_off_shift draining context — fall through.
+  if (presenceStatus === 'at_work' && locId && locId !== character.current_home_location_id) return 'work_off_shift';
   if (!locId) {
     if (presenceIsStale) return 'default';
     if (presenceStatus === 'home' || !presenceStatus) return 'home_resting';
@@ -572,6 +577,52 @@ function needsAreUninitialized(needs) {
   return Object.values(needs).every(v => v === null);
 }
 
+// ── AUTHORIZED SLEEP ENVIRONMENT CHECK ──────────────────────────────────
+// Determines whether the character's current location is an authorized
+// sleeping environment. NOT limited to the primary home — includes hotels,
+// shelters, parks, mixed-use residential environments, and other
+// established sleep-permissive locations.
+function isAtAuthorizedSleepEnvironment(character, locationMap) {
+  const locId = character.resolved_current_location_id;
+  const presence = character.resolved_presence_status || '';
+  const locType = (character.resolved_location_type || '').toLowerCase();
+
+  // Primary home
+  if (locId && locId === character.current_home_location_id) return true;
+  if (presence === 'home' || locType === 'home') return true;
+
+  // Temporary housing, recovery, supervision, halfway house
+  if (['temporary_housing', 'recovery_nap', 'supervision_home', 'halfway_house'].includes(locType)) return true;
+  if (locId && locId === character.temporary_housing_location_id) return true;
+
+  // No resolved location but presence indicates home
+  if (!locId && presence === 'home') return true;
+
+  // Look up the location record
+  const loc = locId ? locationMap[locId] : null;
+  if (!loc) return false;
+
+  const cat = (loc.category || '').toLowerCase();
+
+  // Hotels, shelters, parks (outdoor), and home-category locations
+  if (['home', 'hotel', 'shelter', 'outdoor'].includes(cat)) return true;
+
+  // Generic, community, and public locations may be authorized sleeping spaces
+  if (['generic', 'community', 'public'].includes(cat)) return true;
+
+  // Mixed-use buildings with residential environments
+  if (Array.isArray(loc.environments) && loc.environments.length > 0) {
+    const hasResidential = loc.environments.some(e => e.type === 'residential');
+    if (hasResidential) return true;
+  }
+
+  // Sleep-permissive features
+  const features = (loc.features || []).map(f => (f || '').toLowerCase());
+  if (features.some(f => f.includes('sleep') || f.includes('bed') || f.includes('lodging') || f.includes('rest area'))) return true;
+
+  return false;
+}
+
 // ── CORRECTIVE STATE RESOLVER ────────────────────────────────────────────
 function computeCorrectiveState(needs, character, locationMap) {
   const activity = (character.current_activity || '').toLowerCase();
@@ -635,21 +686,28 @@ function computeCorrectiveState(needs, character, locationMap) {
 
     const effectiveEnergy = (needs.energy / effectiveDrive) * passOutAmp;
 
+    // OBLIGATION CHECK — live schedule authority only. Employment, enrollment,
+    // schedule existence, persisted presence, and stale locks do NOT block
+    // sleep. Only a currently active scheduled work/school interval blocks.
     const inObligation = isOnShift(character, locationMap) ||
       isInSchoolSession(character, locationMap) ||
       character.is_jailed ||
       character.house_arrest_active;
 
-    const atHome = character.resolved_current_location_id === character.current_home_location_id ||
-      presence === 'home' ||
-      (character.resolved_location_type || '').toLowerCase() === 'home';
+    // LOCATION CHECK — authorized sleep environment, not just primary home.
+    // Includes hotels, shelters, parks, mixed-use residential, and other
+    // established sleep-permissive locations.
+    const atSleepEnv = isAtAuthorizedSleepEnvironment(character, locationMap);
 
+    // Overnight safety net: 3-6am, if live check says obligation but no
+    // overnight reason exists, the obligation is stale — do not block sleep.
     const hour = nowET.getHours();
     const isOvernightViolationWindow = hour >= 3 && hour < 6;
     const staleOvernightObligation = isOvernightViolationWindow &&
-      (presence === 'at_school' || (inObligation && hour >= 3 && hour < 6));
-    const effectiveInObligation = staleOvernightObligation && !hasOvernightReason ? false : inObligation;
-    const isBlocked = effectiveInObligation || !atHome || character.sleep_lock;
+      inObligation && !hasOvernightReason;
+
+    const effectiveInObligation = staleOvernightObligation ? false : inObligation;
+    const isBlocked = effectiveInObligation || !atSleepEnv || character.sleep_lock;
 
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
