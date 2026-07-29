@@ -1020,6 +1020,41 @@ Deno.serve(async (req) => {
       console.warn(`[buildCanonicalCharacterContext] location authority reconnect failed (non-blocking): ${authErr.message}`);
     }
 
+    // ── Step 1c: Activity-Location Reconciliation (Feedback Loop Breaker) ──
+    // If current_activity contains transit intent ("heading to X," "going to Y")
+    // but the committed canonical location does not match the implied destination,
+    // the activity is stale and must be cleared. This breaks the self-reinforcing
+    // loop: bad state → bad dialogue → bad activity → bad state.
+    //
+    // current_activity is DESCRIPTIVE only — it must never redefine where the
+    // character believes they are. Location awareness comes exclusively from the
+    // committed location/presence authority. A stale transit phrase in
+    // current_activity overrides that authority in the LLM's mind because it
+    // reads as a present-tense intent. Strip it and write the clear back to the DB
+    // so the loop cannot perpetuate itself across future context builds.
+    const TRANSIT_INTENT_RE = /\b(heading to|headed to|heading back to|headed back to|going to|going back to|on my way to|on the way to|on my way back to|leaving for|making my way to|making my way back to|setting off to|setting out for|taking off to|heading out to|heading over to|going over to|going down to|going up to|on my way|heading out|heading back|going back|leaving now|taking off|heading off|going off|off to (?:the|work|school|home|bar|gym|club|office|church))\b/i;
+    if (character.current_activity && TRANSIT_INTENT_RE.test(character.current_activity)) {
+      const staleActivity = character.current_activity;
+      contextLog.push({
+        step: 'activity_location_reconciliation',
+        stale_activity_cleared: staleActivity.substring(0, 100),
+        committed_location: character.resolved_current_location_name || 'unknown',
+        committed_presence: character.resolved_presence_status || 'unknown',
+        reason: 'Transit intent in current_activity contrads committed location authority — clearing to break feedback loop',
+      });
+      console.warn(
+        `[buildCanonicalCharacterContext] STALE_ACTIVITY_CLEARED` +
+        ` | character=${character.name}` +
+        ` | stale_activity="${staleActivity.substring(0, 80)}"` +
+        ` | committed_location=${character.resolved_current_location_name || 'none'}` +
+        ` | committed_presence=${character.resolved_presence_status || 'none'}`
+      );
+      character = { ...character, current_activity: '' };
+      // Durable write — break the loop permanently so future builds and narrative
+      // generators do not read the stale transit intent.
+      base44.asServiceRole.entities.Character.update(character.id, { current_activity: '' }).catch(() => {});
+    }
+
     // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
     const settingsList = resolvedEmail
       ? await base44.asServiceRole.entities.UserSettings.filter({ owner_email: resolvedEmail }).catch(() => [])

@@ -47,12 +47,15 @@ function generateLocationAliases(locationName) {
     aliases.push(possessive[2].toLowerCase());
   }
   
-  // Generic conversational shortcuts
+  // NOTE: Generic conversational shortcuts like "the bar", "the school", "the gym"
+  // are NOT added here. Those are handled by STEP 0 (context-weighted venue
+  // resolution) in resolveConversationalEntity, which resolves them to the
+  // CHARACTER'S OWN locations first. Adding "the bar" as a blanket alias for
+  // every bar-type location caused semantic conflation: Ethan saying "the bar"
+  // matched JoJo's Bar & Grill instead of his own workplace Anderson's Bar.
+  // Personal context must take priority over generic keyword matching.
   if (/university|college/i.test(locationName)) {
-    aliases.push('the school', 'campus', 'school');
-  }
-  if (/bar|pub|restaurant|cafe/i.test(locationName)) {
-    aliases.push('the bar', 'the place');
+    aliases.push('campus', 'school');
   }
   
   return [...new Set(aliases)]; // dedupe
@@ -131,6 +134,65 @@ export async function resolveConversationalEntity({
     resolved_from_anchor: null,
     anchor_type: null,
   };
+
+  // ── STEP 0: CONTEXT-WEIGHTED VENUE RESOLUTION (PERSONAL CONTEXT FIRST) ──
+  // Generic venue references ("the bar," "the gym," "the office") must resolve
+  // to the CHARACTER'S OWN locations first — not a global business that happens
+  // to match the word. Without this, "the bar" matches any bar in saved locations
+  // (e.g. JoJo's Bar & Grill) instead of the character's workplace (e.g.
+  // Anderson's Bar). This is entity-resolution by personal context, not by
+  // generic keyword matching. The character's own employment/education/home
+  // context is the PRIMARY resolution source for generic venue phrases.
+  const GENERIC_VENUE_MAP = [
+    { regex: /\bthe\s+(bar|pub|club|lounge|tavern|nightclub|joint)\b/i, locFields: ['occupation_location_id', 'current_work_location_id'], additionalField: 'additional_occupation_locations', categories: ['food_drink', 'social', 'business'], label: 'workplace' },
+    { regex: /\bthe\s+(office|work|workplace|job|shop|store|restaurant|cafe|diner|bistro|grill|kitchen|salon|barber|spa|studio)\b/i, locFields: ['occupation_location_id', 'current_work_location_id'], additionalField: 'additional_occupation_locations', categories: ['workplace', 'food_drink', 'social', 'gym', 'business', 'shopping'], label: 'workplace' },
+    { regex: /\bthe\s+(school|campus|university|college|academy|class)\b/i, locFields: ['education_location_id', 'current_school_location_id'], additionalField: 'additional_education_locations', categories: ['education', 'school'], label: 'school' },
+    { regex: /\bthe\s+(gym|fitness center|health club|weight room)\b/i, locFields: ['frequented_gym_location_id'], additionalField: null, categories: ['gym'], label: 'gym' },
+    { regex: /\bthe\s+(church|mosque|temple|synagogue|chapel|parish|ward|stake)\b/i, locFields: ['religious_location_id'], additionalField: null, categories: ['religion'], label: 'place of worship' },
+  ];
+
+  for (const { regex, locFields, additionalField, categories, label } of GENERIC_VENUE_MAP) {
+    if (regex.test(normalized) && currentCharacter) {
+      // Collect the character's own location IDs for this venue type
+      const charLocIds = [];
+      for (const field of locFields) {
+        if (currentCharacter[field]) charLocIds.push(currentCharacter[field]);
+      }
+      // Check additional_occupation_locations / additional_education_locations
+      if (additionalField && Array.isArray(currentCharacter[additionalField])) {
+        for (const entry of currentCharacter[additionalField]) {
+          if (entry && entry.location_id) charLocIds.push(entry.location_id);
+        }
+      }
+      // Deduplicate
+      const uniqueLocIds = [...new Set(charLocIds.filter(Boolean))];
+
+      for (const locId of uniqueLocIds) {
+        const loc = savedLocations.find(l => l.id === locId);
+        if (loc) {
+          // Verify the location category matches what we expect (e.g. work location
+          // should be a food_drink/social/business if we're matching "the bar")
+          const locCat = (loc.category || '').toLowerCase();
+          const categoryMatch = categories.some(c => locCat === c || locCat.includes(c));
+          // Also accept if the location name contains the venue keyword (e.g.
+          // Anderson's Bar contains "bar")
+          const venueKeyword = normalized.replace(/\bthe\s+/i, '').replace(/\s+/g, ' ').trim();
+          const nameMatch = loc.name && loc.name.toLowerCase().includes(venueKeyword);
+
+          if (categoryMatch || nameMatch) {
+            result.entity_type = 'location';
+            result.matched_location_id = loc.id;
+            result.matched_location_name = loc.name;
+            result.confidence = 0.9;
+            result.confidence_reason = `Generic venue "${normalized}" resolved to character's own ${label} (${loc.name}) via personal context`;
+            result.resolved_from_anchor = loc.name;
+            result.anchor_type = `${label}_location`;
+            return result;
+          }
+        }
+      }
+    }
+  }
 
   // ── STEP 1: EXACT/ALIAS LOCATION MATCH ──
   const locationMatches = [];
