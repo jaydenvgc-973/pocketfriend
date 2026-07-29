@@ -49,6 +49,15 @@ export default function Home() {
     refetchOnWindowFocus: false,
   });
 
+  // Refresh character data on every Home navigation so stale cards don't persist.
+  // invalidateQueries marks the cached data stale and triggers a background refetch —
+  // the existing cache renders immediately, fresh data replaces it when the fetch
+  // resolves. This is a one-time fetch on navigation, not polling.
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser.email] });
+  }, [currentUser?.email, queryClient]);
+
   // Pass currentUser?.email so useUserSettings can load settings in parallel with
   // the user query, not sequentially after it. On warm cache this is a no-op.
   // On cold cache this eliminates the blank balance delay.
