@@ -127,6 +127,31 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
     }
   };
 
+  const handleTakeSleep = async () => {
+    setIsLoading(true);
+    setResult(null);
+    try {
+      const res = await base44.functions.invoke('scheduleNap', {
+        characterId,
+        napStartTime: new Date().toISOString(),
+        napDurationMinutes: 360,
+        sleepMode: true,
+      });
+      const data = res?.data;
+      if (data?.success) {
+        setResult({ type: "success", text: `${firstName} is now sleeping. They'll wake up in 6 hours.` });
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      } else {
+        setResult({ type: "error", text: data?.error || "Failed to start sleep." });
+      }
+    } catch (err) {
+      setResult({ type: "error", text: `Sleep failed: ${err?.message || 'unknown error'}` });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSchedule = () => {
     if (!scheduleTime) return;
     // Build a full ISO datetime for today at the chosen time (EST)
@@ -298,6 +323,16 @@ export default function AlarmTool({ isOpen, onClose, character, characterId, cur
               >
                 <Moon className="w-4 h-4 text-muted-foreground" />
                 Take 2-Hour Nap
+              </button>
+
+              {/* Take 6-Hour Sleep */}
+              <button
+                onClick={handleTakeSleep}
+                disabled={isLoading}
+                className="w-full h-11 rounded-xl border border-border text-foreground text-sm flex items-center justify-center gap-2 hover:bg-secondary/60 transition-colors disabled:opacity-40"
+              >
+                <Moon className="w-4 h-4 text-muted-foreground" />
+                Take 6-Hour Sleep
               </button>
 
               {/* Schedule */}

@@ -33,11 +33,24 @@ Deno.serve(async (req) => {
       napStartTime,
       napDurationMinutes = 120,
       action = 'start',
+      sleepMode: rawSleepMode = false,
     } = body;
 
     if (!characterId) {
       return Response.json({ error: 'Missing characterId' }, { status: 400 });
     }
+
+    // sleepMode: when true, the character enters a true 'sleeping' state (not 'napping')
+    // with sleep_start/sleep_end transitions. This follows the same sleep pathway
+    // (enforceCharacterLocationPresence) — only the presence status and transition
+    // labels change. No new sleep system is introduced.
+    const sleepMode = rawSleepMode === true || rawSleepMode === 'sleep';
+    const _verb = sleepMode ? 'sleep' : 'nap';       // "sleep" / "nap"
+    const _verbing = sleepMode ? 'sleeping' : 'napping'; // "sleeping" / "napping"
+    const _Verb = sleepMode ? 'Sleep' : 'Nap';        // "Sleep" / "Nap"
+    const _presenceReq = sleepMode ? 'sleeping' : 'napping';
+    const _transitionStart = sleepMode ? 'sleep_start' : 'nap_start';
+    const _transitionEnd = sleepMode ? 'sleep_end' : 'nap_end';
 
     const nowIso = new Date().toISOString();
 
@@ -133,9 +146,9 @@ Deno.serve(async (req) => {
       try {
         await base44.entities.SleepTransition.create({
           character_id: characterId, character_name: charName, owner_email: char.owner_email,
-          transition_type: 'nap_end', from_status: 'napping', to_status: committedWakePresence,
+          transition_type: _transitionEnd, from_status: _presenceReq, to_status: committedWakePresence,
           authority: 'user_directed',
-          reason: 'User-authorized nap completed (scheduled wake). last_wake_time reset.',
+          reason: `User-authorized ${_verb} completed (scheduled wake). last_wake_time reset.`,
           timestamp: wakeTime, state_start_ref: char.last_nap_time,
           elapsed_hours: char.last_nap_time ? Math.round(((new Date(wakeTime).getTime() - new Date(char.last_nap_time).getTime()) / 3600000) * 100) / 100 : null,
           verified_higher_priority_interrupt: false,
@@ -145,7 +158,7 @@ Deno.serve(async (req) => {
         return Response.json({
           success: true, action: 'wake', characterId, wakeTime,
           passout_recovery_applied: hadRecentPassOut,
-          message: `${charName} woke from their nap (canonical state committed; nap_end proof write failed).`,
+          message: `${charName} woke from their ${_verb} (canonical state committed; ${_transitionEnd} proof write failed).`,
           consequence_write_failed: `nap_end proof write failed: ${transitionError.message}`,
         });
       }
@@ -160,22 +173,22 @@ Deno.serve(async (req) => {
           event_type: 'recovery_event',
           valence: 'positive',
           severity: 'minor',
-          title: hadRecentPassOut ? 'Woke from nap feeling more in control' : 'Woke from a nap',
+          title: hadRecentPassOut ? `Woke from ${_verb} feeling more in control` : `Woke from a ${_verb}`,
           description: hadRecentPassOut
-            ? `${charName} woke from a nap feeling calmer and less exhausted. The rest helped ease some of the physical and emotional weight from earlier.`
-            : `${charName} woke from a nap feeling more rested.`,
+            ? `${charName} woke from ${_verb} feeling calmer and less exhausted. The rest helped ease some of the physical and emotional weight from earlier.`
+            : `${charName} woke from ${_verb} feeling more rested.`,
           emotional_impact: hadRecentPassOut ? 'calmer, less exhausted, more in control' : 'rested, refreshed',
           triggered_by: 'user_message',
           timestamp: wakeTime,
-          context_tags: ['nap_wake', 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],  // backend metadata
+          context_tags: [`${_verb}_wake`, 'last_wake_time_reset', ...(hadRecentPassOut ? ['passout_recovery_nap'] : [])],  // backend metadata
         });
         await base44.entities.CharacterMemory.create({
           character_id: characterId,
           memory_type: 'event',
           memory_text: hadRecentPassOut
-            ? `${charName} took a nap and woke up feeling calmer and less exhausted. The rest helped ease some of the physical weight from earlier. Felt more in control after getting some sleep.`
-            : `${charName} took a two-hour nap and woke up feeling more rested.`,
-          memory_summary: hadRecentPassOut ? `Napped and woke feeling calmer, less exhausted.` : `Took a two-hour nap, woke feeling rested.`,
+            ? `${charName} took a ${_verb} and woke up feeling calmer and less exhausted. The rest helped ease some of the physical weight from earlier. Felt more in control after getting some sleep.`
+            : `${charName} slept for a while and woke up feeling more rested.`,
+          memory_summary: hadRecentPassOut ? `${_Verb}ped and woke feeling calmer, less exhausted.` : `Took a ${_verb}, woke feeling rested.`,
           importance_score: hadRecentPassOut ? 6 : 3,
           permanence: 'short_term',
           related_character_id: characterId,
@@ -190,7 +203,7 @@ Deno.serve(async (req) => {
         characterId,
         wakeTime,
         passout_recovery_applied: hadRecentPassOut,
-        message: `${charName} woke from their nap. Consecutive-awake timer reset.`,
+        message: `${charName} woke from their ${_verb}. Consecutive-awake timer reset.`,
         consequence_write_failed: consequenceWriteFailed,
       });
     }
@@ -234,8 +247,8 @@ Deno.serve(async (req) => {
     try {
       const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
         character_id: characterId, owner_email: char.owner_email,
-        requested_presence_status: 'napping', requested_location_id: napHomeId,
-        requested_source_reason: 'user_directed_nap', requested_authority: 'scheduleNap',
+        requested_presence_status: _presenceReq, requested_location_id: napHomeId,
+        requested_source_reason: sleepMode ? 'user_directed_sleep' : 'user_directed_nap', requested_authority: 'scheduleNap',
         requested_timestamp: napStart.toISOString(),
       });
       napAuthRes = ir?.data || ir;
@@ -251,27 +264,27 @@ Deno.serve(async (req) => {
       try {
         const rir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
           character_id: characterId, owner_email: char.owner_email,
-          requested_presence_status: 'napping', requested_location_id: resubmitLocId,
-          requested_source_reason: 'user_directed_nap', requested_authority: 'scheduleNap',
+          requested_presence_status: _presenceReq, requested_location_id: resubmitLocId,
+          requested_source_reason: sleepMode ? 'user_directed_sleep' : 'user_directed_nap', requested_authority: 'scheduleNap',
           requested_timestamp: napStart.toISOString(),
         });
         const rRes = rir?.data || rir;
-        if (rRes?.disposition === 'accepted' && !rRes?.must_resubmit_sleep && rRes?.committed_result?.resolved_presence_status === 'napping') {
+        if (rRes?.disposition === 'accepted' && !rRes?.must_resubmit_sleep && rRes?.committed_result?.resolved_presence_status === _presenceReq) {
           napCommitted = rRes.committed_result;
         }
       } catch { /* non-fatal — fall through to failure */ }
-    } else if (napAuthRes?.disposition === 'accepted' && napAuthRes?.committed_result?.resolved_presence_status === 'napping') {
+    } else if (napAuthRes?.disposition === 'accepted' && napAuthRes?.committed_result?.resolved_presence_status === _presenceReq) {
       napCommitted = napAuthRes.committed_result;
     }
 
     if (!napCommitted) {
-      return Response.json({ success: false, error: 'nap_not_committed', disposition: napAuthRes?.disposition, reason: napAuthRes?.reason || 'Authority did not commit a napping state.' }, { status: 500 });
+      return Response.json({ success: false,       error: `${_verb}_not_committed`, disposition: napAuthRes?.disposition, reason: napAuthRes?.reason || `Authority did not commit a ${_verbing} state.` }, { status: 500 });
     }
 
     // Write only noncanonical caller-owned fields (activity + 2-hour wake alarm + sim timer).
     // The authority already committed canonical presence, lock, and last_nap_time.
     await base44.entities.Character.update(characterId, {
-      current_activity: `napping (${napDurationMinutes}min)`,
+      current_activity: `${_verbing} (${napDurationMinutes}min)`,
       pending_alarm_time: napEndIso,
       last_need_simulated_at: napStart.toISOString(),
     });
@@ -280,9 +293,9 @@ Deno.serve(async (req) => {
     try {
       await base44.entities.SleepTransition.create({
         character_id: characterId, character_name: charName, owner_email: char.owner_email,
-        transition_type: 'nap_start', from_status: char.resolved_presence_status || 'home', to_status: 'napping',
+        transition_type: _transitionStart, from_status: char.resolved_presence_status || 'home', to_status: _presenceReq,
         authority: 'user_directed',
-        reason: `User-authorized ${napDurationMinutes}-minute nap.`,
+        reason: `User-authorized ${napDurationMinutes}-minute ${_verb}.`,
         timestamp: napStart.toISOString(),
         verified_higher_priority_interrupt: false,
       });
@@ -291,7 +304,7 @@ Deno.serve(async (req) => {
       return Response.json({
         success: true, action: 'start', characterId,
         napStartTime: napStart.toISOString(), napEndTime: napEndIso, durationMinutes: napDurationMinutes,
-        message: `${charName} is now napping (canonical state committed; nap_start proof write failed).`,
+        message: `${charName} is now ${_verbing} (canonical state committed; ${_transitionStart} proof write failed).`,
         proof_write_failed: transitionError.message,
       });
     }
@@ -306,18 +319,18 @@ Deno.serve(async (req) => {
         event_type: 'recovery_event',
         valence: 'positive',
         severity: 'minor',
-        title: 'Decided to get some rest',
-        description: `${charName} decided to take a nap and get some rest. They will wake up in about two hours.`,
+        title: sleepMode ? 'Decided to sleep' : 'Decided to get some rest',
+        description: `${charName} decided to ${sleepMode ? 'sleep' : 'take a nap'} and get some rest. They will wake up in about ${Math.round(napDurationMinutes / 60 * 10) / 10} hours.`,
         emotional_impact: 'resting, recovering',
         triggered_by: 'user_message',
         timestamp: napStart.toISOString(),
-        context_tags: ['nap_start', 'user_directed_nap'],  // backend metadata — not character-facing
+        context_tags: [`${_verb}_start`, sleepMode ? 'user_directed_sleep' : 'user_directed_nap'],  // backend metadata — not character-facing
       });
       await base44.entities.CharacterMemory.create({
         character_id: characterId,
         memory_type: 'event',
-        memory_text: `${charName} decided to take a nap and get some rest. They slept for a couple of hours and woke up feeling more refreshed.`,
-        memory_summary: `Took a two-hour nap to rest.`,
+        memory_text: `${charName} decided to ${sleepMode ? 'sleep' : 'take a nap'} and get some rest. They slept for about ${Math.round(napDurationMinutes / 60 * 10) / 10} hours and woke up feeling more refreshed.`,
+        memory_summary: `Took a ${napDurationMinutes}-minute ${_verb} to rest.`,
         importance_score: 3,
         permanence: 'short_term',
         related_character_id: characterId,
@@ -333,7 +346,7 @@ Deno.serve(async (req) => {
       napStartTime: napStart.toISOString(),
       napEndTime:   napEndIso,
       durationMinutes: napDurationMinutes,
-      message: `${charName} is now napping. They will wake in ${napDurationMinutes} minutes or when their alarm fires.`,
+      message: `${charName} is now ${_verbing}. They will wake in ${napDurationMinutes} minutes or when their alarm fires.`,
       consequence_write_failed: consequenceWriteFailed,
     });
 
