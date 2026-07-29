@@ -161,14 +161,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Travel state
-    const travelState =
-      character.travel_status && character.travel_status !== 'not_traveling' ? 'traveling' :
-      character.resolved_presence_status === 'traveling' ? 'traveling' :
-      'at_location';
-
-    const isTraveling = travelState === 'traveling';
-    const travelDestination = character.traveling_to_location_name || character.travel_destination_location_id || null;
+    // Travel state — TRANSIT REMOVED. Travel is instant teleportation; there is
+    // no in-transit state to narrate. A stale travel_status / traveling_to_location_name
+    // must NEVER make the character think they are traveling. Presence is governed
+    // solely by resolved_presence_status / resolved_current_location (home, at_work, visiting).
+    const isTraveling = false;
+    const travelDestination = null;
 
     // Presence
     const presenceStatus = character.resolved_presence_status || 'home';
@@ -303,11 +301,6 @@ Deno.serve(async (req) => {
 - Do NOT depict them awake, moving, speaking, or doing anything active.
 - Narrative must reflect sleep: physical rest, breathing, stillness, possible dreams, subconscious.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}`;
-    } else if (isTraveling) {
-      situationBlock = `SITUATION: ${character.name} is TRAVELING right now.
-- They are in transit${travelDestination ? ` to ${travelDestination}` : ''}.
-- Narrative must reflect movement, transition, anticipation, or the journey.
-- Do NOT depict them already arrived or stationary at a destination.`;
     } else if (isAtWork) {
       situationBlock = `SITUATION: ${character.name} is AT WORK right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}

@@ -1216,7 +1216,8 @@ Deno.serve(async (req) => {
       const charOverrides = [];
       if (character.is_jailed) charOverrides.push('character_incarcerated');
       if (character.house_arrest_active) charOverrides.push('character_house_arrest');
-      if (character.travel_status && character.travel_status !== 'not_traveling') charOverrides.push('character_traveling');
+      // TRANSIT REMOVED: a stale travel_status must NOT flag the character as
+      // traveling in chat context. Presence is governed by resolved_presence_status.
 
       const userOverrides = [];
       if (userPresenceStatus === 'away') userOverrides.push('user_away');
