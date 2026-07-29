@@ -116,34 +116,6 @@ Deno.serve(async (req) => {
     }
 
 
-    // ── TRANSIT INTENT GUARD — PERMANENT RULE ────────────────────────────────
-    // current_activity is DESCRIPTIVE ("washing dishes," "reading a book,"
-    // "talking with James"), NOT authoritative for location. Movement/transit
-    // phrases ("heading to X," "going to Y," "on my way to Z") are NOT activities
-    // — they are travel intents. The canonical location authority
-    // (enforceCharacterLocationPresence) owns location. Allowing transit phrases
-    // into current_activity creates a self-reinforcing feedback loop:
-    //   bad state → bad dialogue → bad activity → bad state
-    // The character narrates from a stale intent, generates movement dialogue,
-    // which updates current_activity with another movement statement, which
-    // reinforces the false belief. Block transit phrases at the source so they
-    // can NEVER enter current_activity.
-    const TRANSIT_INTENT_PATTERNS = [
-      /\b(heading to|headed to|heading back to|headed back to|going to|going back to|on my way to|on the way to|on my way back to|leaving for|making my way to|making my way back to|setting off to|setting out for|taking off to|heading out to|heading over to|going over to|going down to|going up to)\b/i,
-      /\b(on my way|on the way|heading out|heading back|going back|leaving now|taking off|heading off|going off)\b/i,
-      /\b(i'm off to|i am off to|off to (?:the|work|school|home|bar|gym|club|office|church))\b/i,
-    ];
-
-    if (TRANSIT_INTENT_PATTERNS.some(p => p.test(text))) {
-      return Response.json({
-        success: false,
-        characterId,
-        blocked: true,
-        reason: 'transit_intent_blocked',
-        message: 'Movement/transit phrases are travel intents, not activities. current_activity is descriptive only — location authority is enforced by enforceCharacterLocationPresence. Blocked to prevent activity-location authority drift.',
-      });
-    }
-
     // ── SLEEP/FATIGUE DIALOGUE GUARD — PERMANENT RULE ────────────────────────────
     // Dialogue expressing tiredness, fatigue, sleep intent, or sleep planning is
     // NEVER a valid source for current_activity. These are feeling-state expressions,

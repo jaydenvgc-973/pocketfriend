@@ -194,6 +194,24 @@ Deno.serve(async (req) => {
       }, { status: 500 });
     }
 
+    // ─── SURGICAL ARRIVAL CLEANUP ──────────────────────────────────────────
+    // After a verified arrival, if current_activity describes a movement that has
+    // now completed, it is factually false and must be cleared. This is NOT a ban
+    // on movement language — characters may say "I'm heading home" freely and
+    // that is a valid current_activity while it is true. This only corrects the
+    // stale movement state left by the completed teleport: the described movement
+    // is now finished (or was never real), so the activity is no longer accurate.
+    // Planned/future travel (scheduled events, commitments, next_location) is
+    // preserved — only the descriptive current_activity is corrected.
+    const COMPLETED_MOVEMENT_RE = /\b(heading to|headed to|heading back to|headed back to|going to|going back to|on my way to|on the way to|on my way back to|leaving for|making my way to|heading out to|heading over to|going over to)\b/i;
+    if (char.current_activity && COMPLETED_MOVEMENT_RE.test(char.current_activity)) {
+      await base44.asServiceRole.entities.Character.update(character_id, { current_activity: '' });
+      console.log(
+        `[achieveCharacterDestination] arrival cleanup: cleared stale movement activity ` +
+        `"${char.current_activity.substring(0, 60)}" — ${char.name} arrived at ${destLoc.name}`
+      );
+    }
+
     console.log(
       `[achieveCharacterDestination] ✅ ${char.name} → ${destLoc.name} | ` +
       `presence=${finalPresenceStatus} | location_type=${finalLocationType} | source=${source_reason}`

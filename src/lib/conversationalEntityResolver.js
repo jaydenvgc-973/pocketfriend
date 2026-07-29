@@ -143,12 +143,14 @@ export async function resolveConversationalEntity({
   // Anderson's Bar). This is entity-resolution by personal context, not by
   // generic keyword matching. The character's own employment/education/home
   // context is the PRIMARY resolution source for generic venue phrases.
+  // Only work and school have direct location ID fields on Character. Gym and
+  // religion are resolved through LocationReference membership arrays (not
+  // character-owned fields), so they are not included here — they fall through
+  // to normal STEP 1/2 matching.
   const GENERIC_VENUE_MAP = [
     { regex: /\bthe\s+(bar|pub|club|lounge|tavern|nightclub|joint)\b/i, locFields: ['occupation_location_id', 'current_work_location_id'], additionalField: 'additional_occupation_locations', categories: ['food_drink', 'social', 'business'], label: 'workplace' },
-    { regex: /\bthe\s+(office|work|workplace|job|shop|store|restaurant|cafe|diner|bistro|grill|kitchen|salon|barber|spa|studio)\b/i, locFields: ['occupation_location_id', 'current_work_location_id'], additionalField: 'additional_occupation_locations', categories: ['workplace', 'food_drink', 'social', 'gym', 'business', 'shopping'], label: 'workplace' },
+    { regex: /\bthe\s+(office|work|workplace|job|shop|store|restaurant|cafe|diner|bistro|grill|kitchen|salon|barber|spa|studio)\b/i, locFields: ['occupation_location_id', 'current_work_location_id'], additionalField: 'additional_occupation_locations', categories: ['workplace', 'food_drink', 'social', 'business', 'shopping'], label: 'workplace' },
     { regex: /\bthe\s+(school|campus|university|college|academy|class)\b/i, locFields: ['education_location_id', 'current_school_location_id'], additionalField: 'additional_education_locations', categories: ['education', 'school'], label: 'school' },
-    { regex: /\bthe\s+(gym|fitness center|health club|weight room)\b/i, locFields: ['frequented_gym_location_id'], additionalField: null, categories: ['gym'], label: 'gym' },
-    { regex: /\bthe\s+(church|mosque|temple|synagogue|chapel|parish|ward|stake)\b/i, locFields: ['religious_location_id'], additionalField: null, categories: ['religion'], label: 'place of worship' },
   ];
 
   for (const { regex, locFields, additionalField, categories, label } of GENERIC_VENUE_MAP) {

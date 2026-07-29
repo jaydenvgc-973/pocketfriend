@@ -303,8 +303,15 @@ function getLocationContext(character, locationMap, now) {
   }
   if (presenceStatus === 'passed_out') return 'passed_out';
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
-  if (activity.includes('passed out') || activity.includes('collapsed')) return 'passed_out';
-  if (activity.includes('hospital') || activity.includes('er ') || activity.includes('emergency room') || activity.includes('urgent care')) return 'hospitalized';
+  // NOTE: current_activity must NOT override the committed resolved_presence_status.
+  // The committed presence (resolved_presence_status) is the sole authority for
+  // sleep/pass-out/hospitalized state. Previously this function let a chat-written
+  // activity string ("passed out", "hospital") override the committed presence,
+  // which was an unauthorized pathway — current_activity is descriptive, not
+  // authoritative. Those override lines have been removed. State transitions
+  // (sleep, pass-out, hospitalization) are committed exclusively by the canonical
+  // authority (enforceCharacterLocationPresence / simulateActiveCharacterNeeds
+  // corrective pipeline), never inferred from current_activity text.
 
   const presenceIsStale = now ? resolvePresenceStaleness(character, now) : false;
 
