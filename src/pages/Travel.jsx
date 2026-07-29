@@ -355,8 +355,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       });
       const locationReferenceId = res?.data?.location_reference_id;
       if (!locationReferenceId) throw new Error('Failed to create location');
-      const travelMs = 2000 + Math.random() * 4000;
-      await new Promise(r => setTimeout(r, travelMs));
       const params = new URLSearchParams({ locationId: locationReferenceId, characterIds: selectedCharacterIds.join(",") });
       navigate(`/scene?${params.toString()}`);
     } catch (err) {
@@ -397,8 +395,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       .filter(Boolean);
     if (unavailable.length > 0) { setUnavailablePopup(unavailable); return; }
     setIsTraveling(true);
-    const travelMs = 2000 + Math.random() * 6000;
-    await new Promise(r => setTimeout(r, travelMs));
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
     // Pass the first zone assigned to this environment so Scene starts in the correct zone
     const envZone = selectedEnvironment?.zone_names?.[0] || null;
@@ -421,8 +417,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       return;
     }
     setIsTraveling(true);
-    const travelMs = 2000 + Math.random() * 4000;
-    await new Promise(r => setTimeout(r, travelMs));
     const params = new URLSearchParams({ locationId });
     navigate(`/scene?${params.toString()}`);
   };
@@ -786,9 +780,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       {vgcTowersNote}
                       <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
                         <Navigation className="w-4 h-4" />
-                        {isTraveling ? "Traveling..." : travelLabel}
+                        {travelLabel}
                       </Button>
-                      {isTraveling && <p className="text-xs text-muted-foreground text-center animate-pulse">On your way to {selectedLocation.name}...</p>}
                     </>
                   );
                 })()}
