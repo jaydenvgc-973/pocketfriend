@@ -86,11 +86,11 @@ Deno.serve(async (req) => {
         /\bsoaks?\b[^.!?\n]{0,20}\bbath\b/.test(_narrLower) ||
         /\btaking_bath\b/.test(_narrLower)
       );
-      const _hygWashHair = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bwashing_hair\b/.test(_narrLower);
-      const _hygWashFace = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bface\b/.test(_narrLower) || /\bwashing_face\b/.test(_narrLower);
-      const _hygWashHands = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhands\b/.test(_narrLower) || /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) || /\bwashing_hands\b/.test(_narrLower);
-      const _hygBrushTeeth = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bteeth\b/.test(_narrLower) || /\bbrushing_teeth\b/.test(_narrLower);
-      const _hygGroomHair = /\b(grooms|groomed|grooming)\b/.test(_narrLower) || /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bgrooming_hair\b/.test(_narrLower);
+      const _hygWashHair = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bwashing_hair\b/.test(_narrLower) || /\b(washes|washed|washing)\b[^.!?\n]{0,15}\bhair\b/.test(_narrLower);
+      const _hygWashFace = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bface\b/.test(_narrLower) || /\bwashing_face\b/.test(_narrLower) || /\b(washes|washed|washing)\b[^.!?\n]{0,15}\bface\b/.test(_narrLower);
+      const _hygWashHands = /\b(washes|washed|washing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhands\b/.test(_narrLower) || /\b(washes up|washed up|freshens up|freshened up|freshening up)\b/.test(_narrLower) || /\bwashing_hands\b/.test(_narrLower) || /\b(washes|washed|washing)\b[^.!?\n]{0,15}\bhands\b/.test(_narrLower);
+      const _hygBrushTeeth = /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bteeth\b/.test(_narrLower) || /\bbrushing_teeth\b/.test(_narrLower) || /\b(brushes|brushed|brushing)\b[^.!?\n]{0,15}\bteeth\b/.test(_narrLower);
+      const _hygGroomHair = /\b(grooms|groomed|grooming)\b/.test(_narrLower) || /\b(fixes|fixed|fixing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\b(brushes|brushed|brushing)\b[^.!?\n]{0,20}\b(her|his|their|my)\b[^.!?\n]{0,10}\bhair\b/.test(_narrLower) || /\bgrooming_hair\b/.test(_narrLower) || /\b(fixes|fixed|fixing)\b[^.!?\n]{0,15}\bhair\b/.test(_narrLower);
       const _anyHygiene = _hygShower || _hygBath || _hygWashHair || _hygWashFace || _hygWashHands || _hygBrushTeeth || _hygGroomHair;
       if (_anyHygiene && !_envClean && !_observation) {
         const _base = character.hygiene_value ?? 75;
