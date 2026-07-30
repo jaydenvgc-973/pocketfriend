@@ -19,6 +19,8 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import { filterDashes } from "@/lib/dashFilter";
 import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
+import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   getCachedCanonicalPrompt,
   setCachedCanonicalPrompt,
@@ -185,6 +187,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const replyLockRef = useRef(new Set());
   // ── SEND GUARD: prevents concurrent sends (rapid tap / double submit) ────────
   const isSendingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const queryClient = useQueryClient();
 
   // ── LOAD CONTACTS via shared resolver (single source of truth) ───────────────
   // Runs whenever openGeneration increments (on open or character change) or character?.id changes.
@@ -979,9 +983,12 @@ ${conversationLog}
 
 Respond ONLY with valid JSON in this exact format:
 {
-  "message_type": "text_only",
-  "text_content": "Your reply as ${selectedContact.person_name}."
-}`;
+  "message_type": "text_only" | "text_then_image" | "image_only",
+  "text_content": "Your reply as ${selectedContact.person_name}. Only include if message_type includes text. Never put image descriptions here.",
+  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Only include if message_type includes image.",
+  "image_generation_prompts": ["For multiple images — array of internal image prompts"]
+}
+Only include image fields when sharing a photo, selfie, or visual. Image prompts are for generation only — never visible to the sender.`;
 
     // PROOF LOG — architecture verification, every field must be true
     console.log(`[SINGLE_CHARACTER_CONTEXT_CHECK] ${JSON.stringify({
@@ -1002,15 +1009,17 @@ Respond ONLY with valid JSON in this exact format:
 
     // STEP 7: Call LLM — SAME caller as Chat.
     let npcText = "...";
+    let imageGenPrompts = [];
     try {
       const t_llm = Date.now();
       const rawResponse = await callLLMWithRetry(fullPrompt);
       console.log(`[WorldContacts] llm_call_ms=${Date.now() - t_llm} | contact=${selectedContact.person_name}`);
       const parsed = parseCharacterResponse(rawResponse);
-      npcText = parsed.text_content?.trim() || rawResponse?.trim() || "...";
+      imageGenPrompts = parsed.image_generation_prompts || [];
+      npcText = parsed.text_content?.trim() || (imageGenPrompts.length > 0 ? "" : rawResponse?.trim() || "...");
       npcText = filterDashes(npcText);
       npcText = stripCharacterNamePrefix(npcText, selectedContact.person_name);
-      if (!npcText || npcText.startsWith("{") || npcText.startsWith("```")) npcText = "...";
+      if (imageGenPrompts.length === 0 && (!npcText || npcText.startsWith("{") || npcText.startsWith("```"))) npcText = "...";
 
       // ── VICK CHARACTER BOUNDARY ────────────────────────────────────────────
       // When Vick is the NPC responding, apply the hard diagnostic boundary BEFORE
@@ -1169,8 +1178,62 @@ Respond ONLY with valid JSON in this exact format:
     const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, npcMsg]);
 
+    // ── IMAGE GENERATION DISPATCH (reuses Chat's dispatchImageGeneration) ──────
+    if (imageGenPrompts.length > 0 && contactCharRecordRef.current) {
+      const contactCharForImage = contactCharRecordRef.current;
+      const contactCharRefs = (contactCharForImage.reference_image_urls || []).filter(Boolean);
+      for (let i = 0; i < imageGenPrompts.length; i++) {
+        const imgPrompt = imageGenPrompts[i];
+        try {
+          const imgMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: contactId,
+            character_name: selectedContact.person_name,
+            sender_character_id: contactId,
+            receiver_character_id: character.id,
+            participant_character_ids: participantIdsForMsg,
+            shared_conversation_key: canonicalKeyForMsg,
+            content: "",
+            timestamp: new Date().toISOString(),
+            channel: "world_phone",
+            is_read: false,
+            generation_context: {
+              prompt: imgPrompt,
+              character_id: contactId,
+              character_reference_images: contactCharRefs,
+            },
+          });
+          if (imgMsg?.id) {
+            const imgMsgLocal = { id: imgMsg.id, dbId: imgMsg.id, role: "npc", content: "", image_url: null, timestamp: new Date().toISOString() };
+            setMessages(prev => [...prev, imgMsgLocal]);
+            setTimeout(() => dispatchImageGeneration({
+              targetMsgId: imgMsg.id,
+              imageGenPrompt: imgPrompt,
+              charRefs: contactCharRefs,
+              userRefImages: [],
+              useUserRefs: false,
+              character: contactCharForImage,
+              userSettings: {},
+              currentUser: { email: ownerEmail_send || me_send?.email },
+              subjectType: 'character',
+              characterId: contactId,
+              characterName: selectedContact.person_name,
+              isMountedRef,
+              setMessages,
+              convoId,
+              queryClient,
+            }), 300 + i * 800);
+          }
+        } catch (imgErr) {
+          console.error('[WorldContacts] Image message creation failed:', imgErr.message);
+        }
+      }
+    }
+
+    const previewText = imageGenPrompts.length > 0 && !npcText ? '📷 Photo' : npcText.substring(0, 100);
     await base44.entities.Conversation.update(convoId, {
-      last_message_preview: npcText.substring(0, 100),
+      last_message_preview: previewText,
       last_message_date: new Date().toISOString(),
     }).catch(() => {});
 
