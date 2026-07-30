@@ -623,24 +623,33 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── Create a real Conversation for Media Gallery visibility ────────────
-    // Story event images must be discoverable by the Media Gallery, which scans
-    // Message records by conversation_id from Conversation entities owned by
-    // the user (created_by = ownerEmail). Create a real Conversation using the
-    // user-context client so created_by is set to the user's email, making
-    // these images visible in the gallery without any gallery-side changes.
+    // ── Find or create a real Conversation for Media Gallery visibility ────
+    // The gallery discovers images by scanning Message records whose
+    // conversation_id belongs to a Conversation entity owned by the user.
+    // Service-role create + owner_email ensures the gallery's owner_email
+    // query path finds these even when no user auth context is available
+    // (e.g. when invoked from another backend function or a scheduled automation).
     let storyEventConversationId = `story_event_${eventId}`;
     try {
-      const storyConvo = await base44.entities.Conversation.create({
-        title: `story_event::${eventId}`,
-        type: 'direct',
-        character_ids: allIds,
-        channel: 'story_event',
-        owner_email: ownerEmail,
-      }).catch(() => null);
-      if (storyConvo?.id) {
-        storyEventConversationId = storyConvo.id;
-        console.log(`[generateStoryEvent] Created story event conversation for gallery: ${storyConvo.id}`);
+      const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
+        { title: `story_event::${eventId}`, channel: 'story_event' },
+        '-created_date', 5
+      ).catch(() => []);
+
+      if (existingConvos?.length > 0 && existingConvos[0]?.id) {
+        storyEventConversationId = existingConvos[0].id;
+      } else {
+        const storyConvo = await base44.asServiceRole.entities.Conversation.create({
+          title: `story_event::${eventId}`,
+          type: 'direct',
+          character_ids: allIds,
+          channel: 'story_event',
+          owner_email: ownerEmail,
+        }).catch(() => null);
+        if (storyConvo?.id) {
+          storyEventConversationId = storyConvo.id;
+          console.log(`[generateStoryEvent] Created story event conversation for gallery: ${storyConvo.id}`);
+        }
       }
     } catch (e) {
       console.warn(`[generateStoryEvent] Conversation creation failed (using fallback ID): ${e?.message}`);

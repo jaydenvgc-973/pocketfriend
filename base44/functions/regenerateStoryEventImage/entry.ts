@@ -148,11 +148,8 @@ Deno.serve(async (req) => {
     });
 
     // ── Find or create a real Conversation for Media Gallery visibility ──────
-    // Same pattern as generateStoryEvent: the gallery discovers images by
-    // scanning Message records whose conversation_id belongs to a Conversation
-    // entity owned by the user (created_by = user email). Search for the
-    // existing story event conversation by its deterministic title, or create
-    // one if it doesn't exist yet (covers events generated before this fix).
+    // Service-role create + owner_email ensures the gallery's owner_email query
+    // path finds these conversations even without user auth context.
     let storyEventConversationId = `story_event_${story_event_id}`;
     try {
       const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
@@ -163,12 +160,12 @@ Deno.serve(async (req) => {
       if (existingConvos?.length > 0 && existingConvos[0]?.id) {
         storyEventConversationId = existingConvos[0].id;
       } else {
-        const storyConvo = await base44.entities.Conversation.create({
+        const storyConvo = await base44.asServiceRole.entities.Conversation.create({
           title: `story_event::${story_event_id}`,
           type: 'direct',
           character_ids: allIds,
           channel: 'story_event',
-          owner_email: user.email,
+          owner_email: event.owner_email || user.email,
         }).catch(() => null);
         if (storyConvo?.id) {
           storyEventConversationId = storyConvo.id;

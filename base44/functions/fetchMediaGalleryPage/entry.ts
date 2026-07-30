@@ -145,23 +145,22 @@ Deno.serve(async (req) => {
     console.log(`[fetchMediaGalleryPage] v4 owner=${ownerEmail} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex} neededImages=${neededImages}`);
 
     // ── FETCH CONVERSATIONS ──────────────────────────────────────────────────
-    // Scoped by created_by (Conversation entity's legacy Base44 scope field).
-    // NOTE: Conversation-only legacy scoping exception — created_by is the user ownership
-    // field for Conversations in Base44. This is documented as a legacy exception.
-    // owner_email is preferred for Characters and Messages; future Conversation writes
-    // should include owner_email but created_by remains the query path for existing records.
+    // Scoped by created_by OR owner_email so both user-created conversations
+    // (created_by = user email) and service-role-created story_event conversations
+    // (created_by = service email, owner_email = user email) are discovered.
     //
     // Paginated fetch to avoid 500-record cap that could miss older conversations.
     let userConversations = [];
     const CONVO_BATCH = 500;
     let convoOffset = 0;
     let convoExhausted = false;
+    const convoQuery = { $or: [{ created_by: ownerEmail }, { owner_email: ownerEmail }] };
 
     while (!convoExhausted) {
       let batch = [];
       try {
         batch = await base44.entities.Conversation.filter(
-          { created_by: ownerEmail },
+          convoQuery,
           '-created_date',
           CONVO_BATCH,
           convoOffset
@@ -169,7 +168,7 @@ Deno.serve(async (req) => {
       } catch {
         try {
           batch = await base44.asServiceRole.entities.Conversation.filter(
-            { created_by: ownerEmail },
+            convoQuery,
             '-created_date',
             CONVO_BATCH,
             convoOffset
