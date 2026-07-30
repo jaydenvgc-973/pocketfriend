@@ -623,6 +623,29 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // ── Create a real Conversation for Media Gallery visibility ────────────
+    // Story event images must be discoverable by the Media Gallery, which scans
+    // Message records by conversation_id from Conversation entities owned by
+    // the user (created_by = ownerEmail). Create a real Conversation using the
+    // user-context client so created_by is set to the user's email, making
+    // these images visible in the gallery without any gallery-side changes.
+    let storyEventConversationId = `story_event_${eventId}`;
+    try {
+      const storyConvo = await base44.entities.Conversation.create({
+        title: `story_event::${eventId}`,
+        type: 'direct',
+        character_ids: allIds,
+        channel: 'story_event',
+        owner_email: ownerEmail,
+      }).catch(() => null);
+      if (storyConvo?.id) {
+        storyEventConversationId = storyConvo.id;
+        console.log(`[generateStoryEvent] Created story event conversation for gallery: ${storyConvo.id}`);
+      }
+    } catch (e) {
+      console.warn(`[generateStoryEvent] Conversation creation failed (using fallback ID): ${e?.message}`);
+    }
+
     // ── STEP 5: GENERATE IMAGES WITH UNIFIED IDENTITY GROUNDING ──────────────
     // Every image prompt now:
     //   1. Prepends the Name Reference Key (ID-anchored, canonical format)
@@ -761,8 +784,9 @@ Deno.serve(async (req) => {
           });
 
           // Create Message record for Media Gallery visibility
+          // Uses the real Conversation ID so fetchMediaGalleryPage discovers it
           await base44.asServiceRole.entities.Message.create({
-            conversation_id: `story_event_${eventId}`,
+            conversation_id: storyEventConversationId,
             sender_type: 'user',
             content: '',
             image_url: imageRes.url,
