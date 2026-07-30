@@ -883,25 +883,6 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 5c: CREATE COMMUNITYEVENT ────────────────────────────────────────
-    try {
-      await base44.asServiceRole.entities.CommunityEvent.create({
-        name: title,
-        event_type: 'celebration',
-        source: 'user_calendar',
-        show_on_community_strip: true,
-        location_id: event.venue_id || null,
-        location_name: venueName || null,
-        start_date: `${eventDate || ''}T${startTime || '00:00'}:00.000`,
-        end_date: endTime ? `${eventDate}T${endTime}:00.000` : null,
-        is_active: true,
-        owner_email: ownerEmail,
-        description: generated.narrative_preview || '',
-        vibe: 'social',
-        participations_count: participantIds.length,
-      });
-    } catch (_) {}
-
     // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ───────────────────────────────
     const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
     const eventDepartureTime = endTime
