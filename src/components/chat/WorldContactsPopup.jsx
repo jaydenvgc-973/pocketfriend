@@ -1176,7 +1176,7 @@ Only include image fields when sharing a photo, selfie, or visual. Image prompts
     console.log(`[WorldPhone] Response message | from=${selectedContact.related_character_id} | to=${character.id} | msg_id=${savedNpcMsg.id.substring(0, 8)}`);
 
     const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText, timestamp: new Date().toISOString() };
-    setMessages(prev => [...prev, npcMsg]);
+    setMessages(prev => prev.some(m => m.id === npcMsg.id) ? prev : [...prev, npcMsg]);
 
     // ── IMAGE GENERATION DISPATCH (reuses Chat's dispatchImageGeneration) ──────
     if (imageGenPrompts.length > 0 && contactCharRecordRef.current) {
@@ -1206,7 +1206,7 @@ Only include image fields when sharing a photo, selfie, or visual. Image prompts
           });
           if (imgMsg?.id) {
             const imgMsgLocal = { id: imgMsg.id, dbId: imgMsg.id, role: "npc", content: "", image_url: null, timestamp: new Date().toISOString() };
-            setMessages(prev => [...prev, imgMsgLocal]);
+            setMessages(prev => prev.some(m => m.id === imgMsgLocal.id) ? prev : [...prev, imgMsgLocal]);
             setTimeout(() => dispatchImageGeneration({
               targetMsgId: imgMsg.id,
               imageGenPrompt: imgPrompt,
