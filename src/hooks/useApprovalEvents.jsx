@@ -199,10 +199,12 @@ const BIRTH_PATTERNS = [
   /she\s+had\s+the\s+baby/i,
 ];
 
-export function useApprovalEvents() {
+export function useApprovalEvents({ onLifeEventCreated } = {}) {
   const [pendingApproval, setPendingApproval] = useState(null);
   const [dismissed, setDismissed] = useState(new Set());
   const analysisInFlight = useRef(false);
+  const onLifeEventCreatedRef = useRef(null);
+  onLifeEventCreatedRef.current = onLifeEventCreated;
 
   const checkForApprovalEvents = useCallback((characterReply, character, allCharacters = [], userMessage = '') => {
     if (!characterReply || !character) return;
@@ -378,6 +380,7 @@ Return JSON:`,
         timestamp: new Date().toISOString(),
         systems_updated: ['memory'],
       }).catch(() => {});
+      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'housing', character: data.character, title: `Housing change: ${mover} ${moveTypeLabel}`, description: desc });
     }
 
     if (type === 'marriage' && data.character) {
@@ -394,6 +397,7 @@ Return JSON:`,
         timestamp: new Date().toISOString(),
         systems_updated: ['memory'],
       }).catch(() => {});
+      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'marriage', character: data.character, title: 'Got married', description: `${data.character.name} got married${data.otherCharName ? ` to ${data.otherCharName}` : ''}.` });
     }
 
     if (type === 'education' && data.character) {
@@ -473,6 +477,7 @@ Return JSON:`,
         timestamp: new Date().toISOString(),
         systems_updated: ['memory'],
       }).catch(() => {});
+      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'birth', character: data.character, title: childName ? `${childName} was born` : 'Baby born', description: `${data.character.name} had a baby${childName ? ` — ${childName}` : ''}.` });
     }
 
     dismissApproval();

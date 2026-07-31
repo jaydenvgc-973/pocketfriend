@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Home, Check, ChevronRight, ChevronLeft, MapPin, Users, Clock, Moon, AlertTriangle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
+import StoryEventSuggestionFlow from "@/components/chat/StoryEventSuggestionFlow";
 
 const REASON_OPTIONS = [
   { value: "voluntary_move", label: "Voluntary move" },
@@ -102,6 +103,7 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
   const [notes, setNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
+  const [storySuggestion, setStorySuggestion] = useState(null);
 
   const ownerEmail = currentUser?.email || character?.owner_email;
 
@@ -209,7 +211,18 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
         queryClient.invalidateQueries({ queryKey: ["memories"] });
         queryClient.invalidateQueries({ queryKey: ["relationships"] });
       }
-      onSaved?.();
+      const _moveToName = isNone ? null : isHomeless ? "No fixed residence" : isUnknown ? null : selectedLocation?.name;
+      setStorySuggestion({
+        title: 'Housing change',
+        description: _moveToName ? `${character.name} moved to ${_moveToName}.` : `${character.name} had a housing change.`,
+        characterName: character.name,
+        prefill: {
+          initialTitle: 'Moving day',
+          initialPlot: _moveToName ? `${character.name} moved to ${_moveToName}.` : `${character.name} had a housing change.`,
+          initialParticipantIds: [character.id, ...movingCharacterIds],
+          initialFocusIds: [character.id],
+        },
+      });
     } catch (err) {
       setSaveError(err?.response?.data?.error || err?.message || "Failed to save housing change.");
     } finally {
@@ -619,6 +632,13 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
           </div>
         </motion.div>
       </motion.div>
+      {storySuggestion && (
+        <StoryEventSuggestionFlow
+          character={character}
+          suggestion={storySuggestion}
+          onDone={() => { setStorySuggestion(null); onSaved?.(); }}
+        />
+      )}
     </AnimatePresence>,
     document.body
   );
