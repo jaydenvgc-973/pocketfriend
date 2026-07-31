@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
-import { buildStyleMotifContext, buildProgressionRuleContext } from "@/lib/narrativeScenarioExamples";
+import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -287,25 +287,19 @@ RULES:
         }
       }
 
-      // ── PROGRESSION CADENCE + MOTIF POOL ──────────────────────────────────────
-      // On-demand actions are event initiators that must answer "What has changed?"
-      // and carry forward existing emotional momentum rather than resetting the scene.
+      // ── PROGRESSION + MOTIF ───────────────────────────────────────────────────
+      // Silent imperatives that shape generation without exposing meta-logic.
+      // The narrative IS the response — the next thing that happens.
       const progressionBlock = `
 ════════════════════════════════════════════════════════════
-ON-DEMAND ACTION — PROGRESSION CADENCE
+PROGRESSION
 ════════════════════════════════════════════════════════════
-This button click is an EVENT INITIATOR, not a scene reset.
-Before writing, answer the core question:
-  "What has changed since the previous narrative?"
+Continue from the established state. Do not restart, restate, or reset.
+Carry forward the existing emotional momentum unless this action naturally changes it.
+Fold this interaction into the current emotional/physical state — do not erase what came before.
+Advance the moment. Do not rewrite the same beat with different adjectives.
+════════════════════════════════════════════════════════════
 
-RULES:
-• Do NOT restart the scene. Inherit the established state and continue from the new present.
-• Existing emotional momentum should be carried forward unless this action naturally changes it.
-• If the characters were already in a specific emotional/physical state, fold this interaction INTO that state — do not erase it.
-• A chat message or action button is an event within the story. The narrative must account for what was said/done and show what now happens because of it.
-• Do NOT rewrite the same moment using different adjectives. Once a beat has been communicated, treat it as complete and advance.
-════════════════════════════════════════════════════════════
-${buildProgressionRuleContext()}
 ════════════════════════════════════════════════════════════
 `;
 

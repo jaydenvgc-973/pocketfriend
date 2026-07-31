@@ -66,15 +66,8 @@ export function buildActionNarrationPrompt(character, recentMessages = [], step 
     ? `PREVIOUS NARRATION (continue directly — do NOT restart, do NOT repeat):
 "${lastNarrationText.substring(0, 280)}"
 
-This is step ${step + 1}. A moment has passed. ${name}'s reaction to the conversation continues to play out physically.
-
-PROGRESSION RULE — answer before writing:
-"What has changed since the previous narrative?"
-If the answer is "nothing," the narration has stalled. Advance the moment — do not rewrite the same beat with different adjectives. Carry forward the established emotional momentum and progress from it.`
-    : `This is the first narration step. Show ${name}'s immediate physical/emotional reaction to the last message they received.
-
-PROGRESSION RULE — answer before writing:
-"What has changed since the previous narrative?" — this is the first beat, so establish the present moment clearly. Treat this action as an event that initiates progression, not a self-contained reset.`;
+This is step ${step + 1}. A moment has passed. ${name}'s reaction to the conversation continues to play out physically. Continue from the established state — do not restart or restate. Carry forward the existing emotional momentum and advance the moment.`
+    : `This is the first narration step. Show ${name}'s immediate physical/emotional reaction to the last message they received. Establish the present moment and treat this action as the start of something that will progress.`;
 
   return `You are a literary narrator writing in close third-person.
 
