@@ -199,6 +199,19 @@ const BIRTH_PATTERNS = [
   /she\s+had\s+the\s+baby/i,
 ];
 
+const JOB_OFFER_PATTERNS = [
+  /i\s+got\s+(?:the\s+)?job\b/i,
+  /i\s+got\s+hired\b/i,
+  /i(?:'m|\s+am)\s+(?:officially\s+)?on\s+the\s+payroll\b/i,
+  /they\s+(?:offered|gave)\s+me\s+(?:the\s+)?(?:job|position)/i,
+  /i\s+(?:accepted|took)\s+(?:the\s+)?(?:job\s+offer|offer|position)/i,
+  /got\s+(?:the\s+)?(?:job|hired|position)\b/i,
+  /i(?:'m|\s+am)\s+(?:now\s+)?(?:hired|employed)\b/i,
+  /i\s+start\s+(?:work|the\s+job|my\s+new\s+job)\b/i,
+  /landed\s+(?:the\s+)?(?:job|position|gig)\b/i,
+  /i(?:'m|\s+am)\s+working\s+(?:now|at\s+\w+)/i,
+];
+
 export function useApprovalEvents() {
   const [pendingApproval, setPendingApproval] = useState(null);
   const [dismissed, setDismissed] = useState(new Set());
@@ -212,6 +225,7 @@ export function useApprovalEvents() {
     const eventKey_household = `household_${character.id}`;
     const eventKey_marriage = `marriage_${character.id}`;
     const eventKey_birth = `birth_${character.id}`;
+    const eventKey_job = `job_${character.id}`;
 
     // ── HOUSEHOLD CHANGE DETECTION (move-in OR move-out) ─────────────────────
     if (!dismissed.has(eventKey_household) && isHouseholdChange(combinedLower)) {
@@ -311,6 +325,14 @@ Return JSON:`,
       setPendingApproval({
         type: 'birth',
         data: { character, otherParentName: otherParentName || null, eventKey: eventKey_birth }
+      });
+      return;
+    }
+
+    if (!dismissed.has(eventKey_job) && JOB_OFFER_PATTERNS.some(p => p.test(combinedLower))) {
+      setPendingApproval({
+        type: 'job',
+        data: { character, eventKey: eventKey_job }
       });
       return;
     }
@@ -441,6 +463,26 @@ Return JSON:`,
         }).catch(() => {});
       } else {
         await base44.entities.Character.update(char.id, updatePayload).catch(() => {});
+      }
+    }
+
+    if (type === 'job' && data.character) {
+      try {
+        await base44.entities.LifeEvent.create({
+          character_id: data.character.id,
+          character_name: data.character.name,
+          event_type: 'life_milestone_event',
+          valence: 'positive',
+          severity: 'major',
+          title: 'Got a new job',
+          description: `${data.character.name} got a new job.`,
+          emotional_impact: 'A major career milestone.',
+          triggered_by: 'user_message',
+          timestamp: new Date().toISOString(),
+          systems_updated: ['memory'],
+        });
+      } catch (e) {
+        lifeEventSuccess = false;
       }
     }
 

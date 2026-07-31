@@ -12,13 +12,14 @@ import StoryEventSuggestionFlow from "@/components/chat/StoryEventSuggestionFlow
  * creates a LifeEvent record, offers an optional Story Event suggestion
  * via the existing StoryEventCreator — no new backend, classifier, or listener.
  */
-const LIFE_EVENT_TYPES = new Set(['move_in', 'move_out', 'marriage', 'birth']);
+const LIFE_EVENT_TYPES = new Set(['move_in', 'move_out', 'marriage', 'birth', 'job']);
 
 const TYPE_INFO = {
   marriage: { title: 'Got married', plot: (n, o) => `${n} got married${o ? ` to ${o}` : ''}.` },
   birth: { title: 'Baby born', plot: (n, o) => `${n} had a baby${o ? ` with ${o}` : ''}.` },
   move_in: { title: 'Moved in', plot: (n) => `${n} moved in.` },
   move_out: { title: 'Moved out', plot: (n) => `${n} moved out.` },
+  job: { title: 'Got a new job', plot: (n) => `${n} got a new job.` },
 };
 
 export default function ChatApprovals({ pendingApproval, approveEvent, dismissApproval, character }) {
@@ -85,6 +86,20 @@ export default function ChatApprovals({ pendingApproval, approveEvent, dismissAp
         >
           <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
           {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Partner:</span> {pendingApproval.data.otherCharName}</p>}
+        </ApprovalPopup>
+      )}
+
+      {pendingApproval && pendingApproval.type === 'job' && (
+        <ApprovalPopup
+          type="job"
+          title="New Job Detected"
+          description={`It looks like ${pendingApproval.data.character?.name} may have gotten a new job. Approve this?`}
+          details={pendingApproval.data}
+          onApprove={handleApprove}
+          onDeny={dismissApproval}
+          onIgnoreType={() => dismissApproval()}
+        >
+          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
         </ApprovalPopup>
       )}
 
