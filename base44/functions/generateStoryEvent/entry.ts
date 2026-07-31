@@ -101,6 +101,90 @@ function resolveCharacterRefImages(charRecord) {
   return [];
 }
 
+/**
+ * buildUserIdentityLockBlock
+ *
+ * ZERO-DRIFT IDENTITY LOCK for the authenticated User when they are a selected
+ * Story Event participant. The User is a first-class visual subject — parallel
+ * to a character with a character_id. This block explicitly injects the User's
+ * appearance_lock (height, skin tone, hair type, hairstyle, facial hair),
+ * avatar-derived body type / skin color / facial features, gender, ethnicity,
+ * culture, race, and world name DIRECTLY into the image generation prompt string.
+ *
+ * This is injected for EVERY image moment where the User is a participant —
+ * regardless of whether they are a focus character. The User's likeness must
+ * never be omitted, genericized, or replaced with a stand-in when they are
+ * intentionally included in a Story Event.
+ */
+function buildUserIdentityLockBlock(userBundle) {
+  if (!userBundle || userBundle.participant_type !== 'user') return '';
+  const lines = [];
+  const worldName = userBundle.display_name || 'the User';
+  const promptName = userBundle.matched_prompt_name || 'User';
+  const userId = userBundle.user_id || 'authenticated_user';
+
+  lines.push(`════════════════════════════════════════════════════════════`);
+  lines.push(`🔒 USER IDENTITY LOCK — ZERO-DRIFT ENFORCEMENT`);
+  lines.push(`════════════════════════════════════════════════════════════`);
+  lines.push(`The participant "${promptName}" is the AUTHENTICATED USER of this world.`);
+  lines.push(`They are a real visual subject in this scene — NOT a generic bystander, NOT a stand-in, NOT a placeholder.`);
+  lines.push(`Their likeness MUST appear in this image with the EXACT identity profile below.`);
+  lines.push(``);
+  lines.push(`USER IDENTITY ANCHOR:`);
+  lines.push(`  World Name: ${worldName}`);
+  lines.push(`  User ID: ${userId}`);
+  if (userBundle.gender) lines.push(`  Gender: ${userBundle.gender}`);
+  if (userBundle.culture) lines.push(`  Culture: ${userBundle.culture}`);
+  if (userBundle.race) lines.push(`  Race: ${userBundle.race}`);
+  if (Array.isArray(userBundle.ethnicities) && userBundle.ethnicities.length > 0) {
+    lines.push(`  Ethnicity: ${userBundle.ethnicities.join(', ')}`);
+  }
+
+  // ── APPEARANCE LOCK — explicit attribute injection ──────────────────────
+  // These are the authoritative appearance attributes. Inject them verbatim
+  // into the prompt so the image generator cannot default to training-data priors.
+  const al = userBundle.appearance_lock;
+  if (al && typeof al === 'object') {
+    lines.push(``);
+    lines.push(`USER APPEARANCE LOCK (render these EXACT attributes — do NOT substitute, do NOT genericize):`);
+    if (al.height_display) lines.push(`  Height: ${al.height_display}`);
+    else if (al.height_inches) lines.push(`  Height: ${al.height_inches} inches`);
+    if (al.skin_tone) lines.push(`  Skin tone: ${al.skin_tone}`);
+    if (al.hair_type) lines.push(`  Hair type: ${al.hair_type}`);
+    if (al.hairstyle) lines.push(`  Hairstyle: ${al.hairstyle}`);
+    if (al.facial_hair) lines.push(`  Facial hair: ${al.facial_hair}`);
+    if (al.makeup) lines.push(`  Makeup: ${al.makeup}`);
+    if (al.clothing_style) lines.push(`  Clothing style: ${al.clothing_style}`);
+    if (al.footwear) lines.push(`  Footwear: ${al.footwear}`);
+    if (al.overall_aesthetic) lines.push(`  Overall aesthetic: ${al.overall_aesthetic}`);
+    if (Array.isArray(al.custom_keywords) && al.custom_keywords.length > 0) {
+      lines.push(`  Custom appearance keywords: ${al.custom_keywords.join(', ')}`);
+    }
+    if (al.head_ratio) lines.push(`  Head-to-body ratio: ${al.head_ratio}`);
+  }
+
+  // ── AVATAR-DERIVED VISUAL ANCHOR ────────────────────────────────────────
+  // The avatar defines the user's base form: body type, skin color, facial
+  // features, face shape, hairstyle. Reference images are attached separately
+  // via existing_image_urls — this block tells the generator to USE them.
+  if (userBundle.ref_images && userBundle.ref_images.length > 0) {
+    lines.push(``);
+    lines.push(`USER VISUAL REFERENCE: ${userBundle.ref_images.length} avatar/reference image(s) attached via existing_image_urls.`);
+    lines.push(`The person "${promptName}" MUST match the face, body, skin color, and hairstyle shown in those reference images.`);
+    lines.push(`If reference images conflict with a generic description above, the REFERENCE IMAGES win.`);
+  }
+
+  lines.push(``);
+  lines.push(`ENFORCEMENT:`);
+  lines.push(`- "${promptName}" MUST be visibly present in this image as a real, rendered person.`);
+  lines.push(`- Do NOT omit "${promptName}" from the scene.`);
+  lines.push(`- Do NOT replace "${promptName}" with a generic or different-looking person.`);
+  lines.push(`- Do NOT render "${promptName}" as a partial, obscured, or background-only figure when they are a focus participant.`);
+  lines.push(`- Their skin tone, hair, facial features, body type, and gender presentation must match the identity profile above.`);
+  lines.push(`════════════════════════════════════════════════════════════`);
+  return `\n${lines.join('\n')}\n`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -220,9 +304,19 @@ Deno.serve(async (req) => {
         const settingsRecord = settingsList?.[0] || null;
 
         if (userEntityRecord || settingsRecord) {
+          // ── FULL VISUAL IDENTITY RESOLUTION ────────────────────────────────
+          // The User is a first-class visual subject — parallel to a character.
+          // Pull EVERY identity-bearing field from both the User entity and
+          // UserSettings so the image generator has a complete identity profile:
+          //   - platform user ID (authoritative anchor, mirrors character_id)
+          //   - world name (in-world display name)
+          //   - avatar + generated avatars (body type, skin color, facial features, shape, hairstyle)
+          //   - appearance_lock (height, skin tone, hair type, hairstyle, facial hair, clothing, aesthetic)
+          //   - gender, culture, race, ethnicity (demographic identity anchors)
           const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
           const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
-          const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2)].filter(Boolean);
+          const settingsAvatar = cdnFilter([settingsRecord?.avatar_url, settingsRecord?.image_avatar_url].filter(Boolean));
+          const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2), ...settingsAvatar.slice(0, 2)].filter(Boolean);
 
           const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
           const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity — NOT email
@@ -236,8 +330,15 @@ Deno.serve(async (req) => {
             ref_images: userRefImages,
             appearance_lock: settingsRecord?.appearance_lock || null,
             world_name: worldName,
+            // Demographic + visual identity anchors (zero-drift identity profile)
+            gender: userEntityRecord?.gender || settingsRecord?.user_gender || null,
+            culture: settingsRecord?.user_culture || null,
+            race: settingsRecord?.user_race || null,
+            ethnicities: userEntityRecord?.ethnicities || (settingsRecord?.user_race ? [settingsRecord.user_race] : []),
+            avatar_url: settingsRecord?.avatar_url || userEntityAvatars[0] || null,
+            image_avatar_url: settingsRecord?.image_avatar_url || null,
           };
-          console.log(`[generateStoryEvent] ✅ User bundle resolved (include_user=true): worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length}`);
+          console.log(`[generateStoryEvent] ✅ User bundle resolved (include_user=true): worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length} appearance_lock=${!!settingsRecord?.appearance_lock} gender=${userBundle.gender || 'none'}`);
         }
       } catch (userBundleErr) {
         console.warn(`[generateStoryEvent] User bundle resolution failed (non-blocking): ${userBundleErr?.message}`);
@@ -698,6 +799,15 @@ Deno.serve(async (req) => {
 
         const imageNameRefKey = buildParticipantNameReferenceKeyBlock(imageKeyParticipants);
 
+        // ── USER IDENTITY LOCK BLOCK ─────────────────────────────────────────────
+        // When the authenticated User is a selected Story Event participant, inject
+        // their full identity profile (appearance_lock, avatar, gender, ethnicity,
+        // culture, race, world name, user ID) DIRECTLY into the prompt string.
+        // This is injected for EVERY image moment — regardless of focus status.
+        // The User's likeness must never be omitted or genericized.
+        const userIdentityLockBlock = buildUserIdentityLockBlock(userBundle);
+        const userIsIncluded = !!userBundle;
+
         // ── FINAL IMAGE PROMPT: Name Reference Key + scene description ──────────
         const finalImagePrompt = [
           `════════════════════════════════════════════════════════════`,
@@ -709,6 +819,8 @@ Deno.serve(async (req) => {
           ``,
           imageNameRefKey,
           ``,
+          // ── USER IDENTITY LOCK — zero-drift enforcement ──
+          ...(userIdentityLockBlock ? [userIdentityLockBlock, ``] : []),
           `════════════════════════════════════════════════════════════`,
           `STORY EVENT: "${title}"`,
           `MOMENT: ${img.moment.replace('_', ' ')}`,
@@ -725,6 +837,14 @@ Deno.serve(async (req) => {
           `- Do NOT generate generic strangers, stand-ins, or placeholder people.`,
           `- Do NOT infer any appearance from names alone — use ONLY the visual identity references provided.`,
           `- Character IDs in the key are the sole identity anchors. Reference images define face/hair/body.`,
+          ...(userIsIncluded ? [
+            ``,
+            `USER PRESENCE ENFORCEMENT:`,
+            `- The authenticated User ("${userBundle.matched_prompt_name || 'User'}") IS a selected participant in this Story Event.`,
+            `- They MUST appear as a visible, rendered person in this image — not omitted, not a stand-in, not a generic bystander.`,
+            `- Their likeness must match the USER IDENTITY LOCK block above and the attached reference images.`,
+            `- If they are a focus participant, they must be prominent and clearly visible in the foreground or central framing.`,
+          ] : []),
           ``,
           `BACKGROUND POPULATION DIVERSITY LAW — ABSOLUTE OVERRIDE:`,
           `Caucasian/White is NEVER the default appearance for any automatically generated, unspecified, or background person.`,
