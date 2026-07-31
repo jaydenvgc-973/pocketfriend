@@ -72,6 +72,65 @@ function isCharacterOnWorkSchedule(character, etTime) {
   return now >= workStartMs && now < workEndMs;
 }
 
+function _toMinutesSchool(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function _isInWindowSchool(nowMin, startMin, endMin) {
+  if (startMin == null || endMin == null) return false;
+  if (startMin <= endMin) return nowMin >= startMin && nowMin < endMin;
+  return nowMin >= startMin || nowMin < endMin;
+}
+
+// ── SCHOOL SCHEDULE — TIME-BOUND (mirrors the work schedule pattern) ──────
+// A stale school lock has NO presence authority outside its schedule window.
+// Only resolve at_school when the character is actually within their school
+// hours right now (authoritative Eastern Time). Resolution order:
+//   1. Enrollment override times (character.education_enrollments, active)
+//   2. School location operating_hours for today (or day-agnostic)
+// If neither provides a valid time window, or the current time is outside it,
+// the character is NOT at school — return false.
+function isCharacterOnSchoolSchedule(character, etTime, locationMap) {
+  if (character.student_status !== 'enrolled') return false;
+  if (!character.education_location_id) return false;
+
+  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
+  const dayOfWeek = etTime.getDay();
+
+  // PRIORITY 1: Enrollment override times
+  if (Array.isArray(character.education_enrollments) && character.education_enrollments.length > 0) {
+    const active = character.education_enrollments.find(e => e.status === 'active' && e.start_time && e.end_time);
+    if (active) {
+      const s = _toMinutesSchool(active.start_time);
+      const e = _toMinutesSchool(active.end_time);
+      if (s !== null && e !== null) {
+        return _isInWindowSchool(nowMin, s, e);
+      }
+    }
+  }
+
+  // PRIORITY 2: School location operating hours
+  const schoolLoc = locationMap[character.education_location_id];
+  if (schoolLoc && Array.isArray(schoolLoc.operating_hours) && schoolLoc.operating_hours.length > 0) {
+    const todayEntries = schoolLoc.operating_hours.filter(h => h.day_of_week != null && h.day_of_week === dayOfWeek);
+    const dayAgnosticEntries = schoolLoc.operating_hours.filter(h => h.day_of_week == null);
+
+    if (todayEntries.length > 0) {
+      const entry = todayEntries[0];
+      return _isInWindowSchool(nowMin, _toMinutesSchool(entry.open_time), _toMinutesSchool(entry.close_time));
+    }
+    if (dayAgnosticEntries.length > 0) {
+      const entry = dayAgnosticEntries[0];
+      return _isInWindowSchool(nowMin, _toMinutesSchool(entry.open_time), _toMinutesSchool(entry.close_time));
+    }
+  }
+
+  // No valid school hours found — the character is NOT at school right now
+  return false;
+}
+
 const VALID_SLEEP_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'generic',
   'jail', 'prison', 'detention_center', 'correctional_facility',
@@ -867,18 +926,21 @@ function computeResolvedLocation(character, locationMap, etTime) {
     }
   }
 
-  // School schedule
-  if (character.student_status === 'enrolled' && character.education_location_id) {
+  // School schedule — TIME-BOUND: only resolve at_school when the character is
+  // actually within their school hours right now (authoritative Eastern Time).
+  // A stale school lock has NO presence authority outside its schedule window,
+  // exactly like the work schedule above. If the current time is past the
+  // school end time, this block does NOT return at_school — the character
+  // falls through to sleep/visit/home resolution instead.
+  if (isCharacterOnSchoolSchedule(character, etTime, locationMap)) {
     const schoolLocation = locationMap[character.education_location_id];
-    if (schoolLocation) {
-      return {
-        resolved_current_location_id: character.education_location_id,
-        resolved_current_location_name: schoolLocation.name || 'School',
-        resolved_location_type: 'school',
-        resolved_presence_status: 'at_school',
-        resolved_source_reason: 'school_schedule',
-      };
-    }
+    return {
+      resolved_current_location_id: character.education_location_id,
+      resolved_current_location_name: schoolLocation?.name || 'School',
+      resolved_location_type: 'school',
+      resolved_presence_status: 'at_school',
+      resolved_source_reason: 'school_schedule',
+    };
   }
 
   // Sleep state lock — preserve DB truth (AFTER work/school obligations)
