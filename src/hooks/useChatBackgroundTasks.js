@@ -127,6 +127,7 @@ export function useChatBackgroundTasks({
     isTyping,
     userMsg,
     worldPhoneAlreadySent, // true when Chat.jsx pre-send worldPhoneIntent already fired
+    worldPhoneSendConfirmed, // true when a World Phone Message record was actually written this turn
   }) => {
     if (!characterId || !convoId) return;
 

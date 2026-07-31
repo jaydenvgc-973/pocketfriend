@@ -2225,6 +2225,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Signal to Tier 2 contactIntent that the World Phone message was already sent
       // via the pre-send worldPhoneIntent path — prevents duplicate sends.
       worldPhoneAlreadySent: !!worldPhoneIntent,
+      // CRITICAL: Pass the actual World Phone send result so memory extraction
+      // knows whether a Message record was truly written. Memory of sending a
+      // text/call must NEVER precede the action — if the send failed or didn't
+      // fire, the character must not remember doing it.
+      worldPhoneSendConfirmed: !!(worldPhoneSendResult?.data?.success),
     });
 
     // ── RELATIONSHIP CONTINUITY DETECTION (background, non-blocking) ──────────
