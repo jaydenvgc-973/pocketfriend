@@ -215,6 +215,15 @@ Deno.serve(async (req) => {
     const participantIds = event.participant_character_ids || [];
     const focusNames = event.focus_character_names || [];
     const participantNames = event.participant_character_names || [];
+    // Include the user in name lists when they are a selected participant
+    const userParticipantName = event.user_participant?.display_name || null;
+    const userIsFocusParticipant = event.user_participant?.is_focus || false;
+    const allFocusNames = userParticipantName && userIsFocusParticipant
+      ? [...focusNames, userParticipantName]
+      : focusNames;
+    const allParticipantNames = userParticipantName
+      ? [...participantNames, userParticipantName]
+      : participantNames;
     const allDay = event.all_day;
     const startTime = event.start_time;
     const endTime = event.end_time;
@@ -293,7 +302,7 @@ Deno.serve(async (req) => {
     // The StoryEventCreator UI does not currently expose a "include me" toggle,
     // so include_user will be false/absent for all existing events. This gate
     // ensures the user is never injected based on account state alone.
-    const includeUser = !!(body.include_user || event.include_user);
+    const includeUser = !!(body.include_user || event.user_participant);
     let userBundle = null;
 
     if (includeUser) {
@@ -337,6 +346,7 @@ Deno.serve(async (req) => {
             ethnicities: userEntityRecord?.ethnicities || (settingsRecord?.user_race ? [settingsRecord.user_race] : []),
             avatar_url: settingsRecord?.avatar_url || userEntityAvatars[0] || null,
             image_avatar_url: settingsRecord?.image_avatar_url || null,
+            is_focus: event.user_participant?.is_focus || false,
           };
           console.log(`[generateStoryEvent] ✅ User bundle resolved (include_user=true): worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length} appearance_lock=${!!settingsRecord?.appearance_lock} gender=${userBundle.gender || 'none'}`);
         }
@@ -454,14 +464,22 @@ Deno.serve(async (req) => {
       additionalNotes ? `ADDITIONAL NOTES FROM USER:` : '',
       additionalNotes ? `${additionalNotes}` : '',
       additionalNotes ? `` : '',
-      `FOCUS CHARACTERS (give these characters the most narrative attention):`,
-      focusNames.length > 0 ? focusNames.join(', ') : 'None specified',
+      `FOCUS PARTICIPANTS (give these the most narrative attention):`,
+      allFocusNames.length > 0 ? allFocusNames.join(', ') : 'None specified',
       ``,
-      `PARTICIPATING CHARACTERS (ALL of these are present at the event):`,
-      participantNames.join(', '),
+      `PARTICIPANTS (ALL present at the event — characters AND the user if included):`,
+      allParticipantNames.join(', '),
       ``,
       `CHARACTER DETAILS:`,
       characterContexts,
+      ...(userBundle ? [
+        ``,
+        `USER PARTICIPANT (the authenticated user — include them in the narrative and imagery, but do NOT create memories FOR them):`,
+        `- ${userBundle.display_name} [User — not a character]`,
+        userBundle.gender ? `  Gender: ${userBundle.gender}` : '',
+        userBundle.is_focus ? `  ★ FOCUS participant — give them greater narrative attention` : '',
+        `  NOTE: This person is the USER, not a character. Include them in the narrative and image descriptions, but do NOT include them in the memories array or emotional_outcomes array. Only create memories for CHARACTER participants.`,
+      ].filter(Boolean) : []),
       ``,
       `RELATIONSHIPS BETWEEN PARTICIPANTS:`,
       relationshipContexts.length > 0 ? relationshipContexts.join('\n') : 'No known relationships',
@@ -521,7 +539,9 @@ Deno.serve(async (req) => {
       `- Emotional outcomes must be supported by what happens in the narrative. No random emotions.`,
       `- Relationship changes must have a meaningful reason in the narrative. No unsupported changes.`,
       `- Focus characters get richer memories with higher importance scores.`,
-      `- EVERY participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
+      `- EVERY CHARACTER participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
+      `- The USER participant is NOT a character. Do NOT include them in the memories array, emotional_outcomes array, or any memory-related output. Only create memories for CHARACTER participants.`,
+      `- Relationship changes can be created between CHARACTER participants who interact meaningfully. The user is not a target of relationship changes.`,
       `- Image prompts must reference the venue: ${venueName}.`,
       `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, clothing, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
       `- Only include relationship changes for character pairs that actually interact meaningfully.`,

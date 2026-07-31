@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle, Pencil, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
+import StoryEventEditor from './StoryEventEditor';
 
 const REGEN_REASONS = [
   { id: 'flawed', label: 'Image is flawed', icon: '⚠️' },
@@ -47,6 +48,13 @@ export default function StoryEventViewer({ eventId }) {
   const [currentUser, setCurrentUser] = useState(null);
   // Set of event participant IDs for badge display only
   const [eventParticipantIds, setEventParticipantIds] = useState(new Set());
+
+  // Edit / Regenerate / Delete event state (separate from image regen)
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [eventRegenerating, setEventRegenerating] = useState(false);
+  const [eventDeleting, setEventDeleting] = useState(false);
+  const [actionError, setActionError] = useState(null);
 
   // Load current user + full character roster (all types, no participant filtering)
   useEffect(() => {
@@ -205,6 +213,52 @@ export default function StoryEventViewer({ eventId }) {
     } finally {
       setIsCancellingGeneration(false);
     }
+  };
+
+  // ── EDIT / REGENERATE / DELETE EVENT HANDLERS ─────────────────────────────
+  const handleEventRegenerate = async () => {
+    setEventRegenerating(true);
+    setActionError(null);
+    try {
+      // Step 1: Clean up old generated content + reset status to 'generating'
+      const regenRes = await base44.functions.invoke('regenerateStoryEvent', { event_id: eventId });
+      if (!regenRes?.data?.success) {
+        throw new Error(regenRes?.data?.error || 'Failed to reset event for regeneration');
+      }
+      // Step 2: Re-trigger generation with the (possibly edited) event data
+      await base44.functions.invoke('generateStoryEvent', { event_id: eventId });
+      // Update local state — subscription handles real-time updates
+      setEvent(prev => ({ ...prev, status: 'generating', generated_narrative: null, emotional_outcomes: null, relationship_changes: null, generation_error: null }));
+      setMemories([]);
+      setImages([]);
+    } catch (err) {
+      setActionError(err?.message || 'Regeneration failed');
+    } finally {
+      setEventRegenerating(false);
+    }
+  };
+
+  const handleEventDelete = async () => {
+    setEventDeleting(true);
+    setActionError(null);
+    try {
+      const res = await base44.functions.invoke('deleteStoryEvent', { event_id: eventId });
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.error || 'Failed to delete event');
+      }
+      setEvent(null);
+      setShowDeleteConfirm(false);
+    } catch (err) {
+      setActionError(err?.message || 'Deletion failed');
+    } finally {
+      setEventDeleting(false);
+    }
+  };
+
+  const handleEventEditSave = async () => {
+    const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
+    if (records[0]) setEvent(records[0]);
+    setShowEditModal(false);
   };
 
   const isGenerating = event.status === 'generating';
@@ -460,9 +514,37 @@ export default function StoryEventViewer({ eventId }) {
             </div>
           </div>
         </div>
-        <button onClick={() => setExpanded(!expanded)} className="text-muted-foreground hover:text-foreground">
-          <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-        </button>
+        <div className="flex items-center gap-1">
+          {isComplete && (
+            <>
+              <button
+                onClick={() => { setShowEditModal(true); setActionError(null); }}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                title="Edit event details"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={handleEventRegenerate}
+                disabled={eventRegenerating}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                title="Regenerate story from scratch"
+              >
+                {eventRegenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              </button>
+              <button
+                onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                title="Delete event permanently"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <button onClick={() => setExpanded(!expanded)} className="text-muted-foreground hover:text-foreground">
+            <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -797,6 +879,48 @@ export default function StoryEventViewer({ eventId }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── ACTION ERROR ─────────────────────────────────────────────────────── */}
+      {actionError && (
+        <div className="px-4 py-2 text-xs text-destructive bg-destructive/10 border-t border-destructive/20">
+          {actionError}
+        </div>
+      )}
+
+      {/* ── DELETE CONFIRMATION ───────────────────────────────────────────────── */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end justify-center pb-24 pt-4 px-4" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-sm font-semibold text-foreground">Delete Story Event</h3>
+              <button onClick={() => setShowDeleteConfirm(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-4 h-4 text-muted-foreground" /></button>
+            </div>
+            <div className="p-4">
+              <p className="text-xs text-muted-foreground">
+                This will permanently delete "{event?.title}" and all associated memories, images, life events, and participation records. This cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-2 border-t border-border p-4">
+              <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm">Cancel</button>
+              <button onClick={handleEventDelete} disabled={eventDeleting}
+                className="flex-1 py-2 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                {eventDeleting ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</> : 'Delete Permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── EDIT MODAL ─────────────────────────────────────────────────────────── */}
+      {showEditModal && event && (
+        <StoryEventEditor
+          event={event}
+          characters={characters}
+          currentUser={currentUser}
+          onSaved={handleEventEditSave}
+          onCancel={() => setShowEditModal(false)}
+        />
       )}
 
       {/* ── UNIFIED REGENERATE MODAL (reasons + identity selection) ───────────── */}
