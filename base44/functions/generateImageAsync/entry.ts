@@ -1165,7 +1165,14 @@ Deno.serve(async (req) => {
       const NUDITY_FRAMING = ' Non-explicit nudity: private anatomy (groin, genitals, nipples) fully concealed by pose, framing, bedding, or foreground objects. No added shirt, pants, shorts, or underwear unless explicitly requested. Preserve all requested visible body regions exactly.';
       const hasNudityTerm = /\b(naked|fully nude|fully naked)\b/i.test(s);
       const hasBareBody = /\b(bare\s+(chest|abs|torso)|exposed\s+(chest|abs|torso|stomach|midriff))\b/i.test(s);
-      const needsFraming = hasNudityTerm || hasBareBody;
+      // Missing clothing items alone are NOT explicit — but when BOTH upper AND lower garments
+      // are absent, the model may render visible private anatomy and get blocked by the provider's
+      // safety filter. Append the concealment-framing instruction so private areas are hidden via
+      // pose/framing/bedding while preserving the requested undressed state. No private areas shown
+      // = not explicit, so the image must not be blocked.
+      const hasNoUpper = /\b(no\s+shirt|no\s+top|shirtless|topless|barechested|bare[- ]?chest(ed)?|no\s+shirt\s*\/\s*bare\s+torso)\b/i.test(s);
+      const hasNoLower = /\b(no\s+(pants|bottom|shorts|trousers|jeans|skirt)|without\s+(a\s+)?(pants|bottom|shorts|trousers|jeans|skirt)|bottomless)\b/i.test(s);
+      const needsFraming = hasNudityTerm || hasBareBody || (hasNoUpper && hasNoLower);
 
       if (isSafeScene) {
         // Neutralize performative/suggestive TONE while preserving physical COMPOSITION.
