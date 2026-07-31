@@ -267,6 +267,9 @@ export default function StoryEventViewer({ eventId }) {
 
   const focusNames = event.focus_character_names || [];
   const participantNames = event.participant_character_names || [];
+  const userParticipantName = event.user_participant?.display_name || null;
+  // Total visible participant count includes the user when they are a selected participant
+  const totalParticipantCount = participantNames.length + (userParticipantName ? 1 : 0);
   const nonFocusParticipants = participantNames.filter(n => !focusNames.includes(n));
   const venueDisplay = event.venue_name || 'No venue';
   const timeDisplay = event.all_day
@@ -594,7 +597,7 @@ export default function StoryEventViewer({ eventId }) {
                   <MapPin className="w-3 h-3" /> {venueDisplay}
                 </span>
                 <span className="flex items-center gap-1 text-muted-foreground">
-                  <Users className="w-3 h-3" /> {participantNames.length} participants
+                  <Users className="w-3 h-3" /> {totalParticipantCount} participant{totalParticipantCount !== 1 ? 's' : ''}
                 </span>
                 {focusNames.length > 0 && (
                   <span className="flex items-center gap-1 text-primary">
