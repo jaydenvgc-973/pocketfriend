@@ -61,23 +61,29 @@ Deno.serve(async (req) => {
             const userList = await base44.asServiceRole.entities.User.list(null, 500);
             const matched = userList.find(u => u.id === rawId || u.email === rawId);
             if (matched) {
-              userName = matched.full_name || matched.email || rawId;
+              // World name and avatar live on the USER entity — not UserSettings
+              userName = matched.world_name || matched.full_name || matched.email || rawId;
 
-              // Look up UserSettings for avatar/reference images
+              // Collect user reference images from the USER entity (authoritative source)
+              if (Array.isArray(matched.generated_avatar_urls)) {
+                matched.generated_avatar_urls.forEach(url => {
+                  if (url && typeof url === 'string') userRefImages.push(url);
+                });
+              }
+              if (Array.isArray(matched.reference_image_urls)) {
+                matched.reference_image_urls.forEach(url => {
+                  if (url && typeof url === 'string') userRefImages.push(url);
+                });
+              }
+
+              // UserSettings only for appearance_lock (User entity does not have it)
+              let userAppearanceLock = null;
               try {
                 const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
                   { owner_email: matched.email }, null, 1
                 );
                 if (settingsList[0]) {
-                  const s = settingsList[0];
-                  // Collect user reference images from all available sources
-                  if (s.avatar_url && typeof s.avatar_url === 'string') userRefImages.push(s.avatar_url);
-                  if (s.image_avatar_url && typeof s.image_avatar_url === 'string') userRefImages.push(s.image_avatar_url);
-                  if (Array.isArray(s.reference_image_urls)) {
-                    s.reference_image_urls.forEach(url => {
-                      if (url && typeof url === 'string') userRefImages.push(url);
-                    });
-                  }
+                  userAppearanceLock = settingsList[0].appearance_lock || null;
                 }
               } catch (_) {}
 
@@ -86,7 +92,7 @@ Deno.serve(async (req) => {
                 display_name: userName,
                 character_type: 'user',
                 appearance_notes: '',
-                appearance_lock: matched.appearance_lock || null,
+                appearance_lock: userAppearanceLock,
                 style_identity: '',
                 avatar_url: userRefImages[0] || null,
               };

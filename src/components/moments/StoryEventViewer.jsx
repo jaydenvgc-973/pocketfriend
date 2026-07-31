@@ -80,8 +80,9 @@ export default function StoryEventViewer({ eventId }) {
         if (!cancelled) {
           setCharacters(allChars);
           const userSettings = settingsList?.[0] || null;
-          const userAvatarUrl = userSettings?.avatar_url || userSettings?.image_avatar_url || null;
-          const userDisplayName = userSettings?.fictional_world_name || user.full_name || 'You';
+          // Avatar + world name live on the USER entity, not UserSettings
+          const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+          const userDisplayName = user?.world_name || userSettings?.fictional_world_name || user?.full_name || 'You';
           // Build identity roster: User first, then all characters
           const roster = [];
           if (user) {
