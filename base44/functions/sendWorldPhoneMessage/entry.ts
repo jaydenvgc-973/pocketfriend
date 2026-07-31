@@ -440,9 +440,17 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       });
     }
 
-    // ── STEP 3: INVOKE CANONICAL CHARACTER CONTEXT ──────────────────────────────
-    // The message must be anchored to canonical character data — not cache, not defaults.
-    // buildCanonicalCharacterContext is the single source of identity, memory, presence, and location.
+    // ── STEP 3: INVOKE CANONICAL CHARACTER CONTEXT — SENDER + RECIPIENT ─────────
+    // READ-LAYER UNITY: Both sender and recipient must read from the SAME canonical
+    // context pathway used by Chat, Text, and Scene. buildCanonicalCharacterContext
+    // is the single source of identity, memory, presence, life events, story events,
+    // world-state reconciliation, family graph, and community events.
+    //
+    // The previous implementation only loaded canonical context for the sender.
+    // The recipient response used a lightweight inline identity string, causing the
+    // recipient to be "behind" — not knowing about story events, life events, or
+    // cross-channel history that occurred through other surfaces. This is the
+    // read-layer divergence root cause.
     let canonicalContext = null;
     let canonicalLoaded = false;
     try {
@@ -463,6 +471,32 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       // This ensures World Phone communication works even when buildCanonicalCharacterContext
       // is called from an automation/function context with no user session.
       console.warn(`[sendWorldPhoneMessage] canonical_context_fallback | sender=${sender.name} | reason=${ctxErr.message}`);
+    }
+
+    // ── RECIPIENT CANONICAL CONTEXT — same pathway as Chat/Text/Scene ──────────
+    // The recipient generates their reply from the SAME authoritative character
+    // context as every other surface. This includes CharacterMemory, LifeEvent,
+    // StoryEventMemory, Memory entity, world-state reconciliation, family graph,
+    // community events, co-presence, and hard facts. Without this, the recipient
+    // would not know about events established through Chat, Scene, or Story Events.
+    let recipientCanonicalContext = null;
+    let recipientCanonicalLoaded = false;
+    try {
+      const recipCtxRes = await base44.functions.invoke('buildCanonicalCharacterContext', {
+        characterId: recipient.id,
+        interactionContext: 'world_contacts',
+        topKMemories: 8,
+        ownerEmailHint: ownerEmail,
+      });
+      const recipCtxData = recipCtxRes?.data || recipCtxRes;
+      if (recipCtxData?.systemPrompt) {
+        recipientCanonicalContext = recipCtxData;
+        recipientCanonicalLoaded = true;
+        console.log(`[sendWorldPhoneMessage] recipient_canonical_context_loaded | recipient=${recipient.name} | memories=${recipCtxData.memories?.length || 0} | life_journal=${recipCtxData.lifeJournalEntries?.length || 0} | location=${recipient.resolved_current_location_name || 'unknown'}`);
+      }
+    } catch (recipCtxErr) {
+      // Non-fatal: fall through with a lightweight inline prompt built from recipient fields.
+      console.warn(`[sendWorldPhoneMessage] recipient_canonical_context_fallback | recipient=${recipient.name} | reason=${recipCtxErr.message}`);
     }
 
 
@@ -848,6 +882,11 @@ This must be a real message — not a command, not a description, not a meta-ins
         build_canonical_character_context_status: canonicalLoaded ? 'success' : 'failed',
         canonical_context_memory_count: canonicalContext?.memories?.length || 0,
         canonical_context_life_journal_count: canonicalContext?.lifeJournalEntries?.length || 0,
+        // ── RECIPIENT CANONICAL CONTEXT — read-layer unity proof ────────────────
+        recipient_build_canonical_character_context_status: recipientCanonicalLoaded ? 'success' : 'failed',
+        recipient_canonical_context_memory_count: recipientCanonicalContext?.memories?.length || 0,
+        recipient_canonical_context_life_journal_count: recipientCanonicalContext?.lifeJournalEntries?.length || 0,
+        recipient_canonical_context_used_as_identity_base: !!recipientCanonicalContext?.systemPrompt,
         // CharacterMemory / Life Journal — importance_score >= 4
         life_journal_importance_4_plus_count: (canonicalContext?.lifeJournalEntries || []).filter(e => (e.importance_score ?? 0) >= 4).length,
         // ── GROUNDING PROOF: blocks injected before generation ────────────────
@@ -1068,18 +1107,29 @@ Return ONLY the description text, nothing else.`,
         `${sender.name}: ${rewrittenMessage}`,
       ].join('\n');
 
-      // Use canonical system prompt for recipient if available, else build from grounding
-      const recipientIdentityBase = (() => {
-        try {
-          // Attempt to get recipient canonical context (non-blocking, best-effort)
-          return `You are ${recipient.name}. ${recipient.personality_summary || ''} ${recipient.backstory || recipient.background_story || ''}`.trim();
-        } catch { return `You are ${recipient.name}.`; }
-      })();
+      // ── RECIPIENT IDENTITY: canonical systemPrompt (same as Chat/Text/Scene) ──
+      // The canonical systemPrompt already includes CharacterMemory (Life Journal),
+      // Memory entity, LifeEvent awareness, StoryEventMemory, world-state
+      // reconciliation, family graph, community events, co-presence, hard facts,
+      // relationship context, and behavioral texture. The lightweight inline
+      // fallback is used only when buildCanonicalCharacterContext is unavailable.
+      //
+      // recipientGrounding (buildWorldPhoneLifeGrounding) is intentionally NOT
+      // appended here because the canonical systemPrompt already includes all
+      // that information in a more complete form. Appending it would double-inject.
+      // recipientNeedsBlock is retained as lightweight phone-specific supplement.
+      const recipientIdentityBase = recipientCanonicalContext?.systemPrompt
+        ? recipientCanonicalContext.systemPrompt
+        : (() => {
+            try {
+              return `You are ${recipient.name}. ${recipient.personality_summary || ''} ${recipient.backstory || recipient.background_story || ''}`.trim();
+            } catch { return `You are ${recipient.name}.`; }
+          })();
 
       const rawReply = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `${recipientIdentityBase}${recipientGrounding}${recipientNeedsBlock}
+        prompt: `${recipientIdentityBase}${recipientNeedsBlock}
 
-${sender.name} just texted you. This is a World Phone / text message exchange.
+      ${sender.name} just texted you. This is a World Phone / text message exchange.
 Do NOT start with your name. Do NOT say "I'm an AI". Respond naturally as you would in a real text.
 Keep it to 1-3 sentences max. Stay grounded in your life, your current situation, and your relationship history with ${sender.name}.
 
