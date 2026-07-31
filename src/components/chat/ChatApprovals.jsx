@@ -1,11 +1,8 @@
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import HouseholdChangeApprovalPopup from "@/components/approvals/HouseholdChangeApprovalPopup";
-import StoryEventSuggestionPrompt from "@/components/moments/StoryEventSuggestionPrompt";
-import StoryEventCreator from "@/components/moments/StoryEventCreator";
+import StoryEventSuggestionFlow from "@/components/chat/StoryEventSuggestionFlow";
 
 /**
  * ChatApprovals
@@ -25,48 +22,7 @@ const TYPE_INFO = {
 };
 
 export default function ChatApprovals({ pendingApproval, approveEvent, dismissApproval, character }) {
-  const queryClient = useQueryClient();
   const [storySuggestion, setStorySuggestion] = useState(null);
-  const [showCreator, setShowCreator] = useState(false);
-
-  const needsData = !!storySuggestion || showCreator;
-  const { data: currentUser } = useQuery({
-    queryKey: ["user"],
-    queryFn: () => base44.auth.me(),
-    enabled: needsData,
-    staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
-  });
-  const { data: userSettings } = useQuery({
-    queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.UserSettings.filter({ owner_email: currentUser.email }, null, 1).then(r => r[0] || null)
-      : null,
-    enabled: !!currentUser?.email && needsData,
-    staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
-  });
-  const { data: allCharacters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ status: "active", owner_email: currentUser.email })
-      : [],
-    enabled: !!currentUser?.email && needsData,
-    staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
-    placeholderData: (prev) => prev,
-  });
-  const { data: appLocations = [] } = useQuery({
-    queryKey: ['appLocations', currentUser?.email],
-    queryFn: async () => {
-      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations || [];
-    },
-    enabled: !!currentUser?.email && needsData,
-    staleTime: 10 * 60 * 1000,
-    refetchOnMount: false,
-    placeholderData: (prev) => prev,
-  });
 
   const handleApprove = async (approvalData) => {
     const approvalCtx = pendingApproval;
@@ -173,39 +129,11 @@ export default function ChatApprovals({ pendingApproval, approveEvent, dismissAp
         </ApprovalPopup>
       )}
 
-      {storySuggestion && !showCreator && (
-        <StoryEventSuggestionPrompt
-          suggestion={storySuggestion}
-          onAccept={() => setShowCreator(true)}
-          onDismiss={() => setStorySuggestion(null)}
-        />
-      )}
-      {showCreator && storySuggestion && (
-        <div
-          className="fixed inset-0 z-[65] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowCreator(false); setStorySuggestion(null); } }}
-        >
-          <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5">
-            <StoryEventCreator
-              date={new Date()}
-              characters={allCharacters}
-              currentUser={currentUser}
-              userSettings={userSettings}
-              appLocations={appLocations}
-              initialTitle={storySuggestion.prefill?.initialTitle}
-              initialPlot={storySuggestion.prefill?.initialPlot}
-              initialParticipantIds={storySuggestion.prefill?.initialParticipantIds}
-              initialFocusIds={storySuggestion.prefill?.initialFocusIds}
-              onCreated={() => {
-                setShowCreator(false);
-                setStorySuggestion(null);
-                queryClient.invalidateQueries({ queryKey: ['storyEvents'] });
-              }}
-              onCancel={() => { setShowCreator(false); setStorySuggestion(null); }}
-            />
-          </div>
-        </div>
-      )}
+      <StoryEventSuggestionFlow
+        character={character}
+        suggestion={storySuggestion}
+        onDone={() => setStorySuggestion(null)}
+      />
     </>
   );
 }

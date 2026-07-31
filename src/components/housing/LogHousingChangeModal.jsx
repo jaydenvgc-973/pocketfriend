@@ -4,8 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Home, Check, ChevronRight, ChevronLeft, MapPin, Users, Clock, Moon, AlertTriangle, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
-import StoryEventSuggestionPrompt from "@/components/moments/StoryEventSuggestionPrompt";
-import StoryEventCreator from "@/components/moments/StoryEventCreator";
+import StoryEventSuggestionFlow from "@/components/chat/StoryEventSuggestionFlow";
 
 const REASON_OPTIONS = [
   { value: "voluntary_move", label: "Voluntary move" },
@@ -105,7 +104,6 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [storySuggestion, setStorySuggestion] = useState(null);
-  const [showCreator, setShowCreator] = useState(false);
 
   const ownerEmail = currentUser?.email || character?.owner_email;
 
@@ -634,38 +632,12 @@ export default function LogHousingChangeModal({ character, currentUser, onClose,
           </div>
         </motion.div>
       </motion.div>
-      {storySuggestion && !showCreator && (
-        <StoryEventSuggestionPrompt
+      {storySuggestion && (
+        <StoryEventSuggestionFlow
+          character={character}
           suggestion={storySuggestion}
-          onAccept={() => setShowCreator(true)}
-          onDismiss={() => { setStorySuggestion(null); onSaved?.(); }}
+          onDone={() => { setStorySuggestion(null); onSaved?.(); }}
         />
-      )}
-      {showCreator && storySuggestion && (
-        <div
-          className="fixed inset-0 z-[65] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowCreator(false); setStorySuggestion(null); onSaved?.(); } }}
-        >
-          <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5">
-            <StoryEventCreator
-              date={new Date()}
-              characters={[character, ...allCharacters]}
-              currentUser={currentUser}
-              appLocations={locations.filter(l => l !== null && l?.name)}
-              initialTitle={storySuggestion.prefill?.initialTitle}
-              initialPlot={storySuggestion.prefill?.initialPlot}
-              initialParticipantIds={storySuggestion.prefill?.initialParticipantIds}
-              initialFocusIds={storySuggestion.prefill?.initialFocusIds}
-              onCreated={() => {
-                setShowCreator(false);
-                setStorySuggestion(null);
-                if (queryClient) queryClient.invalidateQueries({ queryKey: ['storyEvents'] });
-                onSaved?.();
-              }}
-              onCancel={() => { setShowCreator(false); setStorySuggestion(null); onSaved?.(); }}
-            />
-          </div>
-        </div>
       )}
     </AnimatePresence>,
     document.body
