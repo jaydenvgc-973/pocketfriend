@@ -343,6 +343,61 @@ export const NARRATIVE_SCENARIOS = {
       narrative: "He leans into something familiar to stabilize himself.",
     },
   ],
+
+  romantic: [
+    {
+      id: 'romantic_uninterrupted_evening',
+      needs: ['social', 'comfort', 'mental'],
+      location_change: false,
+      tone: 'flirtatious, playful, escalating, intimate, gender-neutral',
+      narrative: "Two partners finally have the apartment entirely to themselves, and the moment the door closes, the chemistry between them is undeniable. Their playful flirting escalates almost immediately as lingering kisses, wandering hands, and whispered challenges fill the bedroom. They laugh while one slowly loosens the other's tie, only to be teased about taking forever before being pulled closer instead. Jackets are tossed aside, buttons are undone one by one, belts are unbuckled, and discarded clothing begins forming a trail across the room. Between laughter and stolen kisses, they pause just long enough to remind each other how much they've missed having a completely uninterrupted evening together. Still caught up in the excitement, they make their way into the bathroom, where the familiar setting only fuels their playful confidence. They soak together in a hot bath before moving beneath the shower, the rising steam wrapping around them as they drift effortlessly back into each other's arms. Pressed so closely together that the space between them seems to disappear, the warmth of the water and the rhythm of the moment make it feel as though the lines separating them have begun to blur. More than once they laugh as their enthusiasm carries them gently into the shower wall or sends them stumbling into one another, their effortless friction and playful momentum only adding to the exhilaration as the water cascades over them. They steal lingering kisses through the steam, trade flirtatious compliments, and joke that the bathroom has become the most romantic room in the apartment because neither of them ever seems able to leave it without creating another unforgettable memory. Before long, they realize neither is ready for the evening to end. As they leave the bathroom, one notices the home office and realizes it's the only room they've somehow never 'christened.' The other laughs, insisting it's supposed to be for work, but can't hide an amused smile. The playful debate quickly turns into another flirtatious challenge as curiosity gets the better of them. What begins with teasing and laughter becomes another spontaneous, passionate chapter in an evening defined by romance, anticipation, and undeniable attraction. By the time they finally call it a night, they're exhausted, smiling, and laughing together, amused that after all this time they'd managed to turn the last untouched room in the apartment into one more place overflowing with memories.",
+      guidance: 'Use this as a reference for tone, pacing, chemistry, sensory description, playful banter, environmental interaction, emotional escalation, romantic tension, and relationship development. Draw inspiration from individual moments, themes, descriptive techniques, dialogue patterns, environmental transitions, and emotional beats to create original experiences that naturally evolve from each couple\'s personalities, relationship history, current circumstances, emotional state, and stage of intimacy. Individual elements, phrases, interactions, settings, and progression patterns may be incorporated where appropriate, but every generated scene should remain unique and contextually driven rather than following this example beat-for-beat. This guidance is intentionally written in a gender-neutral manner so it can be applied naturally to any romantic pairing, including male/female, male/male, female/female, non-binary partners, or any other consenting adult relationship.',
+    },
+    {
+      id: 'romantic_slow_morning',
+      needs: ['social', 'comfort'],
+      location_change: false,
+      tone: 'tender, unhurried, warm, intimate',
+      narrative: "Neither of them moves when the light first comes through the curtains. They stay tangled together, trading lazy kisses and half-finished sentences, the kind of morning that only exists when nowhere needs either of them yet.",
+    },
+    {
+      id: 'romantic_cooking_together',
+      needs: ['social', 'hunger', 'comfort'],
+      location_change: false,
+      tone: 'domestic, playful, easy chemistry, warm',
+      narrative: "They end up in the kitchen together without deciding to, bumping hips and stealing tastes while something simmers on the stove. The conversation drifts between teasing and genuine, the kind of ease that only comes from doing something ordinary side by side.",
+    },
+    {
+      id: 'romantic_spontaneous_outing',
+      needs: ['social', 'mental'],
+      location_change: true,
+      location_hint: 'restaurant, bar, or outdoor walk',
+      tone: 'spontaneous, adventurous, flirtatious, light',
+      narrative: "One of them suggests leaving without a plan, and the other doesn't hesitate. They walk somewhere they haven't been before, the conversation loosening as the unfamiliar setting pulls them both out of their usual rhythm.",
+      systems_updated: ['location', 'social', 'mental'],
+    },
+    {
+      id: 'romantic_quiet_reconnection',
+      needs: ['social', 'mental', 'comfort'],
+      location_change: false,
+      tone: 'gentle, vulnerable, rekindling, soft',
+      narrative: "They settle close without saying much at first, letting the quiet do the work. When the conversation starts it's small, but it opens into something deeper without either of them pushing — just proximity and patience and the kind of trust that doesn't need constant proof.",
+    },
+    {
+      id: 'romantic_playful_competition',
+      needs: ['social', 'energy'],
+      location_change: false,
+      tone: 'competitive, teasing, laughing, charged',
+      narrative: "What starts as a casual challenge between them turns into something neither wants to lose, each round raising the stakes with a grin until they're both laughing too hard to keep score.",
+    },
+    {
+      id: 'romantic_late_night_talk',
+      needs: ['social', 'mental', 'comfort'],
+      location_change: false,
+      tone: 'honest, intimate, unguarded, deep',
+      narrative: "The hour gets later than either of them noticed. What started as a regular conversation drifts somewhere more honest, the kind of exchange that only happens when defenses are down and trust is already settled.",
+    },
+  ],
 };
 
 /**
