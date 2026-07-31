@@ -25,7 +25,7 @@ function writeCachedMessages(ownerEmail, characterId, chatType, msgs) {
   if (!ownerEmail || !characterId || !Array.isArray(msgs) || msgs.length === 0) return;
   // Only store the 50 most recent messages to keep localStorage usage bounded
   const recent = [...msgs].sort((a, b) =>
-    new Date(b.created_date || b.timestamp || 0) - new Date(a.created_date || a.timestamp || 0)
+    new Date(b.timestamp || b.created_date || 0) - new Date(a.timestamp || a.created_date || 0)
   ).slice(0, 50).reverse(); // oldest first for correct render order
   lfcWrite(ownerEmail, `chat_msgs:${chatType}:${characterId}`, recent);
 }
@@ -302,9 +302,12 @@ export function useChatLoadConvo({
           convoIdRef.current = convoId;
 
           if (loadedMsgs && loadedMsgs.length > 0) {
-            // Sort chronologically oldest→newest for correct render order
+            // Sort chronologically oldest→newest for correct render order.
+            // Prefer timestamp over created_date so backfilled narrative messages
+            // (e.g. story events) with an intentional event-time timestamp appear
+            // in their correct chronological slot, not at the bottom by created_date.
             const sorted = [...loadedMsgs].sort((a, b) =>
-              new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+              new Date(a.timestamp || a.created_date || 0) - new Date(b.timestamp || b.created_date || 0)
             );
 
             // STALE LOAD GUARD: if user switched characters while this load was in flight, discard
@@ -339,9 +342,9 @@ export function useChatLoadConvo({
                 // Server has everything — use server result (normal fast path)
                 return sorted;
               }
-              // Merge: server result + any local-only messages, sort by creation time
+              // Merge: server result + any local-only messages, sort by timestamp (prefer timestamp over created_date)
               const merged = [...sorted, ...localOnly].sort((a, b) =>
-                new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+                new Date(a.timestamp || a.created_date || 0) - new Date(b.timestamp || b.created_date || 0)
               );
               // Deduplicate in case of overlap
               const seen = new Set();
