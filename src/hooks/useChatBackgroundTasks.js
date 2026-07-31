@@ -147,6 +147,7 @@ export function useChatBackgroundTasks({
               userMessage: text, characterResponse: responseText,
               recentMessages: (recentMsgs || []).slice(-10),
               playAsCharacterId: activeCharacter?.id || null,
+              worldPhoneSendConfirmed: !!worldPhoneSendConfirmed,
             }, characterId, 'memoryExtract');
           }
         }, 4000);
@@ -367,6 +368,10 @@ Return ONLY valid JSON, nothing else.`,
           userMessage: enrichedUserMessage, characterResponse: responseText,
           recentMessages: (recentMsgs || []).slice(-10),
           playAsCharacterId: activeCharacter?.id || null,
+          // ACTION-BEFORE-MEMORY: If the character claims to have sent a text/call
+          // but no World Phone Message record was actually written this turn, the
+          // memory LLM must NOT extract that as a memory. The action must exist first.
+          worldPhoneSendConfirmed: !!worldPhoneSendConfirmed,
         }, characterId, 'memoryExtract').then(res => {
           // Backend returns `newPeopleDetected` (not `new_people`) — must match exactly
           const rawPeople = res?.data?.newPeopleDetected || res?.data?.new_people || [];

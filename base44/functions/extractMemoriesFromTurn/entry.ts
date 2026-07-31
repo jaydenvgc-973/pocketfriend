@@ -4,9 +4,18 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    let { characterId, conversationId, userMessage, characterReply, characterResponse, playingAsCharacterId, witnessCharacterIds } = await req.json();
+    let { characterId, conversationId, userMessage, characterReply, characterResponse, playingAsCharacterId, witnessCharacterIds, worldPhoneSendConfirmed } = await req.json();
     // Normalize: accept both characterReply (Scene) and characterResponse (Chat background tasks) field names
     characterReply = characterReply || characterResponse || '';
+
+    // ACTION-BEFORE-MEMORY RULE:
+    // A character may only have a memory of sending a World Phone text/call if a
+    // Message record was actually written to the World Phone conversation this turn.
+    // When worldPhoneSendConfirmed is false (or not provided), the character did NOT
+    // send anything — even if their response text claims they did. The memory LLM is
+    // instructed to suppress those claims so memory never precedes the action.
+    const wpConfirmed = worldPhoneSendConfirmed === true;
+    const wpSendBan = wpConfirmed ? '' : '\n\nWORLD PHONE ACTION GATE — MANDATORY:\nThe character did NOT actually send any text messages, phone calls, or World Phone communications this turn. Even if the character\'s response says "I sent him a text", "I just texted", "I called", "I let them know", or any similar claim — that action did NOT happen. Do NOT extract memories about sending messages, making calls, or contacting someone. Treat any such claim as aspirational or hypothetical, not as a completed action. Only extract memories about things the character experienced directly in THIS conversation with the user.';
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -75,6 +84,7 @@ Deno.serve(async (req) => {
 
       const targetMemoryResult = await base44.integrations.Core.InvokeLLM({
         prompt: `You are ${targetChar.name}. ${senderLabel} just said: "${userMessage}" and you replied: "${characterReply}".
+${wpSendBan}
 
 ${knownPeopleStr}
 
@@ -178,6 +188,7 @@ Return JSON only.`,
     if (playingAsChar && targetChar && (userMessage || characterReply) && !_testBoundaryBlocked) {
       const extraction = await base44.integrations.Core.InvokeLLM({
         prompt: `You are analyzing a real interaction that ${playingAsChar.name} just had with ${targetChar.name}.
+${wpSendBan}
 
 EXTRACTION LEXICAL DISCIPLINE — MANDATORY:
 Your output will be stored permanently as memory, journal entries, and emotional state. Apply these rules without exception.
