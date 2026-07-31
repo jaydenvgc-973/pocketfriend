@@ -1284,7 +1284,11 @@ Deno.serve(async (req) => {
       try {
         const memChar = charById[mem.character_id];
         const memCharName = memChar?.name || memChar?.display_name || mem.character_name || mem.character_id;
-        const narrativeContent = `[Story Event: ${title} — ${eventDate} at ${venueName}] ${mem.memory_text}`;
+        // Narrative content is the raw memory text ONLY — no [Story Event: ...] header.
+        // Narratives should read as natural character inner monologue/journal entries,
+        // not as system-injected metadata blocks. The timestamp on the Message record
+        // is the authoritative placement anchor for chronological sorting.
+        const narrativeContent = mem.memory_text;
 
         // ── Resolve or create the character's DIRECT conversation (Chat page) ──
         // Same resolution pattern as conversationResolver.js / useChatLoadConvo:
