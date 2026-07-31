@@ -102,12 +102,17 @@ Deno.serve(async (req) => {
           visibleNames.push(userName);
           visibleTypes.push('user');
 
+          // The user is NEVER a generic stranger. They are the authenticated,
+          // known identity. Finding the user record IS the resolution — the
+          // user is resolved as soon as they are matched, regardless of whether
+          // uploaded reference photos exist. The appearance_lock + name are
+          // sufficient for identity generation. Reference images (when present)
+          // are still collected above for grounding.
           if (userRefImages.length > 0) {
             refImages.push(...userRefImages);
-            lookupStatusByChar[cid] = 'resolved';
-          } else {
-            lookupStatusByChar[cid] = 'reference_lookup_failed';
           }
+          // User is resolved the moment we matched their record (charById was set).
+          lookupStatusByChar[cid] = charById[cid] ? 'resolved' : 'reference_lookup_failed';
         } else {
           // ── Character identity ──────────────────────────────────────────
           const chars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
