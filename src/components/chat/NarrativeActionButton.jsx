@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
+import { buildStyleMotifContext, buildProgressionRuleContext } from "@/lib/narrativeScenarioExamples";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -286,6 +287,38 @@ RULES:
         }
       }
 
+      // ── PROGRESSION CADENCE + MOTIF POOL ──────────────────────────────────────
+      // On-demand actions are event initiators that must answer "What has changed?"
+      // and carry forward existing emotional momentum rather than resetting the scene.
+      const progressionBlock = `
+════════════════════════════════════════════════════════════
+ON-DEMAND ACTION — PROGRESSION CADENCE
+════════════════════════════════════════════════════════════
+This button click is an EVENT INITIATOR, not a scene reset.
+Before writing, answer the core question:
+  "What has changed since the previous narrative?"
+
+RULES:
+• Do NOT restart the scene. Inherit the established state and continue from the new present.
+• Existing emotional momentum should be carried forward unless this action naturally changes it.
+• If the characters were already in a specific emotional/physical state, fold this interaction INTO that state — do not erase it.
+• A chat message or action button is an event within the story. The narrative must account for what was said/done and show what now happens because of it.
+• Do NOT rewrite the same moment using different adjectives. Once a beat has been communicated, treat it as complete and advance.
+════════════════════════════════════════════════════════════
+${buildProgressionRuleContext()}
+════════════════════════════════════════════════════════════
+`;
+
+      // Motif pool — only for romantic-eligible intents where escalation is permitted
+      const motifBlock = (romanticOk && (intent === 'flirt' || intent === 'spend_time' || intent === 'comfort' || (intent === 'action' && contextTier !== 'low')))
+        ? `
+════════════════════════════════════════════════════════════
+ROMANTIC STYLE MOTIF POOL (draw from naturally — do NOT label which technique is in use):
+${buildStyleMotifContext()}
+════════════════════════════════════════════════════════════
+`
+        : "";
+
       // Intent action descriptions
       const intentDescriptions = {
         action: contextTier === "high"
@@ -331,6 +364,7 @@ Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 ${userPresenceBlock}
 ${narrativeContinuityBlock}
+${progressionBlock}${motifBlock}
 
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}${actionMemory}
