@@ -1139,7 +1139,7 @@ Deno.serve(async (req) => {
       const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
       const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing|affection(ate)?|tender(ness)?|intimate|love)\b/.test(lower);
       const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
-      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
+      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top|no pants|without (a )?pants|no bottom|without (a )?bottom|no shorts|without (a )?shorts|bottomless|unclothed|undressed|in (his|her|their) underwear|in underwear|bra and panties|just (a )?(bra|thong|panties|towel))\b/.test(lower) && !isExplicit;
       if (isExplicit) return 'explicit';
       if (isSleepContext && isComfortContext) return 'emotional_comfort';
       if (isSleepContext) return 'sleep_lifestyle';
@@ -1162,17 +1162,19 @@ Deno.serve(async (req) => {
       // character unclothed / partially undressed while ensuring private anatomy is
       // concealed through pose, framing, bedding, or foreground objects — not by
       // adding clothing the user never requested.
-      const NUDITY_FRAMING = ' Non-explicit nudity: private anatomy (groin, genitals, nipples) fully concealed by pose, framing, bedding, or foreground objects. No added shirt, pants, shorts, or underwear unless explicitly requested. Preserve all requested visible body regions exactly.';
-      const hasNudityTerm = /\b(naked|fully nude|fully naked)\b/i.test(s);
-      const hasBareBody = /\b(bare\s+(chest|abs|torso)|exposed\s+(chest|abs|torso|stomach|midriff))\b/i.test(s);
-      // Missing clothing items alone are NOT explicit — but when BOTH upper AND lower garments
-      // are absent, the model may render visible private anatomy and get blocked by the provider's
-      // safety filter. Append the concealment-framing instruction so private areas are hidden via
-      // pose/framing/bedding while preserving the requested undressed state. No private areas shown
-      // = not explicit, so the image must not be blocked.
-      const hasNoUpper = /\b(no\s+shirt|no\s+top|shirtless|topless|barechested|bare[- ]?chest(ed)?|no\s+shirt\s*\/\s*bare\s+torso)\b/i.test(s);
+      // POLICY: Unclothed, no pants, no top, no bottom, shirtless, or any partially-undressed state
+      // is NOT explicit and must NOT be blocked — as long as private areas (groin, genitals, nipples,
+      // buttocks) remain fully concealed. The concealment must use NATURAL, context-appropriate
+      // occlusion that fits the scene — never artificial censorship. No added clothing unless requested.
+      const NUDITY_FRAMING = ' Non-explicit undressed state: the subject is unclothed or partially undressed, which is NOT explicit. Private anatomy (groin, genitals, nipples, buttocks) must remain FULLY CONCEALED using natural, context-appropriate occlusion that fits the setting. Use techniques such as: body pose, camera framing, bedding, pillows, blankets, towels, clothing, hair, strategically placed objects, environmental shadows, directional lighting, furniture, foliage, smoke, steam, mist, water, reflections, or other believable scene elements. The concealment must appear intentional within the composition rather than as a censoring effect. Do NOT add a shirt, pants, shorts, or underwear unless explicitly requested — preserve all requested visible body regions exactly while concealing only private anatomy through the natural techniques above.';
+      const hasNudityTerm = /\b(naked|fully nude|fully naked|in the nude)\b/i.test(s);
+      const hasBareBody = /\b(bare\s+(chest|abs|torso|back|butt|buttocks|bottom)|exposed\s+(chest|abs|torso|stomach|midriff|back|butt|buttocks))\b/i.test(s);
+      const hasNoUpper = /\b(no\s+shirt|no\s+top|shirtless|topless|barechested|bare[- ]?chest(ed)?|no\s+shirt\s*\/\s*bare\s+torso|unclothed|undressed)\b/i.test(s);
       const hasNoLower = /\b(no\s+(pants|bottom|shorts|trousers|jeans|skirt)|without\s+(a\s+)?(pants|bottom|shorts|trousers|jeans|skirt)|bottomless)\b/i.test(s);
-      const needsFraming = hasNudityTerm || hasBareBody || (hasNoUpper && hasNoLower);
+      // Any missing clothing can expose private areas — always append the natural-concealment
+      // instruction for undressed states so the model hides anatomy via pose/framing/environment
+      // rather than rendering visible nudity that would trigger a provider safety block.
+      const needsFraming = hasNudityTerm || hasBareBody || hasNoUpper || hasNoLower;
 
       if (isSafeScene) {
         // Neutralize performative/suggestive TONE while preserving physical COMPOSITION.

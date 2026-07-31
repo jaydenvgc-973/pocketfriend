@@ -1290,7 +1290,7 @@ Deno.serve(async (req) => {
       const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
       const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing|affection(ate)?|tender(ness)?|intimate|love)\b/.test(lower);
       const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
-      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
+      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top|no pants|without (a )?pants|no bottom|without (a )?bottom|no shorts|without (a )?shorts|bottomless|unclothed|undressed|in (his|her|their) underwear|in underwear|bra and panties|just (a )?(bra|thong|panties|towel))\b/.test(lower) && !isExplicit;
       if (isExplicit) return 'explicit';
       if (isSleepContext && isComfortContext) return 'emotional_comfort';
       if (isSleepContext) return 'sleep_lifestyle';
@@ -1306,49 +1306,26 @@ Deno.serve(async (req) => {
       const sceneClass = classifySceneContext(s);
       console.log(`[regenerateImageWithReason] Scene classification: "${sceneClass}"`);
 
-      const isSafeScene = ['emotional_comfort', 'sleep_lifestyle', 'comfort', 'lifestyle', 'casual_body', 'neutral'].includes(sceneClass);
+      // POLICY: Unclothed, no pants, no top, no bottom, shirtless, or any partially-undressed state
+      // is NOT explicit and must NOT be blocked — as long as private areas (groin, genitals, nipples,
+      // buttocks) remain fully concealed via natural, context-appropriate occlusion. No added clothing
+      // unless explicitly requested. Preserves the requested undressed state; does NOT rewrite
+      // "naked"/"nude"/"lingerie" into clothed language (that gave the model permission to re-dress).
+      const NUDITY_FRAMING = ' Non-explicit undressed state: the subject is unclothed or partially undressed, which is NOT explicit. Private anatomy (groin, genitals, nipples, buttocks) must remain FULLY CONCEALED using natural, context-appropriate occlusion that fits the setting. Use techniques such as: body pose, camera framing, bedding, pillows, blankets, towels, clothing, hair, strategically placed objects, environmental shadows, directional lighting, furniture, foliage, smoke, steam, mist, water, reflections, or other believable scene elements. The concealment must appear intentional within the composition rather than as a censoring effect. Do NOT add a shirt, pants, shorts, or underwear unless explicitly requested — preserve all requested visible body regions exactly while concealing only private anatomy through the natural techniques above.';
+      const hasNudityTerm = /\b(naked|fully nude|fully naked|in the nude)\b/i.test(s);
+      const hasBareBody = /\b(bare\s+(chest|abs|torso|back|butt|buttocks|bottom)|exposed\s+(chest|abs|torso|stomach|midriff|back|butt|buttocks))\b/i.test(s);
+      const hasNoUpper = /\b(no\s+shirt|no\s+top|shirtless|topless|barechested|bare[- ]?chest(ed)?|no\s+shirt\s*\/\s*bare\s+torso|unclothed|undressed)\b/i.test(s);
+      const hasNoLower = /\b(no\s+(pants|bottom|shorts|trousers|jeans|skirt)|without\s+(a\s+)?(pants|bottom|shorts|trousers|jeans|skirt)|bottomless)\b/i.test(s);
+      const needsFraming = hasNudityTerm || hasBareBody || hasNoUpper || hasNoLower;
 
-      if (isSafeScene) {
-        // Only replace genuinely explicit anatomy/act terms — preserve safe lifestyle/comfort wording
-        s = s.replace(/\bnaked\b/gi, 'not fully dressed');
-        s = s.replace(/\bnude\b/gi, 'not fully dressed');
-        s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
-        s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
-        s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
-        s = s.replace(/\blingerie\b/gi, 'sleepwear');
-        s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
-        s = s.replace(/\bpanties\b/gi, 'underwear');
-        s = s.replace(/\bthong\b/gi, 'underwear');
-        // ── STOCK-PHOTO DRIFT GUARD ──
-        // Phrases like "showing off his athletic build" pull toward generic stock-photo males.
-        s = s.replace(/,?\s*showing off (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) build/gi, '');
-        s = s.replace(/,?\s*showing (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) (body|build|physique|chest|abs|torso)/gi, '');
-        s = s.replace(/\b(athletic|muscular|toned|ripped|jacked|built|fit)\s+build\b/gi, 'build');
-        s = s.replace(/\bshowing off (his|her|their) (body|physique|muscles|abs|chest)\b/gi, 'relaxed');
-        // Do NOT replace: shirtless, no shirt, chest, torso, bedroom, lying together, intimate, vulnerable
-        return s.trim();
-      }
-
-      // Explicit scenes: full sanitization pipeline
-      s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
-      s = s.replace(/\btopless\b/gi, 'with no shirt on');
-      s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
-      s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
-      // NOTE: "underwear", "boxers", "briefs" are NOT rewritten even in explicit scenes.
-      // Underwear is ordinary clothing and must be evaluated by full scene context, not as an isolated word.
-      // Only rewrite if the scene is sexually focused on the underwear itself (handled by explicit signals above).
-      s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
-      s = s.replace(/\blingerie\b/gi, 'sleepwear');
-      s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
-      s = s.replace(/\bpanties\b/gi, 'underwear');
-      s = s.replace(/\bthong\b/gi, 'underwear');
-      s = s.replace(/\bexposed (chest|abs|torso|stomach|midriff)\b/gi, 'no shirt on');
-      s = s.replace(/\b(his|her|their) (bare )?(chest|abs|torso)\b/gi, '$1 relaxed build');
-      s = s.replace(/\bnaked\b/gi, 'not fully dressed');
-      s = s.replace(/\bnude\b/gi, 'not fully dressed');
-      s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
-      s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
-      return s.trim();
+      // Neutralize performative stock-photo tone; preserve physical composition + garments as-is.
+      s = s.replace(/,?\s*showing off (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) build/gi, ', with a visible $2 build');
+      s = s.replace(/,?\s*showing (his|her|their) (athletic|muscular|toned|lean|fit|ripped|built) (body|build|physique|chest|abs|torso)/gi, ', with a visible $2 $3');
+      s = s.replace(/\bshowing off (his|her|their) (body|physique|muscles|abs|chest)\b/gi, 'with a visible $2');
+      // Garment terms (bra, thong, panties, lingerie) and nudity terms are PRESERVED as-is —
+      // the framing constraint appended below ensures private anatomy is concealed naturally
+      // without adding clothing the user never requested.
+      return (needsFraming ? s + NUDITY_FRAMING : s).trim();
     }
 
     // scenePromptRaw was declared above before the prompt-name scan — no re-declaration here.
