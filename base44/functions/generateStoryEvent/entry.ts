@@ -1262,6 +1262,122 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // ── STEP 6.5: INJECT NARRATIVE INTO CHARACTER CHAT (existing pathway) ─────
+    // Push each character's memory of the event into their active direct and
+    // phone conversations as a narrative message, timestamped at the event's
+    // end time. Uses the same Conversation.filter + Message.create pattern as
+    // the Chat page (useChatLoadConvo) and submitNarrative.
+    const narrativeTimestamp = eventDepartureTime || new Date().toISOString();
+
+    // Build the full list of character memory entries (LLM-generated + fallback coverage)
+    const allMemoryEntries = [
+      ...memories.map(m => ({ character_id: m.character_id, character_name: m.character_name, memory_text: m.memory_text })),
+      ...uncoveredIds.map(cid => {
+        const c = charById[cid];
+        const cname = c?.name || c?.display_name || cid;
+        return { character_id: cid, character_name: cname, memory_text: `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.` };
+      }),
+    ];
+
+    for (const mem of allMemoryEntries) {
+      if (!mem.character_id || !mem.memory_text) continue;
+      try {
+        const memChar = charById[mem.character_id];
+        const memCharName = memChar?.name || memChar?.display_name || mem.character_name || mem.character_id;
+        const narrativeContent = `[Story Event: ${title} — ${eventDate} at ${venueName}] ${mem.memory_text}`;
+
+        // ── Resolve or create the character's DIRECT conversation (Chat page) ──
+        // Same resolution pattern as conversationResolver.js / useChatLoadConvo:
+        // type='direct', single character_ids, no shared_conversation_key, no world_phone channel
+        const existingDirect = await base44.asServiceRole.entities.Conversation.filter(
+          { owner_email: ownerEmail, type: 'direct', character_ids: mem.character_id },
+          '-last_message_date', 50
+        ).catch(() => []);
+
+        const directConvos = (existingDirect || []).filter(c => {
+          const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+          return ids.length === 1 && ids[0] === mem.character_id && !c.shared_conversation_key && c.channel !== 'world_phone';
+        });
+
+        let directConvoId = null;
+        if (directConvos.length > 0) {
+          // Prefer conversation with message history (same priority as Chat page)
+          const withHistory = directConvos.filter(c => c.last_message_date);
+          const withoutHistory = directConvos.filter(c => !c.last_message_date);
+          const sortByRecency = (a, b) => new Date(b.last_message_date || b.created_date).getTime() - new Date(a.last_message_date || a.created_date).getTime();
+          directConvoId = [...withHistory.sort(sortByRecency), ...withoutHistory.sort(sortByRecency)][0]?.id || null;
+        } else {
+          // No existing direct conversation — create one (same pattern as conversationResolver.js)
+          const newConvo = await base44.asServiceRole.entities.Conversation.create({
+            title: `direct with ${memCharName}`,
+            type: 'direct',
+            character_ids: [mem.character_id],
+            owner_email: ownerEmail,
+          }).catch(() => null);
+          if (newConvo?.id) directConvoId = newConvo.id;
+        }
+
+        if (directConvoId) {
+          await base44.asServiceRole.entities.Message.create({
+            conversation_id: directConvoId,
+            sender_type: 'character',
+            character_id: mem.character_id,
+            character_name: memCharName,
+            content: narrativeContent,
+            is_narrative: true,
+            is_read: false,
+            timestamp: narrativeTimestamp,
+            memory_eligible: false,
+            relationship_eligible: false,
+          }).catch(() => {});
+
+          await base44.asServiceRole.entities.Conversation.update(directConvoId, {
+            last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
+            last_message_date: narrativeTimestamp,
+          }).catch(() => {});
+        }
+
+        // ── Inject into existing PHONE conversation (Text page) if one exists ──
+        // Do NOT create a new phone conversation — only inject if one already exists
+        const existingPhone = await base44.asServiceRole.entities.Conversation.filter(
+          { owner_email: ownerEmail, type: 'phone', character_ids: mem.character_id },
+          '-last_message_date', 50
+        ).catch(() => []);
+
+        const phoneConvos = (existingPhone || []).filter(c => {
+          const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+          return ids.length === 1 && ids[0] === mem.character_id && !c.shared_conversation_key && c.channel !== 'world_phone';
+        });
+
+        if (phoneConvos.length > 0) {
+          const withHistoryP = phoneConvos.filter(c => c.last_message_date);
+          const withoutHistoryP = phoneConvos.filter(c => !c.last_message_date);
+          const sortByRecencyP = (a, b) => new Date(b.last_message_date || b.created_date).getTime() - new Date(a.last_message_date || a.created_date).getTime();
+          const phoneConvoId = [...withHistoryP.sort(sortByRecencyP), ...withoutHistoryP.sort(sortByRecencyP)][0]?.id || null;
+
+          if (phoneConvoId) {
+            await base44.asServiceRole.entities.Message.create({
+              conversation_id: phoneConvoId,
+              sender_type: 'character',
+              character_id: mem.character_id,
+              character_name: memCharName,
+              content: narrativeContent,
+              is_narrative: true,
+              is_read: false,
+              timestamp: narrativeTimestamp,
+              memory_eligible: false,
+              relationship_eligible: false,
+            }).catch(() => {});
+
+            await base44.asServiceRole.entities.Conversation.update(phoneConvoId, {
+              last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
+              last_message_date: narrativeTimestamp,
+            }).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
     // ── STEP 7: UPDATE STORY EVENT STATUS ────────────────────────────────────
     await base44.asServiceRole.entities.StoryEvent.update(eventId, {
       status: 'complete',
