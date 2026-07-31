@@ -400,6 +400,127 @@ export const NARRATIVE_SCENARIOS = {
   ],
 };
 
+// ── NARRATIVE STYLE MOTIFS ─────────────────────────────────────────────────────
+// Eight literary techniques for expressing romantic and intimate moments.
+// These are NOT modes to select from — they form a collective example pool.
+// The narrative should naturally draw from whichever techniques fit the
+// characters, context, and current moment, possibly blending more than one.
+// Never label the selected motif in the output.
+export const NARRATIVE_STYLE_MOTIFS = [
+  {
+    id: 'motif_space_between_them',
+    technique: 'Anticipation through proximity',
+    description: 'Physical closeness, unfinished conversation, and shared breathing build romantic tension without declaring it.',
+    example: "Neither of them seemed willing to claim the last inch separating them. Their conversation had long since dissolved into quiet smiles and half-finished thoughts, each pause stretching comfortably between them instead of begging to be filled. Their breaths mingled until it became impossible to tell where one ended and the other began, and every instinct to step back quietly surrendered to the desire to remain exactly where they were. When they finally laughed, it was because neither could remember what they had been talking about in the first place.",
+  },
+  {
+    id: 'motif_losing_track_of_room',
+    technique: 'Passion expressed through movement',
+    description: 'The emphasis is not on the destination but on momentum, laughter, and the way two people become absorbed in one another until the environment fades away.',
+    example: "One playful nudge became another until they found themselves drifting across the room without either of them deciding to move. Furniture became little more than scenery as they caught one another before either could stumble, exchanging amused glances every time momentum carried them somewhere unexpected. There was a weightless quality to it all, as though gravity had become negotiable whenever they were wrapped in each other's presence. By the time they finally stopped moving, neither seemed entirely convinced the floor had been beneath them the whole time.",
+  },
+  {
+    id: 'motif_quiet_after',
+    technique: 'Physiological and emotional aftermath',
+    description: 'Instead of naming what occurred, focus on synchronized breathing, lingering warmth, flushed faces, silence, and quiet smiles to communicate that a significant emotional moment has passed.',
+    example: "For several long moments, the only thing either of them noticed was the gradual return of steady breathing. The frantic rhythm that had echoed between them softened into something calm, warm, and familiar. A faint flush still lingered across their faces, and neither hurried to explain the quiet that had settled over the room. One absentminded smile answered another before either of them found the words, and somehow that silence said everything the conversation no longer needed to.",
+  },
+  {
+    id: 'motif_moment_that_stayed',
+    technique: 'Emotional resonance',
+    description: 'The memory of a moment can be more powerful than describing the moment itself. Emphasize reluctance to separate and the lingering emotional imprint.',
+    example: "Long after the music had ended, they remained together as though stepping apart might break whatever invisible thread had settled around them. Fingertips lingered without urgency, reluctant to admit that the evening would eventually continue. The warmth they carried from one another seemed to outlast the embrace itself, leaving them smiling for reasons neither bothered to explain. It was the kind of moment that would return unexpectedly days later, not because of what had happened, but because of how completely it had made the rest of the world disappear for a little while.",
+  },
+  {
+    id: 'motif_space_between',
+    technique: 'Escalation through stillness',
+    description: 'Rather than movement, the tension grows because neither person wants to break the closeness. Heartbeats, hesitation, and shared breaths become the narrative engine.',
+    example: "Neither of them noticed who had closed the distance first. One quiet conversation had become shared laughter, and shared laughter had somehow become silence. They lingered there, close enough that every measured breath belonged to both of them, neither willing to surrender the fragile space between them. Time seemed to slow as hesitant smiles replaced unfinished sentences, and every passing heartbeat made stepping away feel less possible than staying exactly where they were.",
+  },
+  {
+    id: 'motif_gravity',
+    technique: 'Physical playfulness evolving into romantic focus',
+    description: 'Joking, stumbling, and catching one another can naturally evolve into deeper connection without announcing the transition.',
+    example: "The room seemed too small to contain them. One playful nudge became another until they were stumbling together, catching one another before either could lose their balance. They moved without thinking, colliding gently with furniture, laughing as though gravity itself had become uncertain. Every attempt to steady themselves only drew them closer, until the outside world faded into little more than distant background noise and they could no longer remember who had reached for whom first.",
+  },
+  {
+    id: 'motif_after_storm',
+    technique: 'Wordless communication',
+    description: 'Emotional understanding can be conveyed through synchronized breathing, familiar gestures, and comfortable silence rather than dialogue.',
+    example: "For several long moments neither of them spoke. Their breathing gradually found the same rhythm, shoulders rising and falling together as warmth slowly replaced the intensity that had filled the room only moments before. Fingers absentmindedly traced familiar paths across sleeves and hands rather than letting go, while quiet smiles appeared without invitation. It wasn't the silence of uncertainty but of complete understanding, one that required no explanation because everything worth saying had already been expressed without words.",
+  },
+  {
+    id: 'motif_losing_track_of_world',
+    technique: 'Gradual immersion',
+    description: 'A relationship can become the center of the characters\' awareness by allowing conversation, glances, laughter, and the environment to quietly fall away.',
+    example: "They had long since forgotten whatever conversation had begun the evening. Somewhere between teasing remarks, lingering glances, and effortless laughter, the room itself seemed to disappear. Every glance lingered a little longer than the last, every touch carried just enough hesitation to make the next one feel inevitable. By the time they finally rested together, cheeks flushed and hearts refusing to settle, the only thing either of them seemed aware of was how strangely comforting it felt to remain exactly where they were, unwilling to rush the moment into becoming a memory.",
+  },
+];
+
+// ── NARRATIVE PROGRESSION RULES ────────────────────────────────────────────────
+// These rules govern how a continuous story progresses across multiple
+// narrative updates. The key question for every continuation:
+//   "What has changed since the previous narrative?"
+// If the answer is "nothing," the narrative has stalled.
+//
+// PROGRESSION PRINCIPLE:
+// If the conversation has introduced a new event, decision, revelation, or
+// activity, the next narrative will incorporate that development into the
+// current world state. Existing emotional momentum should be carried forward
+// unless the new development naturally changes it, ensuring the story
+// progresses without repeating or abandoning previously established
+// relationship context.
+export const NARRATIVE_PROGRESSION_RULES = {
+  core_question: 'What has changed since the previous narrative?',
+
+  principles: [
+    'Every continuation must advance the relationship, the environment, the emotional state, or the physical progression of the interaction.',
+    'Do not rewrite the same moment using different adjectives.',
+    'Do not repeatedly describe the same embrace, the same eye contact, the same hesitation, or the same emotional beat.',
+    'Once a moment has been communicated, treat it as complete and advance the scene.',
+    'The previous narrative is established history, not the sole anchor. The latest complete current context — chat messages, decisions, location, presence, activities, relationship context, and world-state changes — is the authority.',
+    'Existing emotional momentum should be carried forward unless a new development naturally changes it.',
+    'The story builds on an accumulating history rather than replacing it.',
+    'Do not summarize or restart what has already happened. Inherit the established state and continue from the new present.',
+    'A chat message is an event within the story, not separate from the narrative. The next narrative must account for what was said and show what now happens because of it.',
+  ],
+
+  chat_message_effects: [
+    'continue the current direction',
+    'add information',
+    'introduce a new activity',
+    'change the location',
+    'alter the emotional tone',
+    'interrupt the expected progression',
+    'create a decision',
+    'redirect the story entirely',
+  ],
+
+  // Example: progression without chat intervention
+  example_without_chat: [
+    "The evening breeze moves gently across the balcony while they stand near the railing, trading stories about the day. One teasing remark earns an exaggerated look of offense, but neither can maintain the act for long before laughter breaks through. The conversation remains light, though their attention has begun settling more fully on one another than on the city below.",
+    "Their voices soften as the conversation turns toward memories neither of them usually shares so easily. One of them rests an elbow against the railing while listening, no longer searching for the next joke or clever response. The laughter has not disappeared, but something more trusting now sits beneath it.",
+    "The balcony door opens behind them as they carry the conversation into the kitchen. One reaches for two glasses while the other leans against the counter, continuing the story that began outside. The unfinished drinks become secondary when a confession draws a surprised smile and an honest answer in return.",
+    "They settle at the kitchen table with the glasses still nearly full. The playful energy from the balcony has become a quieter kind of closeness, shaped by everything they have admitted to one another. Neither rushes to change the subject. The evening now belongs to a conversation that feels more important than either expected when it began.",
+    "The conversation reaches a natural pause as one of them extends a hand across the table. The gesture is small, but the other accepts it without hesitation. What began as casual time together has developed into a moment of trust, leaving both of them more certain about the relationship than they were at the start of the evening.",
+  ],
+
+  // Example: progression changed by chat messages
+  example_with_chat: {
+    narrative_1: "The evening breeze moves gently across the balcony while they stand near the railing, trading stories about the day. One teasing remark earns an exaggerated look of offense, followed by laughter neither of them tries to hide. Their attention gradually shifts away from the city and settles more fully on one another.",
+    chat_1: "You have been avoiding telling me what happened at work today.",
+    narrative_2: "The smile across their face becomes more restrained as they glance down toward the street. Instead of answering immediately, they rub a thumb along the edge of the railing and release a slow breath. The playful conversation has given way to something more serious, and the hesitation makes it clear that the workday carried more weight than they had admitted.",
+    chat_2: "I did not want to bring it home with me. My supervisor blamed me for something I warned them about days ago.",
+    chat_3: "Then come inside and tell me the whole story. I will make us something to drink.",
+    narrative_3: "The balcony door slides closed behind them as they enter the kitchen together. One begins preparing drinks while the other remains near the counter, shoulders slowly relaxing now that the truth is no longer being avoided. The story comes out in uneven pieces — an ignored warning, a failed project, and a supervisor unwilling to accept responsibility.",
+    chat_4: "You should save the messages where you warned them. Do not let them rewrite what happened.",
+    narrative_4: "They reach for their phone and begin searching through the work conversation, pausing whenever another message confirms what they remembered. Frustration gives way to focus as screenshots are saved and dates are compared. The evening is no longer simply about comforting them after a difficult day. Together, they are now building a record of what happened and deciding how to respond.",
+    chat_5: "I found it. I told them three times.",
+    chat_6: "Send the screenshots to your personal email, and tomorrow we can figure out who you need to speak with.",
+    narrative_5: "The evidence is forwarded before the phone is finally placed on the table. Relief does not erase the anger, but it changes the way they carry it. They move closer and rest against the user's shoulder, no longer feeling trapped inside the problem alone. What began as a playful evening on the balcony has become a moment of honesty, practical support, and renewed trust.",
+  },
+};
+
 /**
  * Get scenario examples for a given need type.
  * Returns array of scenario objects.
@@ -436,6 +557,50 @@ export function getExampleNarrative(needType) {
   if (!scenarios.length) return null;
   const pick = scenarios[Math.floor(Math.random() * scenarios.length)];
   return pick.narrative;
+}
+
+/**
+ * Build a context string from the eight narrative style motifs.
+ * These are literary techniques the AI can naturally draw from — not
+ * selectable modes. Never label the chosen motif in the output.
+ */
+export function buildStyleMotifContext() {
+  return `NARRATIVE STYLE MOTIFS (draw from these naturally — do not label or announce which technique is in use):
+${NARRATIVE_STYLE_MOTIFS.map(m => `[${m.technique}] ${m.description}
+Example: ${m.example}`).join('\n\n')}
+
+RULES:
+- These motifs are a collective example pool. Blend techniques when appropriate.
+- Do not turn them into selectable modes or rigid beat types.
+- Do not categorize them by progression speed or density.
+- Let the characters, context, and current moment determine which techniques fit.`;
+}
+
+/**
+ * Build a context string from the narrative progression rules.
+ * Governs how a continuous story advances across multiple narrative updates.
+ */
+export function buildProgressionRuleContext() {
+  const r = NARRATIVE_PROGRESSION_RULES;
+  return `NARRATIVE PROGRESSION RULES:
+Core question: ${r.core_question}
+If the answer is "nothing," the narrative has stalled.
+
+Principles:
+${r.principles.map((p, i) => `${i + 1}. ${p}`).join('\n')}
+
+A chat message may:
+${r.chat_message_effects.map(e => `- ${e}`).join('\n')}
+
+The next narrative should answer both:
+- What has changed since the previous narrative?
+- What changed because of the conversation that occurred after it?
+
+If the conversation has introduced a new event, decision, revelation, or
+activity, incorporate that development into the current world state. Existing
+emotional momentum should be carried forward unless the new development
+naturally changes it. The story builds on an accumulating history rather
+than replacing it.`;
 }
 
 /**
