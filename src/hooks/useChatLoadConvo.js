@@ -217,7 +217,8 @@ export function useChatLoadConvo({
             const isCharToChar = ids.length > 1;
             const isBilateral = !!c.shared_conversation_key;
             const isWorldPhone = c.channel === 'world_phone';
-            if (isCharToChar || isBilateral || isWorldPhone) {
+            const isStoryEvent = c.channel === 'story_event';
+            if (isCharToChar || isBilateral || isWorldPhone || isStoryEvent) {
               console.log(`[CHAT_LOAD] EXCLUDED char-to-char/world-phone convo id=${c.id} type=${c.type} char_ids=[${ids.join(',')}] shared_key=${c.shared_conversation_key || 'none'} channel=${c.channel || 'none'}`);
               return false;
             }
