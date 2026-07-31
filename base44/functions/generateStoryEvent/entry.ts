@@ -447,6 +447,16 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 1: GENERATE NARRATIVE ──────────────────────────────────────────────
+    // Pre-compute user inclusion strings for image prompt instructions
+    const userImageRule = userBundle
+      ? " The user participant '" + userBundle.display_name + "' (User ID: " + userBundle.user_id + ") MUST appear in EVERY image prompt by name, described with their appearance data. They are a real visible person — NOT a generic bystander."
+      : "";
+    const userImageRuleShort = userBundle
+      ? " The user participant '" + userBundle.display_name + "' (User ID: " + userBundle.user_id + ") MUST appear in this image by name."
+      : "";
+    const userImageRuleLine = userBundle
+      ? "- USER IMAGE INCLUSION RULE (CRITICAL): The user participant '" + userBundle.display_name + "' (User ID: " + userBundle.user_id + ") MUST appear in EVERY image prompt by name. Describe them as a real visible person in the scene. Do NOT omit them. Do NOT replace them with a generic person. Do NOT describe them as a background figure. Their name must appear in the prompt text just like character names do."
+      : "";
     const narrativePrompt = [
       `You are a narrative writer creating a meaningful story for a character-driven world.`,
       ``,
@@ -528,9 +538,9 @@ Deno.serve(async (req) => {
       `    { "character_id": "the_exact_id", "character_name": "Name", "memory_text": "What this character remembers about the event — personal, specific, from their perspective. Include: the event title, venue, who they saw there, what they did, interactions they had, and how they felt. A few sentences.", "memory_summary": "Short summary for retrieval (one sentence)", "importance_score": 1-10, "emotional_tone": "positive|negative|neutral|mixed" }`,
       `  ],`,
       `  "image_prompts": [`,
-      `    { "moment": "opening", "prompt": "Image generation prompt for the opening moment at ${venueName}. CRITICAL: Describe each visible character using ONLY their APPEARANCE data from the character details above — skin tone, hair, hairstyle, facial hair, clothing style, overall aesthetic. DO NOT invent generic people. DO NOT describe strangers. Every person in this image must match their character's documented appearance. Include venue ambiance, lighting, and mood.", "description": "What the image shows." },`,
-      `    { "moment": "key_moment", "prompt": "Image generation prompt for the peak moment. Focus characters must be prominent and described using their documented appearance. Supporting characters who appear must also use their documented appearance. DO NOT generate stand-ins.", "description": "What the image shows." },`,
-      `    { "moment": "closing", "prompt": "Image generation prompt for the closing moment. Describe each visible character using their documented appearance. No generic faces.", "description": "What the image shows." }`,
+      `    { "moment": "opening", "prompt": "Image generation prompt for the opening moment at ${venueName}. CRITICAL: Describe each visible person using ONLY their APPEARANCE data from the character details above — skin tone, hair, hairstyle, facial hair, clothing style, overall aesthetic. DO NOT invent generic people. DO NOT describe strangers. Every person in this image must match their character's documented appearance.${userImageRule} Include venue ambiance, lighting, and mood.", "description": "What the image shows." },`,
+      `    { "moment": "key_moment", "prompt": "Image generation prompt for the peak moment. Focus characters must be prominent and described using their documented appearance. Supporting characters who appear must also use their documented appearance. DO NOT generate stand-ins.${userImageRuleShort}", "description": "What the image shows." },`,
+      `    { "moment": "closing", "prompt": "Image generation prompt for the closing moment. Describe each visible character using their documented appearance. No generic faces.${userImageRuleShort}", "description": "What the image shows." }`,
       `  ]`,
       `}`,
       ``,
@@ -544,6 +554,7 @@ Deno.serve(async (req) => {
       `- Relationship changes can be created between CHARACTER participants who interact meaningfully. The user is not a target of relationship changes.`,
       `- Image prompts must reference the venue: ${venueName}.`,
       `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, clothing, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
+      userImageRuleLine,
       `- Only include relationship changes for character pairs that actually interact meaningfully.`,
     ].join('\n');
 
@@ -850,6 +861,9 @@ Deno.serve(async (req) => {
           ``,
           img.prompt,
           ``,
+          `VISIBLE PARTICIPANTS (ALL listed must appear in this image — NO OMISSIONS, NO STAND-INS, NO GENERIC STRANGERS):`,
+          allParticipantNames.length > 0 ? allParticipantNames.map(name => `- ${name}`).join('\n') : '- No participants specified',
+          ``,
           `Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.`,
           ``,
           `IDENTITY ENFORCEMENT:`,
@@ -939,7 +953,7 @@ Deno.serve(async (req) => {
             sender_type: 'user',
             content: '',
             image_url: imageRes.url,
-            image_description: img.description || img.prompt,
+            image_description: `${img.description || img.prompt}${userBundle ? ` — Featuring: ${userBundle.display_name} (User ID: ${userBundle.user_id})` : ''}`,
             image_analysis_status: 'complete',
             generation_context: {
               // Identity grounding metadata

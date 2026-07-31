@@ -69,23 +69,29 @@ export default function StoryEventViewer({ eventId }) {
 
       if (!user?.email) return;
 
-      // Load full character roster
+      // Load full character roster + user settings for avatar
       try {
-        const allChars = await base44.entities.Character.filter(
-          { owner_email: user.email, status: 'active' }, 'name', 200
-        );
+        const [allChars, settingsList] = await Promise.all([
+          base44.entities.Character.filter(
+            { owner_email: user.email, status: 'active' }, 'name', 200
+          ),
+          base44.entities.UserSettings.filter({ owner_email: user.email }, null, 1).catch(() => []),
+        ]);
         if (!cancelled) {
           setCharacters(allChars);
+          const userSettings = settingsList?.[0] || null;
+          const userAvatarUrl = userSettings?.avatar_url || userSettings?.image_avatar_url || null;
+          const userDisplayName = userSettings?.fictional_world_name || user.full_name || 'You';
           // Build identity roster: User first, then all characters
           const roster = [];
           if (user) {
             roster.push({
               id: `user_${user.id || user.email}`,
-              name: user.full_name,
-              display_name: user.full_name,
+              name: userDisplayName,
+              display_name: userDisplayName,
               character_type: 'user',
               _isUser: true,
-              avatar_url: null, // User has no avatar field — use first letter fallback
+              avatar_url: userAvatarUrl,
             });
           }
           for (const c of allChars) {
