@@ -199,12 +199,10 @@ const BIRTH_PATTERNS = [
   /she\s+had\s+the\s+baby/i,
 ];
 
-export function useApprovalEvents({ onLifeEventCreated } = {}) {
+export function useApprovalEvents() {
   const [pendingApproval, setPendingApproval] = useState(null);
   const [dismissed, setDismissed] = useState(new Set());
   const analysisInFlight = useRef(false);
-  const onLifeEventCreatedRef = useRef(null);
-  onLifeEventCreatedRef.current = onLifeEventCreated;
 
   const checkForApprovalEvents = useCallback((characterReply, character, allCharacters = [], userMessage = '') => {
     if (!characterReply || !character) return;
@@ -349,8 +347,9 @@ Return JSON:`,
   }, [pendingApproval]);
 
   const approveEvent = useCallback(async (approvalData) => {
-    if (!pendingApproval) return;
+    if (!pendingApproval) return { success: false };
     const { type, data } = pendingApproval;
+    let lifeEventSuccess = true;
 
     if ((type === 'move_in' || type === 'move_out') && data.character) {
       const ha = data.householdAnalysis || {};
@@ -367,37 +366,43 @@ Return JSON:`,
         ha.reasonSummary ? `Context: ${ha.reasonSummary}` : '',
       ].filter(Boolean).join('. ');
 
-      await base44.entities.LifeEvent.create({
-        character_id: data.character.id,
-        character_name: data.character.name,
-        event_type: 'life_milestone_event',
-        valence: type === 'move_out' ? 'mixed' : 'positive',
-        severity: 'significant',
-        title: `Housing change: ${mover} ${moveTypeLabel}`,
-        description: desc,
-        emotional_impact: 'A significant household change.',
-        triggered_by: 'user_message',
-        timestamp: new Date().toISOString(),
-        systems_updated: ['memory'],
-      }).catch(() => {});
-      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'housing', character: data.character, title: `Housing change: ${mover} ${moveTypeLabel}`, description: desc });
+      try {
+        await base44.entities.LifeEvent.create({
+          character_id: data.character.id,
+          character_name: data.character.name,
+          event_type: 'life_milestone_event',
+          valence: type === 'move_out' ? 'mixed' : 'positive',
+          severity: 'significant',
+          title: `Housing change: ${mover} ${moveTypeLabel}`,
+          description: desc,
+          emotional_impact: 'A significant household change.',
+          triggered_by: 'user_message',
+          timestamp: new Date().toISOString(),
+          systems_updated: ['memory'],
+        });
+      } catch (e) {
+        lifeEventSuccess = false;
+      }
     }
 
     if (type === 'marriage' && data.character) {
-      await base44.entities.LifeEvent.create({
-        character_id: data.character.id,
-        character_name: data.character.name,
-        event_type: 'life_milestone_event',
-        valence: 'positive',
-        severity: 'major',
-        title: 'Got married',
-        description: `${data.character.name} got married${data.otherCharName ? ` to ${data.otherCharName}` : ''}.`,
-        emotional_impact: 'A major life milestone.',
-        triggered_by: 'user_message',
-        timestamp: new Date().toISOString(),
-        systems_updated: ['memory'],
-      }).catch(() => {});
-      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'marriage', character: data.character, title: 'Got married', description: `${data.character.name} got married${data.otherCharName ? ` to ${data.otherCharName}` : ''}.` });
+      try {
+        await base44.entities.LifeEvent.create({
+          character_id: data.character.id,
+          character_name: data.character.name,
+          event_type: 'life_milestone_event',
+          valence: 'positive',
+          severity: 'major',
+          title: 'Got married',
+          description: `${data.character.name} got married${data.otherCharName ? ` to ${data.otherCharName}` : ''}.`,
+          emotional_impact: 'A major life milestone.',
+          triggered_by: 'user_message',
+          timestamp: new Date().toISOString(),
+          systems_updated: ['memory'],
+        });
+      } catch (e) {
+        lifeEventSuccess = false;
+      }
     }
 
     if (type === 'education' && data.character) {
@@ -441,46 +446,50 @@ Return JSON:`,
 
     if (type === 'birth' && data.character) {
       const childName = approvalData?.childName;
-      if (childName) {
-        const charArr = await base44.entities.Character.filter({ id: data.character.id });
-        const char = charArr[0];
-        if (char) {
-          const existingRels = char.fictional_relationships || [];
-          await base44.entities.Character.update(data.character.id, {
-            fictional_relationships: [...existingRels, {
-              person_name: childName,
-              relationship_type: 'child',
-              description: `${data.character.name}'s child, born recently.`,
-              current_status: 'newborn',
-              emotional_impact: 'A precious new family member.',
-              friendship_level: 100,
-              chosen_family_level: 100,
-            }],
-          });
-          const existingFamily = char.family_members || [];
-          await base44.entities.Character.update(data.character.id, {
-            family_members: [...existingFamily, { name: childName, relationship_type: 'child' }],
-          });
+      try {
+        if (childName) {
+          const charArr = await base44.entities.Character.filter({ id: data.character.id });
+          const char = charArr[0];
+          if (char) {
+            const existingRels = char.fictional_relationships || [];
+            await base44.entities.Character.update(data.character.id, {
+              fictional_relationships: [...existingRels, {
+                person_name: childName,
+                relationship_type: 'child',
+                description: `${data.character.name}'s child, born recently.`,
+                current_status: 'newborn',
+                emotional_impact: 'A precious new family member.',
+                friendship_level: 100,
+                chosen_family_level: 100,
+              }],
+            });
+            const existingFamily = char.family_members || [];
+            await base44.entities.Character.update(data.character.id, {
+              family_members: [...existingFamily, { name: childName, relationship_type: 'child' }],
+            });
+          }
         }
-      }
 
-      await base44.entities.LifeEvent.create({
-        character_id: data.character.id,
-        character_name: data.character.name,
-        event_type: 'life_milestone_event',
-        valence: 'positive',
-        severity: 'major',
-        title: childName ? `${childName} was born` : 'Baby born',
-        description: `${data.character.name} had a baby${childName ? ` — ${childName}` : ''}.`,
-        emotional_impact: 'Life-changing joy.',
-        triggered_by: 'user_message',
-        timestamp: new Date().toISOString(),
-        systems_updated: ['memory'],
-      }).catch(() => {});
-      if (onLifeEventCreatedRef.current) onLifeEventCreatedRef.current({ type: 'birth', character: data.character, title: childName ? `${childName} was born` : 'Baby born', description: `${data.character.name} had a baby${childName ? ` — ${childName}` : ''}.` });
+        await base44.entities.LifeEvent.create({
+          character_id: data.character.id,
+          character_name: data.character.name,
+          event_type: 'life_milestone_event',
+          valence: 'positive',
+          severity: 'major',
+          title: childName ? `${childName} was born` : 'Baby born',
+          description: `${data.character.name} had a baby${childName ? ` — ${childName}` : ''}.`,
+          emotional_impact: 'Life-changing joy.',
+          triggered_by: 'user_message',
+          timestamp: new Date().toISOString(),
+          systems_updated: ['memory'],
+        });
+      } catch (e) {
+        lifeEventSuccess = false;
+      }
     }
 
     dismissApproval();
+    return { success: lifeEventSuccess };
   }, [pendingApproval, dismissApproval]);
 
   // Manual trigger — called from the app drawer "Log Housing Change" button
