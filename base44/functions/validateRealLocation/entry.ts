@@ -84,7 +84,32 @@ function buildLocationImagePrompt(placeName, category, osmType, city, state) {
 
 async function generateLocationImage(base44, placeName, category, osmType, city, state) {
   try {
-    const prompt = buildLocationImagePrompt(placeName, category, osmType, city, state);
+    // Use web search to get a realistic description of the location's exterior.
+    // This makes generated images more accurate for well-known places (chains, landmarks,
+    // notable venues) by incorporating real-world details into the prompt.
+    let webDescription = '';
+    try {
+      const llmRes = await base44.integrations.Core.InvokeLLM({
+        prompt: `Describe the exterior street-level appearance of "${placeName}" located in ${city}${state ? `, ${state}` : ''}. What does the building look like? Include signage style, building materials, colors, and any distinctive features. Keep it to 2-3 sentences.`,
+        add_context_from_internet: true,
+        model: 'gemini_3_flash',
+        response_json_schema: {
+          type: "object",
+          properties: {
+            description: { type: "string" },
+            is_well_known: { type: "boolean" }
+          }
+        }
+      });
+      webDescription = llmRes?.description || '';
+    } catch {
+      // Non-blocking — fall back to category-based prompt
+    }
+
+    const basePrompt = buildLocationImagePrompt(placeName, category, osmType, city, state);
+    const prompt = webDescription
+      ? `${basePrompt} Real-world reference: ${webDescription}`
+      : basePrompt;
     const res = await base44.integrations.Core.GenerateImage({ prompt });
     return res?.url || null;
   } catch (err) {

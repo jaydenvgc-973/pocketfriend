@@ -145,13 +145,30 @@ export default function Scene() {
     };
   }, [currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
 
-  const { data: locationsData = [] } = useQuery({
+  const { data: locationsData = [], isFetching: isLocationsFetching } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email
+  });
+
+  // FALLBACK: If the location isn't in the list (e.g., just created via real-location
+  // promotion and the list cache is stale), fetch it directly by ID. This prevents
+  // a stale-cache "Location not found" flash when navigating from Travel to Scene
+  // for a newly promoted real-world location.
+  const { data: directLocation = null, isLoading: isDirectLoading } = useQuery({
+    queryKey: ["locationReferenceDirect", locationId],
+    queryFn: async () => {
+      if (!locationId) return null;
+      try {
+        return await base44.entities.LocationReference.get(locationId);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!locationId && !locationsData.find((l) => l.id === locationId),
   });
 
   // Multi-source character loading — same strategy as Travel page so Scene sees all NPCs
@@ -164,7 +181,7 @@ export default function Scene() {
     familyByOwner
   } = useSceneCharacters(currentUser);
 
-  const location = locationsData.find((l) => l.id === locationId);
+  const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
   const locationZones = location?.zones || [];
   // Resolve the active zone's environment type (operational / residential / restricted).
@@ -1682,6 +1699,13 @@ Return JSON:
   };
 
   if (!location) {
+    if (isLocationsFetching || isDirectLoading) {
+      return (
+        <div className="min-h-screen bg-background flex items-center justify-center">
+          <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+        </div>
+      );
+    }
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center space-y-3">
