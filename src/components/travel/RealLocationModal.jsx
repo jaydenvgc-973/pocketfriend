@@ -72,6 +72,9 @@ export default function RealLocationModal({ isOpen, onClose, onConfirm }) {
     setStatus('searching');
     setErrorMsg(null);
 
+    setStatus('searching');
+    setErrorMsg(null);
+
     const res = await base44.functions.invoke('validateRealLocation', {
       locationName: locationName.trim(),
       city: city.trim(),
@@ -98,6 +101,7 @@ export default function RealLocationModal({ isOpen, onClose, onConfirm }) {
         longitude: result.longitude,
         category: result.category,
         hours: result.hours,
+        image_url: result.image_url || null,
         verifiedLocationId: result.id,
       });
       handleClose();
@@ -172,7 +176,7 @@ export default function RealLocationModal({ isOpen, onClose, onConfirm }) {
                 className="w-full gap-2"
               >
                 {status === 'searching' ? (
-                  <><Loader className="w-4 h-4 animate-spin" /> Searching...</>
+                  <><Loader className="w-4 h-4 animate-spin" /> Finding location & generating preview...</>
                 ) : (
                   <><Search className="w-4 h-4" /> Search</>
                 )}
@@ -226,6 +230,13 @@ export default function RealLocationModal({ isOpen, onClose, onConfirm }) {
           {status === 'verified' && result && (
             <div className="space-y-3">
               <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30 space-y-2">
+                {result.image_url && (
+                  <img
+                    src={result.image_url}
+                    alt={result.name}
+                    className="w-full h-32 object-cover rounded-lg"
+                  />
+                )}
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-green-400" />
                   <p className="text-sm font-semibold text-green-400">
@@ -238,9 +249,14 @@ export default function RealLocationModal({ isOpen, onClose, onConfirm }) {
                     <Clock className="w-3 h-3" /> {result.hours}
                   </p>
                 )}
+                {result.image_url && (
+                  <p className="text-[10px] text-green-400/40 flex items-center gap-1">
+                    <Image className="w-3 h-3" /> Auto-generated preview
+                  </p>
+                )}
                 {!result.image_url && (
                   <p className="text-xs text-green-400/50 flex items-center gap-1">
-                    <Image className="w-3 h-3" /> No photo yet — you can add one from the Locations tab
+                    <Image className="w-3 h-3" /> No photo — you can add one from the Locations tab
                   </p>
                 )}
               </div>

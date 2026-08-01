@@ -56,6 +56,43 @@ function scoreCandidateMatch(props, searchName, searchCity) {
   return score;
 }
 
+// ── IMAGE GENERATION FALLBACK ───────────────────────────────────────────────
+// Photon/OSM does not provide images. When no external image is available,
+// generate a representative photo using the existing GenerateImage integration.
+// For known chains (McDonald's, Starbucks, etc.) the model naturally produces
+// recognizable imagery from the brand name alone.
+const CATEGORY_VISUAL = {
+  food_drink: 'restaurant',
+  gym: 'gym fitness center',
+  social: 'entertainment venue',
+  outdoor: 'park outdoor area',
+  medical: 'medical facility',
+  grocery: 'grocery store',
+  education: 'school building',
+  business: 'office building',
+  religion: 'place of worship',
+  public: 'public building',
+  generic: 'building',
+};
+
+function buildLocationImagePrompt(placeName, category, osmType, city, state) {
+  const visual = CATEGORY_VISUAL[category] || 'building';
+  const typeHint = osmType ? ` (${osmType.replace(/_/g, ' ')})` : '';
+  const locCtx = city ? ` in ${city}${state ? `, ${state}` : ''}` : '';
+  return `A realistic, candid exterior photograph of a ${visual}${typeHint} — "${placeName}"${locCtx}. Street-level view, natural daytime lighting, everyday photography style. Clear storefront signage with the business name visible. Photorealistic, high quality, wide angle, no people prominently in frame.`;
+}
+
+async function generateLocationImage(base44, placeName, category, osmType, city, state) {
+  try {
+    const prompt = buildLocationImagePrompt(placeName, category, osmType, city, state);
+    const res = await base44.integrations.Core.GenerateImage({ prompt });
+    return res?.url || null;
+  } catch (err) {
+    console.error('[validateRealLocation] Image generation failed:', err?.message);
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -74,6 +111,16 @@ Deno.serve(async (req) => {
     const cached = await base44.entities.VerifiedRealLocation.filter({ search_key: searchKey, verified: true });
     if (cached.length > 0) {
       const c = cached[0];
+      // ── IMAGE BACKFILL: If cached record has no image, generate one now ──
+      let imageUrl = c.image_url || null;
+      if (!imageUrl) {
+        imageUrl = await generateLocationImage(
+          base44, c.place_name, c.app_location_category, c.osm_type, c.city, c.state
+        );
+        if (imageUrl) {
+          await base44.entities.VerifiedRealLocation.update(c.id, { image_url: imageUrl });
+        }
+      }
       return Response.json({
         status: 'verified',
         fromCache: true,
@@ -85,7 +132,7 @@ Deno.serve(async (req) => {
           longitude: c.longitude,
           category: c.app_location_category,
           hours: c.operating_hours_manual || c.operating_hours_raw || null,
-          image_url: c.image_url || null,
+          image_url: imageUrl,
           linked_location_reference_id: c.linked_location_reference_id || null,
         },
       });
@@ -129,6 +176,14 @@ Deno.serve(async (req) => {
         verified: true,
       });
 
+      // ── IMAGE FALLBACK: Generate a representative photo ───────────────────
+      const generatedImageUrl = await generateLocationImage(
+        base44, saved.place_name, saved.app_location_category, saved.osm_type, city, state
+      );
+      if (generatedImageUrl) {
+        await base44.entities.VerifiedRealLocation.update(saved.id, { image_url: generatedImageUrl });
+      }
+
       return Response.json({
         status: 'verified',
         fromCache: false,
@@ -140,7 +195,7 @@ Deno.serve(async (req) => {
           longitude: saved.longitude,
           category: saved.app_location_category,
           hours: saved.operating_hours_raw || null,
-          image_url: null,
+          image_url: generatedImageUrl,
         },
       });
     }
@@ -211,6 +266,14 @@ Deno.serve(async (req) => {
         verified: true,
       });
 
+      // ── IMAGE FALLBACK: Generate a representative photo ───────────────────
+      const generatedImageUrl = await generateLocationImage(
+        base44, saved.place_name, saved.app_location_category, saved.osm_type, city, state
+      );
+      if (generatedImageUrl) {
+        await base44.entities.VerifiedRealLocation.update(saved.id, { image_url: generatedImageUrl });
+      }
+
       return Response.json({
         status: 'verified',
         fromCache: false,
@@ -222,7 +285,7 @@ Deno.serve(async (req) => {
           longitude: saved.longitude,
           category: saved.app_location_category,
           hours: saved.operating_hours_raw || null,
-          image_url: null,
+          image_url: generatedImageUrl,
         },
       });
     }
