@@ -54,6 +54,7 @@ export default function StoryEventViewer({ eventId }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [eventRegenerating, setEventRegenerating] = useState(false);
   const [eventDeleting, setEventDeleting] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
   const [actionError, setActionError] = useState(null);
 
   // Load current user + full character roster (all types, no participant filtering)
@@ -266,6 +267,30 @@ export default function StoryEventViewer({ eventId }) {
     const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
     if (records[0]) setEvent(records[0]);
     setShowEditModal(false);
+  };
+
+  // Reload — re-fetch the event from the DB to check if generation completed
+  const handleReloadEvent = async () => {
+    setIsReloading(true);
+    setActionError(null);
+    try {
+      const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
+      if (records[0]) {
+        setEvent(records[0]);
+        if (records[0].status === 'complete' || records[0].status === 'failed') {
+          const [mems, imgs] = await Promise.all([
+            base44.entities.StoryEventMemory.filter({ story_event_id: eventId }, null, 50).catch(() => []),
+            base44.entities.StoryEventImage.filter({ story_event_id: eventId }, null, 10).catch(() => []),
+          ]);
+          setMemories(mems);
+          setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+        }
+      }
+    } catch (err) {
+      setActionError(err?.message || 'Failed to reload event');
+    } finally {
+      setIsReloading(false);
+    }
   };
 
   const isGenerating = event.status === 'generating';
@@ -542,15 +567,17 @@ export default function StoryEventViewer({ eventId }) {
               >
                 {eventRegenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
               </button>
-              <button
-                onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
-                className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                title="Delete event permanently"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
             </>
           )}
+          {/* Delete is always available — even during generating */}
+          <button
+            onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
+            disabled={eventDeleting}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+            title="Delete event permanently"
+          >
+            {eventDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          </button>
           <button onClick={() => setExpanded(!expanded)} className="text-muted-foreground hover:text-foreground">
             <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
           </button>
@@ -570,20 +597,51 @@ export default function StoryEventViewer({ eventId }) {
                 </div>
               </div>
               {isStuckGenerating && (
-                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 space-y-2">
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
                   <p className="text-xs text-amber-400 font-medium">Generation seems to be taking longer than expected.</p>
-                  <p className="text-xs text-muted-foreground">You can cancel and try recreating the event, or reset the status to failed.</p>
-                  {cancelError && <p className="text-xs text-destructive">{cancelError}</p>}
-                  <button
-                    onClick={handleCancelGeneration}
-                    disabled={isCancellingGeneration}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-50"
-                  >
-                    {isCancellingGeneration ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
-                    {isCancellingGeneration ? 'Cancelling…' : 'Cancel stuck generation'}
-                  </button>
                 </div>
               )}
+              {cancelError && <p className="text-xs text-destructive">{cancelError}</p>}
+              {actionError && <p className="text-xs text-destructive">{actionError}</p>}
+              {/* Action controls — always available during generating */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  onClick={handleReloadEvent}
+                  disabled={isReloading || eventRegenerating || isCancellingGeneration}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 border border-border text-foreground text-xs font-medium hover:bg-secondary transition-colors disabled:opacity-50"
+                  title="Check if generation completed"
+                >
+                  {isReloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  Reload
+                </button>
+                <button
+                  onClick={handleEventRegenerate}
+                  disabled={eventRegenerating || isCancellingGeneration || isReloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+                  title="Stop current generation and regenerate from scratch"
+                >
+                  {eventRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {eventRegenerating ? 'Retrying…' : 'Retry'}
+                </button>
+                <button
+                  onClick={handleCancelGeneration}
+                  disabled={isCancellingGeneration || eventRegenerating || isReloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+                  title="Stop generation and mark as failed"
+                >
+                  {isCancellingGeneration ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
+                  {isCancellingGeneration ? 'Stopping…' : 'Stop'}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
+                  disabled={eventDeleting || isCancellingGeneration || eventRegenerating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-50"
+                  title="Delete event permanently"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              </div>
             </div>
           )}
 
