@@ -1277,6 +1277,48 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ── IDENTITY CROSS-CHECK — prompt [CHARACTER] token is the authoritative subject ──
+      // If characterId was wrong (e.g., sender ID passed instead of subject ID), the
+      // prompt's [CHARACTER] Name token is the correction signal. Re-resolve from the
+      // prompt name when they disagree. This prevents identity drift where the wrong
+      // character's avatar/appearance lock is injected into the image.
+      if (charRecord && !isThirdPartyPhoto && (subjectType === 'character' || subjectType === 'joint' || subjectType === 'known_character')) {
+        const _charTokenMatch = (prompt || '').match(/^\[CHARACTER\]\s+([A-Za-z][A-Za-z\s'-]{1,40})/i);
+        if (_charTokenMatch) {
+          const _tokenText = _charTokenMatch[1].trim().toLowerCase();
+          try {
+            const _allCharsForCheck = await base44.asServiceRole.entities.Character.filter(
+              { owner_email: requestingUser }, null, 100
+            ).catch(() => []);
+            const _sortedForCheck = [...(_allCharsForCheck || [])].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+            let _promptNamedChar = null;
+            for (const c of _sortedForCheck) {
+              if (!c.name || c.status === 'deleted' || c.status === 'soft_deleted') continue;
+              const _cn = c.name.toLowerCase();
+              const _firstName = c.name.split(' ')[0].toLowerCase();
+              if (_tokenText === _cn || _tokenText.startsWith(_cn) || _cn.startsWith(_tokenText)) {
+                _promptNamedChar = c;
+                break;
+              }
+              if (_firstName.length >= 4 && _tokenText.startsWith(_firstName)) {
+                _promptNamedChar = c;
+                break;
+              }
+            }
+            if (_promptNamedChar && _promptNamedChar.id !== charRecord.id) {
+              console.warn(`[generateImageAsync] ⛔ IDENTITY CROSS-CHECK MISMATCH: characterId="${charRecord.id}" ("${charRecord.name}") but prompt [CHARACTER] token names "${_promptNamedChar.name}" (id=${_promptNamedChar.id}). Re-resolving from prompt name — charRecord replaced.`);
+              charRecord = _promptNamedChar;
+            } else if (!_promptNamedChar) {
+              console.log(`[generateImageAsync] ℹ️ [CHARACTER] token "${_tokenText}" did not match any roster character — using characterId as-is`);
+            } else {
+              console.log(`[generateImageAsync] ✅ Identity cross-check passed: prompt names "${_promptNamedChar.name}" matches characterId`);
+            }
+          } catch (_nameErr) {
+            console.warn(`[generateImageAsync] Identity cross-check failed (non-blocking): ${_nameErr?.message}`);
+          }
+        }
+      }
+
       if (charRecord) {
         const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
         const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
@@ -2173,7 +2215,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         serverHour: serverTime.getHours(),
         serverTime: serverTime.toLocaleTimeString('en-US'),
         subjectType,
-        characterId,
+        characterId: charRecord?.id || characterId,
         userWorldName,
         userOutfitText: userOutfitText || null,
         userAppearanceLockText: userAppearanceLockText || null,
@@ -2260,7 +2302,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
       background_extras_allowed: /\b(pool party|club|concert|beach party|festival|mall|airport|crowd)\b/i.test(sanitizedPrompt) && !/\b(alone|empty|vacant|no people|object only|room only|just the|nobody|no one)\b/i.test(sanitizedPrompt),
       appearance_lock_corrections: appearanceLockCorrections.length > 0 ? appearanceLockCorrections : undefined,
       prompt,
-      character_id: characterId || null,
+      character_id: charRecord?.id || characterId || null,
       character_reference_images: charRefs,
       user_reference_images: userRefs,
       location_id: resolvedLocationId || null,
