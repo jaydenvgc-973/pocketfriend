@@ -1117,10 +1117,21 @@ Deno.serve(async (req) => {
             ).catch(() => [])
           )
         );
-        recentMessages = recentMsgResults.flat()
-          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date))
-          .slice(0, 12);
+        recentMessages = recentMsgResults.flat();
       }
+
+      // ── PLAYED-AS MESSAGES — messages the character "sent" while the user played as them ──
+      // These have played_as_character_id === characterId but character_id is unset (sender_type: 'user').
+      // Without this query, the character never sees their own played-as dialogue in recent history.
+      const playedAsMessages = await base44.asServiceRole.entities.Message.filter(
+        { played_as_character_id: characterId },
+        '-timestamp',
+        10
+      ).catch(() => []);
+
+      recentMessages = [...recentMessages, ...playedAsMessages]
+        .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date))
+        .slice(0, 12);
     } catch (msgErr) {
       contextLog.push({ step: 'recent_messages_load', status: 'error', error: msgErr.message });
     }
@@ -1499,7 +1510,10 @@ Deno.serve(async (req) => {
     let recentMessageBlock = '';
     if (recentMessages.length > 0) {
       const lines = recentMessages.slice(0, 8).map(m => {
-        const speaker = m.sender_type === 'character' ? (m.character_name || character.name) : 'User';
+        // Played-as messages are the character's own dialogue — label with their name, not "User"
+        const speaker = m.played_as_character_id === characterId
+          ? (m.played_as_character_name || character.name)
+          : (m.sender_type === 'character' ? (m.character_name || character.name) : 'User');
         return `${speaker}: ${(m.content || '').substring(0, 150)}`;
       });
       recentMessageBlock = `\nRECENT CONVERSATION HISTORY (cross-page, most recent first):\n${lines.join('\n')}\n`;
