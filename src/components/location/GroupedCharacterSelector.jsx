@@ -15,22 +15,30 @@ export default function GroupedCharacterSelector({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Group and sort characters — legacy characters (no character_type) fall into active_created_character
-  const { activeCreated, npcFictitious, npcFamily } = useMemo(() => {
+  // Group and sort characters using the canonical ManageCharacterList hierarchy:
+  // active_created → npc_fictitious → npc_family → untyped/test → moved_away.
+  // Legacy chars with no character_type fall into "Untyped / Test" (still visible & selectable).
+  const { activeCreated, npcFictitious, npcFamily, untyped, movedAway } = useMemo(() => {
     const active = [];
     const fictitious = [];
     const family = [];
+    const other = [];
+    const moved = [];
     allCharacters.forEach(c => {
-      const type = c.character_type || "active_created_character";
-      if (type === "npc_fictitious") fictitious.push(c);
-      else if (type === "npc_family_member") family.push(c);
-      else active.push(c); // active_created_character + any legacy/unknown type
+      if (c.status === 'moved_away') { moved.push(c); return; }
+      const type = c.character_type;
+      if (type === 'active_created_character') active.push(c);
+      else if (type === 'npc_fictitious') fictitious.push(c);
+      else if (type === 'npc_family_member') family.push(c);
+      else other.push(c); // untyped / test / npc_regular / legacy
     });
     const byName = (a, b) => (a.name || "").localeCompare(b.name || "");
     active.sort(byName);
     fictitious.sort(byName);
     family.sort(byName);
-    return { activeCreated: active, npcFictitious: fictitious, npcFamily: family };
+    other.sort(byName);
+    moved.sort(byName);
+    return { activeCreated: active, npcFictitious: fictitious, npcFamily: family, untyped: other, movedAway: moved };
   }, [allCharacters]);
 
   // Filter by search across all groups
@@ -41,15 +49,21 @@ export default function GroupedCharacterSelector({
   const filteredActive = filterChars(activeCreated);
   const filteredFictitious = filterChars(npcFictitious);
   const filteredFamily = filterChars(npcFamily);
+  const filteredUntyped = filterChars(untyped);
+  const filteredMovedAway = filterChars(movedAway);
 
   const renderCharRow = (char) => {
     const isSelected = selectedIds.includes(char.id);
     const charTypeName =
-      char.character_type === "active_created_character"
+      char.status === "moved_away"
+        ? "Moved Away"
+        : char.character_type === "active_created_character"
         ? "Active Created"
         : char.character_type === "npc_fictitious"
         ? "NPC Fictitious"
-        : "NPC Family Member";
+        : char.character_type === "npc_family_member"
+        ? "NPC Family Member"
+        : "Untyped / Test";
 
     // Availability info — only shown when getCharacterAvailability is provided (worker picker)
     const avail = getCharacterAvailability ? getCharacterAvailability(char) : null;
@@ -144,10 +158,32 @@ export default function GroupedCharacterSelector({
           </div>
         )}
 
+        {/* Untyped / Test Characters */}
+        {filteredUntyped.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              Untyped / Test Characters
+            </p>
+            <div className="space-y-2">{filteredUntyped.map(renderCharRow)}</div>
+          </div>
+        )}
+
+        {/* Moved Away */}
+        {filteredMovedAway.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-1">
+              Moved Away
+            </p>
+            <div className="space-y-2">{filteredMovedAway.map(renderCharRow)}</div>
+          </div>
+        )}
+
         {/* Empty state */}
         {filteredActive.length === 0 &&
           filteredFictitious.length === 0 &&
-          filteredFamily.length === 0 && (
+          filteredFamily.length === 0 &&
+          filteredUntyped.length === 0 &&
+          filteredMovedAway.length === 0 && (
             <p className="text-xs text-muted-foreground text-center py-4">
               No characters found
             </p>

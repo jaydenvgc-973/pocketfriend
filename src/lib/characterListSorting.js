@@ -205,3 +205,39 @@ export function countCharactersByType(characters) {
 
   return counts;
 }
+
+/**
+ * Sort characters using the ManageCharacterList hierarchy:
+ *   0. active_created_character  (status === 'active')
+ *   1. npc_fictitious            (status === 'active')
+ *   2. npc_family_member         (status === 'active')
+ *   3. untyped / test / other    (status === 'active', not one of the 3 known types above)
+ *   4. moved_away                (status === 'moved_away')
+ *   5. everything else           (other non-terminal statuses — kept visible, sorted last)
+ *
+ * Within each bucket, alphabetical by name (localeCompare).
+ *
+ * PURE ORDERING — does NOT filter, drop, or hide any character.
+ * Use this on any character roster to apply the canonical display order
+ * without changing which characters appear.
+ */
+export function sortCharactersByManageListHierarchy(characters) {
+  if (!characters || !Array.isArray(characters)) return [];
+
+  const bucket = (c) => {
+    if (!c) return 6;
+    if (c.status === 'moved_away') return 4;
+    if (c.character_type === 'active_created_character' && c.status === 'active') return 0;
+    if (c.character_type === 'npc_fictitious' && c.status === 'active') return 1;
+    if (c.character_type === 'npc_family_member' && c.status === 'active') return 2;
+    if (c.status === 'active') return 3; // untyped / test / other active
+    return 5; // other non-terminal statuses — stay visible, sort last
+  };
+
+  const nameOf = (c) => c.name || c.display_name || '';
+
+  return [...characters].sort((a, b) => {
+    const diff = bucket(a) - bucket(b);
+    return diff !== 0 ? diff : nameOf(a).localeCompare(nameOf(b));
+  });
+}

@@ -4,6 +4,7 @@ import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Che
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 import { registerUserForegroundTask, clearUserForegroundTask, FOREGROUND_TASKS, PRIORITY_LEVELS } from "@/lib/foregroundPriority";
@@ -1076,20 +1077,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                               1. User  2. active_created_character  3. npc_fictitious
                               4. npc_family_member  5. npc_regular  6. everything else */}
                           {(() => {
-                            const TYPE_ORDER = {
-                              _user: 0,
-                              active_created_character: 1,
-                              npc_fictitious: 2,
-                              npc_family_member: 3,
-                              npc_regular: 4,
-                            };
-                            const typeKey = c => c.is_user ? '_user' : (c.character_type || 'zzz');
-                            const typeRank = c => TYPE_ORDER[typeKey(c)] ?? 99;
-                            const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
-                            return [...allCharacters].sort((a, b) => {
-                              const rankDiff = typeRank(a) - typeRank(b);
-                              return rankDiff !== 0 ? rankDiff : alpha(a, b);
-                            });
+                            // ORDER ONLY: user entry stays first, then canonical ManageCharacterList
+                            // hierarchy (active_created → npc_fictitious → npc_family → untyped/test
+                            // → moved_away), alphabetical within each group. Roster composition unchanged.
+                            const userEntry = allCharacters.find(c => c.is_user);
+                            const nonUser = allCharacters.filter(c => !c.is_user);
+                            return [userEntry, ...sortCharactersByManageListHierarchy(nonUser)].filter(Boolean);
                           })().map(char => (
                             <button
                               key={char.id}

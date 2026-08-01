@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw, AlertCircle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { validateZoneImages } from "@/lib/imageFormatValidator";
 
@@ -306,15 +307,10 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         owner_email: email,
       };
 
-      // Build character entries — active first (desc by created_date), then inactive
-      const activeChars = liveChars
-        .filter(c => c.is_active_character)
-        .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
-      const inactiveChars = liveChars
-        .filter(c => !c.is_active_character)
-        .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
-
-      const roster = [userEntry, ...activeChars, ...inactiveChars];
+      // ORDER ONLY: user entry stays first, then canonical ManageCharacterList hierarchy
+      // (active_created → npc_fictitious → npc_family → untyped/test → moved_away),
+      // alphabetical within each group. Roster composition (liveChars) unchanged.
+      const roster = [userEntry, ...sortCharactersByManageListHierarchy(liveChars)];
 
       setAllCharacters(roster);
       setRosterLoadStatus('fresh');
