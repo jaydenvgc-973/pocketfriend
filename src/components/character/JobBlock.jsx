@@ -80,11 +80,14 @@ export default function JobBlock({
         <OccupationLocationPicker
           characterId={characterId}
           linkType="occupation"
-          currentLocationId={locationLink?.locationId}
+          currentLocationId={locationLink?.isRabbitHole ? locationLink?.locationName : locationLink?.locationId}
           currentTitle={locationLink?.title}
           onLinkChange={onLocationLinkChange}
           placeholder="e.g. Hospital, Coffee Shop, Studio"
           hideTitle
+          isRabbitHole={locationLink?.isRabbitHole}
+          payType={locationLink?.payType}
+          payRate={locationLink?.payRate}
         />
       </div>
 

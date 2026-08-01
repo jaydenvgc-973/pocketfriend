@@ -826,48 +826,113 @@ export default function CharacterProfile() {
 
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
             <div className="space-y-2">
-              {workLocations.length === 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground italic">No work locations linked yet.</p>
-                  <button
-                    onClick={async () => {
-                      await base44.functions.invoke('syncEmploymentAssignments', {}).catch(() => {});
-                      queryClient.invalidateQueries({ queryKey: ['workLocations', characterId] });
-                      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-                    }}
-                    className="text-xs text-primary/70 hover:text-primary underline underline-offset-2 transition-colors"
-                  >
-                    Sync employment data
-                  </button>
-                </div>
-              )}
-              {workLocations.map((loc) => {
-                const payRate = loc.worker_pay_rates?.[characterId];
-                const payType = loc.worker_pay_type?.[characterId];
-                // Fallback: if location has no worker_job_titles entry for this character,
-                // use the character's own occupation field (set when occupation_location_id is assigned).
-                // This covers the case where a character is linked to a location via occupation_location_id
-                // but the location was never updated with worker dict entries.
-                const jobTitle = loc.worker_job_titles?.[characterId] || character?.occupation || null;
-                const shift = getWorkShift(loc.id);
+              {(() => {
+                // Build rabbit hole (custom non-physical) jobs from the character's own fields.
+                // Physical locations are rendered from `workLocations` below.
+                const rhJobs = [];
+                // Primary rabbit hole
+                if (!character?.occupation_location_id && character?.occupation_location_name && character?.work_details?.is_rabbit_hole) {
+                  const wd = character.work_details;
+                  let shift = null;
+                  if (character.work_start_time && character.work_end_time) {
+                    const fmt = (t) => {
+                      const [h, m] = t.split(':').map(Number);
+                      const period = h >= 12 ? 'pm' : 'am';
+                      return `${h % 12 || 12}:${String(m).padStart(2, '0')}${period}`;
+                    };
+                    const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+                    const days = (character.work_days || []).map(d => DAY_LABELS[d]).join('/');
+                    shift = `${fmt(character.work_start_time)}–${fmt(character.work_end_time)}${days ? ' · ' + days : ''}`;
+                  }
+                  rhJobs.push({
+                    key: 'rh-primary',
+                    name: character.occupation_location_name,
+                    jobTitle: wd.job_title || character?.occupation || null,
+                    payRate: wd.pay_rate,
+                    payType: wd.pay_type,
+                    shift,
+                  });
+                }
+                // Additional occupation locations that are rabbit holes
+                (character?.additional_occupation_locations || []).forEach((job, idx) => {
+                  if (job.is_rabbit_hole && !job.location_id && job.location_name) {
+                    rhJobs.push({
+                      key: `rh-job-${idx}`,
+                      name: job.location_name,
+                      jobTitle: job.job_title || null,
+                      payRate: job.pay_rate,
+                      payType: job.pay_type,
+                      shift: null,
+                    });
+                  }
+                });
+
+                const hasNothing = workLocations.length === 0 && rhJobs.length === 0;
+
                 return (
-                  <div key={loc.id} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
-                    <div className="flex items-center gap-2 flex-1 min-w-0">
-                      <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-foreground font-medium truncate block">{loc.name}</span>
-                        {jobTitle && <span className="text-muted-foreground/70 truncate block">{jobTitle}</span>}
-                        {shift && <span className="text-muted-foreground/50 truncate block">{shift}</span>}
-                      </div>
-                    </div>
-                    {payRate != null && (
-                      <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
-                        ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'annual' || payType === 'salary' ? '/yr' : payType === 'monthly' ? '/mo' : payType === 'weekly' ? '/wk' : payType ? `/${payType}` : ''}
+                  <>
+                    {hasNothing && (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground italic">No work locations linked yet.</p>
+                        <button
+                          onClick={async () => {
+                            await base44.functions.invoke('syncEmploymentAssignments', {}).catch(() => {});
+                            queryClient.invalidateQueries({ queryKey: ['workLocations', characterId] });
+                            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+                          }}
+                          className="text-xs text-primary/70 hover:text-primary underline underline-offset-2 transition-colors"
+                        >
+                          Sync employment data
+                        </button>
                       </div>
                     )}
-                  </div>
+                    {rhJobs.map((job) => (
+                      <div key={job.key} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <Briefcase className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                          <div className="min-w-0">
+                            <span className="text-foreground font-medium truncate block">{job.name}</span>
+                            {job.jobTitle && <span className="text-muted-foreground/70 truncate block">{job.jobTitle}</span>}
+                            {job.shift && <span className="text-muted-foreground/50 truncate block">{job.shift}</span>}
+                          </div>
+                        </div>
+                        {job.payRate != null && (
+                          <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
+                            ${Number(job.payRate).toFixed(2)} {job.payType === 'hourly' ? '/hr' : job.payType === 'annual' || job.payType === 'salary' ? '/yr' : job.payType === 'monthly' ? '/mo' : job.payType === 'weekly' ? '/wk' : job.payType ? `/${job.payType}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {workLocations.map((loc) => {
+                      const payRate = loc.worker_pay_rates?.[characterId];
+                      const payType = loc.worker_pay_type?.[characterId];
+                      // Fallback: if location has no worker_job_titles entry for this character,
+                      // use the character's own occupation field (set when occupation_location_id is assigned).
+                      // This covers the case where a character is linked to a location via occupation_location_id
+                      // but the location was never updated with worker dict entries.
+                      const jobTitle = loc.worker_job_titles?.[characterId] || character?.occupation || null;
+                      const shift = getWorkShift(loc.id);
+                      return (
+                        <div key={loc.id} className="flex items-center justify-between text-xs pb-2 border-b border-border last:border-b-0">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+                            <div className="min-w-0">
+                              <span className="text-foreground font-medium truncate block">{loc.name}</span>
+                              {jobTitle && <span className="text-muted-foreground/70 truncate block">{jobTitle}</span>}
+                              {shift && <span className="text-muted-foreground/50 truncate block">{shift}</span>}
+                            </div>
+                          </div>
+                          {payRate != null && (
+                            <div className="text-right flex-shrink-0 ml-2 font-semibold text-green-300">
+                              ${Number(payRate).toFixed(2)} {payType === 'hourly' ? '/hr' : payType === 'annual' || payType === 'salary' ? '/yr' : payType === 'monthly' ? '/mo' : payType === 'weekly' ? '/wk' : payType ? `/${payType}` : ''}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
                 );
-              })}
+              })()}
             </div>
           </CollapsibleProfileSection>
 

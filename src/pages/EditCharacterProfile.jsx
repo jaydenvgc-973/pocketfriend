@@ -72,9 +72,23 @@ export default function EditCharacterProfile() {
   const handleSelect = async (char) => {
     setSelectedChar(char);
     setActiveTab("Occupation");
-    setOccupationLink({ locationId: char.occupation_location_id || null, locationName: char.occupation_location_name || null, title: char.work_details?.job_title || '' });
+    setOccupationLink({
+      locationId: char.occupation_location_id || null,
+      locationName: char.occupation_location_name || null,
+      title: char.work_details?.job_title || '',
+      isRabbitHole: !char.occupation_location_id && !!char.occupation_location_name && char.work_details?.is_rabbit_hole,
+      payType: char.work_details?.pay_type || 'hourly',
+      payRate: char.work_details?.pay_rate || 0,
+    });
     const secondJob = char.additional_occupation_locations?.[0] || {};
-    setOccupationLink2({ locationId: secondJob.location_id || null, locationName: secondJob.location_name || null, title: secondJob.job_title || '' });
+    setOccupationLink2({
+      locationId: secondJob.location_id || null,
+      locationName: secondJob.location_name || null,
+      title: secondJob.job_title || '',
+      isRabbitHole: !secondJob.location_id && !!secondJob.location_name && secondJob.is_rabbit_hole,
+      payType: secondJob.pay_type || 'hourly',
+      payRate: secondJob.pay_rate || 0,
+    });
     setEducationLink({ locationId: char.education_location_id || null, locationName: char.education_location_name || null, title: char.education_details?.course_name || '' });
 
     // Load primary job schedule from LocationReference.worker_shifts (authoritative source)
@@ -226,8 +240,12 @@ export default function EditCharacterProfile() {
       job_title: form.job2_title || "",
       workplace_type: form.job2_workplace_type || "",
       work_environment: form.job2_work_environment || "",
+      // Rabbit hole fields — only set when no physical location is linked
+      is_rabbit_hole: occupationLink2.isRabbitHole,
+      pay_type: occupationLink2.isRabbitHole ? (occupationLink2.payType || 'hourly') : undefined,
+      pay_rate: occupationLink2.isRabbitHole ? (occupationLink2.payRate || 0) : undefined,
     };
-    const hasSecondJobData = form.job2_title || form.job2_work_environment || form.job2_workplace_type || occupationLink2.locationId;
+    const hasSecondJobData = form.job2_title || form.job2_work_environment || form.job2_workplace_type || occupationLink2.locationId || occupationLink2.isRabbitHole;
     // If user cleared all second job fields, remove index 0; otherwise update it. Always keep entries beyond index 0.
     const secondJobEntry = [
       ...(hasSecondJobData ? [updatedSecondJob] : existingAdditional[0] ? [] : []),
@@ -239,6 +257,10 @@ export default function EditCharacterProfile() {
         job_title: form.job_title,
         workplace_type: form.workplace_type,
         work_environment: form.work_environment,
+        // Rabbit hole fields — only set when no physical location is linked
+        is_rabbit_hole: occupationLink.isRabbitHole,
+        pay_type: occupationLink.isRabbitHole ? (occupationLink.payType || 'hourly') : undefined,
+        pay_rate: occupationLink.isRabbitHole ? (occupationLink.payRate || 0) : undefined,
       },
       work_start_time: form.work_start_time || null,
       work_end_time: form.work_end_time || null,
