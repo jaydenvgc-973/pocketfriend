@@ -125,6 +125,8 @@ Deno.serve(async (req) => {
     }));
 
     // Create LocationReference with zones + is_real_world flag
+    // CRITICAL: owner_email must be set or fetchAllLocationsForUser (Query 1)
+    // will filter this location out and the Scene page will show "Location not found".
     const locRef = await base44.entities.LocationReference.create({
       name: vl.place_name,
       location_type: 'global',
@@ -135,6 +137,9 @@ Deno.serve(async (req) => {
       keywords: [vl.place_name.toLowerCase(), vl.city?.toLowerCase()].filter(Boolean),
       image_urls: vl.image_url ? [vl.image_url] : [],
       zones,
+      owner_email: user.email,
+      owner_user_id: user.id,
+      created_by_role: user.role || 'user',
     });
 
     // Link back
