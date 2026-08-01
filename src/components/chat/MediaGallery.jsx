@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check, ImagePlus } from "lucide-react";
+import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check, ImagePlus, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -1245,10 +1245,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                         <button
                           onClick={() => uploadInputRef.current?.click()}
                           disabled={isUploadingRef}
-                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${referenceImageUrl ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${referenceImageUrl && referenceImageSource === 'upload' ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
                         >
                           {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
-                          {referenceImageUrl ? 'Reference uploaded' : 'Upload reference image'}
+                          {referenceImageUrl && referenceImageSource === 'upload' ? 'Upload selected' : 'Upload reference'}
+                        </button>
+                        <button
+                          onClick={() => { setShowGridPicker(true); }}
+                          disabled={images.length === 0}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${referenceImageUrl && referenceImageSource === 'gallery' ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'} disabled:opacity-40 disabled:cursor-not-allowed`}
+                          title={images.length === 0 ? 'No images in gallery yet' : 'Pick from existing images'}
+                        >
+                          <ImageIcon className="w-3.5 h-3.5" />
+                          {referenceImageUrl && referenceImageSource === 'gallery' ? 'Gallery image selected' : 'Choose from gallery'}
                         </button>
                         {referenceImageUrl && (
                           <button onClick={clearReference} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Remove reference">
@@ -1419,6 +1428,44 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           )}
         </AnimatePresence>,
         document.body
+      )}
+
+      {/* Gallery picker for reference image selection */}
+      {showGridPicker && (
+        <div className="fixed inset-0 bg-black/80 z-[52] flex items-center justify-center p-4" onClick={() => setShowGridPicker(false)}>
+          <div className="bg-card rounded-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
+              <h3 className="text-sm font-semibold text-foreground">Pick a reference image</h3>
+              <button onClick={() => setShowGridPicker(false)} className="p-1 hover:bg-secondary rounded-lg transition-colors">
+                <X className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              {images.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">No images in this conversation yet. Upload a reference instead.</p>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {images.map((img) => (
+                    <button
+                      key={img.id}
+                      onClick={() => handlePickFromGallery(img)}
+                      className="group relative rounded-xl overflow-hidden aspect-square border border-border hover:border-primary/50 hover:ring-2 hover:ring-primary/40 transition-all"
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.senderName}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                      />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-[9px] text-white/90 truncate block">{img.senderName}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Regenerate reason modal */}

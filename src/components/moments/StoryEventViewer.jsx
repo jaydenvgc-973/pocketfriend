@@ -558,7 +558,7 @@ export default function StoryEventViewer({ eventId }) {
           >
             <Pencil className="w-3.5 h-3.5" />
           </button>
-          {isComplete && (
+          {(isComplete || isFailed) && (
             <button
               onClick={handleEventRegenerate}
               disabled={eventRegenerating}
@@ -646,9 +646,31 @@ export default function StoryEventViewer({ eventId }) {
 
           {/* Failed state */}
           {isFailed && (
-            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
-              <p className="text-xs text-destructive font-medium">Generation failed</p>
-              {event.generation_error && <p className="text-[10px] text-destructive/70 mt-1">{event.generation_error}</p>}
+            <div className="space-y-3">
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                <p className="text-xs text-destructive font-medium">Generation failed</p>
+                {event.generation_error && <p className="text-[10px] text-destructive/70 mt-1">{event.generation_error}</p>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleEventRegenerate}
+                  disabled={eventRegenerating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+                  title="Regenerate from scratch"
+                >
+                  {eventRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {eventRegenerating ? 'Retrying…' : 'Regenerate'}
+                </button>
+                <button
+                  onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
+                  disabled={eventDeleting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-50"
+                  title="Delete event permanently"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              </div>
             </div>
           )}
 
