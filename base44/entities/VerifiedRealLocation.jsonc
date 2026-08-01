@@ -47,7 +47,8 @@
         "business",
         "religion",
         "public",
-        "generic"
+        "generic",
+        "transportation"
       ],
       "default": "generic",
       "description": "Mapped app location category"

@@ -58,7 +58,7 @@ import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityC
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
   food_drink: "🍽️", outdoor: "🌳", social: "🍸", medical: "🏨",
-  bar: "🍸", generic: "📍"
+  bar: "🍸", generic: "📍", transportation: "🚉"
 };
 
 // Categories that serve food/drinks

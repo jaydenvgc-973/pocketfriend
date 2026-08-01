@@ -90,6 +90,13 @@ export const VENUE_NPCS = {
     { id: "npc_admin_staff", name: "Administrative Staff", role: "Administrative Staff", npcType: "staff" },
     { id: "npc_student", name: "Student", role: "Student", npcType: "customer" },
   ],
+  transportation: [
+    { id: "npc_station_agent", name: "Station Agent", role: "Station Agent", npcType: "staff" },
+    { id: "npc_ticket_clerk", name: "Ticket Clerk", role: "Ticket Clerk", npcType: "staff" },
+    { id: "npc_security_officer_transit", name: "Security Officer", role: "Security Officer", npcType: "staff" },
+    { id: "npc_commuter_1", name: "Commuter", role: "Passenger", npcType: "customer" },
+    { id: "npc_commuter_2", name: "Traveler with luggage", role: "Passenger", npcType: "customer" },
+  ],
   community: [
     { id: "npc_community_coordinator", name: "Community Coordinator", role: "Community Coordinator", npcType: "staff" },
     { id: "npc_volunteer", name: "Volunteer", role: "Volunteer", npcType: "staff" },
@@ -126,6 +133,7 @@ export const REQUIRED_STAFF_ROLES = {
   community:   [{ id: "tmp_coordinator",  name: "Community Coordinator","role": "Community Coordinator", npcType: "staff", isTemporary: true }],
   religion:    [{ id: "tmp_usher",        name: "Usher",               role: "Usher",               npcType: "staff", isTemporary: true }],
   outdoor:     [{ id: "tmp_park_ranger",  name: "Park Ranger",         role: "Park Ranger",         npcType: "staff", isTemporary: true }],
+  transportation: [{ id: "tmp_station_agent", name: "Station Agent",     role: "Station Agent",       npcType: "staff", isTemporary: true }],
 };
 
 // ── VICK SERVICIO — VGC RECOVERY YARD TEMPORARY STAFF ──────────────────────

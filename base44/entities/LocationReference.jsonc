@@ -175,7 +175,8 @@
         "school",
         "community",
         "generic",
-        "jail_prison"
+        "jail_prison",
+        "transportation"
       ],
       "default": "generic"
     },

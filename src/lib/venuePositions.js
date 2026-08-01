@@ -79,6 +79,13 @@ export const VENUE_POSITIONS = {
     'director', 'coordinator', 'case manager', 'counselor', 'advocate', 'receptionist',
     'volunteer coordinator', 'program staff', 'outreach worker', 'administrative assistant',
   ],
+  transportation: [
+    'station manager', 'terminal manager', 'operations manager', 'supervisor', 'ticket agent',
+    'customer service representative', 'information desk clerk', 'gate agent', 'conductor',
+    'train operator', 'bus operator', 'driver', 'pilot', 'flight attendant', 'captain',
+    'deckhand', 'harbor master', 'security officer', 'transit worker', 'maintenance',
+    'baggage handler', 'ground crew', 'dispatcher', 'attendant', 'station agent',
+  ],
 };
 
 /**

@@ -54,6 +54,7 @@ const ZONE_PRESETS = {
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   jail_prison: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
+  transportation: ["Main Lobby", "Ticket Booth", "Waiting Area", "Platform", "Concourse", "Boarding Gate", "Transit Shelter", "Information Desk", "Baggage Claim", "Security Checkpoint"],
 };
 
 // Allowed character types for assignment in location selectors (workers, residents, inmates)
@@ -82,6 +83,7 @@ const CATEGORIES = [
   { value: "public", label: "Public", icon: MapPin, emoji: "🗺️" },
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
   { value: "jail_prison", label: "Jail / Prison", icon: MapPin, emoji: "🔒" },
+  { value: "transportation", label: "Transportation", icon: MapPin, emoji: "🚉" },
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
@@ -334,6 +336,7 @@ const SUBTYPE_OPTIONS = {
   government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
   jail_prison: ["jail", "prison", "detention_center", "holding_cell", "correctional_facility", "juvenile_detention", "halfway_house", "confinement_facility", "pretrial_detention", "adult_detention", "immigration_detention"],
+  transportation: ["train_station", "bus_terminal", "transit_center", "airport", "subway_metro_station", "light_rail_station", "ferry_terminal", "boarding_dock", "cruise_terminal", "marina", "port_terminal", "taxi_stand", "ride_share_pickup", "park_and_ride", "tram_station", "cable_car_station"],
 };
 
 function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
@@ -432,7 +435,7 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
   );
 }
 
-const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community', 'jail_prison'];
+const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community', 'jail_prison', 'transportation'];
 const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 function formatShift(shift) {
@@ -1104,7 +1107,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── WORKERS ── */}
-      {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison') && (
+      {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
 
@@ -1235,7 +1238,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── UNIFORMS (all location types that can have workers/roles) ── */}
-      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery') && (
+      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery' || form.category === 'transportation') && (
         <div className="space-y-2">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Uniforms & Staff Attire</label>
           <p className="text-xs text-muted-foreground">Optional. Define uniforms for staff roles. Visitors, customers, and patrons are never given uniforms. Changes persist when you save the location.</p>
