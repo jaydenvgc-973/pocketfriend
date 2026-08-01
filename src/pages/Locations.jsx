@@ -246,7 +246,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} />
+            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} onResidentsChanged={onLocationUpdate} />
                     {isShared && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
                         <p className="text-xs text-amber-400">🔒 This is a shared location. Only admins can edit it. Your characters can visit but cannot be permanently assigned here.</p>
@@ -1847,7 +1847,7 @@ export default function Locations() {
 
   const renderLocationCard = (loc) => (
     <React.Fragment key={loc.id}>
-      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} onLocationUpdate={() => queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] })} />
+      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} onLocationUpdate={() => { queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       {inlineEditId === loc.id && (
         <LocationForm
           key={`edit-${loc.id}`}

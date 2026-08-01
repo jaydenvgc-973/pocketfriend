@@ -59,32 +59,99 @@ Deno.serve(async (req) => {
     };
 
     if (action === 'fire' || action === 'quit') {
-      // Remove from location roster
+      // ── FULL ROSTER + DATA REMOVAL ──────────────────────────────────────────
+      // The character no longer works at this location. Every trace of their
+      // employment must be removed from BOTH the location record AND the
+      // character record. Leaving stale worker_shifts / worker_job_titles /
+      // worker_pay_rates keys on the location causes the UI roster merge
+      // (worker_character_ids ∪ keys(worker_job_titles) ∪ keys(worker_shifts))
+      // to keep showing them as employed.
       const newWorkerIds = workerIds.filter(id => id !== characterId);
-      await base44.entities.LocationReference.update(locationId, {
-        worker_character_ids: newWorkerIds,
-      });
 
-      // Clear character work schedule + set employment status
-      await base44.entities.Character.update(characterId, {
+      // Helper: strip this character's key from a per-worker map on the location.
+      const stripKey = (map) => {
+        if (!map || typeof map !== 'object') return undefined;
+        if (!(characterId in map)) return undefined; // not present — skip no-op write
+        const copy = { ...map };
+        delete copy[characterId];
+        return copy;
+      };
+
+      const locUpdate = { worker_character_ids: newWorkerIds };
+      const strippedShifts = stripKey(location.worker_shifts);
+      const strippedTitles = stripKey(location.worker_job_titles);
+      const strippedRates = stripKey(location.worker_pay_rates);
+      const strippedType = stripKey(location.worker_pay_type);
+      const strippedManualUniforms = stripKey(location.worker_manual_uniforms);
+      if (strippedShifts !== undefined) locUpdate.worker_shifts = strippedShifts;
+      if (strippedTitles !== undefined) locUpdate.worker_job_titles = strippedTitles;
+      if (strippedRates !== undefined) locUpdate.worker_pay_rates = strippedRates;
+      if (strippedType !== undefined) locUpdate.worker_pay_type = strippedType;
+      if (strippedManualUniforms !== undefined) locUpdate.worker_manual_uniforms = strippedManualUniforms;
+
+      await base44.entities.LocationReference.update(locationId, locUpdate);
+
+      // ── CHARACTER RECORD: clear all employment fields tied to THIS location ──
+      const isPrimaryJob = character.occupation_location_id === locationId;
+      const additionalOccs = Array.isArray(character.additional_occupation_locations)
+        ? character.additional_occupation_locations
+        : [];
+      const additionalIdx = additionalOccs.findIndex(e => e?.location_id === locationId);
+      const isSecondaryJob = additionalIdx >= 0;
+
+      const charUpdate = {
         employment_status: action === 'fire' ? 'fired' : 'quit',
-        work_days: [],
-        work_start_time: null,
-        work_end_time: null,
-        occupation_location_id: null,
-        occupation_location_name: null,
-        // If currently at work, move them home
-        ...(character.resolved_presence_status === 'at_work' ? {
-          resolved_presence_status: 'home',
-          resolved_source_reason: action === 'fire' ? 'fired_from_job' : 'quit_job',
-          resolved_last_updated_at: nowIso,
-        } : {}),
-      });
+      };
+
+      if (isPrimaryJob) {
+        // This was their primary job — clear the primary work schedule + location
+        charUpdate.work_days = [];
+        charUpdate.work_start_time = null;
+        charUpdate.work_end_time = null;
+        charUpdate.occupation_location_id = null;
+        charUpdate.occupation_location_name = null;
+        charUpdate.current_work_location_id = null;
+        charUpdate.work_exception_status = null;
+        charUpdate.work_exception_date = null;
+        charUpdate.work_exception_reason = null;
+        // Clear work_details if it references this location
+        if (character.work_details && (
+          character.work_details.location_name === location.name ||
+          character.work_details.location_id === locationId
+        )) {
+          charUpdate.work_details = {};
+        }
+
+        // If they also have this location as a SECONDARY job, that entry is
+        // removed below. If they have OTHER secondary jobs, leave them — only
+        // this location's employment is being terminated.
+      }
+
+      // Remove this location from additional_occupation_locations if present
+      if (isSecondaryJob) {
+        charUpdate.additional_occupation_locations = additionalOccs.filter((_, i) => i !== additionalIdx);
+      }
+
+      // If they are currently AT WORK at this location, send them home
+      if (character.resolved_presence_status === 'at_work'
+          && (character.current_work_location_id === locationId
+              || character.occupation_location_id === locationId)) {
+        charUpdate.resolved_presence_status = 'home';
+        charUpdate.resolved_source_reason = action === 'fire' ? 'fired_from_job' : 'quit_job';
+        charUpdate.resolved_last_updated_at = nowIso;
+      }
+
+      await base44.entities.Character.update(characterId, charUpdate);
 
       proof.action_taken = `${action} applied`;
       proof.removed_from_roster = isOnRoster;
-      proof.work_schedule_cleared = true;
-      proof.presence_updated = character.resolved_presence_status === 'at_work';
+      proof.was_primary_job = isPrimaryJob;
+      proof.was_secondary_job = isSecondaryJob;
+      proof.work_schedule_cleared = isPrimaryJob;
+      proof.current_work_location_cleared = isPrimaryJob;
+      proof.location_maps_cleaned = Object.keys(locUpdate).filter(k => k !== 'worker_character_ids');
+      proof.presence_updated = character.resolved_presence_status === 'at_work'
+        && (character.current_work_location_id === locationId || character.occupation_location_id === locationId);
 
       // Log LifeEvent
       await base44.asServiceRole.entities.LifeEvent.create({
