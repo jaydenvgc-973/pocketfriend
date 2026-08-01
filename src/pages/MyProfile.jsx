@@ -16,6 +16,7 @@ import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRe
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
 import LocationImage from "@/components/profile/LocationImage";
+import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { useUserActiveOutfit } from "@/lib/activeOutfitResolver";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
@@ -49,6 +50,11 @@ export default function MyProfile() {
       : [],
     enabled: !!user?.email,
   });
+
+  // ORDER ONLY: apply canonical ManageCharacterList hierarchy (active_created → npc_fictitious
+  // → npc_family → untyped/test → moved_away), alphabetical within each group.
+  // Roster composition unchanged — only display order.
+  const sortedCharacters = sortCharactersByManageListHierarchy(characters);
 
   const { data: ownedLocations = [] } = useQuery({
     queryKey: ["userOwnedLocations", user?.id],
@@ -476,7 +482,7 @@ export default function MyProfile() {
             </div>
             <div className="px-4 pb-4">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
-                {characters.slice(0, 8).map(char => (
+                {sortedCharacters.slice(0, 8).map(char => (
                   <Link key={char.id} to={`/profile/${char.id}`} className="flex-shrink-0 flex flex-col items-center gap-1 w-14">
                     <div className="w-11 h-11 rounded-full bg-gradient-to-br from-primary/20 to-accent/10 ring-1 ring-primary/20 flex items-center justify-center overflow-hidden">
                       {char.avatar_url ? (
@@ -509,7 +515,7 @@ export default function MyProfile() {
           <section className="bg-card border border-border rounded-2xl p-5">
             <ProfileSectionHeader icon={Users} title="Characters in Your World" subtitle={`${characters.length} active · Assign your relationship`} />
             <div className="space-y-1">
-              {characters.map(char => {
+              {sortedCharacters.map(char => {
                 const currentRelative = relativeRelationships[char.id];
                 const reciprocal = currentRelative ? getReciprocalRole(currentRelative, userGender) : null;
                 const hasKey = (settings.home_key_holders || []).some(k => k.character_id === char.id);
