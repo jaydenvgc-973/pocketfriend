@@ -355,6 +355,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       });
       const locationReferenceId = res?.data?.location_reference_id;
       if (!locationReferenceId) throw new Error('Failed to create location');
+      // Invalidate the location cache so the Scene page refetches with the newly
+      // created location included immediately — no stale "Location not found" flash.
+      queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser?.email] });
       const params = new URLSearchParams({ locationId: locationReferenceId, characterIds: selectedCharacterIds.join(",") });
       navigate(`/scene?${params.toString()}`);
     } catch (err) {
