@@ -137,8 +137,9 @@ function TextareaField({ character, field, label, placeholder }) {
 
 // ── Fuzzy name match: score similarity between two names ──────────────────────
 function nameSimilarity(a, b) {
-  const norm = s => s.toLowerCase().trim();
+  const norm = s => (s || '').toLowerCase().trim();
   const na = norm(a), nb = norm(b);
+  if (!na || !nb) return 0;
   if (na === nb) return 1;
   if (na.includes(nb) || nb.includes(na)) return 0.85;
   // First name match
