@@ -550,24 +550,23 @@ export default function StoryEventViewer({ eventId }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          {/* Edit is always available — even during generating */}
+          <button
+            onClick={() => { setShowEditModal(true); setActionError(null); }}
+            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+            title="Edit event details"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
           {isComplete && (
-            <>
-              <button
-                onClick={() => { setShowEditModal(true); setActionError(null); }}
-                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-                title="Edit event details"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={handleEventRegenerate}
-                disabled={eventRegenerating}
-                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                title="Regenerate story from scratch"
-              >
-                {eventRegenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              </button>
-            </>
+            <button
+              onClick={handleEventRegenerate}
+              disabled={eventRegenerating}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+              title="Regenerate story from scratch"
+            >
+              {eventRegenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            </button>
           )}
           {/* Delete is always available — even during generating */}
           <button
