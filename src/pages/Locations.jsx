@@ -1563,7 +1563,11 @@ export default function Locations() {
     // ────────────────────────────────────────────────────────────────────────
 
     if (editingLocationId) {
-      await base44.entities.LocationReference.update(editingLocationId, { ...saveData, ...enrichedFields });
+      // When a saved place (is_real_world) is edited and saved, convert it to a
+      // regular app location by clearing the flag — it then appears in "All Locations".
+      const editingLoc = locations.find(l => l.id === editingLocationId);
+      const conversionFields = editingLoc?.is_real_world ? { is_real_world: false } : {};
+      await base44.entities.LocationReference.update(editingLocationId, { ...saveData, ...enrichedFields, ...conversionFields });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
@@ -1778,6 +1782,7 @@ export default function Locations() {
 
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["realLocations", currentUser?.email] });
     // Invalidate workLocations for every worker assigned — so CharacterProfile Income Sources
     // reflects the new assignment immediately without waiting for the 2-minute stale window.
     workerIds.forEach(charId => {
@@ -1915,7 +1920,14 @@ export default function Locations() {
         )}
 
         {activeTab === "saved_places" ? (
-          <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
+          <SavedPlaces
+            currentUser={currentUser}
+            onLocationSelect={() => {}}
+            onEdit={(loc) => {
+              setInlineEditId(loc.id);
+              setActiveTab("locations");
+            }}
+          />
         ) : (
           <>
             {locationsLoading && (

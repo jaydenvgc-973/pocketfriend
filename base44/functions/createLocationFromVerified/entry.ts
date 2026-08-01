@@ -56,15 +56,85 @@ Deno.serve(async (req) => {
     };
     const category = categoryMap[vl.app_location_category] || 'generic';
 
-    // Create LocationReference
+    // ── AUTO-POPULATE ZONES based on category ──────────────────────────────
+    // Every real-world location gets 1–3 default zones so the Scene page can
+    // render without a black screen. The auto-generated exterior image is
+    // assigned to the first zone (Front Entrance).
+    const CATEGORY_ZONES: Record<string, Array<{ zone_name: string; zone_description: string }>> = {
+      food_drink: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Dining Area', zone_description: 'Where people sit to eat' },
+        { zone_name: 'Counter / Cashier', zone_description: 'Order and pickup area' },
+      ],
+      gym: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Workout Floor', zone_description: 'Main exercise area' },
+        { zone_name: 'Locker Room', zone_description: 'Changing rooms and restrooms' },
+      ],
+      social: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Floor', zone_description: 'Main social area' },
+        { zone_name: 'Bar Area', zone_description: 'Bar and seating' },
+      ],
+      outdoor: [
+        { zone_name: 'Entrance', zone_description: 'Main entrance and approach' },
+        { zone_name: 'Main Area', zone_description: 'Primary outdoor space' },
+      ],
+      medical: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Waiting Area', zone_description: 'Reception and waiting' },
+        { zone_name: 'Patient Room', zone_description: 'Examination area' },
+      ],
+      grocery: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Floor', zone_description: 'Shopping area' },
+        { zone_name: 'Checkout', zone_description: 'Cashier area' },
+      ],
+      education: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Hallway', zone_description: 'Central corridor' },
+        { zone_name: 'Classroom', zone_description: 'Main classroom' },
+      ],
+      business: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Office', zone_description: 'Primary workspace' },
+        { zone_name: 'Reception', zone_description: 'Front desk area' },
+      ],
+      religion: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Sanctuary', zone_description: 'Worship area' },
+      ],
+      public: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Area', zone_description: 'Primary public space' },
+        { zone_name: 'Bathroom', zone_description: 'Restroom facilities' },
+      ],
+      generic: [
+        { zone_name: 'Front Entrance', zone_description: 'Exterior and entrance' },
+        { zone_name: 'Main Area', zone_description: 'Primary space' },
+        { zone_name: 'Bathroom', zone_description: 'Restroom facilities' },
+      ],
+    };
+
+    const zoneTemplates = CATEGORY_ZONES[category] || CATEGORY_ZONES.generic;
+    const zones = zoneTemplates.map((z, i) => ({
+      zone_name: z.zone_name,
+      zone_description: z.zone_description,
+      // Assign the auto-generated exterior image to the first zone only
+      image_urls: (i === 0 && vl.image_url) ? [vl.image_url] : [],
+    }));
+
+    // Create LocationReference with zones + is_real_world flag
     const locRef = await base44.entities.LocationReference.create({
       name: vl.place_name,
       location_type: 'global',
       category,
       description: vl.formatted_address || '',
       is_user_created: true,
+      is_real_world: true,
       keywords: [vl.place_name.toLowerCase(), vl.city?.toLowerCase()].filter(Boolean),
       image_urls: vl.image_url ? [vl.image_url] : [],
+      zones,
     });
 
     // Link back
