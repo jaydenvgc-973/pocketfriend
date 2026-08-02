@@ -709,14 +709,17 @@ export default function MessageBubble({ message, character, showName = false, on
             )}
           </div>
 
-          {/* Reactions + copy + location signal + add button — anchored to bottom corner */}
-          {!isNarrative && !isUser && (
-           <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
+          {/* Reactions — shown on ALL messages (user + character).
+              Characters react to user messages via Tier-5 background task (event-driven, not polling);
+              users react to character messages via the add-reaction button.
+              Other action buttons (copy, location signal, add-reaction) are character-message only. */}
+          {!isNarrative && (
+           <div className={`absolute -bottom-2.5 z-20 flex gap-0.5 items-center ${isUser ? "left-1" : "right-1"}`}>
              {hasReactions && (
                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
              )}
-             {/* Copy button — appears on hover, copies full message text */}
-             {message.content && (
+             {/* Copy button — character messages only */}
+             {!isUser && message.content && (
                <button
                  onClick={(e) => {
                    e.stopPropagation();
@@ -730,7 +733,7 @@ export default function MessageBubble({ message, character, showName = false, on
                  {copied ? <Check className="w-2.5 h-2.5" /> : <Copy className="w-2.5 h-2.5" />}
                </button>
              )}
-             {onLocationSignal && (message.content || localImageUrl) && (
+             {!isUser && onLocationSignal && (message.content || localImageUrl) && (
                <LocationSignalButton
                  message={message}
                  onLocationSignal={onLocationSignal}
@@ -739,7 +742,7 @@ export default function MessageBubble({ message, character, showName = false, on
                  isImageOnly={!message.content && !!localImageUrl}
                />
              )}
-             {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
+             {!isUser && onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
            </div>
           )}
         </div>
