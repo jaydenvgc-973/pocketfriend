@@ -150,9 +150,13 @@ function collectAllMentionedCharacterIds(text, currentCharacterId, allCharacters
     }
   }
 
-  // First name matches — only if unambiguous (exactly one character with that first name)
-  const capitalizedWords = (text.match(/\b([A-Z][a-z]+)\b/g) || []).map(n => n.toLowerCase());
-  for (const word of capitalizedWords) {
+  // First name matches — case-insensitive, only if unambiguous
+  // (exactly one character with that first name). Uses ALL alphabetic words,
+  // not just capitalized ones, so lowercase requests like "ethan and sarah"
+  // resolve correctly. Common words ("the", "and", "with") never match a
+  // character first name, so false positives are not a concern.
+  const words = (textLower.match(/\b[a-z]+\b/g) || []);
+  for (const word of words) {
     const candidates = others.filter(c => {
       const firstName = c.name.toLowerCase().split(' ')[0];
       return firstName === word;
@@ -255,6 +259,59 @@ const IMAGE_INTENT_PATTERNS = [
 function detectImageIntent(text) {
   if (!text) return false;
   return IMAGE_INTENT_PATTERNS.some(p => p.test(text));
+}
+
+/**
+ * Detect whether the user's wording explicitly connects a specific character
+ * to an image as the sender. Returns the character object or null.
+ *
+ * Unlike findMentionedCharacter (which matches any name anywhere in the
+ * request), this only returns a sender when the wording LINKS a name to
+ * sending/showing an image:
+ *   - "the picture Ethan sent" / "Ethan sent a picture"
+ *   - "Ethan's picture"
+ *   - "the picture from Ethan"
+ *   - "I sent a picture" → current character
+ *
+ * A name used only to identify group membership ("the group with Ethan and
+ * Sarah — what was the picture?") must NOT be treated as an image sender.
+ * When no sender is identified, the caller considers all images in the
+ * already-resolved conversation.
+ */
+function detectImageSender(text, allCharacters, currentCharacterId) {
+  if (!text || !Array.isArray(allCharacters)) return null;
+  const textLower = text.toLowerCase();
+  const others = allCharacters.filter(c => c.id !== currentCharacterId && c.name);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const IMG_WORDS = 'picture|pictures|photo|photos|pic|pics|image|images';
+  const SEND_WORDS = 'sent|send|posted|shared';
+
+  for (const c of others) {
+    const nameLower = c.name.toLowerCase();
+    const firstName = nameLower.split(' ')[0];
+    const names = [nameLower];
+    if (firstName !== nameLower) names.push(firstName);
+
+    for (const n of names) {
+      const e = esc(n);
+      // "[name] sent a picture"
+      if (new RegExp(`\\b${e}\\b[^.]{0,25}\\b(${SEND_WORDS})\\b[^.]{0,25}\\b(${IMG_WORDS})\\b`, 'i').test(text)) return c;
+      // "the picture [name] sent"
+      if (new RegExp(`\\b(${IMG_WORDS})\\b[^.]{0,25}\\b${e}\\b[^.]{0,25}\\b(${SEND_WORDS})\\b`, 'i').test(text)) return c;
+      // "[name]'s picture"
+      if (new RegExp(`\\b${e}'?s?\\b\\s+(${IMG_WORDS})`, 'i').test(text)) return c;
+      // "picture from [name]"
+      if (new RegExp(`\\b(${IMG_WORDS})\\b\\s+from\\s+\\b${e}\\b`, 'i').test(text)) return c;
+    }
+  }
+
+  // Check if the current character is identified as sender ("I sent a picture")
+  if (new RegExp(`\\b(i|my|me)\\b[^.]{0,20}\\b(${SEND_WORDS})\\b[^.]{0,20}\\b(${IMG_WORDS})\\b`, 'i').test(text)) {
+    const me = allCharacters.find(c => c.id === currentCharacterId);
+    return me || { id: currentCharacterId, name: 'you' };
+  }
+
+  return null;
 }
 
 function buildImageClarificationBlock(senderLabel, imageCount) {
@@ -478,9 +535,9 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
   // A text-only request uses stored descriptions without triggering analysis.
   // When image intent is detected, the relevant image is selected by sender and
   // conversation, not by recency alone.
-  const namedGroupSender = findMentionedCharacter(userMessage, characterId, allCharacters);
-  const namedGroupSenderId = namedGroupSender ? namedGroupSender.id : null;
-  const namedGroupSenderName = namedGroupSender ? namedGroupSender.name : null;
+  const groupImageSender = detectImageSender(userMessage, allCharacters, characterId);
+  const namedGroupSenderId = groupImageSender ? groupImageSender.id : null;
+  const namedGroupSenderName = groupImageSender ? groupImageSender.name : null;
 
   const groupImageResolution = resolveRelevantImageForRetrieval({
     userMessage,
@@ -758,9 +815,9 @@ export async function buildWorldPhoneRetrievalContext({
   // A text-only request uses stored descriptions without triggering analysis.
   // When image intent is detected, the relevant image is selected by sender and
   // conversation, not by recency alone.
-  const userSelfImage = /\b(i|my|me)\b[^.]{0,20}\b(sent|send|posted|shared)\b[^.]{0,20}\b(picture|photo|pic|image)/i.test(userMessage);
-  const namedDirectSenderId = userSelfImage ? characterId : (mentionedChar ? mentionedChar.id : null);
-  const namedDirectSenderName = userSelfImage ? (character.name || 'you') : (mentionedChar ? mentionedChar.name : null);
+  const directImageSender = detectImageSender(userMessage, allCharacters, characterId);
+  const namedDirectSenderId = directImageSender ? directImageSender.id : null;
+  const namedDirectSenderName = directImageSender ? directImageSender.name : null;
 
   const directImageResolution = resolveRelevantImageForRetrieval({
     userMessage,
