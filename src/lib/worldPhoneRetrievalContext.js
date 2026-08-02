@@ -130,6 +130,41 @@ function findMentionedCharacter(text, currentCharacterId, allCharacters) {
   return null;
 }
 
+// ── GROUP-SPECIFIC MULTI-PARTICIPANT COLLECTOR ──────────────────────────────
+// Collect ALL unambiguous character IDs mentioned in the user's request.
+// This is GROUP-ONLY — it does NOT change findMentionedCharacter, which serves
+// the direct World Phone path with its established single-character contract.
+// Used by retrieveGroupContext to narrow candidate groups by the FULL set of
+// named participants (e.g. "the group with Ethan and Sarah" → both IDs).
+function collectAllMentionedCharacterIds(text, currentCharacterId, allCharacters) {
+  if (!text || !Array.isArray(allCharacters)) return [];
+  const textLower = text.toLowerCase();
+  const others = allCharacters.filter(c => c.id !== currentCharacterId && c.name);
+  if (others.length === 0) return [];
+  const found = new Set();
+
+  // Full name matches — highest specificity
+  for (const c of others) {
+    if (textLower.includes(c.name.toLowerCase())) {
+      found.add(c.id);
+    }
+  }
+
+  // First name matches — only if unambiguous (exactly one character with that first name)
+  const capitalizedWords = (text.match(/\b([A-Z][a-z]+)\b/g) || []).map(n => n.toLowerCase());
+  for (const word of capitalizedWords) {
+    const candidates = others.filter(c => {
+      const firstName = c.name.toLowerCase().split(' ')[0];
+      return firstName === word;
+    });
+    if (candidates.length === 1) {
+      found.add(candidates[0].id);
+    }
+  }
+
+  return [...found];
+}
+
 // Extract the relationship role from a user message like "what did your father say".
 // Returns the role term as typed (e.g. 'father', 'dad') or null. Detection only —
 // the role term is then resolved through the shared relationshipRoleResolver authority.
@@ -199,6 +234,11 @@ function buildGroupAmbiguityBlock(characterName, groupNames) {
   return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — MULTIPLE GROUPS MATCH\n════════════════════════════════════\nThe user asked about a group chat. You are in multiple group conversations: ${list}.\n\nAsk the user which group they mean. Do NOT guess or read from the wrong group.\n════════════════════════════════════`;
 }
 
+function buildGroupNoParticipantMatchBlock(characterName, namedParticipants) {
+  const names = namedParticipants.join(', ');
+  return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — NO MATCHING GROUP FOUND\n════════════════════════════════════\nThe user asked about a group chat involving ${names}. No group conversation was found that includes ALL of those participants together with you (${characterName}).\n\nCRITICAL:\nDo NOT invent what was said. Do NOT guess from a partial match. Respond honestly:\n- "I can't find a group with all of those people."\n- "I don't see a group chat with ${names} together — can you clarify which one you mean?"\nAsk the user to clarify which group they are referring to.\n════════════════════════════════════`;
+}
+
 function buildGroupRetrievalBlock(groupTitle, transcript, totalCount, characterName) {
   return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — AUTHORITATIVE RECORD (${groupTitle})\n════════════════════════════════════\nThe user asked about your group chat "${groupTitle}". Below is the ACTUAL message record retrieved from that group conversation. This is the ONLY authoritative source for what was said.\n\n--- Group Transcript (${totalCount} total messages, showing most recent 40) ---\n${transcript || '(no messages found)'}\n--- End Group Transcript ---\n\nCRITICAL — RETRIEVAL BEFORE GENERATION:\n1. You may ONLY quote or summarize messages that appear in the transcript above.\n2. You may NOT invent, infer, reconstruct, or fabricate any message that does not appear above.\n3. If the user asks about a message that is NOT in the transcript, state that you cannot find it.\n4. You may NOT use your memory as proof of what was said. The transcript is the authoritative record.\n5. Image descriptions in brackets [sent an image: ...] are the stored visual descriptions of what was shared — treat them as what you actually saw.\n════════════════════════════════════`;
 }
@@ -240,33 +280,51 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
   if (charGroups.length === 1) {
     targetGroup = charGroups[0];
   } else {
-    // Try to resolve by matching character names mentioned in the user message
-    // findMentionedCharacter returns a single character object (or null).
-    const mentionedChar = findMentionedCharacter(userMessage, characterId, allCharacters);
-    if (mentionedChar) {
-      const mentionedIds = new Set([mentionedChar.id]);
-      // Score each group by whether it contains the mentioned character
-      const scored = charGroups.map(g => ({
-        group: g,
-        overlap: (g.character_ids || []).filter(id => mentionedIds.has(id)).length,
-      })).filter(s => s.overlap > 0).sort((a, b) => b.overlap - a.overlap);
+    // Collect ALL unambiguous participant names mentioned in the user's request.
+    // This is group-specific and does NOT use findMentionedCharacter (which serves
+    // the direct path with a single-character contract). We narrow candidates to
+    // groups that contain the FULL named participant set — no partial-match fallback.
+    const mentionedIds = collectAllMentionedCharacterIds(userMessage, characterId, allCharacters);
 
-      if (scored.length > 0) {
-        // Tie detection: if the top two have the same overlap score, it's ambiguous
-        if (scored.length > 1 && scored[0].overlap === scored[1].overlap) {
-          return {
-            block: buildGroupAmbiguityBlock(
-              character.name || 'you',
-              charGroups.map(g => g.title || 'untitled')
-            ),
-            contactName: null,
-            messageCount: 0,
-            noRecord: false,
-            ambiguous: true,
-            isGroup: true,
-          };
-        }
-        targetGroup = scored[0].group;
+    if (mentionedIds.length > 0) {
+      // Keep only groups that contain ALL named participants
+      const containingAll = charGroups.filter(g => {
+        const gids = new Set(g.character_ids || []);
+        return mentionedIds.every(id => gids.has(id));
+      });
+
+      if (containingAll.length === 1) {
+        targetGroup = containingAll[0];
+      } else if (containingAll.length > 1) {
+        // Multiple groups contain all named participants — ambiguous, ask for clarification
+        return {
+          block: buildGroupAmbiguityBlock(
+            character.name || 'you',
+            containingAll.map(g => g.title || 'untitled')
+          ),
+          contactName: null,
+          messageCount: 0,
+          noRecord: false,
+          ambiguous: true,
+          isGroup: true,
+        };
+      } else {
+        // No group contains ALL named participants — do NOT fall back to partial match.
+        // State that no matching group was found and ask for clarification.
+        const namedNames = mentionedIds
+          .map(id => allCharacters.find(c => c.id === id))
+          .filter(c => c)
+          .map(c => c.name);
+        return {
+          block: buildGroupNoParticipantMatchBlock(
+            character.name || 'you',
+            namedNames.length > 0 ? namedNames : ['the people you mentioned']
+          ),
+          contactName: null,
+          messageCount: 0,
+          noRecord: false,
+          isGroup: true,
+        };
       }
     }
 
@@ -349,6 +407,37 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     }
   }
 
+  // ── RELEVANT IMAGE RESOLUTION (awaited) ────────────────────────────────────
+  // When the user's current request requires viewing an image and the relevant
+  // message has image_url but no usable stored description, AWAIT the existing
+  // analyzeImageForCharacterContext pathway so the current response receives the
+  // grounded visual description. Only the MOST RECENT undescribed image is
+  // analyzed — do NOT analyze every undescribed image in the transcript.
+  const recentGroupMessages = [...validGroupMessages].reverse();
+  const mostRecentUndescribedGroupImage = recentGroupMessages.find(m =>
+    m.image_url && !(m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description)
+  );
+  let resolvedGroupImage = null;
+  if (mostRecentUndescribedGroupImage) {
+    try {
+      const result = await analyzeImageForCharacterContext({
+        imageUrl: mostRecentUndescribedGroupImage.image_url,
+        messageId: mostRecentUndescribedGroupImage.id,
+        context: 'retrieval_recall',
+      });
+      resolvedGroupImage = {
+        messageId: mostRecentUndescribedGroupImage.id,
+        description: result.imageDescription,
+      };
+    } catch {
+      resolvedGroupImage = {
+        messageId: mostRecentUndescribedGroupImage.id,
+        description: null,
+      };
+    }
+  }
+
   // Build the group transcript (last 40 messages, chronological order)
   const groupTranscript = validGroupMessages.slice(-40).map(m => {
     let speaker;
@@ -364,21 +453,24 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
       timeZone: 'America/New_York',
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
-    const imageDesc = m.user_edited_description || m.visual_analysis_description ||
+    // Use stored description if available, else the freshly resolved description
+    // for the relevant image. If the awaited analysis failed (description is null),
+    // the character honestly cannot see the image. Other undescribed images are
+    // noted without triggering analysis.
+    const storedGroupDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description || null;
+    const resolvedGroupDesc = (resolvedGroupImage && m.id === resolvedGroupImage.messageId)
+      ? resolvedGroupImage.description : null;
     let imageNote = '';
-    if (imageDesc) {
-      imageNote = ` [sent an image: ${imageDesc}]`;
+    if (storedGroupDesc) {
+      imageNote = ` [sent an image: ${storedGroupDesc}]`;
+    } else if (resolvedGroupDesc) {
+      imageNote = ` [sent an image: ${resolvedGroupDesc}]`;
+    } else if (m.image_url && resolvedGroupImage && m.id === resolvedGroupImage.messageId) {
+      // Awaited analysis failed — character honestly cannot view this image
+      imageNote = ` [sent an image — could not be analyzed, unable to see what's in it]`;
     } else if (m.image_url) {
-      // Image exists but no stored description — use the existing analysis pathway.
-      // Fire off analysis non-blocking so the description is stored durably for next time.
-      // Do NOT fabricate a description or expose the URL as visual understanding.
-      analyzeImageForCharacterContext({
-        imageUrl: m.image_url,
-        messageId: m.id,
-        context: 'retrieval_recall',
-      }).catch(() => {});
-      imageNote = ` [sent an image — visual analysis in progress]`;
+      imageNote = ` [sent an image]`;
     }
     return `[${timeStr}] ${speaker}: ${m.content || ''}${imageNote}`;
   }).join('\n');
@@ -585,6 +677,37 @@ export async function buildWorldPhoneRetrievalContext({
   ).length;
   const fromOtherChar = validMessages.length - fromCurrentChar;
 
+  // ── RELEVANT IMAGE RESOLUTION (awaited) ────────────────────────────────────
+  // When the user's current request requires viewing an image and the relevant
+  // message has image_url but no usable stored description, AWAIT the existing
+  // analyzeImageForCharacterContext pathway so the current response receives the
+  // grounded visual description. Only the MOST RECENT undescribed image is
+  // analyzed — do NOT analyze every undescribed image in the transcript.
+  const recentDirectMessages = [...validMessages].reverse();
+  const mostRecentUndescribedDirectImage = recentDirectMessages.find(m =>
+    m.image_url && !(m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description)
+  );
+  let resolvedDirectImage = null;
+  if (mostRecentUndescribedDirectImage) {
+    try {
+      const result = await analyzeImageForCharacterContext({
+        imageUrl: mostRecentUndescribedDirectImage.image_url,
+        messageId: mostRecentUndescribedDirectImage.id,
+        context: 'retrieval_recall',
+      });
+      resolvedDirectImage = {
+        messageId: mostRecentUndescribedDirectImage.id,
+        description: result.imageDescription,
+      };
+    } catch {
+      resolvedDirectImage = {
+        messageId: mostRecentUndescribedDirectImage.id,
+        description: null,
+      };
+    }
+  }
+
   // Build the transcript (last 40 messages to keep prompt size reasonable)
   const transcript = validMessages.slice(-40).map(m => {
     const isFromCurrentChar = m.sender_character_id === characterId ||
@@ -595,22 +718,24 @@ export async function buildWorldPhoneRetrievalContext({
       timeZone: 'America/New_York',
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
-    // Include stored image description when available (user_edited > visual > image > inferred).
-    // When an image_url exists but NO stored description is available, use the existing
-    // analysis pathway (analyzeImageForCharacterContext) to populate the description
-    // durably for future retrieval. Do NOT fabricate, expose the URL, or drop the image.
-    const imageDesc = m.user_edited_description || m.visual_analysis_description ||
+    // Use stored description if available, else the freshly resolved description
+    // for the relevant image. If the awaited analysis failed (description is null),
+    // the character honestly cannot see the image. Other undescribed images are
+    // noted without triggering analysis.
+    const storedDirectDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description || null;
+    const resolvedDirectDesc = (resolvedDirectImage && m.id === resolvedDirectImage.messageId)
+      ? resolvedDirectImage.description : null;
     let imageNote = '';
-    if (imageDesc) {
-      imageNote = ` [sent an image: ${imageDesc}]`;
+    if (storedDirectDesc) {
+      imageNote = ` [sent an image: ${storedDirectDesc}]`;
+    } else if (resolvedDirectDesc) {
+      imageNote = ` [sent an image: ${resolvedDirectDesc}]`;
+    } else if (m.image_url && resolvedDirectImage && m.id === resolvedDirectImage.messageId) {
+      // Awaited analysis failed — character honestly cannot view this image
+      imageNote = ` [sent an image — could not be analyzed, unable to see what's in it]`;
     } else if (m.image_url) {
-      analyzeImageForCharacterContext({
-        imageUrl: m.image_url,
-        messageId: m.id,
-        context: 'retrieval_recall',
-      }).catch(() => {});
-      imageNote = ` [sent an image — visual analysis in progress]`;
+      imageNote = ` [sent an image]`;
     }
     return `[${timeStr}] ${sender}: ${m.content || ''}${imageNote}`;
   }).join('\n');
