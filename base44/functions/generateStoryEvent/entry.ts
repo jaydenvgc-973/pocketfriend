@@ -1001,6 +1001,22 @@ Deno.serve(async (req) => {
         }
       } catch (imgErr) {
         console.warn(`[generateStoryEvent] Image generation failed for moment="${img.moment}": ${imgErr?.message}`);
+        // Create a failed StoryEventImage record so the frontend can show
+        // an error placeholder with a regenerate button for this specific moment.
+        // The event still completes — narrative success is never blocked by a single image failure.
+        try {
+          await base44.asServiceRole.entities.StoryEventImage.create({
+            story_event_id: eventId,
+            moment_type: img.moment,
+            description: img.description || '',
+            prompt: img.prompt || '',
+            order: momentOrder[img.moment] ?? 0,
+            visible_character_ids: [],
+            visible_character_names: [],
+            visible_character_types: [],
+            regeneration_reason: `Generation failed: ${imgErr?.message || 'unknown error'}`,
+          });
+        } catch (_) {}
       }
     }
 
@@ -1413,6 +1429,17 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
+    // CRITICAL: Ensure the StoryEvent never stays stuck in 'generating'.
+    // Any uncaught error must transition the status to 'failed' so the user
+    // sees a clear failure state and can retry — not an infinite spinner.
+    if (eventId) {
+      try {
+        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+          status: 'failed',
+          generation_error: error.message || 'Generation failed unexpectedly',
+        });
+      } catch (_) {}
+    }
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

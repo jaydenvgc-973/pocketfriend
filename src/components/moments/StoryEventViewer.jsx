@@ -711,11 +711,38 @@ export default function StoryEventViewer({ eventId }) {
                   <div className="space-y-3">
                     {['opening', 'key_moment', 'closing'].map(moment => {
                       const img = imageByMoment[moment];
-                      if (!img?.image_url) return (
-                        <div key={moment} className="aspect-[4/3] rounded-lg bg-secondary/50 border border-border flex items-center justify-center">
-                          <span className="text-[9px] text-muted-foreground capitalize">{moment.replace('_', ' ')}</span>
-                        </div>
-                      );
+                      if (!img?.image_url) {
+                        const isFailedImg = !!img && !!img.regeneration_reason;
+                        return (
+                          <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
+                            <div className={`aspect-[4/3] flex items-center justify-center ${isFailedImg ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
+                              {isFailedImg ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <AlertCircle className="w-6 h-6 text-destructive/50" />
+                                  <span className="text-[9px] text-destructive/70">Image failed to generate</span>
+                                </div>
+                              ) : (
+                                <span className="text-[9px] text-muted-foreground capitalize">{moment.replace('_', ' ')}</span>
+                              )}
+                            </div>
+                            {isFailedImg && (
+                              <div className="px-3 py-2 flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] font-medium text-foreground capitalize">{moment.replace('_', ' ')}</span>
+                                  <p className="text-[9px] text-destructive/60 mt-0.5">Tap regenerate to retry</p>
+                                </div>
+                                <button
+                                  onClick={() => openRegenModal(img)}
+                                  className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                                  title="Regenerate image"
+                                >
+                                  <RefreshCw className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
                       return (
                         <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
                           <img src={img.image_url} alt={img.description || moment} className="w-full aspect-[4/3] object-cover" />
