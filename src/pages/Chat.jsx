@@ -35,7 +35,6 @@ import { buildClothingAwarenessContext, buildSelfClothingAwareness } from "@/lib
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
-import { maybeReactToUserMessage } from "@/hooks/useCharacterEmojiReaction";
 import { useNarrativeCorrection } from "@/hooks/useNarrativeCorrection";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useVoicePlayback } from "@/hooks/useVoicePlayback";
@@ -550,10 +549,6 @@ export default function Chat({ chatTypeOverride } = {}) {
     if (!userMsg || !userMsg.id) { setSendError("Message failed to save. Try again."); return; }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
-    // ── CHARACTER AUTONOMOUS REACTION TO USER MESSAGE ─────────────────────────
-    // Frequency-gated: ~1 reaction per 5-10 messages. Emoji is permanent once chosen.
-    maybeReactToUserMessage({ character, characterId, userMsg, text, setMessages });
-    // ── END CHARACTER AUTONOMOUS REACTION ─────────────────────────────────────
 
     // ── IMAGE + LINK ANALYSIS — started immediately, non-blocking ────────────
     // Both analyses are kicked off right after userMsg is created (we have the ID).
