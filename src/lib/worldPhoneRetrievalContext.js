@@ -241,10 +241,11 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     targetGroup = charGroups[0];
   } else {
     // Try to resolve by matching character names mentioned in the user message
-    const mentionedChars = findMentionedCharacter(userMessage, characterId, allCharacters);
-    if (mentionedChars && mentionedChars.length > 0) {
-      const mentionedIds = new Set(mentionedChars.map(c => c.id));
-      // Score each group by how many mentioned characters it contains
+    // findMentionedCharacter returns a single character object (or null).
+    const mentionedChar = findMentionedCharacter(userMessage, characterId, allCharacters);
+    if (mentionedChar) {
+      const mentionedIds = new Set([mentionedChar.id]);
+      // Score each group by whether it contains the mentioned character
       const scored = charGroups.map(g => ({
         group: g,
         overlap: (g.character_ids || []).filter(id => mentionedIds.has(id)).length,
