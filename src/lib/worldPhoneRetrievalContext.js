@@ -63,6 +63,11 @@ const WP_INTENT_PATTERNS = [
   /\b(world phone|world contacts?)\b/i,
   /(checking|look at|looking at|read|reading|check).{0,20}(world phone|world contacts?)/i,
   /(world phone|world contacts?).{0,20}(check|read|look|reading)/i,
+  // ── "read what X sent you" / "look at what X sent" / "read the message X sent" ──
+  // Past tense "sent" indicates existing content to read, not a compose instruction.
+  /(?:read|look at|see|check).{0,15}what\b.{0,40}\bsent\b/i,
+  /(?:read|look at|see).{0,10}(?:the |that )?(?:message|text|pic|photo|picture|image)\b.{0,40}\bsent\b/i,
+  /(?:read|look at|see|check).{0,15}what\b.{0,40}\bsend (?:you|me)\b/i,
   // ── Generic phone / messages / texts / contacts requests ──
   // "check your phone", "look at your messages", "read your texts", "check your contacts"
   /(check|look at|looking at|read|reading|see|seeing|open|pull up|show me).{0,15}(your|the|my).{0,15}(phone|messages|texts|text messages|contacts?|private messages?|phone messages?|dms?|inbox)/i,
@@ -314,11 +319,16 @@ export async function buildWorldPhoneRetrievalContext({
     };
   }
 
-  // Filter: exclude canon_excluded, recovery signals, empty content
+  // Filter: exclude canon_excluded, recovery signals.
+  // Retain messages that have ANY retrievable content: text, or a stored image description.
+  // Image-only messages (empty content) are retained when image_description exists.
   const validMessages = (Array.isArray(messages) ? messages : []).filter(m => {
     if (m.canon_excluded === true) return false;
     if (m.recovery_signal === true) return false;
-    return m.content && m.content.trim();
+    const hasText = m.content && m.content.trim();
+    const hasImageDesc = m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description;
+    return hasText || hasImageDesc;
   }).reverse(); // chronological order (oldest first)
 
   // Count messages by sender
@@ -338,7 +348,11 @@ export async function buildWorldPhoneRetrievalContext({
       timeZone: 'America/New_York',
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
-    return `[${timeStr}] ${sender}: ${m.content}`;
+    // Include stored image description when the message has an image (user_edited > visual > image > inferred)
+    const imageDesc = m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description || null;
+    const imageNote = imageDesc ? ` [sent an image: ${imageDesc}]` : '';
+    return `[${timeStr}] ${sender}: ${m.content || ''}${imageNote}`;
   }).join('\n');
 
   return {

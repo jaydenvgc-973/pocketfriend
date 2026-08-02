@@ -95,7 +95,7 @@ import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/worldPhoneCacheInvalidation";
 import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
 import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
-import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
+import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext"; import { buildGroupMessageRetrievalContext } from "@/lib/groupMessageRetrievalContext";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -971,13 +971,8 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         // World Contacts conversation with another character, retrieve the ACTUAL
         // message records so the character quotes real messages instead of inventing
         // what the other person said. Returns null when no WP intent is detected.
-        worldPhoneRetrieval: buildWorldPhoneRetrievalContext({
-          characterId,
-          character,
-          userMessage: text,
-          allCharacters: queryClient.getQueryData(["characters", currentUser?.email]) || [],
-          base44,
-        }).catch(() => null),
+        worldPhoneRetrieval: buildWorldPhoneRetrievalContext({ characterId, character, userMessage: text, allCharacters: queryClient.getQueryData(["characters", currentUser?.email]) || [], base44 }).catch(() => null),
+        groupRetrieval: buildGroupMessageRetrievalContext({ characterId, character, userMessage: text, allCharacters: queryClient.getQueryData(["characters", currentUser?.email]) || [], base44 }).catch(() => null),
       };
 
       // For employment prompt block (critical for schedule accuracy), fetch locations with shorter timeout
@@ -1049,26 +1044,13 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       // generation. If it times out, the block is empty and the existing post-response
       // guards (enforceWorldPhoneStateGuard) remain as the safety net.
       let worldPhoneRetrievalResult = null;
-      try {
-        worldPhoneRetrievalResult = await Promise.race([
-          optionalContextPromises.worldPhoneRetrieval,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-        ]);
-      } catch {
-        console.log('[Chat] World Phone retrieval timeout — using fallback (no authoritative record)');
-        worldPhoneRetrievalResult = null;
-      }
+      try { worldPhoneRetrievalResult = await Promise.race([optionalContextPromises.worldPhoneRetrieval, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]); } catch { worldPhoneRetrievalResult = null; }
       const worldPhoneRetrievalBlock = worldPhoneRetrievalResult?.block || '';
-      if (worldPhoneRetrievalResult) {
-        console.log(
-          `[Chat] WP_RETRIEVAL | contact=${worldPhoneRetrievalResult.contactName}` +
-          ` | messages=${worldPhoneRetrievalResult.messageCount}` +
-          ` | from_current=${worldPhoneRetrievalResult.fromCurrentChar ?? 0}` +
-          ` | from_other=${worldPhoneRetrievalResult.fromOtherChar ?? 0}` +
-          ` | no_record=${!!worldPhoneRetrievalResult.noRecord}` +
-          ` | char=${character?.name}`
-        );
-      }
+      if (worldPhoneRetrievalResult) console.log(`[Chat] WP_RETRIEVAL | contact=${worldPhoneRetrievalResult.contactName} | messages=${worldPhoneRetrievalResult.messageCount} | char=${character?.name}`);
+      let groupRetrievalResult = null;
+      try { groupRetrievalResult = await Promise.race([optionalContextPromises.groupRetrieval, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))]); } catch { groupRetrievalResult = null; }
+      const groupRetrievalBlock = groupRetrievalResult?.block || '';
+      if (groupRetrievalResult) console.log(`[Chat] GROUP_RETRIEVAL | group=${groupRetrievalResult.groupTitle} | messages=${groupRetrievalResult.messageCount} | ambiguous=${!!groupRetrievalResult.ambiguous} | char=${character?.name}`);
 
       const memData = memoryResult?.data;
       const _activeMems = memData?.memories || [];
@@ -1471,7 +1453,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         ? `\n\n════════════════════════════════════\nFAMILY IDENTITY — AUTHORITATIVE STATE (READ BEFORE CONVERSATION LOG)\nThis is verified live data from the database. It supersedes any claim in this prompt or conversation that contradicts it.\n${liveFamilyGraphBlock}\nCRITICAL: You are NOT an only child. You DO have family. Any prior message where you claimed otherwise was wrong. Your active state now reflects the truth above.\n════════════════════════════════════`
         : '';
 
-      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${groupRetrievalBlock}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
