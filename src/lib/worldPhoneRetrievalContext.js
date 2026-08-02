@@ -25,6 +25,7 @@
 // any records. It is non-blocking — returns null if no intent is detected.
 
 import { resolveRelationshipRoleRecipient } from './relationshipRoleResolver.js';
+import { analyzeImageForCharacterContext } from './analyzeImageForCharacterContext.js';
 
 // Canonical shared key — matches WorldContactsPopup.getCanonicalSharedKey
 // and sendWorldPhoneMessage backend function.
@@ -67,7 +68,6 @@ const WP_INTENT_PATTERNS = [
   // Past tense "sent" indicates existing content to read, not a compose instruction.
   /(?:read|look at|see|check).{0,15}what\b.{0,40}\bsent\b/i,
   /(?:read|look at|see).{0,10}(?:the |that )?(?:message|text|pic|photo|picture|image)\b.{0,40}\bsent\b/i,
-  /(?:read|look at|see|check).{0,15}what\b.{0,40}\bsend (?:you|me)\b/i,
   // ── Generic phone / messages / texts / contacts requests ──
   // "check your phone", "look at your messages", "read your texts", "check your contacts"
   /(check|look at|looking at|read|reading|see|seeing|open|pull up|show me).{0,15}(your|the|my).{0,15}(phone|messages|texts|text messages|contacts?|private messages?|phone messages?|dms?|inbox)/i,
@@ -83,6 +83,25 @@ const WP_INTENT_PATTERNS = [
 function detectWorldPhoneIntent(text) {
   if (!text) return false;
   return WP_INTENT_PATTERNS.some(p => p.test(text));
+}
+
+// ── GROUP CONVERSATION INTENT ──────────────────────────────────────────────
+// When the user explicitly references a group or group chat, the request is
+// routed to the group-message retrieval branch INSTEAD of the direct World
+// Phone path. This ensures mutual exclusivity: a group request NEVER produces
+// a direct World Phone retrieval block, and a direct-message request NEVER
+// invokes group retrieval.
+const GROUP_INTENT_PATTERNS = [
+  /\bgroup\s*chat\b/i,
+  /\bgroup\s*conversation\b/i,
+  /\bthe\s+group\b/i,
+  /\bin\s+(?:the\s+)?group\b/i,
+  /(?:read|check|look at|see|what(?:'s|s|s| did)).{0,20}\bgroup\b/i,
+];
+
+function detectGroupIntent(text) {
+  if (!text) return false;
+  return GROUP_INTENT_PATTERNS.some(p => p.test(text));
 }
 
 // Find the OTHER character mentioned in the user's message.
@@ -163,6 +182,222 @@ function buildRetrievalBlock(contactName, transcript, totalCount, fromCurrent, f
   return `\n\n════════════════════════════════════\nWORLD PHONE RETRIEVAL — AUTHORITATIVE RECORD (${contactName})\n════════════════════════════════════\nThe user asked about your World Phone conversation with ${contactName}. Below is the ACTUAL message record retrieved from the authoritative World Phone conversation. This is the ONLY authoritative source for what was said.\n\n--- Transcript (${totalCount} total messages, showing most recent 40) ---\n${transcript || '(no messages found)'}\n--- End Transcript ---\n\nCRITICAL — RETRIEVAL BEFORE GENERATION:\n1. You may ONLY quote or summarize messages that appear in the transcript above.\n2. You may NOT invent, infer, reconstruct, or fabricate any message that does not appear above.\n3. If the user asks about a message that is NOT in the transcript, state that you cannot find it: "I'm not seeing that in the thread" or "I don't have that message."\n4. You may NOT use your memory as proof of ${contactName}'s exact words. The transcript above is the authoritative record — memory is secondary.\n5. Distinguish between what you remember and what appears in the actual record. When in doubt, defer to the record.${missingNote}\n════════════════════════════════════`;
 }
 
+// ── GROUP CONVERSATION RETRIEVAL (internal branch) ──────────────────────────
+// When the user explicitly references a group conversation, this internal
+// branch retrieves group messages using the same established query as
+// GroupChat.jsx: Message.filter({ conversation_id }, 'created_date', 100).
+// It is mutually exclusive with the direct World Phone path — the main
+// function routes here ONLY when detectGroupIntent returns true, and returns
+// early so the direct WP logic never runs for the same request.
+
+function buildGroupNoRecordBlock(characterName) {
+  return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — NO GROUP FOUND\n════════════════════════════════════\nThe user asked about a group chat conversation. No group conversation was found that includes you (${characterName}) as a participant.\n\nCRITICAL:\nDo NOT invent what was said in a group chat. If you have no group chat record, respond honestly:\n- "I'm not in any group chat like that."\n- "I don't have a group conversation matching that."\nDo NOT fabricate group chat content from memory.\n════════════════════════════════════`;
+}
+
+function buildGroupAmbiguityBlock(characterName, groupNames) {
+  const list = groupNames.map(g => `"${g}"`).join(', ');
+  return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — MULTIPLE GROUPS MATCH\n════════════════════════════════════\nThe user asked about a group chat. You are in multiple group conversations: ${list}.\n\nAsk the user which group they mean. Do NOT guess or read from the wrong group.\n════════════════════════════════════`;
+}
+
+function buildGroupRetrievalBlock(groupTitle, transcript, totalCount, characterName) {
+  return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — AUTHORITATIVE RECORD (${groupTitle})\n════════════════════════════════════\nThe user asked about your group chat "${groupTitle}". Below is the ACTUAL message record retrieved from that group conversation. This is the ONLY authoritative source for what was said.\n\n--- Group Transcript (${totalCount} total messages, showing most recent 40) ---\n${transcript || '(no messages found)'}\n--- End Group Transcript ---\n\nCRITICAL — RETRIEVAL BEFORE GENERATION:\n1. You may ONLY quote or summarize messages that appear in the transcript above.\n2. You may NOT invent, infer, reconstruct, or fabricate any message that does not appear above.\n3. If the user asks about a message that is NOT in the transcript, state that you cannot find it.\n4. You may NOT use your memory as proof of what was said. The transcript is the authoritative record.\n5. Image descriptions in brackets [sent an image: ...] are the stored visual descriptions of what was shared — treat them as what you actually saw.\n════════════════════════════════════`;
+}
+
+async function retrieveGroupContext({ characterId, character, userMessage, allCharacters, base44 }) {
+  const ownerEmail = character.owner_email;
+  if (!ownerEmail) return null;
+
+  // Find group conversations where this character is a participant
+  let groupConvos = [];
+  try {
+    groupConvos = await base44.entities.Conversation.filter(
+      { type: 'group', owner_email: ownerEmail },
+      '-updated_date',
+      50
+    );
+  } catch {
+    return null; // non-blocking
+  }
+
+  const charGroups = (groupConvos || []).filter(c =>
+    Array.isArray(c.character_ids) && c.character_ids.includes(characterId) &&
+    c.sync_status !== 'merged'
+  );
+
+  if (charGroups.length === 0) {
+    return {
+      block: buildGroupNoRecordBlock(character.name || 'you'),
+      contactName: null,
+      messageCount: 0,
+      noRecord: true,
+      isGroup: true,
+    };
+  }
+
+  // Resolve the target group — only when unambiguously identified
+  let targetGroup = null;
+
+  if (charGroups.length === 1) {
+    targetGroup = charGroups[0];
+  } else {
+    // Try to resolve by matching character names mentioned in the user message
+    const mentionedChars = findMentionedCharacter(userMessage, characterId, allCharacters);
+    if (mentionedChars && mentionedChars.length > 0) {
+      const mentionedIds = new Set(mentionedChars.map(c => c.id));
+      // Score each group by how many mentioned characters it contains
+      const scored = charGroups.map(g => ({
+        group: g,
+        overlap: (g.character_ids || []).filter(id => mentionedIds.has(id)).length,
+      })).filter(s => s.overlap > 0).sort((a, b) => b.overlap - a.overlap);
+
+      if (scored.length > 0) {
+        // Tie detection: if the top two have the same overlap score, it's ambiguous
+        if (scored.length > 1 && scored[0].overlap === scored[1].overlap) {
+          return {
+            block: buildGroupAmbiguityBlock(
+              character.name || 'you',
+              charGroups.map(g => g.title || 'untitled')
+            ),
+            contactName: null,
+            messageCount: 0,
+            noRecord: false,
+            ambiguous: true,
+            isGroup: true,
+          };
+        }
+        targetGroup = scored[0].group;
+      }
+    }
+
+    // Also try matching by group title keywords
+    if (!targetGroup) {
+      const textLower = userMessage.toLowerCase();
+      const titleMatches = charGroups.filter(g => {
+        const titleLower = (g.title || '').toLowerCase();
+        return titleLower && titleLower.length > 2 && textLower.includes(titleLower);
+      });
+      if (titleMatches.length === 1) {
+        targetGroup = titleMatches[0];
+      } else if (titleMatches.length > 1) {
+        // Multiple title matches — ambiguous, ask for clarification
+        return {
+          block: buildGroupAmbiguityBlock(
+            character.name || 'you',
+            titleMatches.map(g => g.title || 'untitled')
+          ),
+          contactName: null,
+          messageCount: 0,
+          noRecord: false,
+          ambiguous: true,
+          isGroup: true,
+        };
+      }
+    }
+
+    // If still unresolved, ask for clarification — do NOT silently pick one
+    if (!targetGroup) {
+      return {
+        block: buildGroupAmbiguityBlock(
+          character.name || 'you',
+          charGroups.map(g => g.title || 'untitled')
+        ),
+        contactName: null,
+        messageCount: 0,
+        noRecord: false,
+        ambiguous: true,
+        isGroup: true,
+      };
+    }
+  }
+
+  // Retrieve the actual messages using the same pattern as GroupChat.jsx
+  let messages = [];
+  try {
+    messages = await base44.entities.Message.filter(
+      { conversation_id: targetGroup.id },
+      'created_date',
+      100
+    );
+  } catch {
+    return {
+      block: buildGroupNoRecordBlock(character.name || 'you'),
+      contactName: targetGroup.title,
+      messageCount: 0,
+      noRecord: true,
+      isGroup: true,
+    };
+  }
+
+  // Filter: exclude canon_excluded, recovery signals. Retain messages with text,
+  // stored image descriptions, or an image_url (analyzed below when no description).
+  const validGroupMessages = (Array.isArray(messages) ? messages : []).filter(m => {
+    if (m.canon_excluded === true) return false;
+    if (m.recovery_signal === true) return false;
+    const hasText = m.content && m.content.trim();
+    const hasImageDesc = m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description;
+    const hasImageUrl = m.image_url;
+    return hasText || hasImageDesc || hasImageUrl;
+  });
+
+  // Build name lookup for all characters in the group
+  const charNameMap = {};
+  if (allCharacters) {
+    for (const c of allCharacters) {
+      if (c.id) charNameMap[c.id] = c.name;
+    }
+  }
+
+  // Build the group transcript (last 40 messages, chronological order)
+  const groupTranscript = validGroupMessages.slice(-40).map(m => {
+    let speaker;
+    if (m.sender_type === 'user') {
+      speaker = m.played_as_character_name || m.played_as_character_id
+        ? (m.played_as_character_name || charNameMap[m.played_as_character_id] || 'User')
+        : 'User';
+    } else {
+      speaker = m.character_name || charNameMap[m.character_id] || 'Someone';
+    }
+    const time = m.timestamp || m.created_date || '';
+    const timeStr = time ? new Date(time).toLocaleString('en-US', {
+      timeZone: 'America/New_York',
+      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
+    }) : '';
+    const imageDesc = m.user_edited_description || m.visual_analysis_description ||
+      m.image_description || m.inferred_image_description || null;
+    let imageNote = '';
+    if (imageDesc) {
+      imageNote = ` [sent an image: ${imageDesc}]`;
+    } else if (m.image_url) {
+      // Image exists but no stored description — use the existing analysis pathway.
+      // Fire off analysis non-blocking so the description is stored durably for next time.
+      // Do NOT fabricate a description or expose the URL as visual understanding.
+      analyzeImageForCharacterContext({
+        imageUrl: m.image_url,
+        messageId: m.id,
+        context: 'retrieval_recall',
+      }).catch(() => {});
+      imageNote = ` [sent an image — visual analysis in progress]`;
+    }
+    return `[${timeStr}] ${speaker}: ${m.content || ''}${imageNote}`;
+  }).join('\n');
+
+  return {
+    block: buildGroupRetrievalBlock(
+      targetGroup.title || 'Group Chat',
+      groupTranscript,
+      validGroupMessages.length,
+      character.name || 'you'
+    ),
+    contactName: targetGroup.title,
+    messageCount: validGroupMessages.length,
+    noRecord: validGroupMessages.length === 0,
+    isGroup: true,
+    ambiguous: false,
+    conversationId: targetGroup.id,
+  };
+}
+
 // ── MAIN ENTRY POINT ───────────────────────────────────────────────────────
 
 export async function buildWorldPhoneRetrievalContext({
@@ -173,6 +408,16 @@ export async function buildWorldPhoneRetrievalContext({
   base44,
 }) {
   if (!characterId || !character || !userMessage || !base44) return null;
+
+  // ── GROUP CONVERSATION RETRIEVAL ──────────────────────────────────────────
+  // When the user explicitly references a group conversation, retrieve group
+  // messages using the same established query as GroupChat.jsx. This branch
+  // is mutually exclusive with the direct World Phone path below — a group
+  // request NEVER falls through to the direct WP retrieval, preventing
+  // competing authoritative blocks from being injected into the prompt.
+  if (detectGroupIntent(userMessage)) {
+    return await retrieveGroupContext({ characterId, character, userMessage, allCharacters, base44 });
+  }
 
   // STEP 1: Detect World Phone intent — exit early if not a WP question
   if (!detectWorldPhoneIntent(userMessage)) return null;
@@ -328,7 +573,8 @@ export async function buildWorldPhoneRetrievalContext({
     const hasText = m.content && m.content.trim();
     const hasImageDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description;
-    return hasText || hasImageDesc;
+    const hasImageUrl = m.image_url;
+    return hasText || hasImageDesc || hasImageUrl;
   }).reverse(); // chronological order (oldest first)
 
   // Count messages by sender
@@ -348,10 +594,23 @@ export async function buildWorldPhoneRetrievalContext({
       timeZone: 'America/New_York',
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
-    // Include stored image description when the message has an image (user_edited > visual > image > inferred)
+    // Include stored image description when available (user_edited > visual > image > inferred).
+    // When an image_url exists but NO stored description is available, use the existing
+    // analysis pathway (analyzeImageForCharacterContext) to populate the description
+    // durably for future retrieval. Do NOT fabricate, expose the URL, or drop the image.
     const imageDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description || null;
-    const imageNote = imageDesc ? ` [sent an image: ${imageDesc}]` : '';
+    let imageNote = '';
+    if (imageDesc) {
+      imageNote = ` [sent an image: ${imageDesc}]`;
+    } else if (m.image_url) {
+      analyzeImageForCharacterContext({
+        imageUrl: m.image_url,
+        messageId: m.id,
+        context: 'retrieval_recall',
+      }).catch(() => {});
+      imageNote = ` [sent an image — visual analysis in progress]`;
+    }
     return `[${timeStr}] ${sender}: ${m.content || ''}${imageNote}`;
   }).join('\n');
 
