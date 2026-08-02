@@ -531,10 +531,13 @@ Rules for reacting:
           console.log(`[Governor] emojiReact SKIP — character decided no reaction for char=${characterId}`);
           return null;
         }
-        // Extract a clean single emoji
-        const cleaned = result.emoji.trim()
-          .replace(/[\u200D\uFE0F]/g, '')
-          .match(/(\p{Emoji_Presentation}|\p{Extended_Pictographic})/u)?.[0]?.substring(0, 2) || '';
+        // Extract a clean single emoji — preserve FE0F variation selector so ❤️
+        // stays as the emoji-style heart, not the text-style ❤. Only trim whitespace
+        // and strip surrounding non-emoji text; do NOT strip \uFE0F or \u200D.
+        const rawEmoji = (typeof result.emoji === 'string' ? result.emoji : '').trim();
+        // Match a single emoji (with optional variation selector / ZWJ) from the start
+        const emojiMatch = rawEmoji.match(/^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*|\p{Emoji_Presentation})/u);
+        const cleaned = emojiMatch?.[0] || '';
         if (!cleaned) return null;
 
         // Enforce one-per-actor rule: replace any existing character reaction on this message
