@@ -438,17 +438,35 @@ Return ONLY valid JSON, nothing else.`,
       }
     }, 7000);
 
-    // ── TIER 5 — 10s: emoji reaction (personality-gated, emotionally-contextual) ──
-    // Fires on emotionally meaningful messages/images. NOT random decoration.
-    // - High-emotion events: ~40% base chance
-    // - Neutral/routine messages: skip entirely
+    // ── TIER 5 — 10s: emoji reaction (emotionally-contextual, frequency-gated) ──
+    // Characters react to ~1 in every 5-10 user messages — NOT every message.
+    // Two-layer gate BEFORE the LLM is even called:
+    //   1. Minimum message gap: at least 5 user messages must pass since the
+    //      character's last emoji reaction before a new one is even considered.
+    //   2. Probability roll: ~18% chance after the gap is met.
+    // Net result: roughly 1 emoji reaction per 5-10 messages. Reactions are
+    // emotionally meaningful, not decorative spam.
+    // - Emoji is chosen by the LLM based on personality + message emotional content
+    // - Same emoji spam prevented: checks existing character reaction on that message
     // - Image messages: evaluated separately via image prompt context
-    // - Same emoji spam prevented: checks last 3 character reactions on that message
-    // - Cooldown: 45s per character (not 60s — allows reactions to feel less rare)
     setTimeout(() => {
       if (isGloballyRateLimited()) return;
-      if (isOnCooldown(characterId, 'emojiReact', 45000)) return;
       if (isInFlight(characterId, 'emojiReact')) return;
+
+      // ── FREQUENCY GATE: message-count + probability ──
+      // This is the PRIMARY limiter. The 45s time cooldown is removed — the
+      // message-count gate is more meaningful for conversation pacing.
+      emojiMsgCount[characterId] = (emojiMsgCount[characterId] || 0) + 1;
+      const msgsSinceLastReaction = emojiMsgCount[characterId];
+      if (msgsSinceLastReaction < 5) {
+        console.log(`[Governor] emojiReact SKIP — only ${msgsSinceLastReaction} msgs since last reaction (min 5)`);
+        return;
+      }
+      // After the 5-message gap, ~18% chance → roughly 1 reaction per 5-10 messages
+      if (Math.random() > 0.18) {
+        console.log(`[Governor] emojiReact SKIP — probability gate failed (82% skip rate after gap)`);
+        return;
+      }
 
       // Determine what to react TO: user's text message or the most recent user image
       const lastUserMsg = userMsg;
@@ -493,9 +511,11 @@ ${msgContext}
 
 DECISION: Should you react with an emoji to this message/image?
 
-Rules for reacting:
-- YES for: funny, romantic, shocking, sweet, supportive, insulting, scary, emotional, surprising, attractive, suspicious, or dramatic content.
-- NO for: routine, neutral, informational, ordinary check-in messages with no emotional weight.
+Rules for reacting — be SELECTIVE, not generous:
+- React ONLY when the message has genuine emotional weight that naturally pulls a reaction out of you.
+- YES for: something genuinely funny that made you laugh, romantic/affectionate moments that moved you, shocking news, sweet gestures, deeply supportive moments, or anything that genuinely triggers a strong feeling.
+- NO for: routine check-ins ("hey", "what's up", "how are you"), informational messages, scheduling, logistics, ordinary conversation, small talk, or anything that's just... normal. Most messages should NOT get a reaction.
+- Ask yourself: "Did this message actually make me feel something?" If the answer is "not really," do not react.
 - React based on YOUR personality and relationship with this person.
 - If YES: pick exactly ONE emoji from this EXACT list only — do not use any other emoji:
   ❤️ = affection, love, warmth, sweet/supportive moments
@@ -562,6 +582,7 @@ Rules for reacting:
       }).then(updated => {
         if (updated?.id) {
           setMessages(prev => prev.map(m => m.id === updated.id ? { ...m, reactions: updated.reactions } : m));
+          emojiMsgCount[characterId] = 0; // reset gap counter — reaction was just written
           markCooldown(characterId, 'emojiReact');
           console.log(`[Governor] emojiReact APPLIED — reactions now: ${JSON.stringify(updated.reactions?.slice(-2))}`);
         }
