@@ -284,7 +284,7 @@ function detectImageSender(text, allCharacters, currentCharacterId) {
   const others = allCharacters.filter(c => c.id !== currentCharacterId && c.name);
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const IMG_WORDS = 'picture|pictures|photo|photos|pic|pics|image|images';
-  const SEND_WORDS = 'sent|send|posted|shared';
+  const SEND_WORDS = 'sent|send|posted|shared|post';
 
   for (const c of others) {
     const nameLower = c.name.toLowerCase();
@@ -305,8 +305,17 @@ function detectImageSender(text, allCharacters, currentCharacterId) {
     }
   }
 
-  // Check if the current character is identified as sender ("I sent a picture")
-  if (new RegExp(`\\b(i|my|me)\\b[^.]{0,20}\\b(${SEND_WORDS})\\b[^.]{0,20}\\b(${IMG_WORDS})\\b`, 'i').test(text)) {
+  // Check if the current character is identified as sender.
+  // Two orders are supported:
+  //   Forward:  "I sent a picture"          — first-person → sent → image
+  //   Reverse:  "What picture did I send?"  — image → first-person → sent
+  // A first-person pronoun elsewhere in the request does NOT prove the current
+  // character sent the image — the wording must explicitly connect the pronoun
+  // to the send/share action and the image.
+  const SELF_REF = 'i|my|me';
+  const selfForward = new RegExp(`\\b(${SELF_REF})\\b[^.]{0,20}\\b(${SEND_WORDS})\\b[^.]{0,20}\\b(${IMG_WORDS})\\b`, 'i');
+  const selfReverse = new RegExp(`\\b(${IMG_WORDS})\\b[^.]{0,25}\\b(${SELF_REF})\\b[^.]{0,25}\\b(${SEND_WORDS})\\b`, 'i');
+  if (selfForward.test(text) || selfReverse.test(text)) {
     const me = allCharacters.find(c => c.id === currentCharacterId);
     return me || { id: currentCharacterId, name: 'you' };
   }
@@ -344,13 +353,15 @@ function resolveRelevantImageForRetrieval({ userMessage, validMessages, namedSen
   // 2. Collect image messages from the conversation
   const imageMessages = (Array.isArray(validMessages) ? validMessages : []).filter(m => m.image_url);
 
-  // 3. If a sender is named, consider only images from that sender
+  // 3. If a sender is named, consider only images from that sender.
+  // Precedence: sender_character_id is authoritative when present; character_id
+  // is a fallback only. A fallback field must NEVER override an explicit sender.
   let candidateImages = imageMessages;
   if (namedSenderId) {
-    candidateImages = imageMessages.filter(m =>
-      m.sender_character_id === namedSenderId ||
-      m.character_id === namedSenderId
-    );
+    candidateImages = imageMessages.filter(m => {
+      const actualSenderId = m.sender_character_id || m.character_id;
+      return actualSenderId === namedSenderId;
+    });
   }
 
   if (candidateImages.length === 0) {
