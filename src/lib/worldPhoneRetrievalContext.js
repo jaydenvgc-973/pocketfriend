@@ -243,6 +243,81 @@ function buildGroupRetrievalBlock(groupTitle, transcript, totalCount, characterN
   return `\n\n════════════════════════════════════\nGROUP CHAT RETRIEVAL — AUTHORITATIVE RECORD (${groupTitle})\n════════════════════════════════════\nThe user asked about your group chat "${groupTitle}". Below is the ACTUAL message record retrieved from that group conversation. This is the ONLY authoritative source for what was said.\n\n--- Group Transcript (${totalCount} total messages, showing most recent 40) ---\n${transcript || '(no messages found)'}\n--- End Group Transcript ---\n\nCRITICAL — RETRIEVAL BEFORE GENERATION:\n1. You may ONLY quote or summarize messages that appear in the transcript above.\n2. You may NOT invent, infer, reconstruct, or fabricate any message that does not appear above.\n3. If the user asks about a message that is NOT in the transcript, state that you cannot find it.\n4. You may NOT use your memory as proof of what was said. The transcript is the authoritative record.\n5. Image descriptions in brackets [sent an image: ...] are the stored visual descriptions of what was shared — treat them as what you actually saw.\n════════════════════════════════════`;
 }
 
+// ── IMAGE INTENT DETECTION ──────────────────────────────────────────────────
+// Only analyze an image when the current request explicitly concerns an image,
+// picture, photo, or attachment. A text-only request must NOT trigger analysis.
+const IMAGE_INTENT_PATTERNS = [
+  /\bpicture\b/i, /\bpictures\b/i, /\bphoto\b/i, /\bphotos\b/i,
+  /\bpic\b/i, /\bpics\b/i, /\bimage\b/i, /\bimages\b/i,
+  /\battachment\b/i, /\battachments\b/i,
+];
+
+function detectImageIntent(text) {
+  if (!text) return false;
+  return IMAGE_INTENT_PATTERNS.some(p => p.test(text));
+}
+
+function buildImageClarificationBlock(senderLabel, imageCount) {
+  return `\n\n════════════════════════════════════\nIMAGE RETRIEVAL — MULTIPLE IMAGES MATCH\n════════════════════════════════════\nThe user asked about a picture${senderLabel ? ` from ${senderLabel}` : ''}. ${imageCount} images were found that match. Ask the user which picture they mean. Do NOT guess or describe the wrong one.\n════════════════════════════════════`;
+}
+
+function buildNoMatchingImageBlock(senderLabel) {
+  return `\n\n════════════════════════════════════\nIMAGE RETRIEVAL — NO MATCHING IMAGE FOUND\n════════════════════════════════════\nThe user asked about a picture${senderLabel ? ` from ${senderLabel}` : ''}, but no matching image was found in the conversation. Respond honestly: "I don't see a picture matching that in our messages."\n════════════════════════════════════`;
+}
+
+/**
+ * Determine whether an image should be analyzed for the current request.
+ * Returns one of:
+ *   { status: 'no_image_intent' }               — request is not about an image
+ *   { status: 'no_match' }                      — image intent but no matching image found
+ *   { status: 'clarify', imageCount }           — multiple images match; ask which
+ *   { status: 'use_stored' }                    — single image has a stored description
+ *   { status: 'analyze', messageId, imageUrl }   — await analysis for this image
+ *
+ * Does NOT analyze by default. Only returns 'analyze' when the user's request
+ * explicitly concerns an image AND exactly one undescribed image matches the
+ * sender/conversation criteria.
+ */
+function resolveRelevantImageForRetrieval({ userMessage, validMessages, namedSenderId }) {
+  // 1. Determine whether the current request is about an image
+  if (!detectImageIntent(userMessage)) {
+    return { status: 'no_image_intent' };
+  }
+
+  // 2. Collect image messages from the conversation
+  const imageMessages = (Array.isArray(validMessages) ? validMessages : []).filter(m => m.image_url);
+
+  // 3. If a sender is named, consider only images from that sender
+  let candidateImages = imageMessages;
+  if (namedSenderId) {
+    candidateImages = imageMessages.filter(m =>
+      m.sender_character_id === namedSenderId ||
+      m.character_id === namedSenderId
+    );
+  }
+
+  if (candidateImages.length === 0) {
+    return { status: 'no_match' };
+  }
+
+  // 4. Multiple images match → ask which one (regardless of stored descriptions)
+  if (candidateImages.length > 1) {
+    return { status: 'clarify', imageCount: candidateImages.length };
+  }
+
+  // 5. Exactly one image matches — check for stored description first
+  const img = candidateImages[0];
+  const hasStoredDesc = !!(img.user_edited_description || img.visual_analysis_description ||
+    img.image_description || img.inferred_image_description);
+
+  if (hasStoredDesc) {
+    return { status: 'use_stored' };
+  }
+
+  // 6. No stored description → await analysis
+  return { status: 'analyze', messageId: img.id, imageUrl: img.image_url };
+}
+
 async function retrieveGroupContext({ characterId, character, userMessage, allCharacters, base44 }) {
   const ownerEmail = character.owner_email;
   if (!ownerEmail) return null;
@@ -274,62 +349,57 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     };
   }
 
-  // Resolve the target group — only when unambiguously identified
+  // Resolve the target group — only when unambiguously identified.
+  // Named participants are checked FIRST, before any sole-group shortcut,
+  // so a group that lacks one named participant is never selected.
   let targetGroup = null;
 
-  if (charGroups.length === 1) {
-    targetGroup = charGroups[0];
-  } else {
-    // Collect ALL unambiguous participant names mentioned in the user's request.
-    // This is group-specific and does NOT use findMentionedCharacter (which serves
-    // the direct path with a single-character contract). We narrow candidates to
-    // groups that contain the FULL named participant set — no partial-match fallback.
-    const mentionedIds = collectAllMentionedCharacterIds(userMessage, characterId, allCharacters);
+  // Step 1: Collect all unambiguous character names from the user's request
+  const mentionedIds = collectAllMentionedCharacterIds(userMessage, characterId, allCharacters);
 
-    if (mentionedIds.length > 0) {
-      // Keep only groups that contain ALL named participants
-      const containingAll = charGroups.filter(g => {
-        const gids = new Set(g.character_ids || []);
-        return mentionedIds.every(id => gids.has(id));
-      });
+  if (mentionedIds.length > 0) {
+    // Step 2: Filter to groups containing EVERY named participant — no partial match
+    const containingAll = charGroups.filter(g => {
+      const gids = new Set(g.character_ids || []);
+      return mentionedIds.every(id => gids.has(id));
+    });
 
-      if (containingAll.length === 1) {
-        targetGroup = containingAll[0];
-      } else if (containingAll.length > 1) {
-        // Multiple groups contain all named participants — ambiguous, ask for clarification
-        return {
-          block: buildGroupAmbiguityBlock(
-            character.name || 'you',
-            containingAll.map(g => g.title || 'untitled')
-          ),
-          contactName: null,
-          messageCount: 0,
-          noRecord: false,
-          ambiguous: true,
-          isGroup: true,
-        };
-      } else {
-        // No group contains ALL named participants — do NOT fall back to partial match.
-        // State that no matching group was found and ask for clarification.
-        const namedNames = mentionedIds
-          .map(id => allCharacters.find(c => c.id === id))
-          .filter(c => c)
-          .map(c => c.name);
-        return {
-          block: buildGroupNoParticipantMatchBlock(
-            character.name || 'you',
-            namedNames.length > 0 ? namedNames : ['the people you mentioned']
-          ),
-          contactName: null,
-          messageCount: 0,
-          noRecord: false,
-          isGroup: true,
-        };
-      }
+    if (containingAll.length === 1) {
+      targetGroup = containingAll[0];
+    } else if (containingAll.length > 1) {
+      return {
+        block: buildGroupAmbiguityBlock(
+          character.name || 'you',
+          containingAll.map(g => g.title || 'untitled')
+        ),
+        contactName: null,
+        messageCount: 0,
+        noRecord: false,
+        ambiguous: true,
+        isGroup: true,
+      };
+    } else {
+      // No group contains ALL named participants — do NOT fall back to partial match.
+      const namedNames = mentionedIds
+        .map(id => allCharacters.find(c => c.id === id))
+        .filter(c => c)
+        .map(c => c.name);
+      return {
+        block: buildGroupNoParticipantMatchBlock(
+          character.name || 'you',
+          namedNames.length > 0 ? namedNames : ['the people you mentioned']
+        ),
+        contactName: null,
+        messageCount: 0,
+        noRecord: false,
+        isGroup: true,
+      };
     }
-
-    // Also try matching by group title keywords
-    if (!targetGroup) {
+  } else {
+    // No character names supplied — default to sole group or require unique title match
+    if (charGroups.length === 1) {
+      targetGroup = charGroups[0];
+    } else {
       const textLower = userMessage.toLowerCase();
       const titleMatches = charGroups.filter(g => {
         const titleLower = (g.title || '').toLowerCase();
@@ -338,7 +408,6 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
       if (titleMatches.length === 1) {
         targetGroup = titleMatches[0];
       } else if (titleMatches.length > 1) {
-        // Multiple title matches — ambiguous, ask for clarification
         return {
           block: buildGroupAmbiguityBlock(
             character.name || 'you',
@@ -350,22 +419,19 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
           ambiguous: true,
           isGroup: true,
         };
+      } else {
+        return {
+          block: buildGroupAmbiguityBlock(
+            character.name || 'you',
+            charGroups.map(g => g.title || 'untitled')
+          ),
+          contactName: null,
+          messageCount: 0,
+          noRecord: false,
+          ambiguous: true,
+          isGroup: true,
+        };
       }
-    }
-
-    // If still unresolved, ask for clarification — do NOT silently pick one
-    if (!targetGroup) {
-      return {
-        block: buildGroupAmbiguityBlock(
-          character.name || 'you',
-          charGroups.map(g => g.title || 'untitled')
-        ),
-        contactName: null,
-        messageCount: 0,
-        noRecord: false,
-        ambiguous: true,
-        isGroup: true,
-      };
     }
   }
 
@@ -407,32 +473,36 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     }
   }
 
-  // ── RELEVANT IMAGE RESOLUTION (awaited) ────────────────────────────────────
-  // When the user's current request requires viewing an image and the relevant
-  // message has image_url but no usable stored description, AWAIT the existing
-  // analyzeImageForCharacterContext pathway so the current response receives the
-  // grounded visual description. Only the MOST RECENT undescribed image is
-  // analyzed — do NOT analyze every undescribed image in the transcript.
-  const recentGroupMessages = [...validGroupMessages].reverse();
-  const mostRecentUndescribedGroupImage = recentGroupMessages.find(m =>
-    m.image_url && !(m.user_edited_description || m.visual_analysis_description ||
-      m.image_description || m.inferred_image_description)
-  );
+  // ── IMAGE RESOLUTION (request-driven) ──────────────────────────────────────
+  // Only analyze an image when the current request explicitly concerns an image.
+  // A text-only request uses stored descriptions without triggering analysis.
+  // When image intent is detected, the relevant image is selected by sender and
+  // conversation, not by recency alone.
+  const namedGroupSender = findMentionedCharacter(userMessage, characterId, allCharacters);
+  const namedGroupSenderId = namedGroupSender ? namedGroupSender.id : null;
+  const namedGroupSenderName = namedGroupSender ? namedGroupSender.name : null;
+
+  const groupImageResolution = resolveRelevantImageForRetrieval({
+    userMessage,
+    validMessages: validGroupMessages,
+    namedSenderId: namedGroupSenderId,
+  });
+
   let resolvedGroupImage = null;
-  if (mostRecentUndescribedGroupImage) {
+  if (groupImageResolution.status === 'analyze') {
     try {
       const result = await analyzeImageForCharacterContext({
-        imageUrl: mostRecentUndescribedGroupImage.image_url,
-        messageId: mostRecentUndescribedGroupImage.id,
+        imageUrl: groupImageResolution.imageUrl,
+        messageId: groupImageResolution.messageId,
         context: 'retrieval_recall',
       });
       resolvedGroupImage = {
-        messageId: mostRecentUndescribedGroupImage.id,
+        messageId: groupImageResolution.messageId,
         description: result.imageDescription,
       };
     } catch {
       resolvedGroupImage = {
-        messageId: mostRecentUndescribedGroupImage.id,
+        messageId: groupImageResolution.messageId,
         description: null,
       };
     }
@@ -454,9 +524,7 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
     // Use stored description if available, else the freshly resolved description
-    // for the relevant image. If the awaited analysis failed (description is null),
-    // the character honestly cannot see the image. Other undescribed images are
-    // noted without triggering analysis.
+    // for the analyzed image. Other undescribed images are noted without analysis.
     const storedGroupDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description || null;
     const resolvedGroupDesc = (resolvedGroupImage && m.id === resolvedGroupImage.messageId)
@@ -467,7 +535,6 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     } else if (resolvedGroupDesc) {
       imageNote = ` [sent an image: ${resolvedGroupDesc}]`;
     } else if (m.image_url && resolvedGroupImage && m.id === resolvedGroupImage.messageId) {
-      // Awaited analysis failed — character honestly cannot view this image
       imageNote = ` [sent an image — could not be analyzed, unable to see what's in it]`;
     } else if (m.image_url) {
       imageNote = ` [sent an image]`;
@@ -475,13 +542,22 @@ async function retrieveGroupContext({ characterId, character, userMessage, allCh
     return `[${timeStr}] ${speaker}: ${m.content || ''}${imageNote}`;
   }).join('\n');
 
+  // Build the retrieval block, appending image-specific instructions when needed
+  let groupBlock = buildGroupRetrievalBlock(
+    targetGroup.title || 'Group Chat',
+    groupTranscript,
+    validGroupMessages.length,
+    character.name || 'you'
+  );
+
+  if (groupImageResolution.status === 'clarify') {
+    groupBlock += buildImageClarificationBlock(namedGroupSenderName, groupImageResolution.imageCount);
+  } else if (groupImageResolution.status === 'no_match') {
+    groupBlock += buildNoMatchingImageBlock(namedGroupSenderName);
+  }
+
   return {
-    block: buildGroupRetrievalBlock(
-      targetGroup.title || 'Group Chat',
-      groupTranscript,
-      validGroupMessages.length,
-      character.name || 'you'
-    ),
+    block: groupBlock,
     contactName: targetGroup.title,
     messageCount: validGroupMessages.length,
     noRecord: validGroupMessages.length === 0,
@@ -677,32 +753,36 @@ export async function buildWorldPhoneRetrievalContext({
   ).length;
   const fromOtherChar = validMessages.length - fromCurrentChar;
 
-  // ── RELEVANT IMAGE RESOLUTION (awaited) ────────────────────────────────────
-  // When the user's current request requires viewing an image and the relevant
-  // message has image_url but no usable stored description, AWAIT the existing
-  // analyzeImageForCharacterContext pathway so the current response receives the
-  // grounded visual description. Only the MOST RECENT undescribed image is
-  // analyzed — do NOT analyze every undescribed image in the transcript.
-  const recentDirectMessages = [...validMessages].reverse();
-  const mostRecentUndescribedDirectImage = recentDirectMessages.find(m =>
-    m.image_url && !(m.user_edited_description || m.visual_analysis_description ||
-      m.image_description || m.inferred_image_description)
-  );
+  // ── IMAGE RESOLUTION (request-driven) ──────────────────────────────────────
+  // Only analyze an image when the current request explicitly concerns an image.
+  // A text-only request uses stored descriptions without triggering analysis.
+  // When image intent is detected, the relevant image is selected by sender and
+  // conversation, not by recency alone.
+  const userSelfImage = /\b(i|my|me)\b[^.]{0,20}\b(sent|send|posted|shared)\b[^.]{0,20}\b(picture|photo|pic|image)/i.test(userMessage);
+  const namedDirectSenderId = userSelfImage ? characterId : (mentionedChar ? mentionedChar.id : null);
+  const namedDirectSenderName = userSelfImage ? (character.name || 'you') : (mentionedChar ? mentionedChar.name : null);
+
+  const directImageResolution = resolveRelevantImageForRetrieval({
+    userMessage,
+    validMessages,
+    namedSenderId: namedDirectSenderId,
+  });
+
   let resolvedDirectImage = null;
-  if (mostRecentUndescribedDirectImage) {
+  if (directImageResolution.status === 'analyze') {
     try {
       const result = await analyzeImageForCharacterContext({
-        imageUrl: mostRecentUndescribedDirectImage.image_url,
-        messageId: mostRecentUndescribedDirectImage.id,
+        imageUrl: directImageResolution.imageUrl,
+        messageId: directImageResolution.messageId,
         context: 'retrieval_recall',
       });
       resolvedDirectImage = {
-        messageId: mostRecentUndescribedDirectImage.id,
+        messageId: directImageResolution.messageId,
         description: result.imageDescription,
       };
     } catch {
       resolvedDirectImage = {
-        messageId: mostRecentUndescribedDirectImage.id,
+        messageId: directImageResolution.messageId,
         description: null,
       };
     }
@@ -719,9 +799,7 @@ export async function buildWorldPhoneRetrievalContext({
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true
     }) : '';
     // Use stored description if available, else the freshly resolved description
-    // for the relevant image. If the awaited analysis failed (description is null),
-    // the character honestly cannot see the image. Other undescribed images are
-    // noted without triggering analysis.
+    // for the analyzed image. Other undescribed images are noted without analysis.
     const storedDirectDesc = m.user_edited_description || m.visual_analysis_description ||
       m.image_description || m.inferred_image_description || null;
     const resolvedDirectDesc = (resolvedDirectImage && m.id === resolvedDirectImage.messageId)
@@ -732,7 +810,6 @@ export async function buildWorldPhoneRetrievalContext({
     } else if (resolvedDirectDesc) {
       imageNote = ` [sent an image: ${resolvedDirectDesc}]`;
     } else if (m.image_url && resolvedDirectImage && m.id === resolvedDirectImage.messageId) {
-      // Awaited analysis failed — character honestly cannot view this image
       imageNote = ` [sent an image — could not be analyzed, unable to see what's in it]`;
     } else if (m.image_url) {
       imageNote = ` [sent an image]`;
@@ -740,11 +817,20 @@ export async function buildWorldPhoneRetrievalContext({
     return `[${timeStr}] ${sender}: ${m.content || ''}${imageNote}`;
   }).join('\n');
 
+  // Build the retrieval block, appending image-specific instructions when needed
+  let directBlock = buildRetrievalBlock(
+    mentionedChar.name, transcript, validMessages.length,
+    fromCurrentChar, fromOtherChar, character.name
+  );
+
+  if (directImageResolution.status === 'clarify') {
+    directBlock += buildImageClarificationBlock(namedDirectSenderName, directImageResolution.imageCount);
+  } else if (directImageResolution.status === 'no_match') {
+    directBlock += buildNoMatchingImageBlock(namedDirectSenderName);
+  }
+
   return {
-    block: buildRetrievalBlock(
-      mentionedChar.name, transcript, validMessages.length,
-      fromCurrentChar, fromOtherChar, character.name
-    ),
+    block: directBlock,
     contactName: mentionedChar.name,
     messageCount: validMessages.length,
     fromCurrentChar,
