@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// SOLE CANONICAL WRITER — One Truth Authority
+// SOLE CANONICAL WRITER — One Truth Authority (v2 rabbit-hole restored)
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // enforceCharacterLocationPresence is the SOLE live backend canonical writer for:
@@ -500,6 +500,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     //   - Null saved location_id + explicit rabbit-hole flag → intentional rabbit-hole
     // A missing linked record is an integrity error, NOT a rabbit-hole inference.
     if (!requestedLocId && requested.requested_location_name) {
+      console.log('[enforceCharacterLocationPresence] Rabbit-hole work-start branch entered:', requested.requested_location_name);
       // Require scheduler authority — no other caller may commit a null-location work presence
       if (requested.requested_authority !== 'enforceCharacterWorkSchedule') {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_requires_scheduler_authority' };
