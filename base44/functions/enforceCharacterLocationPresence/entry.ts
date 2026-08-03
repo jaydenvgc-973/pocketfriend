@@ -494,28 +494,40 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if ((character.health_value ?? 80) < 20) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
     }
-    // RABBIT-HOLE WORKPLACE — occupation configured without a linked LocationReference.
-    // The scheduler provides the named workplace. A null location ID is valid here;
-    // the workplace name is authoritative. This branch runs BEFORE the linked-location
-    // check so an intentionally unlinked occupation is never rejected as "no_work_location."
-    // The requested name is validated against the character's saved rabbit-hole
-    // occupations (primary or additional) so an arbitrary name cannot be committed.
-    console.error(`[enforceCharacterLocationPresence] at_work DEBUG: requestedLocId=${JSON.stringify(requestedLocId)} requested_location_name=${JSON.stringify(requested.requested_location_name)} occupation_location_id=${JSON.stringify(character.occupation_location_id)} hasLocationName=${JSON.stringify(!!requested.requested_location_name)}`);
+    // RABBIT-HOLE WORKPLACE — only for scheduler-authority requests with no linked location.
+    // The saved occupation entry (primary or additional) determines classification:
+    //   - Non-null saved location_id → linked workplace (even if the record is missing)
+    //   - Null saved location_id + explicit rabbit-hole flag → intentional rabbit-hole
+    // A missing linked record is an integrity error, NOT a rabbit-hole inference.
     if (!requestedLocId && requested.requested_location_name) {
+      // Require scheduler authority — no other caller may commit a null-location work presence
+      if (requested.requested_authority !== 'enforceCharacterWorkSchedule') {
+        return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_requires_scheduler_authority' };
+      }
+      // Validate against saved rabbit-hole occupation entries — use ONLY the actual saved
+      // destination name (occupation_location_name for primary, location_name for additional).
+      // Never use workplace_type or category as a name equivalent.
       const _rhNames = [];
       if (!character.occupation_location_id) {
         const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
-        if (isRH) _rhNames.push(character.occupation_location_name || character.work_details?.workplace_type || 'Work');
+        if (isRH && character.occupation_location_name) {
+          _rhNames.push(character.occupation_location_name);
+        }
       }
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
           if (entry.location_id) continue;
           const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
-          if (isRH) _rhNames.push(entry.location_name || entry.workplace_type || 'Work');
+          if (isRH && entry.location_name) {
+            _rhNames.push(entry.location_name);
+          }
         }
       }
+      if (_rhNames.length === 0) {
+        return { disposition: 'rejected', canonicalFields: {}, reason: 'no_rabbit_hole_occupation_configured' };
+      }
       if (!_rhNames.includes(requested.requested_location_name)) {
-        return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_occupation_not_matched' };
+        return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_occupation_name_not_matched' };
       }
       const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
       const canonicalFields = {
@@ -936,85 +948,67 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
-  // Work schedule
+  // Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
+  // Build ONE ordered employment sequence: primary first, then additional in
+  // stored order. Each entry is linked or rabbit-hole. Evaluation proceeds in
+  // this order so job priority follows the stored order — rabbit-hole jobs
+  // never take artificial priority over linked jobs.
   const todayET = etTime.toISOString().slice(0, 10);
   const hasValidCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
   if (!hasValidCallout) {
-    const allWorkLocIds = [];
-    if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
-    if (character.current_work_location_id && !allWorkLocIds.includes(character.current_work_location_id)) {
-      allWorkLocIds.push(character.current_work_location_id);
-    }
-    if (Array.isArray(character.additional_occupation_locations)) {
-      for (const loc of character.additional_occupation_locations) {
-        if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
-          allWorkLocIds.push(loc.location_id);
-        }
-      }
-    }
-    // RABBIT-HOLE WORK SCHEDULE — check before the linked-location loop.
-    // An occupation without a linked LocationReference uses character-level
-    // schedule fields. The workplace name is stored in occupation_location_name.
-    // Discriminator: occupation_location_id is absent AND (work_details.is_rabbit_hole
-    // is true OR occupation_location_name is set — backward compatible with legacy).
-    if (!character.occupation_location_id) {
-      const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
-      if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
-        const rhShift = { start: character.work_start_time, end: character.work_end_time, days: character.work_days };
-        if (isOnShiftNow(rhShift, etTime)) {
-          return {
-            resolved_current_location_id: null,
-            resolved_current_location_name: character.occupation_location_name || character.work_details?.workplace_type || 'Work',
-            resolved_location_type: 'work',
-            resolved_presence_status: 'at_work',
-            resolved_source_reason: 'work_schedule',
-          };
-        }
-      }
+    // Stale-location correction: for an explicitly configured rabbit-hole primary,
+    // do NOT fall back to current_work_location_id — that field may be stale from
+    // a previous linked occupation. For non-rabbit-hole legacy occupations, existing
+    // behavior (including current_work_location_id fallback) remains unchanged.
+    const _isPrimaryRH = !character.occupation_location_id &&
+      (character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name);
+    const _primaryLocId = _isPrimaryRH
+      ? null
+      : (character.occupation_location_id || character.current_work_location_id || null);
+    const _orderedJobs = [];
+    if (_primaryLocId) {
+      _orderedJobs.push({ type: 'linked', locId: _primaryLocId });
+    } else if (_isPrimaryRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+      _orderedJobs.push({
+        type: 'rabbit_hole',
+        workplaceName: character.occupation_location_name,
+        shift: { start: character.work_start_time, end: character.work_end_time, days: character.work_days },
+      });
     }
     if (Array.isArray(character.additional_occupation_locations)) {
       for (const entry of character.additional_occupation_locations) {
-        if (entry.location_id) continue;
-        const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
-        if (isRH && entry.work_start_time && entry.work_end_time) {
-          const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
-          const rhShift = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
-          if (isOnShiftNow(rhShift, etTime)) {
-            return {
-              resolved_current_location_id: null,
-              resolved_current_location_name: entry.location_name || entry.workplace_type || 'Work',
-              resolved_location_type: 'work',
-              resolved_presence_status: 'at_work',
-              resolved_source_reason: 'work_schedule',
-            };
+        if (entry.location_id) {
+          _orderedJobs.push({ type: 'linked', locId: entry.location_id });
+        } else {
+          const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+          if (isRH && entry.work_start_time && entry.work_end_time) {
+            _orderedJobs.push({
+              type: 'rabbit_hole',
+              workplaceName: entry.location_name,
+              shift: { start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null },
+            });
           }
         }
       }
     }
-    for (const workLocId of allWorkLocIds) {
-      const workLocation = locationMap[workLocId];
-      if (!workLocation) continue;
-      const locationShift = workLocation.worker_shifts?.[character.id];
-      if (locationShift) {
-        if (isOnShiftNow(locationShift, etTime)) {
-          return {
-            resolved_current_location_id: workLocId,
-            resolved_current_location_name: workLocation.name || 'Work',
-            resolved_location_type: 'work',
-            resolved_presence_status: 'at_work',
-            resolved_source_reason: 'work_schedule',
-          };
+    for (const job of _orderedJobs) {
+      if (job.type === 'linked') {
+        const workLocation = locationMap[job.locId];
+        if (!workLocation) continue;
+        const locationShift = workLocation.worker_shifts?.[character.id];
+        if (locationShift) {
+          if (isOnShiftNow(locationShift, etTime)) {
+            return { resolved_current_location_id: job.locId, resolved_current_location_name: workLocation.name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
+          }
+          continue;
         }
-        continue;
-      }
-      if (isCharacterOnWorkSchedule(character, etTime)) {
-        return {
-          resolved_current_location_id: workLocId,
-          resolved_current_location_name: workLocation.name || 'Work',
-          resolved_location_type: 'work',
-          resolved_presence_status: 'at_work',
-          resolved_source_reason: 'work_schedule',
-        };
+        if (isCharacterOnWorkSchedule(character, etTime)) {
+          return { resolved_current_location_id: job.locId, resolved_current_location_name: workLocation.name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
+        }
+      } else {
+        if (isOnShiftNow(job.shift, etTime)) {
+          return { resolved_current_location_id: null, resolved_current_location_name: job.workplaceName || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
+        }
       }
     }
   }

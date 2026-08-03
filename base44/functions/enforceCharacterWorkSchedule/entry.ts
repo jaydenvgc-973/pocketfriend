@@ -330,7 +330,6 @@ Deno.serve(async (req) => {
           }
         }
         let _rhAuthRes = null;
-        console.error(`[enforceCharacterWorkSchedule] RH INVOKE: workplaceName=${JSON.stringify(singleActiveJob?.workplaceName)} type=${singleActiveJob?.type} shift=${JSON.stringify(singleActiveJob?.shift)}`);
         try {
           const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
             character_id: characterId, owner_email: character.owner_email,
@@ -543,7 +542,7 @@ Deno.serve(async (req) => {
       // workplace presence. If the character IS at a workplace, route work-end
       // through the sole canonical writer (existing movement-home pathway).
       const _singleIsAtWork = character.resolved_presence_status === 'at_work';
-      if (singleCurrentWorkLocId || _singleHasStaleWorkLock || _singleIsAtWork) {
+      if (singleCurrentWorkLocId || _singleHasStaleWorkLock) {
         if (!singleCurrentWorkLocId && !_singleIsAtWork) {
           // Character is NOT at a workplace, NOT at_work, but carries a stale
           // work_shift lock. Release the lock — no work_end movement needed.
@@ -1027,7 +1026,7 @@ Deno.serve(async (req) => {
               issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
             }
           }
-        } else if (!onShift && (currentWorkLocId || _gHasStaleWorkLock || char.resolved_presence_status === 'at_work')) {
+        } else if (!onShift && (currentWorkLocId || _gHasStaleWorkLock)) {
           // No active shift. The character may be at a linked workplace, at_work
           // (rabbit-hole), or carrying a stale work lock. All route through the
           // existing work-end pathway. A character merely carrying a stale lock
