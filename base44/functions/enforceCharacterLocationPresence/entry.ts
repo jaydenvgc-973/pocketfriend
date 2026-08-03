@@ -31,6 +31,11 @@
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Module-level constant for the scheduler authority identifier. Used by the
+// rabbit-hole at_work handler to verify that only the work scheduler may
+// commit a null-location work presence.
+const SCHEDULER_AUTHORITY = 'enforceCharacterWorkSchedule';
+
 // ═════════════════════════════════════════════════════════════════════════════
 // HOSPITAL STABILIZATION — one-time amounts applied at admission commit.
 // Repurposed from the former recurring RATES.hospitalized. Applied exactly
@@ -502,7 +507,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (!requestedLocId && requested.requested_location_name) {
       console.log('[enforceCharacterLocationPresence] Rabbit-hole work-start branch entered:', requested.requested_location_name);
       // Require scheduler authority — no other caller may commit a null-location work presence
-      if (requested.requested_authority !== 'enforceCharacterWorkSchedule') {
+      if (requested.requested_authority !== SCHEDULER_AUTHORITY) {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_requires_scheduler_authority' };
       }
       // Validate against saved rabbit-hole occupation entries — use ONLY the actual saved
