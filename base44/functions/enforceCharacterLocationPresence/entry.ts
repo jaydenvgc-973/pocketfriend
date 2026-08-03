@@ -489,6 +489,41 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (character.resolved_presence_status === 'passed_out') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'passed_out_work_blocked' };
     }
+    // RABBIT-HOLE WORKPLACE — occupation configured without a linked LocationReference.
+    // The scheduler provides the named workplace. A null location ID is valid here;
+    // the workplace name is authoritative. This branch runs BEFORE the linked-location
+    // check so an intentionally unlinked occupation is never rejected as "no_work_location."
+    if (!requestedLocId && !character.occupation_location_id && requested.requested_location_name) {
+      const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
+      const canonicalFields = {
+        resolved_current_location_id: null,
+        resolved_current_location_name: requested.requested_location_name,
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: requested.requested_source_reason || 'work_schedule',
+        resolved_last_updated_at: etTime.toISOString(),
+        presence_stay_lock: true,
+        presence_stay_lock_reason: 'work_shift',
+        presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
+        presence_stay_lock_set_at: etTime.toISOString(),
+        presence_stay_lock_created_by: 'system_automation',
+      };
+      if (wasSleeping) {
+        canonicalFields.last_wake_time = etTime.toISOString();
+      }
+      return {
+        disposition: 'accepted',
+        canonicalFields,
+        committed_result: {
+          resolved_current_location_id: null,
+          resolved_current_location_name: requested.requested_location_name,
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: requested.requested_source_reason || 'work_schedule',
+          was_woken_from_sleep: wasSleeping,
+        },
+      };
+    }
     const workLocId = requestedLocId || character.occupation_location_id;
     if (!workLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
@@ -895,6 +930,45 @@ function computeResolvedLocation(character, locationMap, etTime) {
       for (const loc of character.additional_occupation_locations) {
         if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
           allWorkLocIds.push(loc.location_id);
+        }
+      }
+    }
+    // RABBIT-HOLE WORK SCHEDULE — check before the linked-location loop.
+    // An occupation without a linked LocationReference uses character-level
+    // schedule fields. The workplace name is stored in occupation_location_name.
+    // Discriminator: occupation_location_id is absent AND (work_details.is_rabbit_hole
+    // is true OR occupation_location_name is set — backward compatible with legacy).
+    if (!character.occupation_location_id) {
+      const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
+      if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+        const rhShift = { start: character.work_start_time, end: character.work_end_time, days: character.work_days };
+        if (isOnShiftNow(rhShift, etTime)) {
+          return {
+            resolved_current_location_id: null,
+            resolved_current_location_name: character.occupation_location_name || character.work_details?.workplace_type || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+          };
+        }
+      }
+    }
+    if (Array.isArray(character.additional_occupation_locations)) {
+      for (const entry of character.additional_occupation_locations) {
+        if (entry.location_id) continue;
+        const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+        if (isRH && entry.work_start_time && entry.work_end_time) {
+          const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+          const rhShift = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+          if (isOnShiftNow(rhShift, etTime)) {
+            return {
+              resolved_current_location_id: null,
+              resolved_current_location_name: entry.location_name || entry.workplace_type || 'Work',
+              resolved_location_type: 'work',
+              resolved_presence_status: 'at_work',
+              resolved_source_reason: 'work_schedule',
+            };
+          }
         }
       }
     }

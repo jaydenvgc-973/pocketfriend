@@ -140,6 +140,46 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     });
   }
 
+  // RABBIT-HOLE WORK SCHEDULE — check before the linked-location loop.
+  // An occupation without a linked LocationReference uses character-level
+  // schedule fields. The workplace name is stored in occupation_location_name.
+  if (!character.occupation_location_id) {
+    const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
+    if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+      const rhShift = { start: character.work_start_time, end: character.work_end_time, days: character.work_days };
+      if (isOnShiftNow(rhShift, currentTime)) {
+        return {
+          resolved_current_location_id: null,
+          resolved_current_location_name: character.occupation_location_name || character.work_details?.workplace_type || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule',
+          resolved_zone: null,
+        };
+      }
+    }
+  }
+  if (Array.isArray(character.additional_occupation_locations)) {
+    for (const entry of character.additional_occupation_locations) {
+      if (entry.location_id) continue;
+      const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+      if (isRH && entry.work_start_time && entry.work_end_time) {
+        const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+        const rhShift = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+        if (isOnShiftNow(rhShift, currentTime)) {
+          return {
+            resolved_current_location_id: null,
+            resolved_current_location_name: entry.location_name || entry.workplace_type || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+            resolved_zone: null,
+          };
+        }
+      }
+    }
+  }
+
   // For each work location, check if character is on shift right now
   for (const workLocId of allWorkLocIds) {
     const workLocation = locationMap[workLocId];

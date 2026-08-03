@@ -227,6 +227,101 @@ Deno.serve(async (req) => {
         if (locs?.[0]) singleLocMap[locId] = locs[0];
       }
 
+      // ── RABBIT-HOLE OCCUPATION CHECK — before the linked-location loop ──────
+      // An occupation configured without a linked LocationReference uses the
+      // rabbit-hole pathway. The workplace name lives in occupation_location_name
+      // (primary) or additional_occupation_locations[].location_name (additional).
+      // Discriminator: occupation_location_id is absent AND (work_details.is_rabbit_hole
+      // is true OR occupation_location_name is set — backward compatible with legacy).
+      const singleRabbitHoleJobs = [];
+      if (!character.occupation_location_id) {
+        const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
+        if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+          singleRabbitHoleJobs.push({
+            workplaceName: character.occupation_location_name || character.work_details?.workplace_type || 'Work',
+            schedule: { start: character.work_start_time, end: character.work_end_time, days: character.work_days },
+          });
+        }
+      }
+      if (Array.isArray(character.additional_occupation_locations)) {
+        for (const entry of character.additional_occupation_locations) {
+          if (entry.location_id) continue;
+          const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+          if (isRH && entry.work_start_time && entry.work_end_time) {
+            const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+            singleRabbitHoleJobs.push({
+              workplaceName: entry.location_name || entry.workplace_type || 'Work',
+              schedule: { start: entry.work_start_time, end: entry.work_end_time, days: eDays },
+            });
+          }
+        }
+      }
+      let singleRabbitHoleActive = null;
+      for (const rhJob of singleRabbitHoleJobs) {
+        if (isLocationShiftActiveNow(rhJob.schedule, singleClock)) {
+          singleRabbitHoleActive = rhJob;
+          break;
+        }
+      }
+      // If a rabbit-hole shift is active, route the character to work immediately
+      if (singleRabbitHoleActive) {
+        if (isSleeping) {
+          const _isCont = isContinuousShift(singleRabbitHoleActive.schedule);
+          const _inWindow = isWithinShiftStartWakeWindow(singleRabbitHoleActive.schedule, singleClock);
+          if (_isCont || !_inWindow) {
+            const _staleReason = _isCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
+            const _hasStaleLock = character.presence_stay_lock === true &&
+              (character.presence_stay_lock_reason === 'work_shift' ||
+               character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+            if (_hasStaleLock) {
+              try {
+                await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                  character_id: characterId, owner_email: character.owner_email,
+                  requested_lock_release: true,
+                  requested_source_reason: _staleReason,
+                  requested_authority: 'enforceCharacterWorkSchedule',
+                });
+              } catch (_e) { /* non-fatal */ }
+            }
+            return Response.json({ updated: false, reason: `Sleeping — ${_staleReason}, not woken for rabbit-hole work` });
+          }
+        }
+        let _rhAuthRes = null;
+        try {
+          const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+            character_id: characterId, owner_email: character.owner_email,
+            requested_presence_status: 'at_work',
+            requested_location_id: null,
+            requested_location_name: singleRabbitHoleActive.workplaceName,
+            requested_source_reason: 'work_schedule',
+            requested_authority: 'enforceCharacterWorkSchedule',
+            requested_timestamp: singleNowET.toISOString(),
+          });
+          _rhAuthRes = ir?.data || ir;
+        } catch (e) {
+          return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message });
+        }
+        if (_rhAuthRes?.disposition === 'accepted' || _rhAuthRes?.disposition === 'redirected' || _rhAuthRes?.disposition === 'modified') {
+          if (_wasSleepingBeforeWork) {
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({
+                character_id: characterId, character_name: character.name, owner_email: character.owner_email,
+                transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work',
+                authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.',
+                timestamp: singleNowET.toISOString(), state_start_ref: character.last_sleep_start || null,
+              });
+            } catch (_proofError) { /* non-reverting */ }
+          }
+          return Response.json({
+            updated: true, oldLocation: resolvedLocId, newLocation: null,
+            workplaceName: singleRabbitHoleActive.workplaceName,
+            reason: 'On shift — rabbit-hole workplace (via authority)',
+          });
+        }
+        return Response.json({ updated: false, reason: 'authority_rejected', disposition: _rhAuthRes?.disposition, authority_reason: _rhAuthRes?.reason });
+      }
+      // No rabbit-hole active shift — proceed with linked-location loop below
+
       // Find which job has an active shift right now. Evaluate EVERY active job's
       // schedule — not only the primary or first job.
       let singleActiveWorkLocId = null;
@@ -655,7 +750,103 @@ Deno.serve(async (req) => {
           }
         }
 
-        if (allWorkLocIds.length === 0) continue;
+        // ── RABBIT-HOLE OCCUPATIONS — before the linked-location loop ──────────
+        const rabbitHoleJobs = [];
+        if (!char.occupation_location_id) {
+          const isRH = char.work_details?.is_rabbit_hole === true || !!char.occupation_location_name;
+          if (isRH && char.work_start_time && char.work_end_time && Array.isArray(char.work_days)) {
+            rabbitHoleJobs.push({
+              workplaceName: char.occupation_location_name || char.work_details?.workplace_type || 'Work',
+              schedule: { start: char.work_start_time, end: char.work_end_time, days: char.work_days },
+            });
+          }
+        }
+        if (Array.isArray(char.additional_occupation_locations)) {
+          for (const entry of char.additional_occupation_locations) {
+            if (entry.location_id) continue;
+            const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+            if (isRH && entry.work_start_time && entry.work_end_time) {
+              const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+              rabbitHoleJobs.push({
+                workplaceName: entry.location_name || entry.workplace_type || 'Work',
+                schedule: { start: entry.work_start_time, end: entry.work_end_time, days: eDays },
+              });
+            }
+          }
+        }
+        if (allWorkLocIds.length === 0 && rabbitHoleJobs.length === 0) continue;
+
+        // Check for active rabbit-hole shifts before the linked-location loop
+        let rabbitHoleActive = null;
+        for (const rhJob of rabbitHoleJobs) {
+          if (isLocationShiftActiveNow(rhJob.schedule, globalClock)) {
+            rabbitHoleActive = rhJob;
+            break;
+          }
+        }
+        if (rabbitHoleActive) {
+          if (isSleeping) {
+            const _gIsCont = isContinuousShift(rabbitHoleActive.schedule);
+            const _gInWindow = isWithinShiftStartWakeWindow(rabbitHoleActive.schedule, globalClock);
+            if (_gIsCont || !_gInWindow) {
+              const _gStaleReason = _gIsCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
+              const _gHasStaleLock = char.presence_stay_lock === true &&
+                (char.presence_stay_lock_reason === 'work_shift' ||
+                 char.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+              if (_gHasStaleLock) {
+                try {
+                  await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                    character_id: char.id, owner_email: ownerEmail,
+                    requested_lock_release: true,
+                    requested_source_reason: _gStaleReason,
+                    requested_authority: 'enforceCharacterWorkSchedule',
+                  });
+                } catch (_gRelErr) { /* non-fatal */ }
+              }
+              issues_found.push(`${char.name}: sleeping — ${_gStaleReason}, not woken for rabbit-hole work`);
+              continue;
+            }
+          }
+          const alreadyAtRHWork = char.resolved_presence_status === 'at_work' &&
+            char.resolved_current_location_name === rabbitHoleActive.workplaceName;
+          if (!alreadyAtRHWork) {
+            issues_found.push(`${char.name}: should be at rabbit-hole work but not there`);
+            let _gRHAuthRes = null;
+            try {
+              const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+                character_id: char.id, owner_email: ownerEmail,
+                requested_presence_status: 'at_work',
+                requested_location_id: null,
+                requested_location_name: rabbitHoleActive.workplaceName,
+                requested_source_reason: 'work_schedule',
+                requested_authority: 'enforceCharacterWorkSchedule',
+                requested_timestamp: nowET.toISOString(),
+              });
+              _gRHAuthRes = ir?.data || ir;
+            } catch (invokeErr) {
+              issues_found.push(`${char.name}: AUTHORITY_INVOKE_FAILED — ${invokeErr.message}`);
+              continue;
+            }
+            if (_gRHAuthRes?.disposition === 'accepted' || _gRHAuthRes?.disposition === 'redirected' || _gRHAuthRes?.disposition === 'modified') {
+              if (isSleeping) {
+                try {
+                  await base44.asServiceRole.entities.SleepTransition.create({
+                    character_id: char.id, character_name: char.name, owner_email: ownerEmail,
+                    transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work',
+                    authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.',
+                    timestamp: nowET.toISOString(), state_start_ref: char.last_sleep_start || null,
+                  });
+                } catch (_wakeProofError) { /* non-reverting */ }
+              }
+              fixes_applied.push(`${char.name}: synced to rabbit-hole work — ${rabbitHoleActive.workplaceName} (via authority)`);
+              fixCount++;
+            } else {
+              issues_found.push(`${char.name}: AUTHORITY_${_gRHAuthRes?.disposition || 'unknown'} — ${_gRHAuthRes?.reason || 'no reason'}`);
+            }
+          }
+          continue;
+        }
+        // No rabbit-hole active shift — proceed with linked-location loop
 
         // Determine which job (if any) has an active shift right now. Evaluate EVERY
         // active job's schedule — not only the primary or first job — so a current
