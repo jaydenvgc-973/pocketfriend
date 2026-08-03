@@ -510,26 +510,29 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       // Never use workplace_type or category as a name equivalent.
       // Discriminator: saved location ID absent AND saved is_rabbit_hole flag explicitly true.
       // A saved name alone must not classify an occupation as a rabbit hole.
+      // Trim and normalize names so trailing whitespace in saved occupation data
+      // (e.g. "Agency ") does not break the rabbit-hole name match.
+      const _normName = (s) => (s ? String(s).trim() : '');
       const _rhNames = [];
       if (!character.occupation_location_id) {
         const isRH = character.work_details?.is_rabbit_hole === true;
-        if (isRH && character.occupation_location_name) {
-          _rhNames.push(character.occupation_location_name);
+        if (isRH && _normName(character.occupation_location_name)) {
+          _rhNames.push(_normName(character.occupation_location_name));
         }
       }
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
           if (entry.location_id) continue;
           const isRH = entry.is_rabbit_hole === true;
-          if (isRH && entry.location_name) {
-            _rhNames.push(entry.location_name);
+          if (isRH && _normName(entry.location_name)) {
+            _rhNames.push(_normName(entry.location_name));
           }
         }
       }
       if (_rhNames.length === 0) {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'no_rabbit_hole_occupation_configured' };
       }
-      if (!_rhNames.includes(requested.requested_location_name)) {
+      if (!_rhNames.includes(_normName(requested.requested_location_name))) {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_occupation_name_not_matched' };
       }
       const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
