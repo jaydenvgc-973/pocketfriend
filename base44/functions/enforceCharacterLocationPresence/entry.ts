@@ -494,7 +494,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if ((character.health_value ?? 80) < 20) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
     }
-    // RABBIT-HOLE WORKPLACE — only for scheduler-authority requests with no linked location.
+    // RABBIT-HOLE WORKPLACE — only for scheduler-authority requests with no linked location. (restored)
     // The saved occupation entry (primary or additional) determines classification:
     //   - Non-null saved location_id → linked workplace (even if the record is missing)
     //   - Null saved location_id + explicit rabbit-hole flag → intentional rabbit-hole
