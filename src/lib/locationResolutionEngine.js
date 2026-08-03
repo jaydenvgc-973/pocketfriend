@@ -137,7 +137,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // a previous linked occupation. For non-rabbit-hole legacy occupations, existing
   // behavior (including current_work_location_id fallback) remains unchanged.
   const _isPrimaryRH = !character.occupation_location_id &&
-    (character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name);
+    (character.work_details?.is_rabbit_hole === true);
   const _primaryLocId = _isPrimaryRH
     ? null
     : (character.occupation_location_id || character.current_work_location_id || null);
@@ -156,7 +156,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       if (entry.location_id) {
         _orderedWorkJobs.push({ type: 'linked', locId: entry.location_id });
       } else {
-        const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+        const isRH = entry.is_rabbit_hole === true;
         if (isRH && entry.work_start_time && entry.work_end_time) {
           _orderedWorkJobs.push({
             type: 'rabbit_hole',

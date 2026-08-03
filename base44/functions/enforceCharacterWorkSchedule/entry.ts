@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
       // fall back to current_work_location_id — that field may be stale from a
       // previous linked occupation. The rabbit-hole collection below handles it.
       const _singleIsPrimaryRH = !character.occupation_location_id &&
-        (character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name);
+        (character.work_details?.is_rabbit_hole === true);
       const singlePrimaryLocId = _singleIsPrimaryRH
         ? null
         : (character.occupation_location_id || character.current_work_location_id || null);
@@ -242,7 +242,7 @@ Deno.serve(async (req) => {
       // is true OR occupation_location_name is set — backward compatible with legacy).
       const singleRabbitHoleJobs = [];
       if (!character.occupation_location_id) {
-        const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
+        const isRH = character.work_details?.is_rabbit_hole === true;
         if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
           singleRabbitHoleJobs.push({
             workplaceName: character.occupation_location_name || character.work_details?.workplace_type || 'Work',
@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
           if (entry.location_id) continue;
-          const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+          const isRH = entry.is_rabbit_hole === true;
           if (isRH && entry.work_start_time && entry.work_end_time) {
             const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
             singleRabbitHoleJobs.push({
@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
           if (entry.location_id) {
             singleOrderedJobs.push({ type: 'linked', locId: entry.location_id, shift: singleJobSchedules[entry.location_id] });
           } else {
-            const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+            const isRH = entry.is_rabbit_hole === true;
             if (isRH && _rhIdx < singleRabbitHoleJobs.length) {
               singleOrderedJobs.push({ type: 'rabbit_hole', workplaceName: singleRabbitHoleJobs[_rhIdx].workplaceName, shift: singleRabbitHoleJobs[_rhIdx].schedule });
               _rhIdx++;
@@ -782,7 +782,7 @@ Deno.serve(async (req) => {
         // a rabbit-hole occupation (occupation_location_id is null AND
         // work_details.is_rabbit_hole is true OR occupation_location_name is set).
         const _gIsPrimaryRH = !char.occupation_location_id &&
-          (char.work_details?.is_rabbit_hole === true || !!char.occupation_location_name);
+          (char.work_details?.is_rabbit_hole === true);
         const primaryLocId = _gIsPrimaryRH
           ? null
           : (char.occupation_location_id || char.current_work_location_id || null);
@@ -808,7 +808,7 @@ Deno.serve(async (req) => {
         // ── RABBIT-HOLE OCCUPATIONS — before the linked-location loop ──────────
         const rabbitHoleJobs = [];
         if (!char.occupation_location_id) {
-          const isRH = char.work_details?.is_rabbit_hole === true || !!char.occupation_location_name;
+          const isRH = char.work_details?.is_rabbit_hole === true;
           if (isRH && char.work_start_time && char.work_end_time && Array.isArray(char.work_days)) {
             rabbitHoleJobs.push({
               workplaceName: char.occupation_location_name || char.work_details?.workplace_type || 'Work',
@@ -819,7 +819,7 @@ Deno.serve(async (req) => {
         if (Array.isArray(char.additional_occupation_locations)) {
           for (const entry of char.additional_occupation_locations) {
             if (entry.location_id) continue;
-            const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+            const isRH = entry.is_rabbit_hole === true;
             if (isRH && entry.work_start_time && entry.work_end_time) {
               const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
               rabbitHoleJobs.push({
@@ -846,7 +846,7 @@ Deno.serve(async (req) => {
             if (entry.location_id) {
               orderedJobs.push({ type: 'linked', locId: entry.location_id, shift: jobSchedules[entry.location_id] });
             } else {
-              const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+              const isRH = entry.is_rabbit_hole === true;
               if (isRH && _gRhIdx < rabbitHoleJobs.length) {
                 orderedJobs.push({ type: 'rabbit_hole', workplaceName: rabbitHoleJobs[_gRhIdx].workplaceName, shift: rabbitHoleJobs[_gRhIdx].schedule });
                 _gRhIdx++;
