@@ -200,7 +200,14 @@ Deno.serve(async (req) => {
       //   3. Character-level work_start_time/work_end_time/work_days — PRIMARY job only.
       const singleAllWorkLocIds = [];
       const singleJobSchedules = {}; // locId -> { start, end, days } | null
-      const singlePrimaryLocId = character.occupation_location_id || character.current_work_location_id || null;
+      // Rabbit-hole primary: occupation_location_id is intentionally null. Do NOT
+      // fall back to current_work_location_id — that field may be stale from a
+      // previous linked occupation. The rabbit-hole collection below handles it.
+      const _singleIsPrimaryRH = !character.occupation_location_id &&
+        (character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name);
+      const singlePrimaryLocId = _singleIsPrimaryRH
+        ? null
+        : (character.occupation_location_id || character.current_work_location_id || null);
       if (singlePrimaryLocId) {
         if (!singleAllWorkLocIds.includes(singlePrimaryLocId)) singleAllWorkLocIds.push(singlePrimaryLocId);
         singleJobSchedules[singlePrimaryLocId] = (character.work_start_time && character.work_end_time && Array.isArray(character.work_days))
@@ -256,18 +263,54 @@ Deno.serve(async (req) => {
           }
         }
       }
-      let singleRabbitHoleActive = null;
-      for (const rhJob of singleRabbitHoleJobs) {
-        if (isLocationShiftActiveNow(rhJob.schedule, singleClock)) {
-          singleRabbitHoleActive = rhJob;
-          break;
+      // Build ONE ordered employment sequence: primary first, then additional in
+      // stored order. Each entry knows whether it needs a LocationReference lookup
+      // (linked) or uses a named workplace directly (rabbit-hole). Evaluation
+      // proceeds in this order so job priority follows the stored order —
+      // rabbit-hole jobs never take artificial priority over linked jobs.
+      const singleOrderedJobs = [];
+      if (singlePrimaryLocId) {
+        singleOrderedJobs.push({ type: 'linked', locId: singlePrimaryLocId, shift: singleJobSchedules[singlePrimaryLocId] });
+      } else if (singleRabbitHoleJobs.length > 0) {
+        singleOrderedJobs.push({ type: 'rabbit_hole', workplaceName: singleRabbitHoleJobs[0].workplaceName, shift: singleRabbitHoleJobs[0].schedule });
+      }
+      if (Array.isArray(character.additional_occupation_locations)) {
+        let _rhIdx = singlePrimaryLocId ? 0 : 1;
+        for (const entry of character.additional_occupation_locations) {
+          if (entry.location_id) {
+            singleOrderedJobs.push({ type: 'linked', locId: entry.location_id, shift: singleJobSchedules[entry.location_id] });
+          } else {
+            const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+            if (isRH && _rhIdx < singleRabbitHoleJobs.length) {
+              singleOrderedJobs.push({ type: 'rabbit_hole', workplaceName: singleRabbitHoleJobs[_rhIdx].workplaceName, shift: singleRabbitHoleJobs[_rhIdx].schedule });
+              _rhIdx++;
+            }
+          }
+        }
+      }
+      // Evaluate jobs in order. First active shift wins.
+      let singleActiveJob = null;
+      for (const job of singleOrderedJobs) {
+        if (job.type === 'linked') {
+          const loc = singleLocMap[job.locId];
+          if (!loc) continue;
+          const locationShift = loc.worker_shifts?.[characterId];
+          if (locationShift && locationShift.start && locationShift.end) {
+            if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveJob = { ...job, shift: locationShift }; break; }
+            continue;
+          }
+          if (job.shift && job.shift.start && job.shift.end) {
+            if (isLocationShiftActiveNow(job.shift, singleClock)) { singleActiveJob = { ...job, shift: job.shift }; break; }
+          }
+        } else {
+          if (isLocationShiftActiveNow(job.shift, singleClock)) { singleActiveJob = job; break; }
         }
       }
       // If a rabbit-hole shift is active, route the character to work immediately
-      if (singleRabbitHoleActive) {
+      if (singleActiveJob && singleActiveJob.type === 'rabbit_hole') {
         if (isSleeping) {
-          const _isCont = isContinuousShift(singleRabbitHoleActive.schedule);
-          const _inWindow = isWithinShiftStartWakeWindow(singleRabbitHoleActive.schedule, singleClock);
+          const _isCont = isContinuousShift(singleActiveJob.shift);
+          const _inWindow = isWithinShiftStartWakeWindow(singleActiveJob.shift, singleClock);
           if (_isCont || !_inWindow) {
             const _staleReason = _isCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
             const _hasStaleLock = character.presence_stay_lock === true &&
@@ -287,12 +330,12 @@ Deno.serve(async (req) => {
           }
         }
         let _rhAuthRes = null;
+        console.error(`[enforceCharacterWorkSchedule] RH INVOKE: workplaceName=${JSON.stringify(singleActiveJob?.workplaceName)} type=${singleActiveJob?.type} shift=${JSON.stringify(singleActiveJob?.shift)}`);
         try {
           const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
             character_id: characterId, owner_email: character.owner_email,
             requested_presence_status: 'at_work',
-            requested_location_id: null,
-            requested_location_name: singleRabbitHoleActive.workplaceName,
+            requested_location_name: singleActiveJob.workplaceName,
             requested_source_reason: 'work_schedule',
             requested_authority: 'enforceCharacterWorkSchedule',
             requested_timestamp: singleNowET.toISOString(),
@@ -314,7 +357,7 @@ Deno.serve(async (req) => {
           }
           return Response.json({
             updated: true, oldLocation: resolvedLocId, newLocation: null,
-            workplaceName: singleRabbitHoleActive.workplaceName,
+            workplaceName: singleActiveJob.workplaceName,
             reason: 'On shift — rabbit-hole workplace (via authority)',
           });
         }
@@ -322,22 +365,14 @@ Deno.serve(async (req) => {
       }
       // No rabbit-hole active shift — proceed with linked-location loop below
 
-      // Find which job has an active shift right now. Evaluate EVERY active job's
-      // schedule — not only the primary or first job.
+      // Set linked variables from the ordered evaluation. If the active job
+      // is rabbit-hole, the block above already handled it. If no job is
+      // active, both stay null and the shift-end logic below takes over.
       let singleActiveWorkLocId = null;
       let singleActiveShift = null;
-      for (const locId of singleAllWorkLocIds) {
-        const loc = singleLocMap[locId];
-        if (!loc) continue;
-        const locationShift = loc.worker_shifts?.[characterId];
-        if (locationShift && locationShift.start && locationShift.end) {
-          if (isLocationShiftActiveNow(locationShift, singleClock)) { singleActiveWorkLocId = locId; singleActiveShift = locationShift; break; }
-          continue; // location-specific shift defined but not active — do not fall back
-        }
-        const jobShift = singleJobSchedules[locId];
-        if (jobShift && jobShift.start && jobShift.end) {
-          if (isLocationShiftActiveNow(jobShift, singleClock)) { singleActiveWorkLocId = locId; singleActiveShift = jobShift; break; }
-        }
+      if (singleActiveJob && singleActiveJob.type === 'linked') {
+        singleActiveWorkLocId = singleActiveJob.locId;
+        singleActiveShift = singleActiveJob.shift;
       }
 
       // ── CONTINUOUS-SCHEDULE DISTINCTION — valid-work-wake vs stale-continuous-claim ──
@@ -507,12 +542,11 @@ Deno.serve(async (req) => {
       // the schedule authority has ended the shift — release it regardless of
       // workplace presence. If the character IS at a workplace, route work-end
       // through the sole canonical writer (existing movement-home pathway).
-      if (singleCurrentWorkLocId || _singleHasStaleWorkLock) {
-        if (!singleCurrentWorkLocId) {
-          // Character is NOT at a workplace but carries a stale work_shift lock.
-          // The schedule authority has ended the shift. Release the expired lock
-          // through the existing release pathway — do NOT attempt a work_end
-          // movement since the character is already elsewhere.
+      const _singleIsAtWork = character.resolved_presence_status === 'at_work';
+      if (singleCurrentWorkLocId || _singleHasStaleWorkLock || _singleIsAtWork) {
+        if (!singleCurrentWorkLocId && !_singleIsAtWork) {
+          // Character is NOT at a workplace, NOT at_work, but carries a stale
+          // work_shift lock. Release the lock — no work_end movement needed.
           let _singleLockRelRes = null;
           try {
             _singleLockRelRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
@@ -551,6 +585,20 @@ Deno.serve(async (req) => {
           if (minsToStart >= 0 && minsToStart <= 30) {
             const hasDays = _sh.days && _sh.days.length > 0;
             if (!hasDays || _sh.days.includes(_sToday)) { _sImminent = locId; break; }
+          }
+        }
+        // Also check rabbit-hole jobs for imminent shifts
+        if (!_sImminent) {
+          for (const job of singleOrderedJobs) {
+            if (job.type !== 'rabbit_hole' || !job.shift || !job.shift.start) continue;
+            const [sh2, sm2] = job.shift.start.split(':').map(Number);
+            const sMin2 = sh2 * 60 + sm2;
+            let minsToStart2 = sMin2 - _sNowMin;
+            if (minsToStart2 < 0) minsToStart2 += 1440;
+            if (minsToStart2 >= 0 && minsToStart2 <= 30) {
+              const hasDays2 = job.shift.days && job.shift.days.length > 0;
+              if (!hasDays2 || job.shift.days.includes(_sToday)) { _sImminent = job.workplaceName; break; }
+            }
           }
         }
         if (_sImminent) {
@@ -730,7 +778,15 @@ Deno.serve(async (req) => {
         //      (occupation_location_id / current_work_location_id) only.
         const allWorkLocIds = [];
         const jobSchedules = {}; // locId -> { start, end, days } | null
-        const primaryLocId = char.occupation_location_id || char.current_work_location_id || null;
+        // Rabbit-hole primary: same guard as the single-char path. Do NOT fall
+        // back to current_work_location_id when the primary is intentionally
+        // a rabbit-hole occupation (occupation_location_id is null AND
+        // work_details.is_rabbit_hole is true OR occupation_location_name is set).
+        const _gIsPrimaryRH = !char.occupation_location_id &&
+          (char.work_details?.is_rabbit_hole === true || !!char.occupation_location_name);
+        const primaryLocId = _gIsPrimaryRH
+          ? null
+          : (char.occupation_location_id || char.current_work_location_id || null);
         if (primaryLocId) {
           if (!allWorkLocIds.includes(primaryLocId)) allWorkLocIds.push(primaryLocId);
           jobSchedules[primaryLocId] = (char.work_start_time && char.work_end_time && Array.isArray(char.work_days))
@@ -776,18 +832,51 @@ Deno.serve(async (req) => {
         }
         if (allWorkLocIds.length === 0 && rabbitHoleJobs.length === 0) continue;
 
-        // Check for active rabbit-hole shifts before the linked-location loop
-        let rabbitHoleActive = null;
-        for (const rhJob of rabbitHoleJobs) {
-          if (isLocationShiftActiveNow(rhJob.schedule, globalClock)) {
-            rabbitHoleActive = rhJob;
-            break;
+        // Build ONE ordered employment sequence: primary first, then additional
+        // in stored order. Each entry is linked or rabbit-hole. Evaluation
+        // proceeds in this order so job priority follows the stored order.
+        const orderedJobs = [];
+        if (primaryLocId) {
+          orderedJobs.push({ type: 'linked', locId: primaryLocId, shift: jobSchedules[primaryLocId] });
+        } else if (rabbitHoleJobs.length > 0) {
+          orderedJobs.push({ type: 'rabbit_hole', workplaceName: rabbitHoleJobs[0].workplaceName, shift: rabbitHoleJobs[0].schedule });
+        }
+        if (Array.isArray(char.additional_occupation_locations)) {
+          let _gRhIdx = primaryLocId ? 0 : 1;
+          for (const entry of char.additional_occupation_locations) {
+            if (entry.location_id) {
+              orderedJobs.push({ type: 'linked', locId: entry.location_id, shift: jobSchedules[entry.location_id] });
+            } else {
+              const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+              if (isRH && _gRhIdx < rabbitHoleJobs.length) {
+                orderedJobs.push({ type: 'rabbit_hole', workplaceName: rabbitHoleJobs[_gRhIdx].workplaceName, shift: rabbitHoleJobs[_gRhIdx].schedule });
+                _gRhIdx++;
+              }
+            }
           }
         }
-        if (rabbitHoleActive) {
+        // Evaluate jobs in order. First active shift wins.
+        let activeJob = null;
+        for (const job of orderedJobs) {
+          if (job.type === 'linked') {
+            const loc = locMap[job.locId];
+            if (!loc) continue;
+            const locationShift = loc.worker_shifts?.[char.id];
+            if (locationShift && locationShift.start && locationShift.end) {
+              if (isLocationShiftActiveNow(locationShift, globalClock)) { activeJob = { ...job, shift: locationShift }; break; }
+              continue;
+            }
+            if (job.shift && job.shift.start && job.shift.end) {
+              if (isLocationShiftActiveNow(job.shift, globalClock)) { activeJob = { ...job, shift: job.shift }; break; }
+            }
+          } else {
+            if (isLocationShiftActiveNow(job.shift, globalClock)) { activeJob = job; break; }
+          }
+        }
+        if (activeJob && activeJob.type === 'rabbit_hole') {
           if (isSleeping) {
-            const _gIsCont = isContinuousShift(rabbitHoleActive.schedule);
-            const _gInWindow = isWithinShiftStartWakeWindow(rabbitHoleActive.schedule, globalClock);
+            const _gIsCont = isContinuousShift(activeJob.shift);
+            const _gInWindow = isWithinShiftStartWakeWindow(activeJob.shift, globalClock);
             if (_gIsCont || !_gInWindow) {
               const _gStaleReason = _gIsCont ? 'continuous_schedule_stale_claim' : 'bounded_schedule_past_wake_window';
               const _gHasStaleLock = char.presence_stay_lock === true &&
@@ -808,7 +897,7 @@ Deno.serve(async (req) => {
             }
           }
           const alreadyAtRHWork = char.resolved_presence_status === 'at_work' &&
-            char.resolved_current_location_name === rabbitHoleActive.workplaceName;
+            char.resolved_current_location_name === activeJob.workplaceName;
           if (!alreadyAtRHWork) {
             issues_found.push(`${char.name}: should be at rabbit-hole work but not there`);
             let _gRHAuthRes = null;
@@ -816,8 +905,7 @@ Deno.serve(async (req) => {
               const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
                 character_id: char.id, owner_email: ownerEmail,
                 requested_presence_status: 'at_work',
-                requested_location_id: null,
-                requested_location_name: rabbitHoleActive.workplaceName,
+                requested_location_name: activeJob.workplaceName,
                 requested_source_reason: 'work_schedule',
                 requested_authority: 'enforceCharacterWorkSchedule',
                 requested_timestamp: nowET.toISOString(),
@@ -838,7 +926,7 @@ Deno.serve(async (req) => {
                   });
                 } catch (_wakeProofError) { /* non-reverting */ }
               }
-              fixes_applied.push(`${char.name}: synced to rabbit-hole work — ${rabbitHoleActive.workplaceName} (via authority)`);
+              fixes_applied.push(`${char.name}: synced to rabbit-hole work — ${activeJob.workplaceName} (via authority)`);
               fixCount++;
             } else {
               issues_found.push(`${char.name}: AUTHORITY_${_gRHAuthRes?.disposition || 'unknown'} — ${_gRHAuthRes?.reason || 'no reason'}`);
@@ -848,23 +936,14 @@ Deno.serve(async (req) => {
         }
         // No rabbit-hole active shift — proceed with linked-location loop
 
-        // Determine which job (if any) has an active shift right now. Evaluate EVERY
-        // active job's schedule — not only the primary or first job — so a current
-        // shift is found even when it belongs to the second, third, or later job.
+        // Set linked variables from the ordered evaluation. If the active job
+        // is rabbit-hole, the block above already handled it (continue). If no
+        // job is active, both stay null and the shift-end logic takes over.
         let activeWorkLocId = null;
         let activeShiftObj = null;
-        for (const locId of allWorkLocIds) {
-          const loc = locMap[locId];
-          if (!loc) continue;
-          const locationShift = loc.worker_shifts?.[char.id];
-          if (locationShift && locationShift.start && locationShift.end) {
-            if (isLocationShiftActiveNow(locationShift, globalClock)) { activeWorkLocId = locId; activeShiftObj = locationShift; break; }
-            continue; // location-specific shift defined but not active — do not fall back
-          }
-          const jobShift = jobSchedules[locId];
-          if (jobShift && jobShift.start && jobShift.end) {
-            if (isLocationShiftActiveNow(jobShift, globalClock)) { activeWorkLocId = locId; activeShiftObj = jobShift; break; }
-          }
+        if (activeJob && activeJob.type === 'linked') {
+          activeWorkLocId = activeJob.locId;
+          activeShiftObj = activeJob.shift;
         }
 
         // ── CONTINUOUS-SCHEDULE DISTINCTION (global path) ─────────────────
@@ -948,16 +1027,14 @@ Deno.serve(async (req) => {
               issues_found.push(`${char.name}: AUTHORITY_${authRes?.disposition || 'unknown'} — ${authRes?.reason || 'no reason'}`);
             }
           }
-        } else if (!onShift && (currentWorkLocId || _gHasStaleWorkLock)) {
-          // Schedule authority says no shift is active. The work lock is temporally
-          // invalid. Release it regardless of workplace presence — the existing
-          // release pathway (enforceCharacterLocationPresence) handles both the
-          // at-workplace movement-home case and the not-at-workplace lock-only case.
-          if (!currentWorkLocId) {
-            // Character is NOT at a workplace but carries a stale work_shift lock.
-            // The schedule authority has ended the shift. Release the expired lock
-            // through the existing release pathway (requested_lock_release) — do NOT
-            // attempt a work_end movement since the character is already elsewhere.
+        } else if (!onShift && (currentWorkLocId || _gHasStaleWorkLock || char.resolved_presence_status === 'at_work')) {
+          // No active shift. The character may be at a linked workplace, at_work
+          // (rabbit-hole), or carrying a stale work lock. All route through the
+          // existing work-end pathway. A character merely carrying a stale lock
+          // (not at_work, not at a workplace) gets a simple lock release instead.
+          if (!currentWorkLocId && char.resolved_presence_status !== 'at_work') {
+            // NOT at a workplace, NOT at_work, but carries a stale work lock.
+            // Release the lock — no work_end movement needed.
             try {
               const _lockRelRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
                 character_id: char.id, owner_email: ownerEmail,
@@ -1000,6 +1077,20 @@ Deno.serve(async (req) => {
             if (minsToStart >= 0 && minsToStart <= 30) {
               const hasDays = _shift.days && _shift.days.length > 0;
               if (!hasDays || _shift.days.includes(_today)) { imminentOtherJob = locId; break; }
+            }
+          }
+          // Also check rabbit-hole jobs for imminent shifts
+          if (!imminentOtherJob) {
+            for (const job of orderedJobs) {
+              if (job.type !== 'rabbit_hole' || !job.shift || !job.shift.start) continue;
+              const [sh2, sm2] = job.shift.start.split(':').map(Number);
+              const sMin2 = sh2 * 60 + sm2;
+              let minsToStart2 = sMin2 - _nowMin;
+              if (minsToStart2 < 0) minsToStart2 += 1440;
+              if (minsToStart2 >= 0 && minsToStart2 <= 30) {
+                const hasDays2 = job.shift.days && job.shift.days.length > 0;
+                if (!hasDays2 || job.shift.days.includes(_today)) { imminentOtherJob = job.workplaceName; break; }
+              }
             }
           }
           if (imminentOtherJob) {

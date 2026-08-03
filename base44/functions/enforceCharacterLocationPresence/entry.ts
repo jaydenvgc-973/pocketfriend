@@ -489,11 +489,34 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (character.resolved_presence_status === 'passed_out') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'passed_out_work_blocked' };
     }
+    // Critically ill — health below 20 is a biological emergency. Shared safeguard
+    // for BOTH linked and rabbit-hole work — must execute before either branch.
+    if ((character.health_value ?? 80) < 20) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
+    }
     // RABBIT-HOLE WORKPLACE — occupation configured without a linked LocationReference.
     // The scheduler provides the named workplace. A null location ID is valid here;
     // the workplace name is authoritative. This branch runs BEFORE the linked-location
     // check so an intentionally unlinked occupation is never rejected as "no_work_location."
-    if (!requestedLocId && !character.occupation_location_id && requested.requested_location_name) {
+    // The requested name is validated against the character's saved rabbit-hole
+    // occupations (primary or additional) so an arbitrary name cannot be committed.
+    console.error(`[enforceCharacterLocationPresence] at_work DEBUG: requestedLocId=${JSON.stringify(requestedLocId)} requested_location_name=${JSON.stringify(requested.requested_location_name)} occupation_location_id=${JSON.stringify(character.occupation_location_id)} hasLocationName=${JSON.stringify(!!requested.requested_location_name)}`);
+    if (!requestedLocId && requested.requested_location_name) {
+      const _rhNames = [];
+      if (!character.occupation_location_id) {
+        const isRH = character.work_details?.is_rabbit_hole === true || !!character.occupation_location_name;
+        if (isRH) _rhNames.push(character.occupation_location_name || character.work_details?.workplace_type || 'Work');
+      }
+      if (Array.isArray(character.additional_occupation_locations)) {
+        for (const entry of character.additional_occupation_locations) {
+          if (entry.location_id) continue;
+          const isRH = entry.is_rabbit_hole === true || !!entry.location_name;
+          if (isRH) _rhNames.push(entry.location_name || entry.workplace_type || 'Work');
+        }
+      }
+      if (!_rhNames.includes(requested.requested_location_name)) {
+        return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_occupation_not_matched' };
+      }
       const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
       const canonicalFields = {
         resolved_current_location_id: null,
@@ -529,10 +552,6 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
     }
     const workLoc = locationMap[workLocId];
-    // Blocked from work if critically ill
-    if ((character.health_value ?? 80) < 20) {
-      return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
-    }
     const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
     const canonicalFields = {
       resolved_current_location_id: workLocId,
