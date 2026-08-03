@@ -31,11 +31,6 @@
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Module-level constant for the scheduler authority identifier. Used by the
-// rabbit-hole at_work handler to verify that only the work scheduler may
-// commit a null-location work presence.
-const SCHEDULER_AUTHORITY = 'enforceCharacterWorkSchedule';
-
 // ═════════════════════════════════════════════════════════════════════════════
 // HOSPITAL STABILIZATION — one-time amounts applied at admission commit.
 // Repurposed from the former recurring RATES.hospitalized. Applied exactly
@@ -505,9 +500,8 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     //   - Null saved location_id + explicit rabbit-hole flag → intentional rabbit-hole
     // A missing linked record is an integrity error, NOT a rabbit-hole inference.
     if (!requestedLocId && requested.requested_location_name) {
-      console.log('[enforceCharacterLocationPresence] Rabbit-hole work-start branch entered:', requested.requested_location_name);
       // Require scheduler authority — no other caller may commit a null-location work presence
-      if (requested.requested_authority !== SCHEDULER_AUTHORITY) {
+      if (requested.requested_authority !== 'enforceCharacterWorkSchedule') {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_requires_scheduler_authority' };
       }
       // Validate against saved rabbit-hole occupation entries — use ONLY the actual saved
@@ -515,29 +509,26 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       // Never use workplace_type or category as a name equivalent.
       // Discriminator: saved location ID absent AND saved is_rabbit_hole flag explicitly true.
       // A saved name alone must not classify an occupation as a rabbit hole.
-      // Trim and normalize names so trailing whitespace in saved occupation data
-      // (e.g. "Agency ") does not break the rabbit-hole name match.
-      const _normName = (s) => (s ? String(s).trim() : '');
       const _rhNames = [];
       if (!character.occupation_location_id) {
         const isRH = character.work_details?.is_rabbit_hole === true;
-        if (isRH && _normName(character.occupation_location_name)) {
-          _rhNames.push(_normName(character.occupation_location_name));
+        if (isRH && character.occupation_location_name) {
+          _rhNames.push(character.occupation_location_name);
         }
       }
       if (Array.isArray(character.additional_occupation_locations)) {
         for (const entry of character.additional_occupation_locations) {
           if (entry.location_id) continue;
           const isRH = entry.is_rabbit_hole === true;
-          if (isRH && _normName(entry.location_name)) {
-            _rhNames.push(_normName(entry.location_name));
+          if (isRH && entry.location_name) {
+            _rhNames.push(entry.location_name);
           }
         }
       }
       if (_rhNames.length === 0) {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'no_rabbit_hole_occupation_configured' };
       }
-      if (!_rhNames.includes(_normName(requested.requested_location_name))) {
+      if (!_rhNames.includes(requested.requested_location_name)) {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_occupation_name_not_matched' };
       }
       const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
