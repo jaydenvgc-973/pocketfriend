@@ -496,7 +496,8 @@
         "temporary_housing",
         "incarcerated",
         "house_arrest",
-        "halfway_house"
+        "halfway_house",
+        "rabbit_hole"
       ]
     },
     "resolved_presence_status": {
@@ -515,9 +516,10 @@
         "incarcerated",
         "house_arrest",
         "confined",
-        "hospitalized"
+        "hospitalized",
+        "rabbit_hole"
       ],
-      "description": "sleeping = voluntary/chosen sleep. passed_out = involuntary collapse from exhaustion or compound crisis. These are mechanically and visually distinct states. hospitalized = medical emergency. Do NOT use sleeping for pass-out or forced exhaustion."
+      "description": "sleeping = voluntary/chosen sleep. passed_out = involuntary collapse from exhaustion or compound crisis. These are mechanically and visually distinct states. hospitalized = medical emergency. Do NOT use sleeping for pass-out or forced exhaustion. rabbit_hole = custom off-screen destination (user-typed, no persisted LocationReference)."
     },
     "resolved_source_reason": {
       "type": "string"

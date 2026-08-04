@@ -920,6 +920,14 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'at_work', label: 'At work', sublabel: _workName, isTransit: false, isSleeping: false };
   }
 
+  // ── PRIORITY 1.5: RABBIT HOLE (checked BEFORE sleep — matches resolver LAYER 2.5) ──
+  // A character explicitly placed at an off-screen/rabbit-hole destination must
+  // display that state, not be overridden by a schedule-based sleep window.
+  if (character.resolved_presence_status === 'rabbit_hole') {
+    const label = character.resolved_current_location_name || 'Off-screen';
+    return { status: 'rabbit_hole', label, sublabel: null, isTransit: false, isSleeping: false };
+  }
+
   // ── SLEEP/REST DETECTION: SINGLE AUTHORITATIVE TRUTH ──────────────────────
   // Delegates to getCharacterSleepState — the SAME validator used by AlarmTool and
   // ChatHeader. Eliminates split truth: every sleep consumer reads one source.

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Coffee, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Coffee, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign, Compass } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -319,6 +319,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   IconComponent = MapPin;
                   color = 'text-muted-foreground';
                   label = 'Away';
+                } else if (presence.status === 'rabbit_hole') {
+                  IconComponent = Compass;
+                  color = 'text-violet-400';
                 } else if (presence.status === 'health_critical') {
                   IconComponent = AlertTriangle;
                   color = 'text-red-400';
