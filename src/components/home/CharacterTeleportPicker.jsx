@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { MapPin, Search, Home, Briefcase, BookOpen, Dumbbell, Wine, X, Loader2, Check } from "lucide-react";
+import { MapPin, Search, Home, Briefcase, BookOpen, Dumbbell, Wine, X, Loader2, Check, Compass } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
@@ -33,6 +33,8 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
    const [search, setSearch] = useState("");
    const [sending, setSending] = useState(null); // locationId being sent to
    const [done, setDone] = useState(null);       // locationId just sent
+   const [rabbitHoleMode, setRabbitHoleMode] = useState(false);
+   const [customName, setCustomName] = useState("");
    const triggerRef = useRef(null);
    const queryClient = useQueryClient();
 
@@ -82,6 +84,32 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
       }, 800);
     } catch (err) {
       console.error("[Teleport] Failed:", err.message);
+    } finally {
+      setSending(null);
+    }
+  };
+
+  const handleRabbitHole = async () => {
+    if (sending || !customName.trim()) return;
+    setSending('rabbit_hole');
+    try {
+      await base44.functions.invoke("updateCharacterLocation", {
+        characterId: character.id,
+        rabbitHole: true,
+        locationName: customName.trim(),
+        sourceReason: "user_teleport_rabbit_hole",
+      });
+      setDone('rabbit_hole');
+      setTimeout(() => {
+        setDone(null);
+        setOpen(false);
+        setRabbitHoleMode(false);
+        setCustomName("");
+        queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+        onTeleported?.();
+      }, 800);
+    } catch (err) {
+      console.error("[Teleport] Rabbit hole failed:", err.message);
     } finally {
       setSending(null);
     }
@@ -201,8 +229,39 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
                     );
                   })
                 )}
-              </div>
-            </motion.div>
+                </div>
+
+                {/* Rabbit hole / Away option */}
+                <div className="border-t border-border px-2 pt-2 pb-2">
+                  {!rabbitHoleMode ? (
+                    <button
+                      onClick={() => setRabbitHoleMode(true)}
+                      className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-secondary transition-colors text-left"
+                    >
+                      <Compass className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <span className="text-xs text-muted-foreground">Rabbit Hole / Away</span>
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        autoFocus
+                        value={customName}
+                        onChange={e => setCustomName(e.target.value)}
+                        placeholder="Custom location name..."
+                        className="w-full bg-secondary rounded-xl px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                        onKeyDown={e => { if (e.key === 'Enter' && customName.trim()) handleRabbitHole(); }}
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => { setRabbitHoleMode(false); setCustomName(""); }} className="flex-1 py-1.5 rounded-xl border border-border text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                        <button onClick={handleRabbitHole} disabled={!customName.trim() || !!sending} className="flex-1 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-1">
+                          {sending === 'rabbit_hole' ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                          Send
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                </motion.div>
           </AnimatePresence>
         </div>,
         document.body

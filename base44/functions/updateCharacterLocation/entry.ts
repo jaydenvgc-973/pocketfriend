@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const { characterId, characterName, locationId, locationName, presenceStatus, locationType, sourceReason } = body;
+    const { characterId, characterName, locationId, locationName, presenceStatus, locationType, sourceReason, rabbitHole } = body;
 
     if (!characterId && !characterName) {
       return Response.json({ error: 'Must provide characterId or characterName' }, { status: 400 });
@@ -56,6 +56,53 @@ Deno.serve(async (req) => {
         roster_count: allChars.length,
         roster_names: allChars.map(c => c.name)
       }, { status: 404 });
+    }
+
+    // RABBIT HOLE MODE: custom off-screen destination — skip LocationReference lookup entirely.
+    // The character is placed at a named but non-persisted destination (resolved_presence_status: 'rabbit_hole').
+    // No LocationHistory proof is written (requires a real location_id).
+    if (rabbitHole === true) {
+      const customName = (locationName || '').trim();
+      if (!customName) {
+        return Response.json({ error: 'Rabbit hole requires a locationName (custom name)' }, { status: 400 });
+      }
+      const previousLocationId = matched.resolved_current_location_id || null;
+      const previousLocationName = matched.resolved_current_location_name || null;
+      const now = new Date().toISOString();
+
+      await base44.entities.Character.update(matched.id, {
+        resolved_current_location_id: null,
+        resolved_current_location_name: customName,
+        resolved_location_type: 'rabbit_hole',
+        resolved_presence_status: 'rabbit_hole',
+        resolved_source_reason: sourceReason || 'user_teleport_rabbit_hole',
+        resolved_last_updated_at: now,
+        travel_status: 'not_traveling',
+        travel_destination_location_id: null,
+        traveling_to_location_id: null,
+        traveling_to_location_name: null,
+        presence_stay_lock: false,
+      });
+
+      const verifyList = await base44.entities.Character.list(null, 500);
+      const verified = verifyList.find(c => c.id === matched.id);
+      const writeConfirmed = verified?.resolved_presence_status === 'rabbit_hole'
+        && verified?.resolved_current_location_name === customName;
+
+      return Response.json({
+        success: true,
+        write_confirmed: writeConfirmed,
+        matched_character_name: matched.name,
+        matched_character_id: matched.id,
+        previous_location_id: previousLocationId,
+        previous_location_name: previousLocationName,
+        new_location_id: null,
+        new_location_name: customName,
+        new_presence_status: 'rabbit_hole',
+        new_location_type: 'rabbit_hole',
+        rabbit_hole: true,
+        updated_at: now,
+      });
     }
 
     // STEP 3: Load locations via user-scoped path

@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { User, DollarSign, MapPin, ChevronDown, LogOut, Check } from "lucide-react";
+import { User, DollarSign, MapPin, ChevronDown, LogOut, Check, Compass } from "lucide-react";
 import { useUserPresence } from "@/hooks/useUserPresence";
 
 export default function UserCard({ user, settings, settingsId, settingsLoading = false, settingsError = false, locations = [], isLocationsLoading = false, isLocationsError = false }) {
@@ -17,6 +17,8 @@ export default function UserCard({ user, settings, settingsId, settingsLoading =
 
   const { userPresence, setUserLocation, setUserAway } = useUserPresence(user, settings, settingsId);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [rabbitHoleMode, setRabbitHoleMode] = useState(false);
+  const [customName, setCustomName] = useState("");
   const wrapperRef = useRef(null);
 
   // Outside click is handled by the fixed click-catcher div rendered when showDropdown is true
@@ -31,8 +33,16 @@ export default function UserCard({ user, settings, settingsId, settingsLoading =
     setUserAway();
   };
 
+  const handleRabbitHole = () => {
+    if (!customName.trim()) return;
+    setShowDropdown(false);
+    setRabbitHoleMode(false);
+    setUserAway(customName.trim());
+    setCustomName("");
+  };
+
   const presenceLabel = userPresence.isAway
-    ? "Away"
+    ? (userPresence.locationName || "Away")
     : (userPresence.locationName || "Somewhere");
 
   const presenceColor = userPresence.isAway ? "text-muted-foreground" : "text-primary";
@@ -106,7 +116,7 @@ export default function UserCard({ user, settings, settingsId, settingsLoading =
                   <button
                     onClick={handleSetAway}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-secondary transition-colors ${
-                      userPresence.isAway ? "bg-secondary/50" : ""
+                      userPresence.isAway && !userPresence.locationName ? "bg-secondary/50" : ""
                     }`}
                   >
                     <LogOut className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
@@ -114,8 +124,47 @@ export default function UserCard({ user, settings, settingsId, settingsLoading =
                       <p className="text-xs font-medium text-foreground">Away</p>
                       <p className="text-[10px] text-muted-foreground">Outside the app world</p>
                     </div>
-                    {userPresence.isAway && <Check className="w-3 h-3 text-primary flex-shrink-0" />}
+                    {userPresence.isAway && !userPresence.locationName && <Check className="w-3 h-3 text-primary flex-shrink-0" />}
                   </button>
+
+                  {/* Rabbit hole / custom Away option */}
+                  {!rabbitHoleMode ? (
+                    <button
+                      onClick={() => setRabbitHoleMode(true)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-left hover:bg-secondary transition-colors ${
+                        userPresence.isAway && userPresence.locationName ? "bg-secondary/50" : ""
+                      }`}
+                    >
+                      <Compass className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground">Custom Away</p>
+                        <p className="text-[10px] text-muted-foreground">Off-screen location</p>
+                      </div>
+                      {userPresence.isAway && userPresence.locationName && <Check className="w-3 h-3 text-primary flex-shrink-0" />}
+                    </button>
+                  ) : (
+                    <div className="px-3 py-2 space-y-2">
+                      <input
+                        autoFocus
+                        value={customName}
+                        onChange={e => setCustomName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && customName.trim()) handleRabbitHole(); }}
+                        placeholder="Where are they?"
+                        className="w-full bg-secondary rounded-lg px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground outline-none"
+                      />
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => { setRabbitHoleMode(false); setCustomName(""); }}
+                          className="flex-1 py-1.5 rounded-lg border border-border text-[10px] text-muted-foreground hover:text-foreground"
+                        >Cancel</button>
+                        <button
+                          onClick={handleRabbitHole}
+                          disabled={!customName.trim()}
+                          className="flex-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-50"
+                        >Set</button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="border-t border-border/50">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-3 pt-2 pb-1">Locations</p>

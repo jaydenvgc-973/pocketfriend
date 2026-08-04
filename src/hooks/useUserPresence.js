@@ -37,7 +37,7 @@ export function readUserPresence(currentUser, settings) {
   return {
     isAway,
     locationId: isAway ? null : locationId,
-    locationName: isAway ? null : locationName,
+    locationName: locationName,
     status: isAway ? "away" : "present",
     displayName: settings.fictional_world_name || currentUser.full_name || "You",
     ownerEmail: currentUser.email,
@@ -165,7 +165,7 @@ export function useUserPresence(currentUser, settings, settingsId) {
    * Set user as Away (outside the app world).
    * Applies optimistic update immediately.
    */
-  const setUserAway = useCallback(async () => {
+  const setUserAway = useCallback(async (customName) => {
     let resolvedSettingsId = resolveSettingsIdFromCache();
 
     if (!resolvedSettingsId && currentUser?.email) {
@@ -207,14 +207,14 @@ export function useUserPresence(currentUser, settings, settingsId) {
     // OPTIMISTIC: update local state AND shared React Query cache
     const presenceFields = {
       user_current_location_id: null,
-      user_current_location_name: null,
+      user_current_location_name: customName || null,
       user_presence_status: "away",
     };
-    setOptimisticPresence({ isAway: true, locationId: null, locationName: null, status: "away" });
+    setOptimisticPresence({ isAway: true, locationId: null, locationName: customName || null, status: "away" });
     writeToCache(presenceFields);
     base44.entities.UserSettings.update(activeSettingsId, {
       user_current_location_id: null,
-      user_current_location_name: null,
+      user_current_location_name: customName || null,
       user_presence_status: "away",
       user_presence_updated_at: new Date().toISOString(),
     }).then(() => invalidate()).catch(() => {

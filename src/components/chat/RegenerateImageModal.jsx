@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw, AlertCircle } from "lucide-react";
+import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin, Users, Check, RefreshCw, AlertCircle, Compass } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
@@ -131,6 +131,9 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [combinedMode, setCombinedMode] = useState(false);
   // Pending subject selection from combined flow — held until location is confirmed
   const [pendingSubjectSelection, setPendingSubjectSelection] = useState(null);
+  // Rabbit hole / custom off-screen location input
+  const [rabbitHoleMode, setRabbitHoleMode] = useState(false);
+  const [customLocationName, setCustomLocationName] = useState("");
 
   // ── PROMPT-DERIVED IDENTITY ────────────────────────────────────────────────
   // Parse [CHARACTER] Name or [CHARACTER] FirstName from prompt as authoritative subject identity.
@@ -170,6 +173,8 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setRosterDiagnostics(null);
       setCombinedMode(false);
       setPendingSubjectSelection(null);
+      setRabbitHoleMode(false);
+      setCustomLocationName("");
     }
   }, [isOpen]);
 
@@ -463,6 +468,19 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     setPromptMode(null);
   };
 
+  const handleRabbitHoleConfirm = () => {
+    if (!customLocationName.trim()) return;
+    if (combinedMode && pendingSubjectSelection) {
+      onSelect('no_avatar', null, null, null, [], customLocationName.trim(), pendingSubjectSelection);
+    } else {
+      onSelect('wrong_location', null, null, null, [], customLocationName.trim());
+    }
+    setRabbitHoleMode(false);
+    setCustomLocationName("");
+    setCombinedMode(false);
+    setPendingSubjectSelection(null);
+  };
+
   const handleClose = () => {
     setShowPromptInput(false);
     setEditPrompt("");
@@ -741,7 +759,40 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       {locations.length === 0 && <p className="text-xs text-muted-foreground italic text-center py-3">No locations found</p>}
                     </div>
                   )}
-                  <button onClick={() => setShowLocationPicker(false)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
+                  {!rabbitHoleMode ? (
+                    <button
+                      onClick={() => setRabbitHoleMode(true)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-border bg-secondary/40 hover:border-primary/50 hover:bg-primary/5 transition-all text-left"
+                    >
+                      <Compass className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Custom off-screen location</p>
+                        <p className="text-xs text-muted-foreground">Type a location name not in your places</p>
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="space-y-2 px-1">
+                      <p className="text-xs text-muted-foreground">Enter the location name:</p>
+                      <input
+                        autoFocus
+                        value={customLocationName}
+                        onChange={e => setCustomLocationName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && customLocationName.trim()) handleRabbitHoleConfirm(); }}
+                        placeholder="e.g. 'the old warehouse', 'rooftop bar downtown'"
+                        className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => { setRabbitHoleMode(false); setCustomLocationName(""); }} className="flex-1 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground">Back</button>
+                        <button onClick={handleRabbitHoleConfirm} disabled={!customLocationName.trim() || isRegenerating} className="flex-1 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2">
+                          {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Compass className="w-4 h-4" />}
+                          Use this location
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {!rabbitHoleMode && (
+                    <button onClick={() => setShowLocationPicker(false)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
+                  )}
                 </>
               ) : (
                 <>
