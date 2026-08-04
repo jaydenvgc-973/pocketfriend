@@ -510,7 +510,11 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       // Discriminator: saved location ID absent AND saved is_rabbit_hole flag explicitly true.
       // A saved name alone must not classify an occupation as a rabbit hole.
       const _rhNames = [];
-      if (!character.occupation_location_id) {
+      // One Truth safeguard: is_rabbit_hole flag is the authority for
+      // rabbit-hole classification. A stale occupation_location_id from a
+      // former linked job must NOT prevent the active rabbit-hole employment
+      // from being recognized.
+      {
         const isRH = character.work_details?.is_rabbit_hole === true;
         if (isRH && character.occupation_location_name) {
           _rhNames.push(character.occupation_location_name);
@@ -964,8 +968,11 @@ function computeResolvedLocation(character, locationMap, etTime) {
     // behavior (including current_work_location_id fallback) remains unchanged.
     // Discriminator: saved location ID absent AND saved is_rabbit_hole flag explicitly true.
     // A saved name alone must not classify an occupation as a rabbit hole.
-    const _isPrimaryRH = !character.occupation_location_id &&
-      character.work_details?.is_rabbit_hole === true;
+    // One Truth safeguard: the is_rabbit_hole flag is the authority for
+    // rabbit-hole classification. A stale occupation_location_id from a
+    // former linked job must NOT prevent the active rabbit-hole employment
+    // from being recognized.
+    const _isPrimaryRH = character.work_details?.is_rabbit_hole === true;
     const _primaryLocId = _isPrimaryRH
       ? null
       : (character.occupation_location_id || character.current_work_location_id || null);

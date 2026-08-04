@@ -203,8 +203,10 @@ Deno.serve(async (req) => {
       // Rabbit-hole primary: occupation_location_id is intentionally null. Do NOT
       // fall back to current_work_location_id — that field may be stale from a
       // previous linked occupation. The rabbit-hole collection below handles it.
-      const _singleIsPrimaryRH = !character.occupation_location_id &&
-        (character.work_details?.is_rabbit_hole === true);
+      // One Truth safeguard: is_rabbit_hole flag is the authority. A stale
+      // occupation_location_id from a former linked job must NOT prevent the
+      // active rabbit-hole employment from being recognized.
+      const _singleIsPrimaryRH = character.work_details?.is_rabbit_hole === true;
       const singlePrimaryLocId = _singleIsPrimaryRH
         ? null
         : (character.occupation_location_id || character.current_work_location_id || null);
@@ -241,7 +243,9 @@ Deno.serve(async (req) => {
       // Discriminator: occupation_location_id is absent AND (work_details.is_rabbit_hole
       // is true OR occupation_location_name is set — backward compatible with legacy).
       const singleRabbitHoleJobs = [];
-      if (!character.occupation_location_id) {
+      // One Truth safeguard: is_rabbit_hole flag is the authority. Stale
+      // occupation_location_id must NOT block rabbit-hole recognition.
+      {
         const isRH = character.work_details?.is_rabbit_hole === true;
         if (isRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
           singleRabbitHoleJobs.push({
@@ -781,8 +785,10 @@ Deno.serve(async (req) => {
         // back to current_work_location_id when the primary is intentionally
         // a rabbit-hole occupation (occupation_location_id is null AND
         // work_details.is_rabbit_hole is true OR occupation_location_name is set).
-        const _gIsPrimaryRH = !char.occupation_location_id &&
-          (char.work_details?.is_rabbit_hole === true);
+        // One Truth safeguard: is_rabbit_hole flag is the authority. A stale
+        // occupation_location_id from a former linked job must NOT prevent the
+        // active rabbit-hole employment from being recognized.
+        const _gIsPrimaryRH = char.work_details?.is_rabbit_hole === true;
         const primaryLocId = _gIsPrimaryRH
           ? null
           : (char.occupation_location_id || char.current_work_location_id || null);
@@ -807,7 +813,9 @@ Deno.serve(async (req) => {
 
         // ── RABBIT-HOLE OCCUPATIONS — before the linked-location loop ──────────
         const rabbitHoleJobs = [];
-        if (!char.occupation_location_id) {
+        // One Truth safeguard: is_rabbit_hole flag is the authority. Stale
+        // occupation_location_id must NOT block rabbit-hole recognition.
+        {
           const isRH = char.work_details?.is_rabbit_hole === true;
           if (isRH && char.work_start_time && char.work_end_time && Array.isArray(char.work_days)) {
             rabbitHoleJobs.push({

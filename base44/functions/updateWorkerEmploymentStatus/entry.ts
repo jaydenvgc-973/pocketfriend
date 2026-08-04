@@ -91,7 +91,12 @@ Deno.serve(async (req) => {
 
       await base44.entities.LocationReference.update(locationId, locUpdate);
 
-      // ── CHARACTER RECORD: clear all employment fields tied to THIS location ──
+      // ── CHARACTER RECORD: SURGICAL CLEANUP ────────────────────────────────────
+      // Clear workplace identifiers ONLY when they reference the terminated
+      // employment. Do NOT clear identifiers belonging to the character's
+      // current active employment (e.g. a new rabbit-hole job). This is the
+      // One Truth safeguard: stale persisted IDs from a former job must
+      // never survive a Fired/Quit operation.
       const isPrimaryJob = character.occupation_location_id === locationId;
       const additionalOccs = Array.isArray(character.additional_occupation_locations)
         ? character.additional_occupation_locations
@@ -99,18 +104,32 @@ Deno.serve(async (req) => {
       const additionalIdx = additionalOccs.findIndex(e => e?.location_id === locationId);
       const isSecondaryJob = additionalIdx >= 0;
 
+      // Check whether current_work_location_id references the terminated
+      // employment. This is independent of isPrimaryJob — the primary
+      // occupation may have already been changed to a different job (e.g. a
+      // rabbit-hole), but the stale current_work_location_id from the former
+      // linked job may still be populated. This is the exact field the
+      // Geolocator reads — if it survives termination, the One Truth is
+      // violated.
+      const currentWorkLocMatchesTerminated = character.current_work_location_id === locationId;
+
+      // Check whether resolved_current_location_id references the terminated
+      // employment. Any surface that reads this field directly (Geolocator,
+      // Travel, Chat header) will show the stale workplace if it survives.
+      const resolvedLocMatchesTerminated = character.resolved_current_location_id === locationId;
+
       const charUpdate = {
         employment_status: action === 'fire' ? 'fired' : 'quit',
       };
 
       if (isPrimaryJob) {
-        // This was their primary job — clear the primary work schedule + location
+        // This was their primary linked job — clear the primary work schedule
+        // + location identifiers that belong to THIS employment.
         charUpdate.work_days = [];
         charUpdate.work_start_time = null;
         charUpdate.work_end_time = null;
         charUpdate.occupation_location_id = null;
         charUpdate.occupation_location_name = null;
-        charUpdate.current_work_location_id = null;
         charUpdate.work_exception_status = null;
         charUpdate.work_exception_date = null;
         charUpdate.work_exception_reason = null;
@@ -121,10 +140,27 @@ Deno.serve(async (req) => {
         )) {
           charUpdate.work_details = {};
         }
-
         // If they also have this location as a SECONDARY job, that entry is
         // removed below. If they have OTHER secondary jobs, leave them — only
         // this location's employment is being terminated.
+      }
+
+      // ── ONE TRUTH SAFEGUARD: Clear current_work_location_id whenever it
+      //    references the terminated employment — even if the primary
+      //    occupation was already changed to a different job (e.g. a
+      //    rabbit-hole). Stale persisted IDs from a former job must never
+      //    survive termination. Do NOT clear it if it references a different
+      //    (current active) workplace.
+      if (currentWorkLocMatchesTerminated) {
+        charUpdate.current_work_location_id = null;
+      }
+
+      // Also clear occupation_location_id if it still references this
+      // location even though isPrimaryJob was false (edge case: occupation
+      // was changed but the old ID was not cleared in a prior update).
+      if (!isPrimaryJob && character.occupation_location_id === locationId) {
+        charUpdate.occupation_location_id = null;
+        charUpdate.occupation_location_name = null;
       }
 
       // Remove this location from additional_occupation_locations if present
@@ -132,13 +168,44 @@ Deno.serve(async (req) => {
         charUpdate.additional_occupation_locations = additionalOccs.filter((_, i) => i !== additionalIdx);
       }
 
-      // If they are currently AT WORK at this location, send them home
-      if (character.resolved_presence_status === 'at_work'
-          && (character.current_work_location_id === locationId
-              || character.occupation_location_id === locationId)) {
-        charUpdate.resolved_presence_status = 'home';
+      // ── CANONICAL PRESENCE RECOMPUTATION ──────────────────────────────────────
+      // This recomputation happens as part of the existing save flow — it
+      // must NOT rely on scheduler execution, polling, page refreshes,
+      // reopening the application, delayed repair jobs, or maintenance tasks.
+      // The character's current location must be correct immediately after
+      // the employment transaction completes.
+      //
+      // If the character was at work at this location OR if any resolved
+      // location field still references the terminated workplace, clear the
+      // stale resolved location and redirect to home. The Geolocator and all
+      // other surfaces read resolved_current_location_id — if it still points
+      // to the terminated workplace, the One Truth is violated even though
+      // resolved_presence_status may have been changed.
+      const wasAtWorkHere = character.resolved_presence_status === 'at_work'
+        && (character.current_work_location_id === locationId
+            || character.occupation_location_id === locationId
+            || resolvedLocMatchesTerminated);
+
+      if (wasAtWorkHere || resolvedLocMatchesTerminated) {
+        const homeLocId = character.current_home_location_id || character.home_location_id || null;
+        charUpdate.resolved_current_location_id = homeLocId;
+        charUpdate.resolved_current_location_name = null;
+        charUpdate.resolved_location_type = 'home';
+        if (character.resolved_presence_status === 'at_work') {
+          charUpdate.resolved_presence_status = 'home';
+        }
         charUpdate.resolved_source_reason = action === 'fire' ? 'fired_from_job' : 'quit_job';
         charUpdate.resolved_last_updated_at = nowIso;
+      }
+
+      // Release any work stay-lock tied to this location
+      if (character.presence_stay_lock && character.presence_stay_lock_location_id === locationId) {
+        charUpdate.presence_stay_lock = false;
+        charUpdate.presence_stay_lock_reason = null;
+        charUpdate.presence_stay_lock_authority = null;
+        charUpdate.presence_stay_lock_location_id = null;
+        charUpdate.presence_stay_lock_set_at = null;
+        charUpdate.presence_stay_lock_created_by = null;
       }
 
       await base44.entities.Character.update(characterId, charUpdate);
@@ -148,10 +215,11 @@ Deno.serve(async (req) => {
       proof.was_primary_job = isPrimaryJob;
       proof.was_secondary_job = isSecondaryJob;
       proof.work_schedule_cleared = isPrimaryJob;
-      proof.current_work_location_cleared = isPrimaryJob;
+      proof.current_work_location_cleared = currentWorkLocMatchesTerminated;
+      proof.occupation_location_id_cleared = isPrimaryJob || (!isPrimaryJob && character.occupation_location_id === locationId);
+      proof.resolved_location_cleared = resolvedLocMatchesTerminated;
       proof.location_maps_cleaned = Object.keys(locUpdate).filter(k => k !== 'worker_character_ids');
-      proof.presence_updated = character.resolved_presence_status === 'at_work'
-        && (character.current_work_location_id === locationId || character.occupation_location_id === locationId);
+      proof.presence_recomputed = wasAtWorkHere || resolvedLocMatchesTerminated;
 
       // Log LifeEvent
       await base44.asServiceRole.entities.LifeEvent.create({

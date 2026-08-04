@@ -136,8 +136,12 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // do NOT fall back to current_work_location_id — that field may be stale from
   // a previous linked occupation. For non-rabbit-hole legacy occupations, existing
   // behavior (including current_work_location_id fallback) remains unchanged.
-  const _isPrimaryRH = !character.occupation_location_id &&
-    (character.work_details?.is_rabbit_hole === true);
+  // One Truth safeguard: the is_rabbit_hole flag is the authority for
+  // rabbit-hole classification. A stale occupation_location_id from a former
+  // linked job must NOT prevent the active rabbit-hole employment from being
+  // recognized. Rabbit-hole employment always wins over obsolete workplace
+  // identifiers.
+  const _isPrimaryRH = character.work_details?.is_rabbit_hole === true;
   const _primaryLocId = _isPrimaryRH
     ? null
     : (character.occupation_location_id || character.current_work_location_id || null);
