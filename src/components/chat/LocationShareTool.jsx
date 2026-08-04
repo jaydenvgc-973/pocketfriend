@@ -39,9 +39,11 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
   });
   const data = res?.data || res;
   const committed = data?.committed_result;
-  if (committed && committed.resolved_current_location_id) {
+  // Accept the committed result when it has a location_id OR a rabbit_hole presence
+  // (rabbit holes have null location_id but a valid custom location_name).
+  if (committed && (committed.resolved_current_location_id || committed.resolved_presence_status === 'rabbit_hole')) {
     return {
-      locationId: committed.resolved_current_location_id,
+      locationId: committed.resolved_current_location_id || null,
       locationName: committed.resolved_current_location_name || null,
       presenceStatus: committed.resolved_presence_status || null,
     };
@@ -52,6 +54,15 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
   const chars = await base44.entities.Character.filter({ id: characterId }, null, 1);
   const ch = chars?.[0];
   if (!ch) return null;
+  // Rabbit hole: null location_id is valid when presence is 'rabbit_hole' and a name exists.
+  const isRabbitHole = ch.resolved_presence_status === 'rabbit_hole' || ch.resolved_location_type === 'rabbit_hole';
+  if (isRabbitHole && ch.resolved_current_location_name) {
+    return {
+      locationId: null,
+      locationName: ch.resolved_current_location_name,
+      presenceStatus: ch.resolved_presence_status || 'rabbit_hole',
+    };
+  }
   return {
     locationId: ch.resolved_current_location_id || null,
     locationName: ch.resolved_current_location_name || null,
@@ -221,7 +232,9 @@ Write a short natural text message responding to receiving their location. React
       const shareLocName = loc?.locationName || null;
       const sharePresence = loc?.presenceStatus || null;
 
-      if (!shareLocId || !shareLocName) {
+      // Rabbit hole: location_id is null but location_name is valid.
+      // Allow sharing when we have a name, even without a persisted LocationReference.
+      if (!shareLocName) {
         setResult({ type: 'error', text: "Character location is currently unknown." });
         return;
       }

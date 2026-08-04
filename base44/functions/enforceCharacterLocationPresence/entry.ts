@@ -926,6 +926,35 @@ function evaluateLegacyRecompute(character, locationMap, etTime) {
 
 // ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
 function computeResolvedLocation(character, locationMap, etTime) {
+  // ── RABBIT HOLE AUTHORITY — runs BEFORE work/school/sleep/visit/home layers ─
+  // A rabbit hole is a user-confirmed custom off-screen destination. It must NOT
+  // be overridden by work schedule, school schedule, sleep windows, or home fallback.
+  // This mirrors the frontend resolveCharacterLocation LAYER 2.5 early return.
+  if (character.resolved_presence_status === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole') {
+    const label = character.resolved_current_location_name || 'Off-screen';
+    return {
+      resolved_current_location_id: null,
+      resolved_current_location_name: label,
+      resolved_location_type: 'rabbit_hole',
+      resolved_presence_status: 'rabbit_hole',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+    };
+  }
+
+  // ── HOSPITALIZATION GUARD — preserve committed hospital state ──────────────
+  // A hospitalized character is physically at the hospital. Schedule/visit/home
+  // layers must NOT re-resolve them back to home, work, or school.
+  if (character.resolved_presence_status === 'hospitalized') {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id || null,
+      resolved_current_location_name: character.resolved_current_location_name || 'Hospital',
+      resolved_location_type: character.resolved_location_type || 'medical',
+      resolved_presence_status: 'hospitalized',
+      resolved_source_reason: character.resolved_source_reason || 'medical_emergency',
+    };
+  }
+
   // Incarceration lock
   if (character.is_jailed === true) {
     const facilityId = character.incarceration_facility_id || null;
