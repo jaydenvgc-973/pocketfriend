@@ -155,6 +155,40 @@ function resolveValidSleepLocationId(character, locationMap) {
   return null;
 }
 
+// ── STALE INFORMATION HAS NO AUTHORITY OVER ACTIVE INFORMATION ──────────────
+// A stale DB 'sleeping'/'napping' field must NOT be preserved if the character
+// is NOT actually in their sleep window right now. Only preserve sleep when the
+// active schedule confirms the character should be sleeping.
+
+function _isInSleepWindow(character, etTime) {
+  if (!character.sleep_start_time || !character.wake_up_time) return false;
+  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+  const [wh, wm] = character.wake_up_time.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const wakeMin = wh * 60 + wm;
+  if (wakeMin <= startMin) return nowMin >= startMin || nowMin < wakeMin;
+  return nowMin >= startMin && nowMin < wakeMin;
+}
+
+function _isSleepStillValid(character, etTime) {
+  if (!_isInSleepWindow(character, etTime)) return false;
+  // 8-hour sleep cap — even within the window, sleep must not exceed 8 hours
+  if (character.last_sleep_start) {
+    const sleepStart = new Date(character.last_sleep_start);
+    const elapsedHours = (etTime.getTime() - sleepStart.getTime()) / (1000 * 60 * 60);
+    if (elapsedHours >= 8) return false;
+  }
+  return true;
+}
+
+function _isNapStillValid(character, etTime) {
+  if (!character.last_nap_time) return false;
+  const napStart = new Date(character.last_nap_time);
+  const elapsedMin = (etTime.getTime() - napStart.getTime()) / (1000 * 60);
+  return elapsedMin >= 0 && elapsedMin < 180; // 3-hour nap cap
+}
+
 /**
  * Evaluate a requested transition against the complete current state.
  * Returns a disposition and the canonical fields to commit.
@@ -1070,20 +1104,20 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
-  // Sleep state lock — preserve DB truth (AFTER work/school obligations)
-  // A stale DB 'sleeping'/'napping' must NOT override an active work shift or
-  // school session. Work and school are checked above first; only when no
-  // obligation is active does the committed sleep state get preserved. This
-  // aligns the authority's inline resolver with the client-side
-  // resolveCharacterLocation (which uses isCharacterAsleepFromUtils with a
-  // work/school blocker). Without this order, a character whose DB says
-  // napping while they are actually on shift is left napping at home — the
-  // One Truth violation where Chat/Text believe home while Homepage/Travel
-  // show at_work.
+  // Sleep state lock — STALE INFORMATION HAS NO AUTHORITY OVER ACTIVE INFORMATION.
+  // A stale DB 'sleeping'/'napping' field must NOT be preserved if the character
+  // is NOT actually in their sleep window right now. Only preserve sleep when the
+  // active schedule confirms the character should be sleeping. Work and school
+  // are checked above first; sleep is only preserved when no obligation is active
+  // AND the active schedule validates the sleep state.
   const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
   const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
   const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
-  if (dbSleeping && sleepHomeId) {
+  const dbIsSleeping = character.resolved_presence_status === 'sleeping';
+  const dbIsNapping = character.resolved_presence_status === 'napping';
+  const sleepActive = (dbIsSleeping && _isSleepStillValid(character, etTime)) ||
+                      (dbIsNapping && _isNapStillValid(character, etTime));
+  if (dbSleeping && sleepActive && sleepHomeId) {
     return {
       resolved_current_location_id: sleepHomeId,
       resolved_current_location_name: sleepHomeLoc?.name || 'Home',
