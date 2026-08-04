@@ -1627,6 +1627,24 @@ Deno.serve(async (req) => {
       const _locSrc = useManualLocation ? 'manual_ui_dropdown' : 'auto_resolve_from_character';
 
       if (!useManualLocation && charRecord) {
+        // ── RABBIT HOLE GUARD — terminal off-screen destination ──────────────────
+        // A rabbit hole is an intentional user-placed off-screen destination with no
+        // persisted LocationReference. The location tag must show the rabbit hole label
+        // (e.g. "Spectrum Lounge"), NOT the character's home. Set locationId to a sentinel
+        // so LAYERS 4-6 (which check !locationId) do NOT override with home fallback.
+        // The LocationReference lookup for 'rabbit_hole' will fail (no such record),
+        // leaving resolvedLocationName as the rabbit hole label set here.
+        if (charRecord.resolved_presence_status === 'rabbit_hole' ||
+            charRecord.resolved_location_type === 'rabbit_hole') {
+          const _rhLabel = charRecord.resolved_current_location_name || null;
+          resolvedLocationName = _rhLabel;
+          resolvedLocationId = null;
+          resolvedLocCategory = null;
+          resolvedZoneName = null;
+          envRefs = [];
+          locationId = 'rabbit_hole'; // sentinel — prevents LAYERS 4-6 home fallback
+          console.log(`[generateImageAsync] RABBIT-HOLE-AUTHORITY: label="${_rhLabel || 'none'}" — skipping all location resolution. No home fallback.`);
+        }
         const _pl = (sanitizedPrompt || prompt || '').toLowerCase();
         const _home = /\b(at (my |his |her )?(home|house|apartment|place|crib)|my (home|house|apartment|place|room)|his (home|apartment|place|room)|her (home|apartment|place|room)|back home|the apartment|my (bedroom|living room|kitchen)|his (bedroom|living room)|her bedroom|home office|in (my|his|her) (room|apartment|place|house))\b/.test(_pl);
         const _work = /\b(at (my |his |her )?(work|job|office|workplace|store|restaurant|bar|studio)|on the job|during (my|his|her) (shift|work day)|busy day at work|work today|yesterday at work|busy at work|at the (office|store|restaurant|bar|studio|workplace)|his (job|office|shift)|her (job|office|shift))\b/.test(_pl);
@@ -1638,14 +1656,14 @@ Deno.serve(async (req) => {
 
         // Prompt keyword home only accepted when NOT on shift.
         // Work-shift schedule authority outranks prompt drift.
-        if (_home && !_effectiveWorkLocId) {
+        if (_home && !_effectiveWorkLocId && !locationId) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
           if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (off shift) → ${locationId}`);
         } else if (_home && _effectiveWorkLocId) {
           console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME suppressed — character on shift, work authority wins`);
-        } else if (_work) {
+        } else if (_work && !locationId) {
           locationId = charRecord.current_work_location_id || charRecord.occupation_location_id || null;
-        } else if (_school) {
+        } else if (_school && !locationId) {
           locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
         }
 
