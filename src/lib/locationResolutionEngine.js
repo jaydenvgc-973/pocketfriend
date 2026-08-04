@@ -117,6 +117,28 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // WORK-SHIFT LOCK GUARD: An active work_shift presence lock is an inviolable
+  // authority. If the lock is active (reason 'work_shift' or authority
+  // 'enforceCharacterWorkSchedule'), the character IS at work — no sleep,
+  // home, or visit layer may override it. This closes the rabbit-hole gap
+  // where a null resolved_current_location_id let the Home fallback win.
+  const _hasActiveWorkLock = character.presence_stay_lock === true &&
+    (character.presence_stay_lock_reason === 'work_shift' ||
+     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+  if (_hasActiveWorkLock) {
+    const _workLocName = character.resolved_current_location_name ||
+      character.occupation_location_name ||
+      (character.work_details && character.work_details.workplace_type) || 'Work';
+    return {
+      resolved_current_location_id: character.resolved_current_location_id || null,
+      resolved_current_location_name: _workLocName,
+      resolved_location_type: 'work',
+      resolved_presence_status: 'at_work',
+      resolved_source_reason: 'work_shift_lock_authority',
+      resolved_zone: null,
+    };
+  }
+
   // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
   // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
   // This is the ONLY gate between Presence Truth and Schedule Truth.
@@ -888,6 +910,16 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // For active_created_character: isCharacterAsleepFromUtils applies the strict
   // schedule-anchored validator — raw DB sleeping is NOT accepted without window validation.
   // For NPCs: clock-window approach unchanged.
+  // WORK-SHIFT LOCK AUTHORITY: An active work_shift lock means the character
+  // IS at work. This must be checked BEFORE sleep — the lock is the authority.
+  if (character.presence_stay_lock === true &&
+    (character.presence_stay_lock_reason === 'work_shift' ||
+     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule')) {
+    const _workName = character.resolved_current_location_name ||
+      character.occupation_location_name || 'Work';
+    return { status: 'at_work', label: 'At work', sublabel: _workName, isTransit: false, isSleeping: false };
+  }
+
   // ── SLEEP/REST DETECTION: SINGLE AUTHORITATIVE TRUTH ──────────────────────
   // Delegates to getCharacterSleepState — the SAME validator used by AlarmTool and
   // ChatHeader. Eliminates split truth: every sleep consumer reads one source.
@@ -1011,6 +1043,17 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
         }
       }
     }
+  }
+
+  // ── WORK-SHIFT LOCK AUTHORITY ─────────────────────────────────────────────
+  // An active work_shift lock means the character IS at work. This must be
+  // checked BEFORE sleep/rabbit-hole/home — the lock is the inviolable authority.
+  if (character.presence_stay_lock === true &&
+    (character.presence_stay_lock_reason === 'work_shift' ||
+     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule')) {
+    const _workName = locName || character.occupation_location_name || 'their workplace';
+    if (imageMode) return `[LOCATION LOCKED: character is at work at ${_workName} — use that work environment as background]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${_workName}. All location references must match this environment. You are NOT at home.`;
   }
 
   // ── RABBIT HOLE ───────────────────────────────────────────────────────────
