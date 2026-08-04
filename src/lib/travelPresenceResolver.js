@@ -168,10 +168,12 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
                           (resolvedLocId ? locationMap[resolvedLocId]?.name : null) || null;
   const resolvedStatus  = canonical.resolved_presence_status || 'away';
 
-  // Character is "currently present" if the resolver gave them a real location.
+  // Character is "currently present" if the resolver gave them a real location
+  // OR they are at a rabbit hole (custom off-screen destination with null location_id).
   // Sleeping characters get their home location — they ARE present (at home, asleep).
   // Only truly locationless characters (no home, no schedule, no visit) are absent.
-  const isCurrentlyPresent = !!resolvedLocId;
+  const isRabbitHole = resolvedStatus === 'rabbit_hole';
+  const isCurrentlyPresent = !!resolvedLocId || isRabbitHole;
 
   // passed_out is mechanically distinct from sleeping — it is involuntary forced recovery.
   // Include it here so the travel map shows passed-out characters at their home (not as missing).
@@ -198,8 +200,8 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
 
     is_home_resident: !!homeLocId,
     is_currently_present: isCurrentlyPresent,
-    is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
-    is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
+    is_home: !isRabbitHole && isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
+    is_away: isRabbitHole || (isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId),
     is_sleeping: isSleeping,
     is_passed_out: isPassedOut,
   };

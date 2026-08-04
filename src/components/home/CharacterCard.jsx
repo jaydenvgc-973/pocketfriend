@@ -276,16 +276,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 const isResting = !isVerifiedAtSchool && !isVerifiedAtWork &&
                   presence.status === 'resting' && sleepState.displayLabel === 'resting';
 
-                // Rabbit hole — not teleportable, show static
-                if (presence.status === 'rabbit_hole') {
-                  return (
-                    <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3 h-3 text-violet-400" />
-                      <span className="text-xs text-violet-400">{presence.label}</span>
-                    </div>
-                  );
-                }
-
                 let IconComponent = null;
                 let color = 'text-muted-foreground';
                 let label = presence.label;

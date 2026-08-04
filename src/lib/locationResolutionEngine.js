@@ -148,6 +148,23 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
+  // ── RABBIT HOLE AUTHORITY — runs BEFORE work/school/sleep/visit layers ─────
+  // A rabbit hole is a user-confirmed custom off-screen destination. It must NOT
+  // be overridden by work schedule, school schedule, sleep windows, or home fallback.
+  // Stale schedule fields must NEVER take authority over an active rabbit hole presence.
+  if (character.resolved_presence_status === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole') {
+    const label = character.resolved_current_location_name || 'Off-screen';
+    return {
+      resolved_current_location_id: null,
+      resolved_current_location_name: label,
+      resolved_location_type: 'rabbit_hole',
+      resolved_presence_status: 'rabbit_hole',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+      resolved_zone: null,
+    };
+  }
+
   if (!hasValidCallout && !isCharacterAsleepFromUtils(character, locationMap)) {
   // LAYER 1: Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
   // Build ONE ordered employment sequence: primary first, then additional in
@@ -341,10 +358,10 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 2.5: Rabbit hole — character is at an off-screen/unbuilt destination confirmed by user
-  // This must come BEFORE home fallback. A rabbit hole is a valid current presence.
+  // LAYER 2.5: Rabbit hole — secondary check (primary check is the early-return above).
+  // Kept for safety: if the early return was somehow bypassed, this catches it before home fallback.
   if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
-    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
+    const label = character.resolved_current_location_name || 'Off-screen';
     return {
       resolved_current_location_id: null,
       resolved_current_location_name: label,
