@@ -185,6 +185,21 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     return evaluateLegacyRecompute(character, locationMap, etTime);
   }
 
+  // ── RABBIT HOLE GUARD — terminal state, only explicit relocation can override ──
+  // A rabbit hole is an intentional user-placed off-screen destination. It is a
+  // terminal presence state — schedule automations (work, sleep, school, wake,
+  // work_end, lock_release) must NOT override it. Only an explicit relocation
+  // request (from updateCharacterLocation or processScheduledRelocations) with a
+  // real destination can move the character out of the rabbit hole.
+  if (currentStatus === 'rabbit_hole' && !requested.requested_relocation) {
+    return {
+      disposition: 'no_change',
+      canonicalFields: {},
+      reason: 'rabbit_hole_terminal_state',
+      committed_result: null,
+    };
+  }
+
   // ── INCARCERATION / HOUSE ARREST — absolute hard lock ──────────────────────
   if (character.is_jailed === true) {
     const facilityId = character.incarceration_facility_id || null;
