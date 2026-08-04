@@ -44,7 +44,7 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
   const isRabbitHole = ch.resolved_presence_status === 'rabbit_hole' || ch.resolved_location_type === 'rabbit_hole';
   if (isRabbitHole && ch.resolved_current_location_name) {
     return {
-      locationId: null,
+      locationId: 'rabbit_hole',
       locationName: ch.resolved_current_location_name,
       presenceStatus: ch.resolved_presence_status || 'rabbit_hole',
     };

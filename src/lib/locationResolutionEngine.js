@@ -125,7 +125,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       character.resolved_location_type === 'rabbit_hole') {
     const label = character.resolved_current_location_name || 'Off-screen';
     return {
-      resolved_current_location_id: null,
+      resolved_current_location_id: 'rabbit_hole',
       resolved_current_location_name: label,
       resolved_location_type: 'rabbit_hole',
       resolved_presence_status: 'rabbit_hole',
@@ -363,7 +363,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
     const label = character.resolved_current_location_name || 'Off-screen';
     return {
-      resolved_current_location_id: null,
+      resolved_current_location_id: 'rabbit_hole',
       resolved_current_location_name: label,
       resolved_location_type: 'rabbit_hole',
       resolved_presence_status: 'rabbit_hole',

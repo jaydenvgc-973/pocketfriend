@@ -253,6 +253,8 @@ export function isLocationEmpty(location, presenceEntities = []) {
 export function shouldCharacterAppearOnMap(entity, location = null) {
   // Must have resolved location (be somewhere in the world)
   if (!entity.resolved_current_location_id) return false;
+  // Rabbit hole characters are off-screen — never show on the map
+  if (entity.resolved_current_location_id === 'rabbit_hole') return false;
   
   // If location is specified, only show if they're there
   if (location && entity.resolved_current_location_id !== location.id) return false;

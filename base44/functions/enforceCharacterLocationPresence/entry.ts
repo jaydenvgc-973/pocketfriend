@@ -936,7 +936,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
       character.resolved_location_type === 'rabbit_hole') {
     const label = character.resolved_current_location_name || 'Off-screen';
     return {
-      resolved_current_location_id: null,
+      resolved_current_location_id: 'rabbit_hole',
       resolved_current_location_name: label,
       resolved_location_type: 'rabbit_hole',
       resolved_presence_status: 'rabbit_hole',

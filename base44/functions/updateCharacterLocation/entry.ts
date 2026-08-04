@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       const now = new Date().toISOString();
 
       await base44.entities.Character.update(matched.id, {
-        resolved_current_location_id: null,
+        resolved_current_location_id: 'rabbit_hole',
         resolved_current_location_name: customName,
         resolved_location_type: 'rabbit_hole',
         resolved_presence_status: 'rabbit_hole',
