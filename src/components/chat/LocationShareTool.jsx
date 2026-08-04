@@ -33,28 +33,14 @@ import { base44 } from "@/api/base44Client";
  * (now-confirmed) Character fields are authoritative and safe to use.
  */
 async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
-  const res = await base44.functions.invoke('enforceCharacterLocationPresence', {
-    character_id: characterId,
-    owner_email: ownerEmail || undefined,
-  });
-  const data = res?.data || res;
-  const committed = data?.committed_result;
-  // Accept the committed result when it has a location_id OR a rabbit_hole presence
-  // (rabbit holes have null location_id but a valid custom location_name).
-  if (committed && (committed.resolved_current_location_id || committed.resolved_presence_status === 'rabbit_hole')) {
-    return {
-      locationId: committed.resolved_current_location_id || null,
-      locationName: committed.resolved_current_location_name || null,
-      presenceStatus: committed.resolved_presence_status || null,
-    };
-  }
-  // no_change (or deferred) — the stored fields are the authoritative recomputed truth.
-  // Read them from the authority's character load by re-fetching the Character record
-  // so we never rely on a stale page-load snapshot passed in as a prop.
+  // ── RABBIT HOLE FIRST — read character record BEFORE any backend call ──────
+  // enforceCharacterLocationPresence may clobber the rabbit hole status (stale
+  // deployment, propagation delay). An active rabbit hole must NEVER be sent
+  // through the backend recompute — it would overwrite the DB record and
+  // corrupt the character card and travel page.
   const chars = await base44.entities.Character.filter({ id: characterId }, null, 1);
   const ch = chars?.[0];
   if (!ch) return null;
-  // Rabbit hole: null location_id is valid when presence is 'rabbit_hole' and a name exists.
   const isRabbitHole = ch.resolved_presence_status === 'rabbit_hole' || ch.resolved_location_type === 'rabbit_hole';
   if (isRabbitHole && ch.resolved_current_location_name) {
     return {
@@ -63,6 +49,22 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
       presenceStatus: ch.resolved_presence_status || 'rabbit_hole',
     };
   }
+
+  // ── NOT A RABBIT HOLE — resolve through the authoritative backend ─────────
+  const res = await base44.functions.invoke('enforceCharacterLocationPresence', {
+    character_id: characterId,
+    owner_email: ownerEmail || undefined,
+  });
+  const data = res?.data || res;
+  const committed = data?.committed_result;
+  if (committed && (committed.resolved_current_location_id || committed.resolved_presence_status === 'rabbit_hole')) {
+    return {
+      locationId: committed.resolved_current_location_id || null,
+      locationName: committed.resolved_current_location_name || null,
+      presenceStatus: committed.resolved_presence_status || null,
+    };
+  }
+  // no_change (or deferred) — the stored fields are the authoritative truth.
   return {
     locationId: ch.resolved_current_location_id || null,
     locationName: ch.resolved_current_location_name || null,

@@ -117,24 +117,19 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // WORK-SHIFT LOCK GUARD: An active work_shift presence lock is an inviolable
-  // authority. If the lock is active (reason 'work_shift' or authority
-  // 'enforceCharacterWorkSchedule'), the character IS at work — no sleep,
-  // home, or visit layer may override it. This closes the rabbit-hole gap
-  // where a null resolved_current_location_id let the Home fallback win.
-  const _hasActiveWorkLock = character.presence_stay_lock === true &&
-    (character.presence_stay_lock_reason === 'work_shift' ||
-     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
-  if (_hasActiveWorkLock) {
-    const _workLocName = character.resolved_current_location_name ||
-      character.occupation_location_name ||
-      (character.work_details && character.work_details.workplace_type) || 'Work';
+  // ── RABBIT HOLE AUTHORITY — runs BEFORE work-shift lock and all other layers ─
+  // A rabbit hole is a user-confirmed custom off-screen destination. It must NOT
+  // be overridden by work schedule, school schedule, sleep windows, or home fallback.
+  // Stale schedule fields must NEVER take authority over an active rabbit hole presence.
+  if (character.resolved_presence_status === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole') {
+    const label = character.resolved_current_location_name || 'Off-screen';
     return {
-      resolved_current_location_id: character.resolved_current_location_id || null,
-      resolved_current_location_name: _workLocName,
-      resolved_location_type: 'work',
-      resolved_presence_status: 'at_work',
-      resolved_source_reason: 'work_shift_lock_authority',
+      resolved_current_location_id: null,
+      resolved_current_location_name: label,
+      resolved_location_type: 'rabbit_hole',
+      resolved_presence_status: 'rabbit_hole',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
       resolved_zone: null,
     };
   }
@@ -148,19 +143,24 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.work_exception_status === 'called_out' &&
     character.work_exception_date === todayET;
 
-  // ── RABBIT HOLE AUTHORITY — runs BEFORE work/school/sleep/visit layers ─────
-  // A rabbit hole is a user-confirmed custom off-screen destination. It must NOT
-  // be overridden by work schedule, school schedule, sleep windows, or home fallback.
-  // Stale schedule fields must NEVER take authority over an active rabbit hole presence.
-  if (character.resolved_presence_status === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole') {
-    const label = character.resolved_current_location_name || 'Off-screen';
+  // WORK-SHIFT LOCK GUARD: An active work_shift presence lock is an authority,
+  // BUT only if the character is actually on shift right now. A stale lock
+  // (left by an automation that hasn't run work-end yet) must NOT keep showing
+  // "at_work" after the shift has ended. Verify against BOTH location-level
+  // worker_shifts AND character-level schedule — it is not either/or.
+  const _hasActiveWorkLock = character.presence_stay_lock === true &&
+    (character.presence_stay_lock_reason === 'work_shift' ||
+     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+  if (_hasActiveWorkLock && _isCharacterCurrentlyOnAnyShift(character, locationMap, currentTime)) {
+    const _workLocName = character.resolved_current_location_name ||
+      character.occupation_location_name ||
+      (character.work_details && character.work_details.workplace_type) || 'Work';
     return {
-      resolved_current_location_id: null,
-      resolved_current_location_name: label,
-      resolved_location_type: 'rabbit_hole',
-      resolved_presence_status: 'rabbit_hole',
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+      resolved_current_location_id: character.resolved_current_location_id || null,
+      resolved_current_location_name: _workLocName,
+      resolved_location_type: 'work',
+      resolved_presence_status: 'at_work',
+      resolved_source_reason: 'work_shift_lock_authority',
       resolved_zone: null,
     };
   }
@@ -704,6 +704,59 @@ function isCharacterOnWorkSchedule(character, currentTime) {
 }
 
 /**
+ * Check if a character is currently on shift by checking BOTH:
+ * 1. Character-level schedule (work_start_time, work_end_time, work_days)
+ * 2. Location-level worker_shifts (for linked jobs with location IDs)
+ * 3. Rabbit-hole job shifts (from additional_occupation_locations)
+ *
+ * The work lock must be able to read BOTH — it is not either/or.
+ * A stale presence_stay_lock must NOT show "at_work" after the shift has ended.
+ */
+function _isCharacterCurrentlyOnAnyShift(character, locationMap = {}, currentTime = new Date()) {
+  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+  // 1. Character-level schedule
+  if (isCharacterOnWorkSchedule(character, etTime)) return true;
+
+  // 2. Location-level worker_shifts + rabbit-hole job shifts
+  const _isPrimaryRH = character.work_details?.is_rabbit_hole === true;
+
+  // Primary linked job
+  if (!_isPrimaryRH) {
+    const _primaryLocId = character.occupation_location_id || character.current_work_location_id || null;
+    if (_primaryLocId) {
+      const loc = locationMap[_primaryLocId];
+      if (loc) {
+        const shift = loc.worker_shifts?.[character.id];
+        if (shift && isOnShiftNow(shift, etTime)) return true;
+      }
+    }
+  }
+
+  // Primary rabbit-hole job (character-level schedule)
+  if (_isPrimaryRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    if (isOnShiftNow({ start: character.work_start_time, end: character.work_end_time, days: character.work_days }, etTime)) return true;
+  }
+
+  // Additional occupation locations
+  if (Array.isArray(character.additional_occupation_locations)) {
+    for (const entry of character.additional_occupation_locations) {
+      if (entry.location_id) {
+        const loc = locationMap[entry.location_id];
+        if (loc) {
+          const shift = loc.worker_shifts?.[character.id];
+          if (shift && isOnShiftNow(shift, etTime)) return true;
+        }
+      } else if (entry.is_rabbit_hole === true && entry.work_start_time && entry.work_end_time) {
+        if (isOnShiftNow({ start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null }, etTime)) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Valid sleep location categories
  */
 const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
@@ -927,22 +980,25 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // For active_created_character: isCharacterAsleepFromUtils applies the strict
   // schedule-anchored validator — raw DB sleeping is NOT accepted without window validation.
   // For NPCs: clock-window approach unchanged.
-  // WORK-SHIFT LOCK AUTHORITY: An active work_shift lock means the character
-  // IS at work. This must be checked BEFORE sleep — the lock is the authority.
-  if (character.presence_stay_lock === true &&
-    (character.presence_stay_lock_reason === 'work_shift' ||
-     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule')) {
-    const _workName = character.resolved_current_location_name ||
-      character.occupation_location_name || 'Work';
-    return { status: 'at_work', label: 'At work', sublabel: _workName, isTransit: false, isSleeping: false };
-  }
-
-  // ── PRIORITY 1.5: RABBIT HOLE (checked BEFORE sleep — matches resolver LAYER 2.5) ──
+  // ── PRIORITY 1.5: RABBIT HOLE (checked BEFORE work lock and sleep) ──────────
   // A character explicitly placed at an off-screen/rabbit-hole destination must
-  // display that state, not be overridden by a schedule-based sleep window.
+  // display that state, not be overridden by a work lock or schedule-based sleep window.
   if (character.resolved_presence_status === 'rabbit_hole') {
     const label = character.resolved_current_location_name || 'Off-screen';
     return { status: 'rabbit_hole', label, sublabel: null, isTransit: false, isSleeping: false };
+  }
+
+  // WORK-SHIFT LOCK AUTHORITY: An active work_shift lock means the character
+  // IS at work — BUT only if the character is actually on shift right now.
+  // A stale lock must NOT keep showing "at_work" after the shift has ended.
+  // Verify against BOTH location-level worker_shifts AND character-level schedule.
+  if (character.presence_stay_lock === true &&
+    (character.presence_stay_lock_reason === 'work_shift' ||
+     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule') &&
+    _isCharacterCurrentlyOnAnyShift(character, locationMap)) {
+    const _workName = character.resolved_current_location_name ||
+      character.occupation_location_name || 'Work';
+    return { status: 'at_work', label: 'At work', sublabel: _workName, isTransit: false, isSleeping: false };
   }
 
   // ── SLEEP/REST DETECTION: SINGLE AUTHORITATIVE TRUTH ──────────────────────
