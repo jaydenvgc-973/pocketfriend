@@ -1634,8 +1634,10 @@ Deno.serve(async (req) => {
         // so LAYERS 4-6 (which check !locationId) do NOT override with home fallback.
         // The LocationReference lookup for 'rabbit_hole' will fail (no such record),
         // leaving resolvedLocationName as the rabbit hole label set here.
-        if (charRecord.resolved_presence_status === 'rabbit_hole' ||
-            charRecord.resolved_location_type === 'rabbit_hole') {
+        if (charRecord.resolved_current_location_id === 'rabbit_hole' ||
+            charRecord.resolved_presence_status === 'rabbit_hole' ||
+            charRecord.resolved_location_type === 'rabbit_hole' ||
+            charRecord.is_rabbit_hole === true) {
           const _rhLabel = charRecord.resolved_current_location_name || null;
           resolvedLocationName = _rhLabel;
           resolvedLocationId = null;

@@ -61,30 +61,37 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
   // If the DB or the character's employment config indicates rabbit hole, we
   // return immediately with ID = 'rabbit_hole' and the custom workplace name.
   // This must NEVER fall through to the backend or the home fallback.
-  const isRabbitHoleDB = ch.resolved_presence_status === 'rabbit_hole' ||
-    ch.resolved_location_type === 'rabbit_hole';
+  //
+  // "rabbit_hole" is the placeholder location ID — NOT a failed lookup. The
+  // actual presence status (e.g. at_work) is PRESERVED, not overwritten with
+  // 'rabbit_hole'.
+  const isRabbitHoleDB = ch.resolved_current_location_id === 'rabbit_hole' ||
+    ch.resolved_presence_status === 'rabbit_hole' ||
+    ch.resolved_location_type === 'rabbit_hole' ||
+    ch.is_rabbit_hole === true;
   const hasRabbitHoleEmployment = ch.work_details?.is_rabbit_hole === true ||
     (Array.isArray(ch.additional_occupation_locations) &&
       ch.additional_occupation_locations.some(e => e.is_rabbit_hole === true));
   if (isRabbitHoleDB || hasRabbitHoleEmployment) {
-    // Use the frontend resolver to check if the character is currently on shift.
-    // The resolver now returns 'rabbit_hole' as the ID for active rabbit hole shifts.
+    // Use the frontend resolver to get the canonical state.
+    // The resolver now preserves the actual presence status for rabbit holes.
     const resolved = resolveCharacterLocation(ch, {});
-    if (resolved.resolved_presence_status === 'rabbit_hole' ||
-        resolved.resolved_location_type === 'rabbit_hole') {
+    if (resolved.resolved_current_location_id === 'rabbit_hole' ||
+        resolved.resolved_location_type === 'rabbit_hole' ||
+        resolved.resolved_presence_status === 'rabbit_hole') {
       return {
         locationId: 'rabbit_hole',
         locationName: resolved.resolved_current_location_name || deriveRabbitHoleName(ch),
-        presenceStatus: 'rabbit_hole',
+        presenceStatus: resolved.resolved_presence_status || ch.resolved_presence_status || null,
       };
     }
-    // Even if the resolver didn't return rabbit_hole (e.g. off-shift), if the DB
-    // says rabbit_hole, honor it — the DB was committed by the authority.
+    // Even if the resolver didn't return rabbit_hole, if the DB positively
+    // identifies a rabbit hole, honor the committed state.
     if (isRabbitHoleDB) {
       return {
         locationId: 'rabbit_hole',
         locationName: deriveRabbitHoleName(ch),
-        presenceStatus: 'rabbit_hole',
+        presenceStatus: ch.resolved_presence_status || null,
       };
     }
   }
@@ -100,13 +107,15 @@ async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
 
   const resolved = resolveCharacterLocation(ch, locationMap);
 
-  // Double-check: if the resolver detected a rabbit hole work shift, return it.
-  if (resolved.resolved_presence_status === 'rabbit_hole' ||
-      resolved.resolved_location_type === 'rabbit_hole') {
+  // Double-check: if the resolver detected a rabbit hole, return it.
+  // Preserves the actual presence status (e.g. at_work).
+  if (resolved.resolved_current_location_id === 'rabbit_hole' ||
+      resolved.resolved_location_type === 'rabbit_hole' ||
+      resolved.resolved_presence_status === 'rabbit_hole') {
     return {
       locationId: 'rabbit_hole',
       locationName: resolved.resolved_current_location_name || deriveRabbitHoleName(ch),
-      presenceStatus: 'rabbit_hole',
+      presenceStatus: resolved.resolved_presence_status || ch.resolved_presence_status || null,
     };
   }
 

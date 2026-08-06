@@ -928,18 +928,25 @@ function evaluateLegacyRecompute(character, locationMap, etTime) {
 
 // ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
 function computeResolvedLocation(character, locationMap, etTime) {
-  // ── RABBIT HOLE AUTHORITY — runs BEFORE work/school/sleep/visit/home layers ─
-  // A rabbit hole is a user-confirmed custom off-screen destination. It must NOT
-  // be overridden by work schedule, school schedule, sleep windows, or home fallback.
-  // This mirrors the frontend resolveCharacterLocation LAYER 2.5 early return.
-  if (character.resolved_presence_status === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole') {
+  // ── RABBIT HOLE PRESERVATION — runs BEFORE work/school/sleep/visit/home layers ─
+  // A rabbit hole is a user-confirmed custom off-screen destination. The placeholder
+  // ID "rabbit_hole" is a VALID canonical location ID — NOT a failed lookup, NOT null.
+  // The absence of a LocationReference record is expected.
+  //
+  // Preserves the character's actual committed presence status (e.g. at_work) —
+  // does NOT overwrite with 'rabbit_hole'. This mirrors the frontend
+  // resolveCharacterLocation early return.
+  if (character.resolved_current_location_id === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole' ||
+      character.resolved_presence_status === 'rabbit_hole' ||
+      character.is_rabbit_hole === true) {
     const label = character.resolved_current_location_name || 'Off-screen';
+    const actualPresence = character.resolved_presence_status || 'visiting';
     return {
       resolved_current_location_id: 'rabbit_hole',
       resolved_current_location_name: label,
-      resolved_location_type: 'rabbit_hole',
-      resolved_presence_status: 'rabbit_hole',
+      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
+      resolved_presence_status: actualPresence,
       resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
     };
   }
@@ -1049,7 +1056,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
         }
       } else {
         if (isOnShiftNow(job.shift, etTime)) {
-          return { resolved_current_location_id: null, resolved_current_location_name: job.workplaceName || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
+          return { resolved_current_location_id: 'rabbit_hole', resolved_current_location_name: job.workplaceName || 'Work', resolved_location_type: 'rabbit_hole', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
         }
       }
     }
