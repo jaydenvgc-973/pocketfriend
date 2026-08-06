@@ -1,19 +1,25 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-async function getOrCreateFinancial(base44, charId, charName) {
+async function getOrCreateFinancial(base44, charId, charName, finCache) {
+  if (finCache?.has(charId)) return finCache.get(charId);
   const recs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: charId });
-  if (recs[0]) return recs[0];
-  return base44.asServiceRole.entities.CharacterFinancial.create({
+  if (recs[0]) {
+    finCache?.set(charId, recs[0]);
+    return recs[0];
+  }
+  const created = await base44.asServiceRole.entities.CharacterFinancial.create({
     character_id: charId,
     character_name: charName,
     current_balance: 6000,
     total_income: 0,
     total_expenses: 0,
   });
+  finCache?.set(charId, created);
+  return created;
 }
 
-async function applyTransaction(base44, charId, charName, amount, direction, description, businessName) {
-  const financial = await getOrCreateFinancial(base44, charId, charName);
+async function applyTransaction(base44, charId, charName, amount, direction, description, businessName, finCache) {
+  const financial = await getOrCreateFinancial(base44, charId, charName, finCache);
   const currentBalance = financial.current_balance ?? 6000;
   const newBalance = direction === 'income' ? currentBalance + amount : currentBalance - amount;
   await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
@@ -21,6 +27,10 @@ async function applyTransaction(base44, charId, charName, amount, direction, des
     total_income: direction === 'income' ? (financial.total_income || 0) + amount : (financial.total_income || 0),
     total_expenses: direction === 'expense' ? (financial.total_expenses || 0) + amount : (financial.total_expenses || 0),
   });
+  // Update in-memory cache so subsequent calls for the same character see the new balance (Pattern 9)
+  financial.current_balance = newBalance;
+  if (direction === 'income') financial.total_income = (financial.total_income || 0) + amount;
+  else financial.total_expenses = (financial.total_expenses || 0) + amount;
   await base44.asServiceRole.entities.FinancialTransaction.create({
     character_id: charId,
     character_name: charName,
@@ -50,6 +60,9 @@ Deno.serve(async (req) => {
 
     let processed = 0;
     let failed = 0;
+    // In-memory cache for financial records — avoids re-fetching the same CharacterFinancial
+    // record when a business owner has multiple employees (Pattern 9)
+    const finCache = new Map();
 
     for (const char of allChars) {
       const businesses = char.businesses || [];
@@ -71,12 +84,12 @@ Deno.serve(async (req) => {
             // Deduct from business owner
             await applyTransaction(
               base44, char.id, char.name, weeklyPay, 'expense',
-              `Payroll: ${emp.character_name} (${business.name})`, business.name
+              `Payroll: ${emp.character_name} (${business.name})`, business.name, finCache
             );
             // Credit the employee
             await applyTransaction(
               base44, emp.character_id, emp.character_name, weeklyPay, 'income',
-              `Wages from ${business.name} (${char.name})`, business.name
+              `Wages from ${business.name} (${char.name})`, business.name, finCache
             );
             processed++;
           } catch (err) {
@@ -91,7 +104,7 @@ Deno.serve(async (req) => {
           try {
             await applyTransaction(
               base44, char.id, char.name, weeklyAmount, 'income',
-              `Weekly payment from ${business.name}`, business.name
+              `Weekly payment from ${business.name}`, business.name, finCache
             );
             processed++;
           } catch (err) {

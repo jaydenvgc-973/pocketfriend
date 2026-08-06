@@ -47,6 +47,10 @@ Deno.serve(async (req) => {
 
     console.log(`[processLandlordRentIncome] Found ${landlordLocations.length} locations with owner + rent + residents | owner_email=${user.email}`);
 
+    // In-memory cache for owner financial records — avoids re-fetching when one owner
+    // character owns multiple locations (Pattern 9)
+    const finCache = new Map();
+
     for (const loc of landlordLocations) {
       const ownerCharId = loc.owner_character_id;
       const ownerCharName = loc.owner_character_name || ownerCharId;
@@ -57,18 +61,8 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Get owner's financial record
-      const ownerFinList = await base44.asServiceRole.entities.CharacterFinancial.filter({
-        character_id: ownerCharId
-      }).catch(() => []);
-
-      if (!ownerFinList[0]) {
-        skipped.push({ location: loc.name, owner: ownerCharName, reason: 'no_financial_record' });
-        continue;
-      }
-      const ownerFin = ownerFinList[0];
-
       // Idempotency: check if we already credited this owner for this location this period
+      // Moved before financial record fetch — does not depend on it (Pattern 5)
       const recentIncome = await base44.asServiceRole.entities.FinancialTransaction.filter({
         character_id: ownerCharId,
         transaction_type: 'rent',
@@ -89,6 +83,23 @@ Deno.serve(async (req) => {
           reason: `already_credited_${billingPeriod}`,
         });
         continue;
+      }
+
+      // Get owner's financial record (cached in-memory for this run — Pattern 9)
+      let ownerFin;
+      if (finCache.has(ownerCharId)) {
+        ownerFin = finCache.get(ownerCharId);
+      } else {
+        const ownerFinList = await base44.asServiceRole.entities.CharacterFinancial.filter({
+          character_id: ownerCharId
+        }).catch(() => []);
+
+        if (!ownerFinList[0]) {
+          skipped.push({ location: loc.name, owner: ownerCharName, reason: 'no_financial_record' });
+          continue;
+        }
+        ownerFin = ownerFinList[0];
+        finCache.set(ownerCharId, ownerFin);
       }
 
       // Calculate total rent from all paying residents
@@ -124,6 +135,9 @@ Deno.serve(async (req) => {
         current_balance: ownerNewBalance,
         total_income: ownerNewIncome,
       }).catch(err => console.warn(`[processLandlordRentIncome] balance update failed for ${ownerCharName}: ${err.message}`));
+      // Update in-memory cache so subsequent locations owned by the same character see the new balance (Pattern 9)
+      ownerFin.current_balance = ownerNewBalance;
+      ownerFin.total_income = ownerNewIncome;
 
       // Write income transaction
       await base44.asServiceRole.entities.FinancialTransaction.create({
