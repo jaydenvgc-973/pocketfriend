@@ -260,11 +260,11 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     } else {
       if (isOnShiftNow(job.shift, currentTime)) {
         return {
-          resolved_current_location_id: null,
-          resolved_current_location_name: job.workplaceName || 'Work',
-          resolved_location_type: 'work',
-          resolved_presence_status: 'at_work',
-          resolved_source_reason: 'work_schedule',
+          resolved_current_location_id: 'rabbit_hole',
+          resolved_current_location_name: job.workplaceName || 'Off-screen',
+          resolved_location_type: 'rabbit_hole',
+          resolved_presence_status: 'rabbit_hole',
+          resolved_source_reason: 'rabbit_hole_work_schedule',
           resolved_zone: null,
         };
       }

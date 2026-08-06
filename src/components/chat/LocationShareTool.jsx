@@ -25,50 +25,95 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, MapPin, Navigation, ArrowRight } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 
 /**
- * Resolve the character's authoritative current location through the existing
- * presence/location authority. Returns { locationId, locationName, presenceStatus }.
- * On `no_change` the stored fields already equal the recomputed truth, so the
- * (now-confirmed) Character fields are authoritative and safe to use.
+ * Derive the rabbit-hole workplace name from the character's employment config.
+ * Falls back through primary occupation and additional occupation locations.
+ */
+function deriveRabbitHoleName(ch) {
+  if (ch.resolved_current_location_name) return ch.resolved_current_location_name;
+  if (ch.occupation_location_name) return ch.occupation_location_name;
+  if (ch.work_details?.workplace_name) return ch.work_details.workplace_name;
+  if (Array.isArray(ch.additional_occupation_locations)) {
+    for (const entry of ch.additional_occupation_locations) {
+      if (entry.is_rabbit_hole === true && entry.location_name) return entry.location_name;
+    }
+  }
+  return 'Off-screen';
+}
+
+/**
+ * Resolve the character's authoritative current location using the SAME frontend
+ * resolver as the Character Card and Travel page — One Truth.
+ *
+ * Rabbit hole is a terminal state: the ID is the string 'rabbit_hole' (never null,
+ * never 'unknown'), and the name is the custom workplace name from the employment
+ * configuration. This function never calls the backend recompute for rabbit hole
+ * characters, preventing stale-deployment clobbering.
  */
 async function resolveAuthoritativeCharLocation(characterId, ownerEmail) {
-  // ── RABBIT HOLE FIRST — read character record BEFORE any backend call ──────
-  // enforceCharacterLocationPresence may clobber the rabbit hole status (stale
-  // deployment, propagation delay). An active rabbit hole must NEVER be sent
-  // through the backend recompute — it would overwrite the DB record and
-  // corrupt the character card and travel page.
   const chars = await base44.entities.Character.filter({ id: characterId }, null, 1);
   const ch = chars?.[0];
   if (!ch) return null;
-  const isRabbitHole = ch.resolved_presence_status === 'rabbit_hole' || ch.resolved_location_type === 'rabbit_hole';
-  if (isRabbitHole && ch.resolved_current_location_name) {
+
+  // ── RABBIT HOLE FIRST — terminal state, checked before ANY resolver ──────
+  // If the DB or the character's employment config indicates rabbit hole, we
+  // return immediately with ID = 'rabbit_hole' and the custom workplace name.
+  // This must NEVER fall through to the backend or the home fallback.
+  const isRabbitHoleDB = ch.resolved_presence_status === 'rabbit_hole' ||
+    ch.resolved_location_type === 'rabbit_hole';
+  const hasRabbitHoleEmployment = ch.work_details?.is_rabbit_hole === true ||
+    (Array.isArray(ch.additional_occupation_locations) &&
+      ch.additional_occupation_locations.some(e => e.is_rabbit_hole === true));
+  if (isRabbitHoleDB || hasRabbitHoleEmployment) {
+    // Use the frontend resolver to check if the character is currently on shift.
+    // The resolver now returns 'rabbit_hole' as the ID for active rabbit hole shifts.
+    const resolved = resolveCharacterLocation(ch, {});
+    if (resolved.resolved_presence_status === 'rabbit_hole' ||
+        resolved.resolved_location_type === 'rabbit_hole') {
+      return {
+        locationId: 'rabbit_hole',
+        locationName: resolved.resolved_current_location_name || deriveRabbitHoleName(ch),
+        presenceStatus: 'rabbit_hole',
+      };
+    }
+    // Even if the resolver didn't return rabbit_hole (e.g. off-shift), if the DB
+    // says rabbit_hole, honor it — the DB was committed by the authority.
+    if (isRabbitHoleDB) {
+      return {
+        locationId: 'rabbit_hole',
+        locationName: deriveRabbitHoleName(ch),
+        presenceStatus: 'rabbit_hole',
+      };
+    }
+  }
+
+  // ── NOT A RABBIT HOLE — resolve through the frontend resolver ────────────
+  // Build a locationMap so the resolver can evaluate linked work, school, etc.
+  let locationMap = {};
+  try {
+    const filter = ownerEmail ? { owner_email: ownerEmail } : {};
+    const locations = await base44.entities.LocationReference.filter(filter, null, 500);
+    for (const loc of locations) locationMap[loc.id] = loc;
+  } catch (_) { /* resolver handles empty map */ }
+
+  const resolved = resolveCharacterLocation(ch, locationMap);
+
+  // Double-check: if the resolver detected a rabbit hole work shift, return it.
+  if (resolved.resolved_presence_status === 'rabbit_hole' ||
+      resolved.resolved_location_type === 'rabbit_hole') {
     return {
       locationId: 'rabbit_hole',
-      locationName: ch.resolved_current_location_name,
-      presenceStatus: ch.resolved_presence_status || 'rabbit_hole',
+      locationName: resolved.resolved_current_location_name || deriveRabbitHoleName(ch),
+      presenceStatus: 'rabbit_hole',
     };
   }
 
-  // ── NOT A RABBIT HOLE — resolve through the authoritative backend ─────────
-  const res = await base44.functions.invoke('enforceCharacterLocationPresence', {
-    character_id: characterId,
-    owner_email: ownerEmail || undefined,
-  });
-  const data = res?.data || res;
-  const committed = data?.committed_result;
-  if (committed && (committed.resolved_current_location_id || committed.resolved_presence_status === 'rabbit_hole')) {
-    return {
-      locationId: committed.resolved_current_location_id || null,
-      locationName: committed.resolved_current_location_name || null,
-      presenceStatus: committed.resolved_presence_status || null,
-    };
-  }
-  // no_change (or deferred) — the stored fields are the authoritative truth.
   return {
-    locationId: ch.resolved_current_location_id || null,
-    locationName: ch.resolved_current_location_name || null,
-    presenceStatus: ch.resolved_presence_status || null,
+    locationId: resolved.resolved_current_location_id || null,
+    locationName: resolved.resolved_current_location_name || null,
+    presenceStatus: resolved.resolved_presence_status || null,
   };
 }
 
