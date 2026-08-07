@@ -52,7 +52,7 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   const isWorker = workerIds.includes(character.id);
   const jobTitle = location.worker_job_titles?.[character.id];
 
-  // ── BLOCKERS: Visitors/customers/patrons never wear uniforms ─────────────
+  // ── VISITOR ROLE DETECTION ────────────────────────────────────────────────
   // NOTE: 'patient' is NOT a visitor role. An admitted patient is not merely a
   // visitor when the Location defines patient-specific clothing. Patient uniforms
   // are resolved through the normal role/status uniform path.
@@ -60,32 +60,29 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
     'visitor', 'guest', 'customer', 'shopper', 'patron', 'diner',
     'tourist', 'parent', 'member', 'spectator'
   ]);
-  if (VISITOR_ROLES.has(characterRoleAtLocation)) {
-    return result; // No uniform for visitors
-  }
-
-  // ── PRIORITY 1: Manual override (set today) ───────────────────────────
-  // Handled at a higher level (in resolveCharacterOutfit), not here.
-  // This resolver is called AFTER manual override check fails.
+  const isVisitorRole = VISITOR_ROLES.has(characterRoleAtLocation);
+  // Role-specific checks (manual_assignment, job_title, role_status, generic_staff)
+  // are skipped for visitors. Non-role-specific checks (zone, location_wide) are
+  // still evaluated — a visitor at a Location with a location-wide uniform rule
+  // must receive that uniform. Do not let visitor detection defeat location_wide.
 
   // ── PRIORITY 2: Manual employee-specific uniform assignment ────────────
-  const manualAssignment = location.worker_manual_uniforms?.[character.id];
-  if (manualAssignment && uniforms[manualAssignment]) {
-    const uniform = uniforms[manualAssignment];
-    return {
-      uniform,
-      applicability: 'manual_assignment',
-      reason: `manual assignment to ${manualAssignment}`,
-      source: 'manual_assignment',
-    };
+  if (!isVisitorRole) {
+    const manualAssignment = location.worker_manual_uniforms?.[character.id];
+    if (manualAssignment && uniforms[manualAssignment]) {
+      const uniform = uniforms[manualAssignment];
+      return {
+        uniform,
+        applicability: 'manual_assignment',
+        reason: `manual assignment to ${manualAssignment}`,
+        source: 'manual_assignment',
+      };
+    }
   }
 
   // ── PRIORITY 3: Job-title uniform ────────────────────────────────────
-  if (jobTitle && isWorker) {
-    // Normalize job title for matching: lowercase, trim whitespace
+  if (!isVisitorRole && jobTitle && isWorker) {
     const normalizedTitle = jobTitle.toLowerCase().trim();
-    
-    // Check if this job title has a uniform
     for (const [uniformId, uniform] of Object.entries(uniforms)) {
       if (!uniform || uniform.applicability !== 'job_title') continue;
       const configuredTitle = (uniform.job_title || '').toLowerCase().trim();
@@ -101,7 +98,7 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   }
 
   // ── PRIORITY 4: Zone-specific uniform ────────────────────────────────
-  // Zone detection: character.current_activity or location.current_zone
+  // Non-role-specific: applies to anyone in the matching zone, including visitors.
   const characterZone = character.current_zone || character.current_activity?.toLowerCase() || '';
   if (characterZone) {
     for (const [uniformId, uniform] of Object.entries(uniforms)) {
@@ -119,8 +116,7 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   }
 
   // ── PRIORITY 5: Role/status uniform ──────────────────────────────────
-  // character is 'employee', 'inmate', 'student', 'staff', etc.
-  if (characterRoleAtLocation) {
+  if (!isVisitorRole && characterRoleAtLocation) {
     const normalizedRole = characterRoleAtLocation.toLowerCase().trim();
     for (const [uniformId, uniform] of Object.entries(uniforms)) {
       if (!uniform || uniform.applicability !== 'role_status') continue;
@@ -137,20 +133,24 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   }
 
   // ── PRIORITY 6: Generic/default staff uniform ───────────────────────
-  // Only for employees with custom job titles that didn't match priority 3
-  if (isWorker && jobTitle) {
+  // For any worker/staff member — not just those with a job title.
+  // The existing semantics: established staff member + no more specific uniform
+  // matched = generic staff uniform. Do not require a nonempty jobTitle string.
+  if (!isVisitorRole && isWorker) {
     for (const [uniformId, uniform] of Object.entries(uniforms)) {
       if (!uniform || uniform.applicability !== 'generic_staff') continue;
       return {
         uniform,
         applicability: 'generic_staff',
-        reason: `generic staff uniform (custom title: ${jobTitle})`,
+        reason: `generic staff uniform`,
         source: 'generic_staff',
       };
     }
   }
 
   // ── PRIORITY 7: Location-wide uniform ───────────────────────────────
+  // Non-role-specific: applies to anyone at the Location, including visitors.
+  // Must NOT be defeated by visitor detection or any earlier role gate.
   for (const [uniformId, uniform] of Object.entries(uniforms)) {
     if (!uniform || uniform.applicability !== 'location_wide') continue;
     return {
@@ -160,15 +160,6 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
       source: 'location_wide',
     };
   }
-
-  // ── PRIORITY 8: Scheduled work/school outfit ────────────────────────
-  // Handled by resolveCharacterOutfit, not here
-
-  // ── PRIORITY 9: Current closet/worn outfit ──────────────────────────
-  // Handled by resolveCharacterOutfit, not here
-
-  // ── PRIORITY 10: Default outfit ─────────────────────────────────────
-  // Handled by resolveCharacterOutfit, not here
 
   return result;
 }
@@ -203,22 +194,23 @@ export function determineCharacterRoleAtLocation(character, location) {
     return 'student';
   }
 
-  // Employee at workplace/business/restaurant/etc
-  if (isWorker) {
-    return 'employee';
-  }
-
   // Patient at medical facility (hospitalized establishes patient status)
-  // An admitted patient is not a visitor — the Location may define patient-specific
-  // clothing via role_status: 'patient' in its uniforms configuration.
+  // Checked BEFORE the generic employee check so a hospitalized worker at a
+  // medical facility is classified as 'patient', not 'employee'.
   if ((location.category === 'medical' || location.category === 'hospital') &&
       (character.resolved_presence_status === 'hospitalized' || character.location_status === 'hospitalized')) {
     return 'patient';
   }
 
-  // Hospital staff
-  if (location.category === 'medical' && isWorker) {
+  // Medical staff (worker at a medical facility, not hospitalized)
+  // Checked BEFORE the generic employee check so medical workers are 'staff'.
+  if ((location.category === 'medical' || location.category === 'hospital') && isWorker) {
     return 'staff';
+  }
+
+  // Employee at workplace/business/restaurant/etc
+  if (isWorker) {
+    return 'employee';
   }
 
   // Gym member

@@ -34,57 +34,81 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── UNIFORM RESOLVER ─────────────────────────────────────────────────────────
-// Returns uniform description text if a required uniform applies, null otherwise.
-// Determines the character's actual role/status at the Location using existing data
-// (worker IDs, job titles, presence status, education, incarceration, Location category),
-// then checks the Location's existing uniform definitions for that role/status.
-// Uniforms are temporary context outfits — they do not overwrite closet or rotation.
-// A uniform from one Location never follows the character to another Location.
-// The Location owns the clothing requirement; the Character record contributes
-// role/title information that is evaluated against the current Location's uniform rules.
+// MUST BE KEPT IN SYNC WITH src/lib/uniformResolver.js
+//
+// The Deno backend environment cannot import from src/lib/, so the uniform
+// applicability rules are inlined here. This is NOT a separate authority —
+// it is a synchronized copy of the same algorithm in uniformResolver.js.
+// Any change to uniform resolution logic MUST be applied to both files.
+//
+// The rules: Location owns the uniform requirement. The character's actual
+// role/status at that Location determines applicability. Visitors do not wear
+// role-specific uniforms but CAN receive zone and location-wide uniforms.
+// generic_staff applies to any worker, not just those with a job title.
 function resolveUniformText(character, locationRecord) {
   if (!character || !locationRecord) return null;
   const uniforms = locationRecord.uniforms || {};
   if (!uniforms || Object.keys(uniforms).length === 0) return null;
 
   // ── DETERMINE CHARACTER'S ROLE/STATUS AT THIS LOCATION ──────────────────
+  // Mirrors determineCharacterRoleAtLocation() in uniformResolver.js exactly.
   const workerIds = locationRecord.worker_character_ids || [];
   const isWorker = workerIds.includes(character.id);
   const jobTitle = locationRecord.worker_job_titles?.[character.id];
-  const presence = character.resolved_presence_status || character.location_status || '';
   const locCategory = locationRecord.category || '';
+  const presence = character.resolved_presence_status || character.location_status || '';
 
   let role = null;
 
-  // Patient at medical facility (hospitalized establishes patient status)
-  if (presence === 'hospitalized' && (locCategory === 'medical' || locCategory === 'hospital')) {
-    role = 'patient';
-  }
-
   // Inmate at jail/prison
-  if (!role && locCategory === 'jail_prison' && character.is_jailed) {
+  if (locCategory === 'jail_prison' && character.is_jailed) {
     role = 'inmate';
   }
-
-  // Staff at jail/prison (worker at a confinement facility)
+  // Staff at jail/prison
   if (!role && locCategory === 'jail_prison' && isWorker) {
     role = 'staff';
   }
-
-  // Student at school/education
+  // Student at school
   if (!role && (locCategory === 'school' || locCategory === 'education')
       && character.education_location_id === locationRecord.id) {
     role = 'student';
   }
-
-  // Employee at workplace, or staff at medical facility
+  // Patient at medical facility (hospitalized establishes patient status)
+  // Checked BEFORE the generic employee check so a hospitalized worker at a
+  // medical facility is classified as 'patient', not 'employee'.
+  if (!role && (locCategory === 'medical' || locCategory === 'hospital') &&
+      presence === 'hospitalized') {
+    role = 'patient';
+  }
+  // Medical staff (worker at a medical facility, not hospitalized)
+  if (!role && (locCategory === 'medical' || locCategory === 'hospital') && isWorker) {
+    role = 'staff';
+  }
+  // Employee at workplace
   if (!role && isWorker) {
-    role = (locCategory === 'medical') ? 'staff' : 'employee';
+    role = 'employee';
+  }
+  // Gym member
+  if (!role && locCategory === 'gym' && (locationRecord.gym_members || []).includes(character.id)) {
+    role = 'member';
+  }
+  // Home resident
+  if (!role && (locCategory === 'home' || locCategory === 'generic') &&
+      character.current_home_location_id === locationRecord.id) {
+    role = 'resident';
+  }
+  // Default: visitor
+  if (!role) {
+    role = 'visitor';
   }
 
-  // No role established — character is a visitor/customer at this Location.
-  // Visitors do not wear role-specific uniforms.
-  if (!role) return null;
+  // ── VISITOR ROLE DETECTION ──────────────────────────────────────────────
+  // Mirrors resolveUniform() in uniformResolver.js exactly.
+  const VISITOR_ROLES = new Set([
+    'visitor', 'guest', 'customer', 'shopper', 'patron', 'diner',
+    'tourist', 'parent', 'member', 'spectator'
+  ]);
+  const isVisitorRole = VISITOR_ROLES.has(role);
 
   function uniformToText(u) {
     if (!u) return null;
@@ -93,13 +117,17 @@ function resolveUniformText(character, locationRecord) {
   }
 
   // ── CHECK UNIFORM APPLICABILITY TYPES (existing priority order) ──────────
+  // Role-specific checks are skipped for visitors.
+  // Non-role-specific checks (zone, location_wide) are always evaluated.
 
   // 1. Manual employee-specific uniform assignment
-  const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
-  if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
+  if (!isVisitorRole) {
+    const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
+    if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
+  }
 
   // 2. Job-title uniform
-  if (jobTitle && isWorker) {
+  if (!isVisitorRole && jobTitle && isWorker) {
     const normalizedTitle = jobTitle.toLowerCase().trim();
     for (const u of Object.values(uniforms)) {
       if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
@@ -108,7 +136,7 @@ function resolveUniformText(character, locationRecord) {
     }
   }
 
-  // 3. Zone-specific uniform
+  // 3. Zone-specific uniform (non-role-specific: applies to anyone in the zone)
   const characterZone = (character.current_zone || character.current_activity || '').toLowerCase();
   if (characterZone) {
     for (const u of Object.values(uniforms)) {
@@ -119,21 +147,24 @@ function resolveUniformText(character, locationRecord) {
   }
 
   // 4. Role/status uniform (matches the character's actual role at this Location)
-  const normalizedRole = role.toLowerCase().trim();
-  for (const u of Object.values(uniforms)) {
-    if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === normalizedRole) {
-      return uniformToText(u);
+  if (!isVisitorRole && role) {
+    const normalizedRole = role.toLowerCase().trim();
+    for (const u of Object.values(uniforms)) {
+      if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === normalizedRole) {
+        return uniformToText(u);
+      }
     }
   }
 
-  // 5. Generic staff uniform (for employees with unmatched job titles)
-  if (isWorker && jobTitle) {
+  // 5. Generic staff uniform (for any worker, not just those with a job title)
+  if (!isVisitorRole && isWorker) {
     for (const u of Object.values(uniforms)) {
       if (u?.applicability === 'generic_staff') return uniformToText(u);
     }
   }
 
-  // 6. Location-wide uniform
+  // 6. Location-wide uniform (non-role-specific: applies to anyone at the Location)
+  // Must NOT be defeated by visitor detection or any earlier role gate.
   for (const u of Object.values(uniforms)) {
     if (u?.applicability === 'location_wide') return uniformToText(u);
   }
