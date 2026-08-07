@@ -29,19 +29,96 @@
  * It is only used as an absolute last resort when the closet is completely empty.
  *
  * UNIFORM RESOLUTION:
- *   Uniform applicability is evaluated by the shared module at
- *   base44/shared/uniformApplicabilityRules.js — the SAME module used by the
- *   frontend uniformResolver.js. No duplicated rule body.
+ *   Uniform applicability is evaluated inline below — the backend's existing
+ *   image-generation responsibility (Priority 1: uniform before closet rotation).
+ *   No shared module, no duplicated algorithm, no synchronization requirement.
  *
  * TIMEZONE: All date comparisons use America/New_York (Eastern Time).
  *           UTC is forbidden as an application time reference.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-import {
-  resolveCharacterAssignmentAtLocation,
-  evaluateUniformApplicability,
-  uniformToText,
-} from '../../shared/uniformApplicabilityRules.js';
+
+// ── INLINE UNIFORM TEXT RESOLVER ──────────────────────────────────────────────
+// Minimal uniform check for the backend's image-generation outfit context.
+// Evaluates the Location's uniforms against the character's actual status/
+// employment at that Location. Returns uniform text or null.
+function resolveUniformText(character: any, location: any): string | null {
+  const uniforms = location.uniforms || {};
+  if (Object.keys(uniforms).length === 0) return null;
+
+  const charId = character.id;
+  const presence = character.resolved_presence_status || character.location_status || '';
+  const uText = (u: any) => u?.description || u?.name || null;
+
+  // 1. Manual assignment
+  const manualKey = location.worker_manual_uniforms?.[charId];
+  if (manualKey && uniforms[manualKey]) return uText(uniforms[manualKey]);
+
+  // 2. Job title at THIS location
+  let jobTitle = location.worker_job_titles?.[charId] || null;
+  if (!jobTitle && character.occupation_location_id === location.id && character.work_details?.job_title) {
+    jobTitle = character.work_details.job_title;
+  }
+  if (!jobTitle && Array.isArray(character.additional_occupation_locations)) {
+    for (const loc of character.additional_occupation_locations) {
+      if ((loc.location_id || loc.id) === location.id && loc.job_title) { jobTitle = loc.job_title; break; }
+    }
+  }
+  if (jobTitle) {
+    const norm = jobTitle.toLowerCase().trim();
+    for (const u of Object.values(uniforms) as any[]) {
+      if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === norm) return uText(u);
+    }
+  }
+
+  // 3. Role/status — actual status strings at THIS location
+  const statusStrings: string[] = [];
+  if (presence) statusStrings.push(presence);
+  if (character.student_status && character.student_status !== 'not_student' &&
+      (character.current_school_location_id === location.id || character.education_location_id === location.id)) {
+    statusStrings.push(character.student_status);
+  }
+  const inArr = (arr: any) => Array.isArray(arr) && arr.some((i: any) => typeof i === 'string' ? i === charId : i?.character_id === charId);
+  if (inArr(location.enrolled_students)) statusStrings.push('enrolled_students');
+  if (inArr(location.inmates)) statusStrings.push('inmates');
+  if (location.gym_members?.includes(charId)) statusStrings.push('gym_members');
+  if (inArr(location.religious_members)) statusStrings.push('religious_members');
+  if (inArr(location.residents)) statusStrings.push('residents');
+  if (location.worker_character_ids?.includes(charId)) statusStrings.push('worker_character_ids');
+
+  for (const u of Object.values(uniforms) as any[]) {
+    if (u?.applicability === 'role_status' && u.role_status) {
+      const us = u.role_status.toLowerCase().trim();
+      if (statusStrings.some(s => s.toLowerCase().trim() === us)) return uText(u);
+    }
+  }
+
+  // 4. Generic staff — worker at THIS location, no job title required
+  const isStaff = location.worker_character_ids?.includes(charId) ||
+    character.occupation_location_id === location.id ||
+    (Array.isArray(character.additional_occupation_locations) &&
+      character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id));
+  if (isStaff) {
+    for (const u of Object.values(uniforms) as any[]) {
+      if (u?.applicability === 'generic_staff') return uText(u);
+    }
+  }
+
+  // 5. Zone
+  const zone = (character.current_zone || character.current_activity || '').toLowerCase();
+  if (zone) {
+    for (const u of Object.values(uniforms) as any[]) {
+      if (u?.applicability === 'zone' && u.zone && zone.includes(u.zone.toLowerCase())) return uText(u);
+    }
+  }
+
+  // 6. Location-wide — no gate
+  for (const u of Object.values(uniforms) as any[]) {
+    if (u?.applicability === 'location_wide') return uText(u);
+  }
+
+  return null;
+}
 
 // ── FALLBACK CHAINS ────────────────────────────────────────────────────────────
 // Copied from lib/outfitRotationEngine.js buildFallbackChain().
@@ -222,16 +299,10 @@ Deno.serve(async (req) => {
       const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []);
       const locRecord = locList?.[0] || null;
       if (locRecord) {
-        // Use the SHARED uniform applicability module — same authority as frontend.
-        const uniforms = locRecord.uniforms || {};
-        const assignment = resolveCharacterAssignmentAtLocation(character, locRecord);
-        const uniformResult = evaluateUniformApplicability(uniforms, character, locRecord, assignment);
-        if (uniformResult) {
-          const uniformText = uniformToText(uniformResult.uniform);
-          if (uniformText) {
-            console.log(`[resolveCharacterOutfitContext] ✅ UNIFORM for "${character.name}" at "${locRecord.name}": "${uniformText.substring(0,80)}" (source=${uniformResult.source})`);
-            return Response.json({ text: uniformText, source: 'uniform', category: 'uniform' });
-          }
+        const uniformText = resolveUniformText(character, locRecord);
+        if (uniformText) {
+          console.log(`[resolveCharacterOutfitContext] ✅ UNIFORM for "${character.name}" at "${locRecord.name}": "${uniformText.substring(0,80)}"`);
+          return Response.json({ text: uniformText, source: 'uniform', category: 'uniform' });
         }
       }
     }
