@@ -18,7 +18,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { resolveCurrentOutfit, buildOutfitPromptText, applyManualCategoryOverride } from './outfitRotationEngine.js';
+import { resolveCurrentOutfit, resolveTargetCategory, buildOutfitPromptText, applyManualCategoryOverride } from './outfitRotationEngine.js';
 import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
 
 // ── EASTERN TIME HELPERS ──────────────────────────────────────────────────────
@@ -105,6 +105,69 @@ function buildOutfitTextFromOutfit(outfit) {
   return outfit.full_description?.trim() || null;
 }
 
+// ── ROTATION GROUP MAPPING (mirrors RotationSchedulePreview groups) ──────────
+// Today's Rotation display selects today's outfit per GROUP (Home, Daily Wear,
+// Special Occasion, Activity) by merging all sub-categories in the group into one
+// numbered pool. The Rotation-ON automatic active-outfit handoff must consume that
+// same group-merged selection so Currently Wearing matches the Today's Rotation card.
+const OUTFIT_GROUP_CATEGORIES = {
+  "Home":             ["lounge", "sleepwear", "bath"],
+  "Daily Wear":       ["daily_casual", "work", "school", "outdoor", "nightlife"],
+  "Special Occasion": ["formal", "date_night", "church", "special"],
+  "Activity":         ["gym", "swimwear"],
+};
+const CATEGORY_TO_GROUP = Object.entries(OUTFIT_GROUP_CATEGORIES).reduce((acc, [group, cats]) => {
+  for (const c of cats) acc[c] = group;
+  return acc;
+}, {});
+
+/**
+ * resolveGroupTodayOutfit — mirrors RotationSchedulePreview.getGroupPreview (isToday=true)
+ * so the Rotation-ON automatic active-outfit handoff consumes the SAME today-selected
+ * outfit that the green Today's Rotation card shows for the applicable group.
+ *
+ * Returns the outfit object, or null when the target category is not a rotation group
+ * (modifiers like travel/cold_weather/hot_weather) or the group has no outfits — in
+ * those cases the caller falls back to the existing rotation engine.
+ */
+function resolveGroupTodayOutfit(character, targetCategory) {
+  if (!character) return null;
+  const group = CATEGORY_TO_GROUP[targetCategory];
+  if (!group) return null; // modifier category — caller falls back to existing engine
+  const catValues = OUTFIT_GROUP_CATEGORIES[group];
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
+  const pool = outfits.filter(o => catValues.includes(o.category));
+  if (pool.length === 0) return null;
+
+  // Today override scan across the GROUP's categories (mirrors getGroupPreview)
+  const overrideState = character.today_category_outfit_overrides;
+  if (overrideState?.date && overrideState.overrides && overrideState.date === getETTodayStr()) {
+    for (const cat of catValues) {
+      const overrideId = overrideState.overrides[cat];
+      if (overrideId) {
+        const o = pool.find(x => x.outfit_id === overrideId);
+        if (o) return o;
+      }
+    }
+  }
+
+  // Numbered merged pool across the whole group, sorted together
+  const numbered = pool
+    .filter(o => o.rotation_number != null && o.rotation_number !== "")
+    .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+  if (numbered.length > 0) {
+    return numbered[getETDayIndex(character.id) % numbered.length];
+  }
+  // No numbered outfits — daily rotation over the merged group pool (favorites then all)
+  const unnumbered = pool.filter(o => o.rotation_number == null || o.rotation_number === "");
+  const favorites = unnumbered.filter(o => o.is_favorite);
+  const candidates = favorites.length > 0 ? favorites : unnumbered;
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+  return candidates[getETDayIndex(character.id) % candidates.length];
+}
+
 // ── CHARACTER ACTIVE OUTFIT (display authority) ──────────────────────────────
 export function resolveCharacterActiveOutfit(character, options = {}) {
   const { specialOccasionCategory = null, locationMap = {} } = options;
@@ -130,7 +193,18 @@ export function resolveCharacterActiveOutfit(character, options = {}) {
   const rotationEnabled = character.outfit_rotation_enabled !== false;
 
   // P3/P4: CLOSET via rotation engine
-  const outfit = resolveCurrentOutfit(character, '', null, forcedCategory);
+  // Rotation ON: consume the SAME group-merged today-selection that the Today's Rotation
+  // display uses (so Currently Wearing matches the green Today Home / Daily Wear / etc.
+  // card). Modifier categories (travel/cold_weather/hot_weather) and empty groups fall
+  // back to the existing rotation engine, preserving prior behavior for those cases.
+  let outfit = null;
+  if (rotationEnabled) {
+    const targetCat = forcedCategory || resolveTargetCategory(character, '', null);
+    outfit = resolveGroupTodayOutfit(character, targetCat);
+    if (!outfit) outfit = resolveCurrentOutfit(character, '', null, forcedCategory);
+  } else {
+    outfit = resolveCurrentOutfit(character, '', null, forcedCategory);
+  }
   if (!outfit) {
     // Rotation ON: current_outfit is NEVER authoritative — return null, show nothing.
     // Rotation OFF: current_outfit is the authority only when closet is completely empty.
