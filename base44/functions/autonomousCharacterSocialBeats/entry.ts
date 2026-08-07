@@ -83,8 +83,9 @@ function computePairRelationshipStrength(sender, receiverId, receiverType, pairi
     return Math.min(100, Math.max(0, Math.round(raw - tensionPenalty)));
   }
 
-  // Family = inherently strong bond regardless of relationship record
-  if (pairingSource === 'family' || receiverType === 'npc_family_member') {
+  // Family = inherently strong bond — determined by pairwise family_members data, NOT character type.
+  // npc_family_member is individual character classification, not a relationship between this pair.
+  if (pairingSource === 'family') {
     return 70;
   }
 
@@ -101,7 +102,10 @@ function computePairRelationshipStrength(sender, receiverId, receiverType, pairi
 function selectBeatType(sender, receiver, rel, pairingSource) {
   const tension = rel?.tension_level ?? 0;
   const friendship = rel?.friendship_level ?? 0;
-  const isFamily = pairingSource === 'family' || rel?.relationship_type === 'family' || receiver.character_type === 'npc_family_member';
+  // Family is determined by pairwise data only: pairingSource (from family_members array)
+  // or the CharacterRelationship record for this specific sender ↔ receiver pair.
+  // npc_family_member character type is individual classification, NOT a pairwise relationship.
+  const isFamily = pairingSource === 'family' || rel?.relationship_type === 'family' || rel?.is_family === true;
   const socialNeed = sender.social_value ?? 65;
   const mentalVal = sender.mental_value ?? 70;
 
@@ -415,20 +419,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Source 3: Family members (npc_family_member or family relationship)
+      // Source 3: Family members — pairwise only, from each character's own family_members array.
+      // npc_family_member character type is individual classification and must NOT create family
+      // pairs with every active_created_character. Family relationship is bilateral: it exists
+      // only when the character's own family_members array links them to the other character.
       for (const c of userChars) {
-        // Check character's family_members array for other characters in the user's roster
         for (const fm of (c.family_members || [])) {
           if (fm.character_id && userCharIds.has(fm.character_id)) {
             addPair(c.id, fm.character_id, 'family', null);
-          }
-        }
-        // npc_family_member type characters are always family-source candidates with any active_created_character
-        if (c.character_type === 'npc_family_member') {
-          for (const other of userChars) {
-            if (other.character_type === 'active_created_character') {
-              addPair(other.id, c.id, 'family', null);
-            }
           }
         }
       }
