@@ -6,12 +6,12 @@ import { Loader2, BookOpen, Users, MapPin, Star } from 'lucide-react';
 // Stable synthetic ID for the user participant (not a Character entity ObjectId)
 const USER_STORY_ID = '__user__';
 
-export default function StoryEventCreator({ date, characters = [], currentUser = null, userSettings = null, appLocations = [], onCreated, onCancel, initialTitle = '', initialPlot = '', initialVenueId = '', initialParticipantIds = [], initialFocusIds = [] }) {
+export default function StoryEventCreator({ date, characters = [], currentUser = null, userSettings = null, appLocations = [], onCreated, onCancel, initialTitle = '', initialPlot = '', initialVenueId = '', initialParticipantIds = [], initialFocusIds = [], initialStartTime = '', initialEndTime = '' }) {
   const [title, setTitle] = useState(initialTitle || '');
   const [plot, setPlot] = useState(initialPlot || '');
   const [notes, setNotes] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
+  const [startTime, setStartTime] = useState(initialStartTime || '');
+  const [endTime, setEndTime] = useState(initialEndTime || '');
   const [allDay, setAllDay] = useState(false);
   const [selectedVenueId, setSelectedVenueId] = useState(initialVenueId || '');
   const [isRabbitHole, setIsRabbitHole] = useState(false);

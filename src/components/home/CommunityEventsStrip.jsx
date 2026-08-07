@@ -44,6 +44,7 @@ import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Calendar, MapPin, Users, ChevronDown, ChevronUp, Info } from 'lucide-react';
 import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS } from '@/lib/defaultCommunityEvents';
+import CommunityActivityStoryEventModal from '@/components/home/CommunityActivityStoryEventModal';
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
 
@@ -416,6 +417,7 @@ function AttendanceDiagnosticPanel({ diagnostics, eventName, onClose }) {
 export default function CommunityEventsStrip({ currentUser, characters = [] }) {
   const scrollRef = useRef(null);
   const [openDiagnosticEventId, setOpenDiagnosticEventId] = useState(null);
+  const [storyEventActivity, setStoryEventActivity] = useState(null);
 
   // Fetch app locations — shared query key with Home page (no duplicate fetch)
   const { data: appLocations = [] } = useQuery({
@@ -456,14 +458,26 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
     placeholderData: (prev) => prev,
   });
 
-  // Merge + dedupe events (DB first, defaults fill gaps)
+  // Merge + dedupe events with 2-hour lifecycle rule:
+  // A Community Activity remains visible until start_date + 2 hours.
+  // Eligibility is applied BEFORE sorting and truncation so valid upcoming
+  // events are never pushed out by expired or unrelated records.
   const displayEvents = useMemo(() => {
-    const cutoff = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const now = Date.now();
+    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+    const isEligible = (e) => {
+      if (!e.start_date) return false;
+      const eventStart = new Date(e.start_date).getTime();
+      const expirationTime = eventStart + TWO_HOURS_MS;
+      return now <= expirationTime;
+    };
+
     const seenIds = new Set();
     const merged = [];
 
     for (const e of globalDbEvents) {
-      if (!e.start_date || new Date(e.start_date) < cutoff) continue;
+      if (!isEligible(e)) continue;
       if (isConfinementVenue(e.location_name)) continue;
       if (seenIds.has(e.id)) continue;
       seenIds.add(e.id);
@@ -471,21 +485,21 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
     }
 
     for (const e of userDbEvents) {
-      if (!e.start_date || new Date(e.start_date) < cutoff) continue;
+      if (!isEligible(e)) continue;
       if ((e.source === 'user_calendar' || e.source === 'user') && e.show_on_community_strip === false) continue;
       if (seenIds.has(e.id)) continue;
       seenIds.add(e.id);
       merged.push(e);
     }
 
-    merged.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
-
-    // Fill remaining slots with default events (no permanent location creation)
     for (const e of buildDefaultCommunityEvents(appLocations)) {
+      if (!isEligible(e)) continue;
       if (seenIds.has(e.id)) continue;
       seenIds.add(e.id);
       merged.push(e);
     }
+
+    merged.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
 
     return merged.slice(0, 10);
   }, [globalDbEvents, userDbEvents, appLocations]);
@@ -506,6 +520,17 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
       <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3">
         Community Activity
       </h3>
+
+      {storyEventActivity && (
+        <CommunityActivityStoryEventModal
+          activity={storyEventActivity}
+          attendees={eventData[storyEventActivity.id]?.attendees || []}
+          characters={characters}
+          currentUser={currentUser}
+          appLocations={appLocations}
+          onClose={() => setStoryEventActivity(null)}
+        />
+      )}
 
       <div ref={scrollRef} className="flex gap-2 overflow-x-auto scrollbar-hide pb-2">
         {displayEvents.map((event) => {
@@ -528,7 +553,16 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
               {/* Event header */}
               <div className="flex items-start gap-1.5 mb-1">
                 <span className="text-sm leading-none mt-0.5 shrink-0">{icon}</span>
-                <p className="text-sm font-semibold text-foreground leading-snug line-clamp-2">{event.name}</p>
+                <p
+                  className="text-sm font-semibold text-foreground leading-snug line-clamp-2 cursor-pointer hover:text-primary transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setStoryEventActivity(event);
+                  }}
+                  title="Click to create a Story Event from this activity"
+                >
+                  {event.name}
+                </p>
               </div>
 
               <p className="text-xs text-muted-foreground capitalize mb-2">
