@@ -35,24 +35,55 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── UNIFORM RESOLVER ─────────────────────────────────────────────────────────
 // Returns uniform description text if a required uniform applies, null otherwise.
-// Only fires when character is a worker/inmate/student at the location — never for visitors.
+// Determines the character's actual role/status at the Location using existing data
+// (worker IDs, job titles, presence status, education, incarceration, Location category),
+// then checks the Location's existing uniform definitions for that role/status.
+// Uniforms are temporary context outfits — they do not overwrite closet or rotation.
+// A uniform from one Location never follows the character to another Location.
+// The Location owns the clothing requirement; the Character record contributes
+// role/title information that is evaluated against the current Location's uniform rules.
 function resolveUniformText(character, locationRecord) {
   if (!character || !locationRecord) return null;
   const uniforms = locationRecord.uniforms || {};
   if (!uniforms || Object.keys(uniforms).length === 0) return null;
 
+  // ── DETERMINE CHARACTER'S ROLE/STATUS AT THIS LOCATION ──────────────────
   const workerIds = locationRecord.worker_character_ids || [];
   const isWorker = workerIds.includes(character.id);
   const jobTitle = locationRecord.worker_job_titles?.[character.id];
-  const isInmate = locationRecord.category === 'jail_prison' && character.is_jailed;
-  const isStudent = (locationRecord.category === 'school' || locationRecord.category === 'education')
-    && character.education_location_id === locationRecord.id;
+  const presence = character.resolved_presence_status || character.location_status || '';
+  const locCategory = locationRecord.category || '';
 
-  if (!isWorker && !isInmate && !isStudent) return null;
+  let role = null;
 
-  let role = isInmate ? 'inmate' : isStudent ? 'student' : isWorker ? 'employee' : null;
-  if (isWorker && locationRecord.category === 'jail_prison') role = 'staff';
-  if (isWorker && locationRecord.category === 'medical') role = 'staff';
+  // Patient at medical facility (hospitalized establishes patient status)
+  if (presence === 'hospitalized' && (locCategory === 'medical' || locCategory === 'hospital')) {
+    role = 'patient';
+  }
+
+  // Inmate at jail/prison
+  if (!role && locCategory === 'jail_prison' && character.is_jailed) {
+    role = 'inmate';
+  }
+
+  // Staff at jail/prison (worker at a confinement facility)
+  if (!role && locCategory === 'jail_prison' && isWorker) {
+    role = 'staff';
+  }
+
+  // Student at school/education
+  if (!role && (locCategory === 'school' || locCategory === 'education')
+      && character.education_location_id === locationRecord.id) {
+    role = 'student';
+  }
+
+  // Employee at workplace, or staff at medical facility
+  if (!role && isWorker) {
+    role = (locCategory === 'medical') ? 'staff' : 'employee';
+  }
+
+  // No role established — character is a visitor/customer at this Location.
+  // Visitors do not wear role-specific uniforms.
   if (!role) return null;
 
   function uniformToText(u) {
@@ -61,10 +92,14 @@ function resolveUniformText(character, locationRecord) {
     return parts[0] || null;
   }
 
+  // ── CHECK UNIFORM APPLICABILITY TYPES (existing priority order) ──────────
+
+  // 1. Manual employee-specific uniform assignment
   const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
   if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
 
-  if (jobTitle) {
+  // 2. Job-title uniform
+  if (jobTitle && isWorker) {
     const normalizedTitle = jobTitle.toLowerCase().trim();
     for (const u of Object.values(uniforms)) {
       if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
@@ -73,6 +108,7 @@ function resolveUniformText(character, locationRecord) {
     }
   }
 
+  // 3. Zone-specific uniform
   const characterZone = (character.current_zone || character.current_activity || '').toLowerCase();
   if (characterZone) {
     for (const u of Object.values(uniforms)) {
@@ -82,18 +118,22 @@ function resolveUniformText(character, locationRecord) {
     }
   }
 
+  // 4. Role/status uniform (matches the character's actual role at this Location)
+  const normalizedRole = role.toLowerCase().trim();
   for (const u of Object.values(uniforms)) {
-    if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === role) {
+    if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === normalizedRole) {
       return uniformToText(u);
     }
   }
 
+  // 5. Generic staff uniform (for employees with unmatched job titles)
   if (isWorker && jobTitle) {
     for (const u of Object.values(uniforms)) {
       if (u?.applicability === 'generic_staff') return uniformToText(u);
     }
   }
 
+  // 6. Location-wide uniform
   for (const u of Object.values(uniforms)) {
     if (u?.applicability === 'location_wide') return uniformToText(u);
   }
@@ -136,6 +176,12 @@ function resolveTargetCategory(character, locationCategory) {
   if (/bath|shower|grooming/.test(activity)) return 'bath';
   if (presence === 'sleeping' || presence === 'napping' || presence === 'passed_out') return 'sleepwear';
   if (/\b(sleep|nap|asleep|bedtime|going to sleep)\b/.test(activity)) return 'sleepwear';
+
+  // Hospitalized characters use the 'medical' fallback category when no Location
+  // patient uniform applies. This is NOT a hard-coded gown — it uses the existing
+  // category/fallback system so the closet's 'medical' outfits (if any) are found,
+  // falling through to 'daily_casual' per the existing FALLBACK_CHAINS.
+  if (presence === 'hospitalized') return 'medical';
 
   // Pre-sleep window: within 60 minutes of scheduled sleep start
   if (character?.sleep_start_time) {
@@ -239,19 +285,13 @@ Deno.serve(async (req) => {
       return Response.json({ text: null, source: 'character_not_found', category: null });
     }
 
-    // ── PRIORITY -1: HOSPITALIZED PATIENT (admission gown) ──────────────────────
-    // A hospitalized character (resolved_presence_status === 'hospitalized') is an
-    // admitted patient. During admission they MUST be depicted in a hospital gown —
-    // this is identity/medical state, not a fashion choice. It overrides EVERYTHING
-    // below: manual Change-Clothes selections, uniforms, closet rotation, and
-    // category fallbacks. No closet outfit, no scene_explicit_outfit, and no daily
-    // wear may replace the gown while the character remains admitted.
-    const _presenceStatus = character.resolved_presence_status || character.location_status || '';
-    if (_presenceStatus === 'hospitalized') {
-      const gownText = 'a hospital patient gown — light blue, short-sleeve V-neck front, open back with tie closures, standard admitted-patient attire, hospital wristband on one wrist';
-      console.log(`[resolveCharacterOutfitContext] ✅ HOSPITALIZED patient gown for "${character.name}" (presence=hospitalized) — overrides all other outfit logic`);
-      return Response.json({ text: gownText, source: 'hospitalized_patient', category: 'medical' });
-    }
+    // ── HOSPITALIZED PATIENT ────────────────────────────────────────────────────
+    // Hospitalization establishes the character's role/status as patient.
+    // The applicable patient clothing comes from the hospital Location's existing
+    // uniform configuration (role_status: 'patient'), resolved by the uniform
+    // resolver below. No hard-coded gown — the Location owns the clothing requirement.
+    // If no patient uniform is defined on the Location, the character falls through
+    // to the normal clothing system (closet rotation → dynamic fallback).
 
     // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
     // Honored ABOVE all automatic logic (uniform, special occasion, rotation,
@@ -277,7 +317,8 @@ Deno.serve(async (req) => {
     const effectiveLocationId = locationId
       || (presence === 'at_work' ? (character.current_work_location_id || character.occupation_location_id || null) : null)
       || (presence === 'at_school' ? (character.current_school_location_id || character.education_location_id || null) : null)
-      || (presence === 'incarcerated' ? (character.incarceration_facility_id || null) : null);
+      || (presence === 'incarcerated' ? (character.incarceration_facility_id || null) : null)
+      || (presence === 'hospitalized' ? (character.resolved_current_location_id || null) : null);
 
     if (effectiveLocationId) {
       const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []);

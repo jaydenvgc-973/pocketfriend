@@ -53,9 +53,12 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   const jobTitle = location.worker_job_titles?.[character.id];
 
   // ── BLOCKERS: Visitors/customers/patrons never wear uniforms ─────────────
+  // NOTE: 'patient' is NOT a visitor role. An admitted patient is not merely a
+  // visitor when the Location defines patient-specific clothing. Patient uniforms
+  // are resolved through the normal role/status uniform path.
   const VISITOR_ROLES = new Set([
     'visitor', 'guest', 'customer', 'shopper', 'patron', 'diner',
-    'tourist', 'parent', 'member', 'patient', 'spectator'
+    'tourist', 'parent', 'member', 'spectator'
   ]);
   if (VISITOR_ROLES.has(characterRoleAtLocation)) {
     return result; // No uniform for visitors
@@ -203,6 +206,14 @@ export function determineCharacterRoleAtLocation(character, location) {
   // Employee at workplace/business/restaurant/etc
   if (isWorker) {
     return 'employee';
+  }
+
+  // Patient at medical facility (hospitalized establishes patient status)
+  // An admitted patient is not a visitor — the Location may define patient-specific
+  // clothing via role_status: 'patient' in its uniforms configuration.
+  if ((location.category === 'medical' || location.category === 'hospital') &&
+      (character.resolved_presence_status === 'hospitalized' || character.location_status === 'hospitalized')) {
+    return 'patient';
   }
 
   // Hospital staff
