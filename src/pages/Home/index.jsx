@@ -410,6 +410,7 @@ export default function Home() {
                 ...(defaultChar ? [defaultChar] : []),
                 ...activeCustomChars,
               ]}
+              allCharacters={allCharacters}
             />
           )}
           

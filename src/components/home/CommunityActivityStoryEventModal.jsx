@@ -15,6 +15,7 @@ export default function CommunityActivityStoryEventModal({
   activity,
   attendees = [],
   characters = [],
+  allCharacters = [],
   currentUser = null,
   userSettings = null,
   appLocations = [],
@@ -35,6 +36,12 @@ export default function CommunityActivityStoryEventModal({
     : `${activity.name}${activity.location_name ? ` at ${activity.location_name}` : ''}.`;
 
   const participantIds = attendees.map(a => a.id);
+
+  // Detect if venue is a real app location or rabbit-hole (same logic as CommunityEventsStrip)
+  const appLocationMatch = activity.location_id
+    ? appLocations.find(l => l.id === activity.location_id)
+    : appLocations.find(l => l.name?.toLowerCase().trim() === activity.location_name?.toLowerCase().trim());
+  const isRabbitHoleVenue = activity.location_name && !appLocationMatch;
 
   const handleCreated = (storyEventId, eventPreview) => {
     if (onCreated) onCreated(storyEventId, eventPreview);
@@ -124,7 +131,7 @@ export default function CommunityActivityStoryEventModal({
         </div>
         <StoryEventCreator
           date={startDate}
-          characters={characters}
+          characters={allCharacters.length > 0 ? allCharacters : characters}
           currentUser={currentUser}
           userSettings={userSettings}
           appLocations={appLocations}
@@ -132,10 +139,12 @@ export default function CommunityActivityStoryEventModal({
           onCancel={onClose}
           initialTitle={activity.name}
           initialPlot={initialPlot}
-          initialVenueId={activity.location_id || ''}
+          initialVenueId={isRabbitHoleVenue ? '' : (activity.location_id || '')}
           initialParticipantIds={participantIds}
           initialStartTime={startTimeStr}
           initialEndTime={endTimeStr}
+          initialIsRabbitHole={isRabbitHoleVenue}
+          initialRabbitHoleName={isRabbitHoleVenue ? (activity.location_name || '') : ''}
         />
       </div>
     </div>

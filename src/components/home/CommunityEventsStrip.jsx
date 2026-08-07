@@ -414,7 +414,7 @@ function AttendanceDiagnosticPanel({ diagnostics, eventName, onClose }) {
 
 // ── MAIN COMPONENT ────────────────────────────────────────────────────────────
 
-export default function CommunityEventsStrip({ currentUser, characters = [] }) {
+export default function CommunityEventsStrip({ currentUser, characters = [], allCharacters = [] }) {
   const scrollRef = useRef(null);
   const [openDiagnosticEventId, setOpenDiagnosticEventId] = useState(null);
   const [storyEventActivity, setStoryEventActivity] = useState(null);
@@ -526,6 +526,7 @@ export default function CommunityEventsStrip({ currentUser, characters = [] }) {
           activity={storyEventActivity}
           attendees={eventData[storyEventActivity.id]?.attendees || []}
           characters={characters}
+          allCharacters={allCharacters}
           currentUser={currentUser}
           appLocations={appLocations}
           onClose={() => setStoryEventActivity(null)}

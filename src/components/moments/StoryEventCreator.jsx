@@ -6,7 +6,7 @@ import { Loader2, BookOpen, Users, MapPin, Star } from 'lucide-react';
 // Stable synthetic ID for the user participant (not a Character entity ObjectId)
 const USER_STORY_ID = '__user__';
 
-export default function StoryEventCreator({ date, characters = [], currentUser = null, userSettings = null, appLocations = [], onCreated, onCancel, initialTitle = '', initialPlot = '', initialVenueId = '', initialParticipantIds = [], initialFocusIds = [], initialStartTime = '', initialEndTime = '' }) {
+export default function StoryEventCreator({ date, characters = [], currentUser = null, userSettings = null, appLocations = [], onCreated, onCancel, initialTitle = '', initialPlot = '', initialVenueId = '', initialParticipantIds = [], initialFocusIds = [], initialStartTime = '', initialEndTime = '', initialIsRabbitHole = false, initialRabbitHoleName = '' }) {
   const [title, setTitle] = useState(initialTitle || '');
   const [plot, setPlot] = useState(initialPlot || '');
   const [notes, setNotes] = useState('');
@@ -14,8 +14,8 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
   const [endTime, setEndTime] = useState(initialEndTime || '');
   const [allDay, setAllDay] = useState(false);
   const [selectedVenueId, setSelectedVenueId] = useState(initialVenueId || '');
-  const [isRabbitHole, setIsRabbitHole] = useState(false);
-  const [rabbitHoleName, setRabbitHoleName] = useState('');
+  const [isRabbitHole, setIsRabbitHole] = useState(initialIsRabbitHole);
+  const [rabbitHoleName, setRabbitHoleName] = useState(initialRabbitHoleName || '');
   const [focusIds, setFocusIds] = useState(initialFocusIds && initialFocusIds.length > 0 ? initialFocusIds : []);
   const [participantIds, setParticipantIds] = useState(initialParticipantIds && initialParticipantIds.length > 0 ? initialParticipantIds : []);
   const [userIsParticipant, setUserIsParticipant] = useState(false);
@@ -36,16 +36,24 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
 
   const dateStr = date ? new Date(date.getFullYear(), date.getMonth(), date.getDate()).toISOString().split('T')[0] : '';
 
-  // All eligible character types: active_created_character, npc_family_member, npc_fictitious, npc_world_service
-  const ELIGIBLE_TYPES = ['active_created_character', 'npc_family_member', 'npc_fictitious', 'npc_world_service'];
-  const eligibleChars = characters.filter(c =>
-    ELIGIBLE_TYPES.includes(c.character_type) && c.status === 'active'
+  // Complete character population — no type filtering, all non-deleted characters included.
+  // Grouped by existing character_type with alphabetical sorting within each group.
+  // Test characters (is_test_character === true) get their own group regardless of type.
+  // Untyped (no character_type) or moved_away characters get their own group.
+  const allChars = characters.filter(c => c.status !== 'deleted');
+  const sortByName = (arr) => [...arr].sort((a, b) =>
+    (a.name || a.display_name || '').localeCompare(b.name || b.display_name || '')
   );
-  // Group by type for organized display
-  const activeChars = eligibleChars.filter(c => c.character_type === 'active_created_character');
-  const familyChars = eligibleChars.filter(c => c.character_type === 'npc_family_member');
-  const fictitiousChars = eligibleChars.filter(c => c.character_type === 'npc_fictitious');
-  const serviceChars = eligibleChars.filter(c => c.character_type === 'npc_world_service');
+  const testChars = sortByName(allChars.filter(c => c.is_test_character === true));
+  const nonTest = allChars.filter(c => c.is_test_character !== true);
+  const activeChars = sortByName(nonTest.filter(c => c.character_type === 'active_created_character'));
+  const fictitiousChars = sortByName(nonTest.filter(c =>
+    ['npc_fictitious', 'npc_world_service', 'npc_regular'].includes(c.character_type)
+  ));
+  const familyChars = sortByName(nonTest.filter(c => c.character_type === 'npc_family_member'));
+  const untypedChars = sortByName(nonTest.filter(c =>
+    !c.character_type || c.status === 'moved_away'
+  ));
 
   const venues = appLocations.filter(l => l !== null && l?.name);
 
@@ -280,15 +288,16 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
               </div>
             </div>
           )}
-          {eligibleChars.length === 0 && !userParticipant ? (
+          {allChars.length === 0 && !userParticipant ? (
             <p className="text-xs text-muted-foreground italic">No eligible characters available. Create characters first.</p>
           ) : (
             <>
             {[
-              { group: '★ My Characters', chars: activeChars },
-              { group: '👪 Family', chars: familyChars },
-              { group: '🎭 Fictional / NPC', chars: fictitiousChars },
-              { group: '🔧 World Services', chars: serviceChars },
+              { group: '★ Active Created', chars: activeChars },
+              { group: '🎭 NPC Fictitious', chars: fictitiousChars },
+              { group: '👪 NPC Family', chars: familyChars },
+              { group: '🧪 Test Characters', chars: testChars },
+              { group: '❓ Untyped / Moved Away', chars: untypedChars },
             ].filter(g => g.chars.length > 0).map(({ group, chars }) => (
               <div key={group}>
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1.5 px-1">{group}</p>
@@ -299,7 +308,10 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
                     const typeLabel = c.character_type === 'npc_world_service'
                       ? 'Service' : c.character_type === 'npc_family_member'
                       ? 'Family' : c.character_type === 'npc_fictitious'
-                      ? 'NPC' : '';
+                      ? 'NPC' : c.character_type === 'npc_regular'
+                      ? 'NPC' : c.is_test_character
+                      ? 'Test' : !c.character_type
+                      ? 'Untyped' : '';
                     return (
                       <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border">
                         <div className="flex-1 min-w-0">
