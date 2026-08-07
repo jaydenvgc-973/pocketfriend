@@ -72,6 +72,47 @@ function isCharacterOnWorkSchedule(character, etTime) {
   return now >= workStartMs && now < workEndMs;
 }
 
+// ── RABBIT HOLE WORK SHIFT DETECTION ─────────────────────────────────────────
+// Returns the workplace name if the character has an active rabbit hole work
+// shift right now (authoritative Eastern Time), or null if no rabbit hole
+// shift is active. Used by the Rabbit Hole preservation branch to ensure an
+// active work shift is never short-circuited by a stale preserved presence.
+//
+// This uses the SAME isOnShiftNow determination used for a normal linked
+// workplace — no LocationReference is required merely because the workplace
+// is off-screen. The callout guard matches the work schedule block above.
+function _findActiveRabbitHoleWorkShift(character, etTime) {
+  // Callout check — if the character called out today, no work shift is active
+  const todayET = etTime.toISOString().slice(0, 10);
+  const hasValidCallout =
+    character.work_exception_status === 'called_out' &&
+    character.work_exception_date === todayET;
+  if (hasValidCallout) return null;
+
+  // Primary rabbit hole job
+  const _isPrimaryRH = character.work_details?.is_rabbit_hole === true;
+  if (_isPrimaryRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    const shift = { start: character.work_start_time, end: character.work_end_time, days: character.work_days };
+    if (isOnShiftNow(shift, etTime)) {
+      return character.occupation_location_name || 'Work';
+    }
+  }
+  // Additional rabbit hole jobs
+  if (Array.isArray(character.additional_occupation_locations)) {
+    for (const entry of character.additional_occupation_locations) {
+      if (entry.location_id) continue;
+      const isRH = entry.is_rabbit_hole === true;
+      if (isRH && entry.work_start_time && entry.work_end_time) {
+        const shift = { start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null };
+        if (isOnShiftNow(shift, etTime)) {
+          return entry.location_name || 'Work';
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function _toMinutesSchool(timeStr) {
   if (!timeStr) return null;
   const [h, m] = timeStr.split(':').map(Number);
@@ -1145,20 +1186,48 @@ function computeResolvedLocation(character, locationMap, etTime) {
   // ── RABBIT HOLE PRESERVATION (late) ────────────────────────────────────────
   // Runs AFTER confinement, hospitalization, work schedule, school schedule,
   // sleep enforcement, and social-visit layers. A rabbit hole is a valid
-  // canonical location ID — NOT a failed lookup. If no higher authority has
-  // claimed the character by this point, preserve the committed rabbit hole
-  // state. Does NOT invent a presence status — preserves the actual committed
-  // one (e.g. visiting, at_work). Does NOT reference is_rabbit_hole (not a
-  // Character field).
+  // canonical location ID — NOT a failed lookup.
+  //
+  // ONE TRUTH SAFEGUARD: Before preserving any stale presence, check for an
+  // active rabbit hole work shift. If the shift is active, the character IS
+  // at_work — a stale 'home' or 'visiting' presence must NOT be preserved.
+  // This prevents the invalid tuple:
+  //   location_id = rabbit_hole, location_name = Agency, presence = home
+  //
+  // When the shift is NOT active, a stale 'at_work' presence must NOT be
+  // preserved either — the work authority has ended and the character must
+  // fall through to home/visit resolution. 'home' at a rabbit hole is also
+  // invalid (home is a specific location, not a rabbit hole).
+  //
+  // Legitimate non-work rabbit holes (visiting, etc.) established through an
+  // authorized pathway remain protected.
   if (character.resolved_current_location_id === 'rabbit_hole' ||
       character.resolved_location_type === 'rabbit_hole') {
-    return {
-      resolved_current_location_id: 'rabbit_hole',
-      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
-      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-      resolved_presence_status: character.resolved_presence_status || 'visiting',
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
-    };
+    // 1. Active rabbit hole work shift → return the complete work tuple atomically
+    const _activeRHWorkplace = _findActiveRabbitHoleWorkShift(character, etTime);
+    if (_activeRHWorkplace) {
+      return {
+        resolved_current_location_id: 'rabbit_hole',
+        resolved_current_location_name: _activeRHWorkplace,
+        resolved_location_type: 'rabbit_hole',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: 'work_schedule',
+      };
+    }
+    // 2. Stale 'at_work' or 'home' at a rabbit hole with no active shift →
+    //    do NOT preserve; fall through to home/visit resolution below.
+    const _stalePresence = character.resolved_presence_status;
+    if (_stalePresence !== 'at_work' && _stalePresence !== 'home') {
+      // 3. Legitimate non-work rabbit hole → preserve actual presence
+      return {
+        resolved_current_location_id: 'rabbit_hole',
+        resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+        resolved_location_type: character.resolved_location_type || 'rabbit_hole',
+        resolved_presence_status: _stalePresence || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+      };
+    }
+    // Fall through — stale 'at_work' or 'home' will be resolved by home base below
   }
 
   // Home base fallback
