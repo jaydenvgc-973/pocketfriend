@@ -537,3 +537,62 @@ export function resolveOutfitForDate(character, date, activityText = '', locatio
   // No outfits in any chain category — return null rather than picking from wrong category.
   return null;
 }
+
+// ── ROTATION GROUP TODAY SELECTION ───────────────────────────────────────────
+// The existing group-level Today selection calculation (previously embedded in
+// RotationSchedulePreview.jsx). Exposed here so the Today preview and the
+// Rotation-ON automatic active-outfit handoff consume ONE calculation.
+// Behavior mirrors the prior getGroupPreview(isToday=true) exactly: same group
+// pools, same numbered sort, same ET day/index, same override scan, same
+// scheduled / no_numbered / conflict / rotation_off / no_outfits outcomes.
+// No new favorites/unnumbered fallback, no new indexing.
+export const OUTFIT_GROUP_CATEGORIES = OUTFIT_CATEGORIES.reduce((acc, c) => {
+  if (!acc[c.group]) acc[c.group] = [];
+  acc[c.group].push(c.value);
+  return acc;
+}, {});
+
+export function getGroupForCategory(category) {
+  const c = OUTFIT_CATEGORIES.find(o => o.value === category);
+  return c?.group || null;
+}
+
+export function resolveGroupTodaySelection(character, group) {
+  if (!character || !group) return null;
+  const catValues = OUTFIT_GROUP_CATEGORIES[group];
+  if (!catValues) return null;
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
+  const pool = outfits.filter(o => catValues.includes(o.category));
+  if (pool.length === 0) return null;
+  const rotationEnabled = character.outfit_rotation_enabled !== false;
+  if (!rotationEnabled) return { state: 'rotation_off' };
+  // Today override scan across the group's categories (ET date-scoped)
+  const overrideState = character.today_category_outfit_overrides;
+  if (overrideState?.date && overrideState?.overrides && overrideState.date === getETTodayStr()) {
+    for (const cat of catValues) {
+      const overrideId = overrideState.overrides[cat];
+      if (overrideId) {
+        const o = pool.find(x => x.outfit_id === overrideId);
+        if (o) return { state: 'scheduled', outfit: o, isOverride: true };
+      }
+    }
+  }
+  const numbered = pool
+    .filter(o => o.rotation_number != null && o.rotation_number !== "")
+    .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
+  if (numbered.length === 0) return { state: 'no_numbered', total: pool.length };
+  const seen = new Set();
+  let hasDuplicate = false;
+  for (const o of numbered) {
+    const n = Number(o.rotation_number);
+    if (seen.has(n)) { hasDuplicate = true; break; }
+    seen.add(n);
+  }
+  if (hasDuplicate) return { state: 'conflict' };
+  const etNow = getETNow();
+  const dayOfYear = Math.floor((etNow - new Date(etNow.getFullYear(), 0, 0)) / 86400000);
+  const hash = (character.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const idx = (dayOfYear + hash) % numbered.length;
+  return { state: 'scheduled', outfit: numbered[idx] };
+}

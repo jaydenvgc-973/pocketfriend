@@ -1,4 +1,5 @@
 import { Calendar } from "lucide-react";
+import { resolveGroupTodaySelection } from "@/lib/outfitRotationEngine";
 
 /**
  * RotationSchedulePreview
@@ -48,13 +49,6 @@ const GROUP_CATEGORIES = OUTFIT_CATEGORIES.reduce((acc, c) => {
   return acc;
 }, {});
 
-/** Eastern Time day-of-year, deterministic */
-function getTodayDayOfYear() {
-  const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const start = new Date(etNow.getFullYear(), 0, 0);
-  return Math.floor((etNow - start) / 86400000);
-}
-
 /** Eastern Time "tomorrow" day-of-year, deterministic */
 function getTomorrowDayOfYear() {
   const etNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
@@ -68,38 +62,20 @@ function idHash(characterId = '') {
   return characterId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
 }
 
-/** Eastern Time today date string YYYY-MM-DD */
-function getETTodayStr() {
-  const n = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-}
-
 /**
- * Compute the scheduled outfit for a group.
+ * Compute the scheduled outfit for a group for a given day-of-year.
+ * Used for TOMORROW's preview only — pure rotation numbers, no overrides.
+ * Today's selection is owned by resolveGroupTodaySelection in the rotation engine.
  * Returns: { state, outfit? }
  * States: 'scheduled' | 'no_outfits' | 'no_numbered' | 'conflict' | 'rotation_off'
- *
- * When isToday=true, respects today_category_outfit_overrides so the "Today" display
- * agrees with the Currently Wearing card. Tomorrow always uses pure rotation numbers.
  */
-function getGroupPreview(groupKey, outfits, rotationEnabled, characterId, dayOfYear, todayOverrides = null, isToday = false) {
+function getGroupPreview(groupKey, outfits, rotationEnabled, characterId, dayOfYear) {
   const catValues = GROUP_CATEGORIES[groupKey] || [];
   const pool = outfits.filter(o => catValues.includes(o.category));
 
   if (pool.length === 0) return null; // group has no outfits at all — skip
 
   if (!rotationEnabled) return { state: 'rotation_off' };
-
-  // Today: check for a manual override before falling through to rotation numbers
-  if (isToday && todayOverrides) {
-    for (const cat of catValues) {
-      const overrideId = todayOverrides[cat];
-      if (overrideId) {
-        const overrideOutfit = pool.find(o => o.outfit_id === overrideId);
-        if (overrideOutfit) return { state: 'scheduled', outfit: overrideOutfit, isOverride: true };
-      }
-    }
-  }
 
   const numbered = pool
     .filter(o => o.rotation_number != null && o.rotation_number !== "")
@@ -132,25 +108,20 @@ export default function RotationSchedulePreview({ character }) {
   const rotationEnabled = character.outfit_rotation_enabled !== false;
   const characterId = character.id || '';
 
-  const todayDayOfYear = getTodayDayOfYear();
   const tomorrowDayOfYear = getTomorrowDayOfYear();
 
-  // Extract today's category overrides (from "Wear Today" selections) — ET date-scoped
-  const overrideState = character.today_category_outfit_overrides;
-  const todayOverrides = (overrideState?.date === getETTodayStr() && overrideState?.overrides)
-    ? overrideState.overrides
-    : null;
-
-  // Build today's group previews — respects today_category_outfit_overrides so display agrees with Currently Wearing
+  // Build today's group previews — consumes the single Today group-selection
+  // calculation owned by the rotation engine (the same result Currently Wearing
+  // consumes when Rotation is ON and automatic resolution applies).
   const todayPreviews = GROUPS.map(g => ({
     ...g,
-    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, todayDayOfYear, todayOverrides, true),
+    preview: resolveGroupTodaySelection(character, g.key),
   })).filter(g => g.preview !== null);
 
   // Build tomorrow's group previews — pure rotation only, overrides do not affect tomorrow
   const tomorrowPreviews = GROUPS.map(g => ({
     ...g,
-    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, tomorrowDayOfYear, null, false),
+    preview: getGroupPreview(g.key, outfits, rotationEnabled, characterId, tomorrowDayOfYear),
   })).filter(g => g.preview !== null);
 
   if (todayPreviews.length === 0 && tomorrowPreviews.length === 0) return null;
