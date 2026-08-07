@@ -19,7 +19,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { resolveCurrentOutfit, buildOutfitPromptText, applyManualCategoryOverride } from './outfitRotationEngine.js';
-import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
 
 // ── EASTERN TIME HELPERS ──────────────────────────────────────────────────────
 function getETNow() {
@@ -115,8 +115,7 @@ export function resolveCharacterActiveOutfit(character, options = {}) {
   const currentLocation = currentLocationId ? locationMap[currentLocationId] : null;
   if (currentLocation) {
     try {
-      const role = determineCharacterRoleAtLocation(character, currentLocation);
-      const resolvedUniform = resolveUniform(character, currentLocation, role);
+      const resolvedUniform = resolveUniform(character, currentLocation);
       if (resolvedUniform?.uniform) {
         const u = buildUniformOutfitContext(resolvedUniform);
         if (u) {

@@ -16,7 +16,7 @@
 
 import { resolveTargetCategory, buildOutfitPromptText, resolveCurrentOutfit } from './outfitRotationEngine.js';
 import { buildJailUniformOutfitContext } from './jailUniformResolver.js';
-import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
 import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
 
 /**
@@ -191,8 +191,7 @@ export function resolveCharacterOutfit(character, locationMap = {}) {
 
   // ── PRIORITY 2-7: Global uniform resolver ──────────────────────────
   if (currentLocation) {
-    const characterRole = determineCharacterRoleAtLocation(character, currentLocation);
-    const resolvedUniform = resolveUniform(character, currentLocation, characterRole);
+    const resolvedUniform = resolveUniform(character, currentLocation);
     
     if (resolvedUniform.uniform) {
       const uniformOutfit = buildUniformOutfitContext(resolvedUniform);

@@ -28,149 +28,20 @@
  * current_outfit is NEVER an authority. It is stale UI state.
  * It is only used as an absolute last resort when the closet is completely empty.
  *
+ * UNIFORM RESOLUTION:
+ *   Uniform applicability is evaluated by the shared module at
+ *   base44/shared/uniformApplicabilityRules.js — the SAME module used by the
+ *   frontend uniformResolver.js. No duplicated rule body.
+ *
  * TIMEZONE: All date comparisons use America/New_York (Eastern Time).
  *           UTC is forbidden as an application time reference.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-
-// ── UNIFORM RESOLVER ─────────────────────────────────────────────────────────
-// MUST BE KEPT IN SYNC WITH src/lib/uniformResolver.js
-//
-// The Deno backend environment cannot import from src/lib/, so the uniform
-// applicability rules are inlined here. This is NOT a separate authority —
-// it is a synchronized copy of the same algorithm in uniformResolver.js.
-// Any change to uniform resolution logic MUST be applied to both files.
-//
-// The rules: Location owns the uniform requirement. The character's actual
-// role/status at that Location determines applicability. Visitors do not wear
-// role-specific uniforms but CAN receive zone and location-wide uniforms.
-// generic_staff applies to any worker, not just those with a job title.
-function resolveUniformText(character, locationRecord) {
-  if (!character || !locationRecord) return null;
-  const uniforms = locationRecord.uniforms || {};
-  if (!uniforms || Object.keys(uniforms).length === 0) return null;
-
-  // ── DETERMINE CHARACTER'S ROLE/STATUS AT THIS LOCATION ──────────────────
-  // Mirrors determineCharacterRoleAtLocation() in uniformResolver.js exactly.
-  const workerIds = locationRecord.worker_character_ids || [];
-  const isWorker = workerIds.includes(character.id);
-  const jobTitle = locationRecord.worker_job_titles?.[character.id];
-  const locCategory = locationRecord.category || '';
-  const presence = character.resolved_presence_status || character.location_status || '';
-
-  let role = null;
-
-  // Inmate at jail/prison
-  if (locCategory === 'jail_prison' && character.is_jailed) {
-    role = 'inmate';
-  }
-  // Staff at jail/prison
-  if (!role && locCategory === 'jail_prison' && isWorker) {
-    role = 'staff';
-  }
-  // Student at school
-  if (!role && (locCategory === 'school' || locCategory === 'education')
-      && character.education_location_id === locationRecord.id) {
-    role = 'student';
-  }
-  // Patient at medical facility (hospitalized establishes patient status)
-  // Checked BEFORE the generic employee check so a hospitalized worker at a
-  // medical facility is classified as 'patient', not 'employee'.
-  if (!role && (locCategory === 'medical' || locCategory === 'hospital') &&
-      presence === 'hospitalized') {
-    role = 'patient';
-  }
-  // Medical staff (worker at a medical facility, not hospitalized)
-  if (!role && (locCategory === 'medical' || locCategory === 'hospital') && isWorker) {
-    role = 'staff';
-  }
-  // Employee at workplace
-  if (!role && isWorker) {
-    role = 'employee';
-  }
-  // Gym member
-  if (!role && locCategory === 'gym' && (locationRecord.gym_members || []).includes(character.id)) {
-    role = 'member';
-  }
-  // Home resident
-  if (!role && (locCategory === 'home' || locCategory === 'generic') &&
-      character.current_home_location_id === locationRecord.id) {
-    role = 'resident';
-  }
-  // Default: visitor
-  if (!role) {
-    role = 'visitor';
-  }
-
-  // ── VISITOR ROLE DETECTION ──────────────────────────────────────────────
-  // Mirrors resolveUniform() in uniformResolver.js exactly.
-  const VISITOR_ROLES = new Set([
-    'visitor', 'guest', 'customer', 'shopper', 'patron', 'diner',
-    'tourist', 'parent', 'member', 'spectator'
-  ]);
-  const isVisitorRole = VISITOR_ROLES.has(role);
-
-  function uniformToText(u) {
-    if (!u) return null;
-    const parts = [u.description, u.name].filter(Boolean);
-    return parts[0] || null;
-  }
-
-  // ── CHECK UNIFORM APPLICABILITY TYPES (existing priority order) ──────────
-  // Role-specific checks are skipped for visitors.
-  // Non-role-specific checks (zone, location_wide) are always evaluated.
-
-  // 1. Manual employee-specific uniform assignment
-  if (!isVisitorRole) {
-    const manualKey = locationRecord.worker_manual_uniforms?.[character.id];
-    if (manualKey && uniforms[manualKey]) return uniformToText(uniforms[manualKey]);
-  }
-
-  // 2. Job-title uniform
-  if (!isVisitorRole && jobTitle && isWorker) {
-    const normalizedTitle = jobTitle.toLowerCase().trim();
-    for (const u of Object.values(uniforms)) {
-      if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === normalizedTitle) {
-        return uniformToText(u);
-      }
-    }
-  }
-
-  // 3. Zone-specific uniform (non-role-specific: applies to anyone in the zone)
-  const characterZone = (character.current_zone || character.current_activity || '').toLowerCase();
-  if (characterZone) {
-    for (const u of Object.values(uniforms)) {
-      if (u?.applicability === 'zone' && u.zone && characterZone.includes(u.zone.toLowerCase())) {
-        return uniformToText(u);
-      }
-    }
-  }
-
-  // 4. Role/status uniform (matches the character's actual role at this Location)
-  if (!isVisitorRole && role) {
-    const normalizedRole = role.toLowerCase().trim();
-    for (const u of Object.values(uniforms)) {
-      if (u?.applicability === 'role_status' && (u.role_status || '').toLowerCase().trim() === normalizedRole) {
-        return uniformToText(u);
-      }
-    }
-  }
-
-  // 5. Generic staff uniform (for any worker, not just those with a job title)
-  if (!isVisitorRole && isWorker) {
-    for (const u of Object.values(uniforms)) {
-      if (u?.applicability === 'generic_staff') return uniformToText(u);
-    }
-  }
-
-  // 6. Location-wide uniform (non-role-specific: applies to anyone at the Location)
-  // Must NOT be defeated by visitor detection or any earlier role gate.
-  for (const u of Object.values(uniforms)) {
-    if (u?.applicability === 'location_wide') return uniformToText(u);
-  }
-
-  return null;
-}
+import {
+  resolveCharacterAssignmentAtLocation,
+  evaluateUniformApplicability,
+  uniformToText,
+} from '../../shared/uniformApplicabilityRules.js';
 
 // ── FALLBACK CHAINS ────────────────────────────────────────────────────────────
 // Copied from lib/outfitRotationEngine.js buildFallbackChain().
@@ -189,11 +60,13 @@ const FALLBACK_CHAINS = {
   lounge:       ['lounge', 'daily_casual'],
   outdoor:      ['outdoor', 'daily_casual'],
   travel:       ['travel', 'outdoor', 'daily_casual'],
-  medical:      ['medical', 'daily_casual'],
   special:      ['special', 'formal', 'daily_casual'],
   cold_weather: ['cold_weather', 'outdoor', 'daily_casual'],
   hot_weather:  ['hot_weather', 'outdoor', 'daily_casual'],
   daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+  // Legacy values — if an existing outfit has one of these categories saved in DB,
+  // fall through to the nearest approved category. Never surface as selection options.
+  medical:      ['lounge', 'daily_casual'],
 };
 
 // ── CATEGORY RESOLVER ─────────────────────────────────────────────────────────
@@ -207,12 +80,6 @@ function resolveTargetCategory(character, locationCategory) {
   if (/bath|shower|grooming/.test(activity)) return 'bath';
   if (presence === 'sleeping' || presence === 'napping' || presence === 'passed_out') return 'sleepwear';
   if (/\b(sleep|nap|asleep|bedtime|going to sleep)\b/.test(activity)) return 'sleepwear';
-
-  // Hospitalized characters use the 'medical' fallback category when no Location
-  // patient uniform applies. This is NOT a hard-coded gown — it uses the existing
-  // category/fallback system so the closet's 'medical' outfits (if any) are found,
-  // falling through to 'daily_casual' per the existing FALLBACK_CHAINS.
-  if (presence === 'hospitalized') return 'medical';
 
   // Pre-sleep window: within 60 minutes of scheduled sleep start
   if (character?.sleep_start_time) {
@@ -319,10 +186,10 @@ Deno.serve(async (req) => {
     // ── HOSPITALIZED PATIENT ────────────────────────────────────────────────────
     // Hospitalization establishes the character's role/status as patient.
     // The applicable patient clothing comes from the hospital Location's existing
-    // uniform configuration (role_status: 'patient'), resolved by the uniform
-    // resolver below. No hard-coded gown — the Location owns the clothing requirement.
-    // If no patient uniform is defined on the Location, the character falls through
-    // to the normal clothing system (closet rotation → dynamic fallback).
+    // uniform configuration (role_status: 'patient'), resolved by the shared uniform
+    // applicability module below. No hard-coded gown — the Location owns the clothing
+    // requirement. If no patient uniform is defined on the Location, the character
+    // falls through to the normal clothing system (closet rotation → dynamic fallback).
 
     // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
     // Honored ABOVE all automatic logic (uniform, special occasion, rotation,
@@ -342,8 +209,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── PRIORITY 1: UNIFORM (work/school/jail) ───────────────────────────────
-    // Resolve the effective location ID: passed locationId, then work/school/jail from presence.
+    // ── PRIORITY 1: UNIFORM (work/school/jail/hospital) ──────────────────────
+    // Resolve the effective location ID: passed locationId, then work/school/jail/hospital from presence.
     const presence = character.resolved_presence_status || character.location_status || '';
     const effectiveLocationId = locationId
       || (presence === 'at_work' ? (character.current_work_location_id || character.occupation_location_id || null) : null)
@@ -355,10 +222,16 @@ Deno.serve(async (req) => {
       const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []);
       const locRecord = locList?.[0] || null;
       if (locRecord) {
-        const uniformText = resolveUniformText(character, locRecord);
-        if (uniformText) {
-          console.log(`[resolveCharacterOutfitContext] ✅ UNIFORM for "${character.name}" at "${locRecord.name}": "${uniformText.substring(0,80)}"`);
-          return Response.json({ text: uniformText, source: 'uniform', category: 'uniform' });
+        // Use the SHARED uniform applicability module — same authority as frontend.
+        const uniforms = locRecord.uniforms || {};
+        const assignment = resolveCharacterAssignmentAtLocation(character, locRecord);
+        const uniformResult = evaluateUniformApplicability(uniforms, character, locRecord, assignment);
+        if (uniformResult) {
+          const uniformText = uniformToText(uniformResult.uniform);
+          if (uniformText) {
+            console.log(`[resolveCharacterOutfitContext] ✅ UNIFORM for "${character.name}" at "${locRecord.name}": "${uniformText.substring(0,80)}" (source=${uniformResult.source})`);
+            return Response.json({ text: uniformText, source: 'uniform', category: 'uniform' });
+          }
         }
       }
     }

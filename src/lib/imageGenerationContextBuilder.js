@@ -2,7 +2,7 @@ import { resolveLocationWithSchoolGuard } from './campusResidencyResolver.js';
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { resolveUserParticipantInPrompt } from './chatImageSubjectResolver.js';
 import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
-import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -354,17 +354,14 @@ export async function buildImageGenerationContext({
   let uniformOutfitObj = null;
   if (!isSleepContext && effectiveCharacterRecord && locationRecord) {
     try {
-      const charRole = determineCharacterRoleAtLocation(effectiveCharacterRecord, locationRecord);
-      if (charRole) {
-        const resolvedUniform = resolveUniform(effectiveCharacterRecord, locationRecord, charRole);
-        if (resolvedUniform?.uniform) {
-          const uCtx = buildUniformOutfitContext(resolvedUniform);
-          if (uCtx?.outfit) {
-            uniformOutfitObj = uCtx.outfit;
-            outfitText = uCtx.description || buildOutfitPromptText(uCtx.outfit);
-            outfitSource = `uniform:${resolvedUniform.source}`;
-            outfitPrecedenceReason = `uniform_override:${resolvedUniform.applicability}`;
-          }
+      const resolvedUniform = resolveUniform(effectiveCharacterRecord, locationRecord);
+      if (resolvedUniform?.uniform) {
+        const uCtx = buildUniformOutfitContext(resolvedUniform);
+        if (uCtx?.outfit) {
+          uniformOutfitObj = uCtx.outfit;
+          outfitText = uCtx.description || buildOutfitPromptText(uCtx.outfit);
+          outfitSource = `uniform:${resolvedUniform.source}`;
+          outfitPrecedenceReason = `uniform_override:${resolvedUniform.applicability}`;
         }
       }
     } catch (e) {
