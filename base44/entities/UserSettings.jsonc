@@ -253,6 +253,10 @@
             "type": "boolean",
             "default": false
           },
+          "rotation_number": {
+            "type": "integer",
+            "description": "Rotation sequence number within the outfit's category. Outfits with rotation_number are sorted ascending and cycled by day-index. Null/absent = no explicit rotation order."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
