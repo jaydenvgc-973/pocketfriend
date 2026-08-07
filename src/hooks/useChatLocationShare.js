@@ -48,13 +48,16 @@ export function useChatLocationShare({
     const earlyCharLocationName = character.resolved_current_location_name || null;
     const earlyCharLocationId = character.resolved_current_location_id || null;
     const earlyCharPresence = character.resolved_presence_status || null;
-    const isRabbitHole = earlyCharPresence === 'rabbit_hole' || character.resolved_location_type === 'rabbit_hole';
+    // "rabbit_hole" is the canonical placeholder location ID. A character at a
+    // rabbit hole has a valid location_id ("rabbit_hole") and a real name.
+    const isRabbitHole = earlyCharLocationId === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole';
 
     console.log(
       `[LOCATION-SHARE] detected=${locationShareRequest} | locationName=${earlyCharLocationName} | locationId=${earlyCharLocationId} | presence=${earlyCharPresence} | rabbitHole=${isRabbitHole} | text="${text.substring(0, 60)}"`
     );
 
-    // Rabbit hole: location_id is null by design — allow when we have a name.
+    // Rabbit hole: location_id is "rabbit_hole" — allow when we have a name.
     // Non-rabbit-hole: require both name and location_id (persisted LocationReference).
     if (!locationShareRequest || !earlyCharLocationName || (!earlyCharLocationId && !isRabbitHole)) {
       return { handled: false };
@@ -135,8 +138,8 @@ export function useChatLocationShare({
       setMessages(prev => prev.some(m => m.id === textMsg.id) ? prev : [...prev, textMsg]);
     }
 
-    // ── Fetch location record for category (skip for rabbit holes — null id) ─
-    const loc = earlyCharLocationId
+    // ── Fetch location record for category (skip for rabbit holes — placeholder id) ─
+    const loc = (earlyCharLocationId && earlyCharLocationId !== 'rabbit_hole')
       ? (await base44.entities.LocationReference.filter({ id: earlyCharLocationId }).catch(() => []))?.[0]
       : null;
 

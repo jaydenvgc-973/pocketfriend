@@ -539,9 +539,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       }
       const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
       const canonicalFields = {
-        resolved_current_location_id: null,
+        resolved_current_location_id: 'rabbit_hole',
         resolved_current_location_name: requested.requested_location_name,
-        resolved_location_type: 'work',
+        resolved_location_type: 'rabbit_hole',
         resolved_presence_status: 'at_work',
         resolved_source_reason: requested.requested_source_reason || 'work_schedule',
         resolved_last_updated_at: etTime.toISOString(),
@@ -558,9 +558,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
         disposition: 'accepted',
         canonicalFields,
         committed_result: {
-          resolved_current_location_id: null,
+          resolved_current_location_id: 'rabbit_hole',
           resolved_current_location_name: requested.requested_location_name,
-          resolved_location_type: 'work',
+          resolved_location_type: 'rabbit_hole',
           resolved_presence_status: 'at_work',
           resolved_source_reason: requested.requested_source_reason || 'work_schedule',
           was_woken_from_sleep: wasSleeping,
@@ -722,16 +722,51 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     if (!destLocId) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_destination' };
     }
-    const destLoc = locationMap[destLocId];
-    if (!destLoc) {
-      return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
-    }
     // Incarcerated/house-arrest/hospitalized characters cannot be relocated
     if (character.is_jailed || character.house_arrest_active) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'confinement_block' };
     }
     if (character.resolved_presence_status === 'hospitalized') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_relocation_blocked' };
+    }
+    // RABBIT HOLE — intentional off-screen destination positively established by
+    // an authorized movement pathway (chat commitment, user teleport, scheduled
+    // relocation). The placeholder ID "rabbit_hole" is a valid canonical location
+    // ID — NOT a failed lookup. Do NOT attempt a locationMap lookup.
+    if (destLocId === 'rabbit_hole') {
+      const destName = requested.requested_location_name || character.resolved_current_location_name || 'Off-screen';
+      const canonicalFields = {
+        resolved_current_location_id: 'rabbit_hole',
+        resolved_current_location_name: destName,
+        resolved_location_type: requested.requested_location_type || 'rabbit_hole',
+        resolved_presence_status: requestedStatus || 'visiting',
+        resolved_source_reason: requested.requested_source_reason || 'relocation',
+        resolved_last_updated_at: etTime.toISOString(),
+        last_arrived_time: etTime.toISOString(),
+        travel_status: 'not_traveling',
+        travel_destination_location_id: null,
+        traveling_to_location_id: null,
+        traveling_to_location_name: null,
+      };
+      if (requested.clear_stay_lock) {
+        canonicalFields.presence_stay_lock = false;
+        canonicalFields.presence_stay_lock_reason = null;
+      }
+      return {
+        disposition: 'accepted',
+        canonicalFields,
+        committed_result: {
+          resolved_current_location_id: 'rabbit_hole',
+          resolved_current_location_name: destName,
+          resolved_location_type: requested.requested_location_type || 'rabbit_hole',
+          resolved_presence_status: requestedStatus || 'visiting',
+          resolved_source_reason: requested.requested_source_reason || 'relocation',
+        },
+      };
+    }
+    const destLoc = locationMap[destLocId];
+    if (!destLoc) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
     }
     const canonicalFields = {
       resolved_current_location_id: destLocId,
@@ -928,29 +963,6 @@ function evaluateLegacyRecompute(character, locationMap, etTime) {
 
 // ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
 function computeResolvedLocation(character, locationMap, etTime) {
-  // ── RABBIT HOLE PRESERVATION — runs BEFORE work/school/sleep/visit/home layers ─
-  // A rabbit hole is a user-confirmed custom off-screen destination. The placeholder
-  // ID "rabbit_hole" is a VALID canonical location ID — NOT a failed lookup, NOT null.
-  // The absence of a LocationReference record is expected.
-  //
-  // Preserves the character's actual committed presence status (e.g. at_work) —
-  // does NOT overwrite with 'rabbit_hole'. This mirrors the frontend
-  // resolveCharacterLocation early return.
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      character.resolved_presence_status === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.resolved_current_location_name || 'Off-screen';
-    const actualPresence = character.resolved_presence_status || 'visiting';
-    return {
-      resolved_current_location_id: 'rabbit_hole',
-      resolved_current_location_name: label,
-      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-      resolved_presence_status: actualPresence,
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
-    };
-  }
-
   // ── HOSPITALIZATION GUARD — preserve committed hospital state ──────────────
   // A hospitalized character is physically at the hospital. Schedule/visit/home
   // layers must NOT re-resolve them back to home, work, or school.
@@ -1128,6 +1140,25 @@ function computeResolvedLocation(character, locationMap, etTime) {
         resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
       };
     }
+  }
+
+  // ── RABBIT HOLE PRESERVATION (late) ────────────────────────────────────────
+  // Runs AFTER confinement, hospitalization, work schedule, school schedule,
+  // sleep enforcement, and social-visit layers. A rabbit hole is a valid
+  // canonical location ID — NOT a failed lookup. If no higher authority has
+  // claimed the character by this point, preserve the committed rabbit hole
+  // state. Does NOT invent a presence status — preserves the actual committed
+  // one (e.g. visiting, at_work). Does NOT reference is_rabbit_hole (not a
+  // Character field).
+  if (character.resolved_current_location_id === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole') {
+    return {
+      resolved_current_location_id: 'rabbit_hole',
+      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+    };
   }
 
   // Home base fallback

@@ -22,9 +22,21 @@ Deno.serve(async (req) => {
       commitment_id
     } = await req.json();
 
-    if (!character_id || !destination_location_id || !scheduled_move_time) {
+    // RABBIT HOLE: accept a named off-screen destination without a built
+    // LocationReference. The placeholder ID "rabbit_hole" is valid. A named
+    // destination with no location_id is also accepted as a rabbit hole.
+    const isRabbitHole = destination_location_id === 'rabbit_hole' ||
+      (!destination_location_id && destination_location_name);
+
+    if (!character_id || !scheduled_move_time) {
       return Response.json(
-        { error: 'character_id, destination_location_id, scheduled_move_time required' },
+        { error: 'character_id, scheduled_move_time required' },
+        { status: 400 }
+      );
+    }
+    if (!destination_location_id && !destination_location_name) {
+      return Response.json(
+        { error: 'destination_location_id or destination_location_name required' },
         { status: 400 }
       );
     }
@@ -47,11 +59,13 @@ Deno.serve(async (req) => {
 
     // If move time is in the past or very soon, execute immediately
     if (minutesUntilMove < 1) {
+      const resolvedLocId = isRabbitHole ? 'rabbit_hole' : destination_location_id;
+      const resolvedLocType = isRabbitHole ? 'rabbit_hole' : (location_reason || 'visit');
       await base44.entities.Character.update(character_id, {
-        resolved_current_location_id: destination_location_id,
+        resolved_current_location_id: resolvedLocId,
         resolved_current_location_name: destination_location_name,
-        resolved_location_type: location_reason || 'visit',
-        resolved_presence_status: 'at_location',
+        resolved_location_type: resolvedLocType,
+        resolved_presence_status: 'visiting',
         resolved_last_updated_at: now.toISOString(),
         arrived_at: now.toISOString(),
         travel_destination_location_id: null,
@@ -69,8 +83,9 @@ Deno.serve(async (req) => {
     }
 
     // Schedule for later: store pending relocation on character
+    const pendingLocId = isRabbitHole ? 'rabbit_hole' : destination_location_id;
     await base44.entities.Character.update(character_id, {
-      travel_destination_location_id: destination_location_id,
+      travel_destination_location_id: pendingLocId,
       travel_destination_location_name: destination_location_name,
       resolved_last_updated_at: now.toISOString(),
       // Do NOT set travel_status to 'traveling' - they stay at current location until move time

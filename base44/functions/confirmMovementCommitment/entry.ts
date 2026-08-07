@@ -85,11 +85,18 @@ Deno.serve(async (req) => {
     };
 
     // Step 2: Resolve destination location — prefer ID over name
-    let destLocation = null;
+    // RABBIT HOLE: When the caller positively establishes an intentional
+    // off-screen destination (location_id = "rabbit_hole"), do NOT perform a
+    // LocationReference lookup. Store the placeholder ID and actual name.
+    let destLocId = null;
+    let destLocName = null;
 
-    if (destination_location_id) {
+    if (destination_location_id === 'rabbit_hole') {
+      destLocId = 'rabbit_hole';
+      destLocName = (destination_name || '').trim() || 'Off-screen';
+    } else if (destination_location_id) {
       // Prefer the explicit ID passed by the resolver — use .get(id), not .filter({ id })
-      destLocation = await base44.asServiceRole.entities.LocationReference.get(destination_location_id);
+      const destLocation = await base44.asServiceRole.entities.LocationReference.get(destination_location_id);
       if (!destLocation) {
         return Response.json({
           error: 'Destination location not found',
@@ -97,6 +104,8 @@ Deno.serve(async (req) => {
           destination_location_id,
         }, { status: 404 });
       }
+      destLocId = destLocation.id;
+      destLocName = destLocation.name;
     } else {
       // Fallback: name lookup scoped to owner_email
       const locs = await base44.asServiceRole.entities.LocationReference.filter(
@@ -104,19 +113,22 @@ Deno.serve(async (req) => {
         null,
         200
       );
-      destLocation = locs.find(loc =>
+      const destLocation = locs.find(loc =>
         loc.name?.toLowerCase().trim() === (destination_name || '').toLowerCase().trim()
       );
       if (!destLocation) {
-        return Response.json({
-          success: false,
-          error: 'Destination location not found',
-          destination_name,
-        });
+        // RABBIT HOLE FALLBACK: A named destination with no matching
+        // LocationReference is an intentional off-screen destination when the
+        // caller has positively established it (e.g. user confirmed a named
+        // destination in the commitment prompt). Store as rabbit_hole.
+        // This restores the Dance Studio commitment pathway.
+        destLocId = 'rabbit_hole';
+        destLocName = (destination_name || '').trim() || 'Off-screen';
+      } else {
+        destLocId = destLocation.id;
+        destLocName = destLocation.name;
       }
     }
-
-    const destLocId = destLocation.id;
 
     const nowIso = new Date().toISOString();
 
@@ -132,11 +144,11 @@ Deno.serve(async (req) => {
         owner_email: user.email,
         commitment_type: 'arrival',
         destination_location_id: destLocId,
-        destination_location_name: destLocation.name,
+        destination_location_name: destLocName,
         commitment_source: 'chat_commitment',
         source_message_id: message_id,
         source_conversation_id: conversation_id,
-        commitment_text: travel_reason || `${character.name} committed to being at ${destLocation.name}`,
+        commitment_text: travel_reason || `${character.name} committed to being at ${destLocName}`,
         expected_arrival_time: scheduled_arrival_time,
         expected_arrival_window_minutes: 15,
         interruptible: false,
@@ -158,7 +170,7 @@ Deno.serve(async (req) => {
     await base44.entities.Character.update(character_id, {
       pending_scheduled_relocation_at: scheduled_arrival_time,
       next_location_id: destLocId,
-      next_location_name: destLocation.name,
+      next_location_name: destLocName,
       pending_relocation_from: character.resolved_current_location_id || null,
       pending_relocation_from_name: character.resolved_current_location_name || null,
       pending_relocation_source: 'user_confirmed_commitment',
@@ -170,8 +182,8 @@ Deno.serve(async (req) => {
     await base44.asServiceRole.entities.CharacterMemory.create({
       character_id,
       memory_type: 'event',
-      memory_text: `${character.name} committed to being at ${destLocation.name} at ${new Date(scheduled_arrival_time).toLocaleTimeString()}. User confirmed the scheduled move.`,
-      memory_summary: `committed_relocation::${destLocation.name}`,
+      memory_text: `${character.name} committed to being at ${destLocName} at ${new Date(scheduled_arrival_time).toLocaleTimeString()}. User confirmed the scheduled move.`,
+      memory_summary: `committed_relocation::${destLocName}`,
       importance_score: 7,
       permanence: 'short_term',
     }).catch(() => {});
@@ -182,33 +194,37 @@ Deno.serve(async (req) => {
       hour12: true
     });
 
+    const resolvedVia = destination_location_id === 'rabbit_hole' ? 'rabbit_hole'
+      : destination_location_id ? 'destination_location_id'
+      : 'name_fallback_rabbit_hole';
+
     // Proof log
     console.log('[confirmMovementCommitment] Commitment stored:', {
       character: character.name,
       from_location: character.resolved_current_location_name || 'unknown',
-      to_location: destLocation.name,
+      to_location: destLocName,
       to_location_id: destLocId,
       scheduled_for: etaTime,
-      resolved_via: destination_location_id ? 'destination_location_id' : 'name_fallback',
+      resolved_via: resolvedVia,
     });
 
     return Response.json({
       success: true,
       character_name: character.name,
-      destination: destLocation.name,
+      destination: destLocName,
       destination_id: destLocId,
       eta_time: etaTime,
       scheduled_arrival_time,
       proof: {
         character: character.name,
         from_location: character.resolved_current_location_name || 'Home',
-        to_location: destLocation.name,
+        to_location: destLocName,
         to_location_id: destLocId,
         scheduled_for: etaTime,
         will_update_at: scheduled_arrival_time,
-        resolved_via: destination_location_id ? 'destination_location_id' : 'name_fallback',
+        resolved_via: resolvedVia,
         user_confirmed: true,
-        message: `Scheduled ${character.name} to arrive at ${destLocation.name} at ${etaTime}.`
+        message: `Scheduled ${character.name} to arrive at ${destLocName} at ${etaTime}.`
       }
     });
 

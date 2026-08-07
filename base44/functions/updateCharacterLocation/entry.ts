@@ -70,11 +70,17 @@ Deno.serve(async (req) => {
       const previousLocationName = matched.resolved_current_location_name || null;
       const now = new Date().toISOString();
 
+      // Preserve the applicable presence semantics — do NOT overwrite with
+      // 'rabbit_hole'. The ID is the container; the presence is the truth.
+      // If the caller provided an explicit presenceStatus, use it. Otherwise
+      // preserve the character's existing presence, or default to 'visiting'.
+      const rabbitHolePresence = presenceStatus || matched.resolved_presence_status || 'visiting';
+      const rabbitHoleType = locationType || 'rabbit_hole';
       await base44.entities.Character.update(matched.id, {
         resolved_current_location_id: 'rabbit_hole',
         resolved_current_location_name: customName,
-        resolved_location_type: 'rabbit_hole',
-        resolved_presence_status: 'rabbit_hole',
+        resolved_location_type: rabbitHoleType,
+        resolved_presence_status: rabbitHolePresence,
         resolved_source_reason: sourceReason || 'user_teleport_rabbit_hole',
         resolved_last_updated_at: now,
         travel_status: 'not_traveling',
@@ -86,7 +92,7 @@ Deno.serve(async (req) => {
 
       const verifyList = await base44.entities.Character.list(null, 500);
       const verified = verifyList.find(c => c.id === matched.id);
-      const writeConfirmed = verified?.resolved_presence_status === 'rabbit_hole'
+      const writeConfirmed = verified?.resolved_current_location_id === 'rabbit_hole'
         && verified?.resolved_current_location_name === customName;
 
       return Response.json({
@@ -96,10 +102,10 @@ Deno.serve(async (req) => {
         matched_character_id: matched.id,
         previous_location_id: previousLocationId,
         previous_location_name: previousLocationName,
-        new_location_id: null,
+        new_location_id: 'rabbit_hole',
         new_location_name: customName,
-        new_presence_status: 'rabbit_hole',
-        new_location_type: 'rabbit_hole',
+        new_presence_status: rabbitHolePresence,
+        new_location_type: rabbitHoleType,
         rabbit_hole: true,
         updated_at: now,
       });

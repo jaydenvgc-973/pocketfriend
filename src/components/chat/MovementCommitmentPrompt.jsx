@@ -114,8 +114,12 @@ export default function MovementCommitmentPrompt({
     : `in ${etaMinutes} minutes`;
 
   const handleConfirm = async () => {
-    if (!selectedLocId) {
-      setError('Please select a destination before scheduling.');
+    // Rabbit Hole: when the user has entered or kept a named destination that
+    // has no built LocationReference, submit it as an intentional off-screen
+    // destination. The backend stores location_id = "rabbit_hole".
+    const isRabbitHole = !selectedLocId && !!selectedLocName.trim();
+    if (!selectedLocId && !isRabbitHole) {
+      setError('Please select or enter a destination before scheduling.');
       return;
     }
     const finalTime = buildScheduledTime();
@@ -132,7 +136,7 @@ export default function MovementCommitmentPrompt({
       character_name: currentCharacter?.name || characterName,
       character_current_location_id: currentCharacter?.resolved_current_location_id || null,
       character_current_location_name: currentCharacter?.resolved_current_location_name || null,
-      destination_location_id: selectedLocId,
+      destination_location_id: isRabbitHole ? 'rabbit_hole' : selectedLocId,
       destination_name: selectedLocName,
       scheduled_arrival_time: finalTime,
       conversation_id: conversationId,

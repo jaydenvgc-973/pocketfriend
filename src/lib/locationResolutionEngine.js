@@ -117,35 +117,6 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // ── RABBIT HOLE PRESERVATION — runs BEFORE work-shift lock and all other layers ─
-  // A rabbit hole is a user-confirmed custom off-screen destination. The placeholder
-  // ID "rabbit_hole" is a VALID canonical location ID — it is NOT a failed lookup,
-  // NOT null, NOT unknown. The absence of a LocationReference record is expected.
-  //
-  // This preservation must NOT invent a "rabbit_hole" presence status. It preserves
-  // the character's actual committed presence (e.g. at_work, visiting) so that
-  // downstream consumers see the same One Truth as the database.
-  //
-  // Rabbit hole workplaces follow the SAME live work-shift authority as regular
-  // workplaces. When the backend commits at_work + rabbit_hole during an active
-  // shift, this preserves it. When the shift ends and the backend updates the
-  // committed state, this block does not fire because the ID/type change.
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      character.resolved_presence_status === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.resolved_current_location_name || 'Off-screen';
-    const actualPresence = character.resolved_presence_status || 'visiting';
-    return {
-      resolved_current_location_id: 'rabbit_hole',
-      resolved_current_location_name: label,
-      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-      resolved_presence_status: actualPresence,
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
-      resolved_zone: null,
-    };
-  }
-
   // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
   // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
   // This is the ONLY gate between Presence Truth and Schedule Truth.
@@ -370,25 +341,6 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 2.5: Rabbit hole — secondary check (primary check is the early-return above).
-  // Kept for safety: if the early return was somehow bypassed, this catches it before home fallback.
-  // Preserves the actual presence status — does NOT overwrite with 'rabbit_hole'.
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      character.resolved_presence_status === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.resolved_current_location_name || 'Off-screen';
-    const actualPresence = character.resolved_presence_status || 'visiting';
-    return {
-      resolved_current_location_id: 'rabbit_hole',
-      resolved_current_location_name: label,
-      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
-      resolved_presence_status: actualPresence,
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
-      resolved_zone: null,
-    };
-  }
-
   // LAYER 3: TRAVEL SYSTEM DEPRECATED — TravelSession is NO LONGER authoritative.
   // Characters teleport instantly at scheduled time. No slow transit state.
   // travel_status and TravelSession records must NOT override resolved_current_location_id.
@@ -531,6 +483,25 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         location_temporarily_unavailable: true,
       };
     }
+  }
+
+  // ── RABBIT HOLE PRESERVATION (late) ────────────────────────────────────────
+  // Runs AFTER confinement, hospitalization, work schedule, school schedule,
+  // sleep enforcement, and social-visit layers. A rabbit hole is a valid
+  // canonical location ID — NOT a failed lookup. If no higher authority has
+  // claimed the character by this point, preserve the committed rabbit hole
+  // state. Does NOT invent a presence status — preserves the actual committed
+  // one. Does NOT reference is_rabbit_hole (not a Character field).
+  if (character.resolved_current_location_id === 'rabbit_hole' ||
+      character.resolved_location_type === 'rabbit_hole') {
+    return {
+      resolved_current_location_id: 'rabbit_hole',
+      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+      resolved_location_type: character.resolved_location_type || 'rabbit_hole',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+      resolved_zone: null,
+    };
   }
 
   // PHASE 4: RESOLVE HOME BASE (TEMPORARY HOUSING PRIORITY)
@@ -997,19 +968,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // For active_created_character: isCharacterAsleepFromUtils applies the strict
   // schedule-anchored validator — raw DB sleeping is NOT accepted without window validation.
   // For NPCs: clock-window approach unchanged.
-  // ── PRIORITY 1.5: RABBIT HOLE (checked BEFORE work lock and sleep) ──────────
-  // A character explicitly placed at an off-screen/rabbit-hole destination must
-  // display that state, not be overridden by a work lock or schedule-based sleep window.
-  // Preserves the actual presence status (e.g. at_work) — does NOT invent 'rabbit_hole'.
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      character.resolved_presence_status === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.resolved_current_location_name || 'Off-screen';
-    const actualStatus = character.resolved_presence_status || 'visiting';
-    return { status: actualStatus, label, sublabel: null, isTransit: false, isSleeping: false };
-  }
-
   // WORK-SHIFT LOCK AUTHORITY: An active work_shift lock means the character
   // IS at work — BUT only if the character is actually on shift right now.
   // A stale lock must NOT keep showing "at_work" after the shift has ended.
@@ -1056,16 +1014,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   // Only show "Looking for food" if no other authoritative presence exists.
   if (hungerCritical && !locName && presenceStatus !== 'home' && presenceStatus !== 'at_work' && presenceStatus !== 'at_school') {
     return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isTransit: false, isSleeping: false };
-  }
-
-  // ── PRIORITY 1.5: RABBIT HOLE (secondary) ──────────────────────────────────
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      character.resolved_presence_status === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
-    const actualStatus = character.resolved_presence_status || 'visiting';
-    return { status: actualStatus, label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
   }
 
   // ── PRIORITY 2: TRANSIT STATE — DEPRECATED ────────────────────────────────
@@ -1161,18 +1109,6 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
     const _workName = locName || character.occupation_location_name || 'their workplace';
     if (imageMode) return `[LOCATION LOCKED: character is at work at ${_workName} — use that work environment as background]`;
     return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${_workName}. All location references must match this environment. You are NOT at home.`;
-  }
-
-  // ── RABBIT HOLE ───────────────────────────────────────────────────────────
-  // Preserves the actual presence status (e.g. at_work). The placeholder ID
-  // "rabbit_hole" is a valid canonical location — NOT a failed lookup.
-  if (character.resolved_current_location_id === 'rabbit_hole' ||
-      character.resolved_location_type === 'rabbit_hole' ||
-      presence === 'rabbit_hole' ||
-      character.is_rabbit_hole === true) {
-    const label = character.resolved_current_location_name || character.rabbit_hole_label || 'Off-screen';
-    if (imageMode) return `[LOCATION LOCKED: character is at "${label}" — do not place them at home or any built venue]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at "${label}" — an off-screen destination not in the built location list. You are NOT at home. Do NOT describe yourself as being at home or any other built location. This is your current presence.`;
   }
 
   // ── SLEEPING ──────────────────────────────────────────────────────────────
