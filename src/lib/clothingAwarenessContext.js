@@ -29,7 +29,7 @@
 
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { adaptOutfitForWeather, buildWeatherAdaptationNote } from './weatherOutfitAdapter.js';
-import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitContext } from './uniformResolver.js';
+import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
 
 // ── UNIFORM CHECK ─────────────────────────────────────────────────────────────
 // When a character is at a location with a required uniform, the uniform IS
@@ -39,9 +39,7 @@ import { resolveUniform, determineCharacterRoleAtLocation, buildUniformOutfitCon
 function resolveUniformIfApplicable(character, locationRecord) {
   if (!character || !locationRecord) return null;
   try {
-    const role = determineCharacterRoleAtLocation(character, locationRecord);
-    if (!role) return null;
-    const resolved = resolveUniform(character, locationRecord, role);
+    const resolved = resolveUniform(character, locationRecord);
     if (resolved?.uniform) {
       return buildUniformOutfitContext(resolved);
     }

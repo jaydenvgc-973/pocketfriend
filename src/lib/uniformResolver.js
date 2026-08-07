@@ -3,8 +3,8 @@
  *
  * This module is a thin wrapper around the shared uniform applicability rules
  * in base44/shared/uniformApplicabilityRules.js. It preserves the existing
- * export signatures (resolveUniform, determineCharacterRoleAtLocation,
- * buildUniformOutfitContext) so existing callers continue to work.
+ * export signatures (resolveUniform, buildUniformOutfitContext) so existing
+ * callers continue to work.
  *
  * The actual applicability algorithm lives in the shared module — there is
  * no duplicated rule body here.
@@ -18,7 +18,6 @@
 
 import {
   resolveUniform as _resolveUniformShared,
-  resolveCharacterAssignmentAtLocation,
 } from '../../base44/shared/uniformApplicabilityRules.js';
 
 /**
@@ -40,35 +39,6 @@ import {
  */
 export function resolveUniform(character, location, characterRoleAtLocation) {
   return _resolveUniformShared(character, location);
-}
-
-/**
- * Determine the character's role/status at a location.
- *
- * DEPRECATED as an authority — the uniform system now uses
- * resolveCharacterAssignmentAtLocation from the shared module, which returns
- * structured assignment data instead of a single role string.
- *
- * This function is kept for backward compatibility with any callers that
- * still use the role string. It returns a role derived from the character's
- * actual existing status data, NOT from interpreting the Location category.
- *
- * @param {Object} character - Character record
- * @param {Object} location - Location record
- * @returns {string|null} Role label
- */
-export function determineCharacterRoleAtLocation(character, location) {
-  if (!character || !location) return null;
-  const assignment = resolveCharacterAssignmentAtLocation(character, location);
-  // Return the most specific role/status from the assignment
-  // Priority: patient > inmate > student > staff > member > resident > visitor
-  if (assignment.roleStatuses.includes('patient')) return 'patient';
-  if (assignment.roleStatuses.includes('inmate')) return 'inmate';
-  if (assignment.roleStatuses.includes('student')) return 'student';
-  if (assignment.roleStatuses.includes('staff')) return 'staff';
-  if (assignment.roleStatuses.includes('member')) return 'member';
-  if (assignment.roleStatuses.includes('resident')) return 'resident';
-  return 'visitor';
 }
 
 /**

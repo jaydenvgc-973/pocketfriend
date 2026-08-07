@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 
 const APPLICABILITY_TYPES = [
   { key: 'job_title', label: 'Job Title', description: 'Apply when job title matches' },
-  { key: 'role_status', label: 'Role / Status', description: 'Apply based on role (inmate, officer, student, staff, etc.)' },
+  { key: 'role_status', label: 'Role / Status', description: 'Apply based on character status (hospitalized, incarcerated, enrolled, inmates, etc.)' },
   { key: 'zone', label: 'Zone / Area', description: 'Apply within specific location zone (kitchen, floor, etc.)' },
   { key: 'location_wide', label: 'Location-Wide', description: 'Default for all staff' },
   { key: 'generic_staff', label: 'Generic Staff', description: 'For unmatched custom employee titles' },
@@ -100,7 +100,7 @@ function UniformForm({ applicability, uniform, location, onSave, onCancel }) {
         <input
           type="text"
           placeholder={applicability === 'job_title' ? 'Job title (e.g., "Bartender")' : 
-                       applicability === 'role_status' ? 'Role (e.g., "inmate", "officer", "student")' :
+                       applicability === 'role_status' ? 'Role/status (e.g., "hospitalized", "incarcerated", "enrolled", "inmates")' :
                        'Zone (e.g., "kitchen", "floor")'}
           value={specificity}
           onChange={e => setSpecificity(e.target.value)}

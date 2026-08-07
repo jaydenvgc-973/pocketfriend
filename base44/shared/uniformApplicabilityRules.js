@@ -1,19 +1,27 @@
 /**
  * UNIFORM APPLICABILITY RULES — Environment-Neutral Shared Authority
  *
- * This is the SINGLE authority for uniform applicability evaluation.
+ * This is the single shared authority for Location-uniform applicability evaluation.
  * Consumed by both:
  *   - src/lib/uniformResolver.js (frontend)
  *   - base44/functions/resolveCharacterOutfitContext/entry.ts (backend)
  *
  * No duplicates. No synchronized copies. Both environments import this module.
  *
+ * SCOPE:
+ *   This module evaluates whether a Location's configured uniform applies to a
+ *   character at that Location. It is NOT the wardrobe authority — Character Closet,
+ *   Daily Rotation, Outfit Transition, Currently Wearing, and user controls remain
+ *   separate established systems.
+ *
  * DESIGN PRINCIPLES:
  * 1. Each applicability type is evaluated according to its own stored rule.
  *    No broad visitor gate in front of unrelated applicability mechanisms.
- * 2. Role/status is derived from the character's actual existing data fields
- *    (presence status, student status, incarceration, worker assignment),
- *    NOT by interpreting the Location category.
+ * 2. Role/status matching uses the character's ACTUAL existing data values —
+ *    raw presence-status strings, raw student-status strings, and Location
+ *    membership-array field names. No manufactured alias vocabulary.
+ *    A future valid status (e.g. 'paroled') works automatically — the uniform's
+ *    role_status just needs to match the actual data value.
  * 3. Job title and staff assignment are resolved for the CURRENT Location:
  *    Location-side assignment takes priority; character-side employment data
  *    matched to this Location is the fallback.
@@ -35,22 +43,47 @@ export function uniformToText(u) {
 }
 
 /**
+ * Check whether a character is a member of a Location array.
+ * Handles both arrays of strings (character IDs) and arrays of objects
+ * with a `character_id` field.
+ */
+function isInLocationArray(arr, characterId) {
+  if (!Array.isArray(arr) || !characterId) return false;
+  return arr.some(item => {
+    if (typeof item === 'string') return item === characterId;
+    return item?.character_id === characterId;
+  });
+}
+
+/**
  * Resolve the character's assignment at a specific Location.
  *
- * Uses the character's actual existing role/status/employment data and the
+ * Gathers the character's ACTUAL existing role/status/employment data and the
  * Location's existing worker/student/member assignment data. Does NOT
- * interpret the Location category to manufacture a role.
+ * interpret the Location category or manufacture role aliases.
+ *
+ * The `statusStrings` array contains raw data values only:
+ *   - resolved_presence_status raw value (e.g. 'hospitalized', 'incarcerated')
+ *   - location_status raw value (fallback)
+ *   - student_status raw value (when school location matches)
+ *   - Location membership-array field names where the character is a member
+ *     (e.g. 'enrolled_students', 'inmates', 'gym_members', 'religious_members',
+ *      'residents', 'worker_character_ids')
+ *
+ * A uniform's role_status is matched against these actual values. No fixed
+ * vocabulary — a future data value works automatically.
  *
  * @param {Object} character - Character record
  * @param {Object} location - LocationReference record
- * @returns {{ jobTitle: string|null, isStaff: boolean, roleStatuses: string[], zone: string, presence: string }}
+ * @returns {{ jobTitle: string|null, isStaff: boolean, statusStrings: string[], zone: string, presence: string }}
  */
 export function resolveCharacterAssignmentAtLocation(character, location) {
   if (!character || !location) {
-    return { jobTitle: null, isStaff: false, roleStatuses: [], zone: '', presence: '' };
+    return { jobTitle: null, isStaff: false, statusStrings: [], zone: '', presence: '' };
   }
 
   const locationId = location.id;
+  const charId = character.id;
   const presence = character.resolved_presence_status || character.location_status || '';
 
   // ── JOB TITLE AT THIS LOCATION ──────────────────────────────────────────
@@ -60,8 +93,8 @@ export function resolveCharacterAssignmentAtLocation(character, location) {
   let jobTitle = null;
 
   // 1. Location-side: explicit job title assignment for this character
-  if (location.worker_job_titles && location.worker_job_titles[character.id]) {
-    jobTitle = location.worker_job_titles[character.id];
+  if (location.worker_job_titles && location.worker_job_titles[charId]) {
+    jobTitle = location.worker_job_titles[charId];
   }
 
   // 2. Character-side: primary employment data matched to this Location
@@ -87,59 +120,45 @@ export function resolveCharacterAssignmentAtLocation(character, location) {
   // data matched to this Location. A worker at Location A is not automatically
   // staff at Location B.
   const isStaff =
-    (location.worker_character_ids && location.worker_character_ids.includes(character.id)) ||
+    (location.worker_character_ids && location.worker_character_ids.includes(charId)) ||
     character.occupation_location_id === locationId ||
     (Array.isArray(character.additional_occupation_locations) &&
       character.additional_occupation_locations.some(loc =>
         (loc.location_id || loc.id) === locationId
       ));
 
-  // ── ROLE/STATUS AT THIS LOCATION ─────────────────────────────────────────
-  // Derived from the character's actual existing status data fields, NOT from
-  // interpreting the Location category. These strings allow Location uniform
-  // role_status rules to match against the character's real status.
-  //
-  // The raw presence status is always included so Location uniforms can match
-  // directly on the actual status string (e.g. role_status: 'hospitalized').
-  // Common aliases (patient, inmate, student, staff) are also included so
-  // Location uniforms can use conventional role labels.
-  const roleStatuses = [];
+  // ── STATUS STRINGS (actual data values, no manufactured aliases) ────────
+  // These are the character's actual existing role/status/assignment values at
+  // this Location. A uniform's role_status is matched against them directly.
+  // No fixed vocabulary — a future data value works automatically without
+  // editing this module.
+  const statusStrings = [];
 
-  if (presence) roleStatuses.push(presence);
+  // Raw presence status (e.g. 'hospitalized', 'incarcerated', 'at_work')
+  if (presence) statusStrings.push(presence);
 
-  // Patient — from actual hospitalized presence status (not Location category)
-  if (presence === 'hospitalized') roleStatuses.push('patient');
-
-  // Inmate — from actual incarceration data (not Location category)
-  if (character.is_jailed || presence === 'incarcerated') roleStatuses.push('inmate');
-
-  // Student — from actual enrollment data matched to this Location
-  if (character.student_status === 'enrolled' &&
+  // Raw student status, included only when the character's school location
+  // matches this Location (so 'enrolled' doesn't apply at a non-school Location)
+  if (character.student_status && character.student_status !== 'not_student' &&
       (character.current_school_location_id === locationId ||
        character.education_location_id === locationId)) {
-    roleStatuses.push('student');
+    statusStrings.push(character.student_status);
   }
 
-  // Staff/employee — from actual staff assignment at this Location
-  if (isStaff) {
-    roleStatuses.push('staff');
-    roleStatuses.push('employee');
-  }
-
-  // Gym member — from Location's gym_members array (existing data)
-  if (location.gym_members && location.gym_members.includes(character.id)) {
-    roleStatuses.push('member');
-  }
-
-  // Resident — from character's current_home_location_id (existing data)
-  if (character.current_home_location_id === locationId) {
-    roleStatuses.push('resident');
-  }
+  // Location membership-array field names — the character's actual membership
+  // in existing Location data structures. The field name itself is the string
+  // used for matching, so a future Location array works automatically.
+  if (isInLocationArray(location.enrolled_students, charId)) statusStrings.push('enrolled_students');
+  if (isInLocationArray(location.inmates, charId)) statusStrings.push('inmates');
+  if (location.gym_members && location.gym_members.includes(charId)) statusStrings.push('gym_members');
+  if (isInLocationArray(location.religious_members, charId)) statusStrings.push('religious_members');
+  if (isInLocationArray(location.residents, charId)) statusStrings.push('residents');
+  if (location.worker_character_ids && location.worker_character_ids.includes(charId)) statusStrings.push('worker_character_ids');
 
   // ── ZONE ────────────────────────────────────────────────────────────────
   const zone = character.current_zone || character.current_activity || '';
 
-  return { jobTitle, isStaff, roleStatuses, zone, presence };
+  return { jobTitle, isStaff, statusStrings, zone, presence };
 }
 
 /**
@@ -148,10 +167,10 @@ export function resolveCharacterAssignmentAtLocation(character, location) {
  * Each applicability type is evaluated according to its own stored rule.
  * No broad visitor gate — the evidence for each type determines applicability.
  *
- * Priority order (existing):
+ * Priority order:
  * 1. manual_assignment — Location explicitly assigns a uniform to this character
  * 2. job_title — character's job title at this Location matches
- * 3. role_status — character's actual role/status at this Location matches
+ * 3. role_status — character's actual status string at this Location matches
  * 4. generic_staff — character is established as staff at this Location
  * 5. zone — character's current zone matches (per existing zone semantics)
  * 6. location_wide — Location has a location-wide rule (per existing semantics)
@@ -186,13 +205,16 @@ export function evaluateUniformApplicability(uniforms, character, location, assi
     }
   }
 
-  // 3. Role/status — character's actual role/status at this Location matches.
-  // Evidence: assignment.roleStatuses includes the uniform's role_status.
-  if (assignment.roleStatuses.length > 0) {
+  // 3. Role/status — character's actual status string at this Location matches.
+  // Evidence: assignment.statusStrings includes the uniform's role_status.
+  // No manufactured vocabulary — the uniform's role_status is matched against
+  // the character's actual existing data values (presence status, student status,
+  // Location membership-array field names).
+  if (assignment.statusStrings.length > 0) {
     for (const u of Object.values(uniforms)) {
       if (u && u.applicability === 'role_status' && u.role_status) {
         const uniformRoleStatus = u.role_status.toLowerCase().trim();
-        if (assignment.roleStatuses.some(rs => rs.toLowerCase().trim() === uniformRoleStatus)) {
+        if (assignment.statusStrings.some(s => s.toLowerCase().trim() === uniformRoleStatus)) {
           return { uniform: u, applicability: 'role_status', source: 'role_status' };
         }
       }
