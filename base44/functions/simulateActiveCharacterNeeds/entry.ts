@@ -667,7 +667,15 @@ function computeCorrectiveState(needs, character, locationMap) {
   }
 
   // ENERGY 25-50%: DECISION PIPELINE REQUIRED — state only if at home + no obligations
-  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_PASSOUT && !isInRestState) {
+  // ENERGY GATE: Run the sleep decision pipeline for energy ≤ NAP_AVAILABLE (50)
+  // and > MEDICAL (5). Energy ≤5 is medical danger (hospitalization, handled below).
+  // The former gate excluded energy ≤ PASSOUT (10) because pass-out was supposed to
+  // handle it — but pass-out is disabled, so energy 6-10 fell through to nothing,
+  // leaving critically exhausted characters awake with no corrective action. The
+  // gate now extends to > MEDICAL so the existing sleep pipeline covers the gap
+  // created by the pass-out shutdown. This is NOT a new rule — it lets the existing
+  // sleep decision pathway handle energy levels it already knows how to process.
+  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_MEDICAL && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const overnightDrive = overnightSleepDriveMultiplier(nowET, character);
     const hasOvernightReason = hasMeaningfulOvernightActivity(character);
@@ -698,7 +706,14 @@ function computeCorrectiveState(needs, character, locationMap) {
     // resolved location. A valid non-primary-home sleep location (hotel, shelter,
     // generic, confinement) is accepted by the authority; an invalid location is
     // redirected to a valid sleep home. No local duplicate of that authority runs here.
-    const isBlocked = inObligation || character.sleep_lock;
+    // STALE-AUTHORITY CORRECTION: Only live obligations block sleep.
+    // character.sleep_lock is a persisted field that can outlive the condition
+    // that gave it authority. It must NOT independently veto sleep — stale
+    // information has no authority over active information. The live
+    // inObligation check (active work shift, active school session, jail,
+    // house arrest) is the sole authority. If the live schedule says no
+    // current obligation exists, a stale persisted lock cannot override that.
+    const isBlocked = inObligation;
 
     const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
     const nowMin = nowET.getHours() * 60 + nowET.getMinutes();
