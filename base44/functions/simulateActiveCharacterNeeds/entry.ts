@@ -675,7 +675,7 @@ function computeCorrectiveState(needs, character, locationMap) {
   // gate now extends to > MEDICAL so the existing sleep pipeline covers the gap
   // created by the pass-out shutdown. This is NOT a new rule — it lets the existing
   // sleep decision pathway handle energy levels it already knows how to process.
-  if (needs.energy <= T.ENERGY_NAP_AVAILABLE && needs.energy > T.ENERGY_MEDICAL && !isInRestState) {
+  if (needs.energy > T.ENERGY_MEDICAL && !isInRestState) {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const overnightDrive = overnightSleepDriveMultiplier(nowET, character);
     const hasOvernightReason = hasMeaningfulOvernightActivity(character);
@@ -760,8 +760,6 @@ function computeCorrectiveState(needs, character, locationMap) {
       return null;
     }
 
-    if (effectiveEnergy <= T.ENERGY_NAP_AVAILABLE) return null;
-    return null;
   }
 
   if (needs.hunger <= T.HUNGER_CRITICAL && !activity.includes('eat')) return { current_activity: 'eating — hunger drove them to food' };
