@@ -415,7 +415,13 @@ export function getLocationPresence(location, characters = []) {
   // and location presence — excluded ONLY from regular homepage CharacterCard rendering.
   characters.forEach(char => {
     const resolvedType = char.character_type || resolveCharacterType(char);
-    if (!['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(resolvedType)) {
+    // Only skip characters with an EXPLICITLY known non-participating type.
+    // Unknown/null type does NOT erase presence — location/presence is a
+    // separate concern from classification. A character with an unresolved
+    // type but a valid resolved_current_location_id is still present at that
+    // location; resolveCharacterPresenceAtLocation determines presence from
+    // the location authority, not from the type.
+    if (resolvedType && !['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(resolvedType)) {
       return;
     }
 

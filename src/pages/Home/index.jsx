@@ -268,7 +268,7 @@ export default function Home() {
   }, [userSettings?.default_character_id, userSettings?.id, allCharacters.length]);
 
   const defaultChar = allCharacters.find(c => c.is_default);
-  const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
+  const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged");
   
   // Use unified resolver to get homepage-eligible characters from the full merged pool
   const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);

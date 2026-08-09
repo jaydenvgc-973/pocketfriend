@@ -70,15 +70,14 @@ export function useOwnedCharacters(
       // LEGACY COMPATIBILITY: is_test_character and diagnostic_only may be absent on
       // older records — treat undefined as false. Never exclude a character because
       // a newer metadata field is missing. Explicit true is required to exclude.
-      // Terminal lifecycle states (deleted, soft_deleted, merged) are excluded from
-      // the live roster so deleted-character information does not function as current
-      // character authority. moved_away is NOT terminal — Home shows those characters.
+      // NOTE: Terminal lifecycle states (deleted, soft_deleted, merged) are NOT
+      // filtered here. The shared authoritative fetch returns all owned records so
+      // consumers can inspect/manage terminal records where legitimate. Live-
+      // operational slices (activeCreated, npcFictitious, etc.) apply their own
+      // lifecycle exclusion — retrievable record ≠ eligible for a live surface.
       const freshFiltered = fresh.filter(c =>
         c.is_test_character !== true &&
-        c.diagnostic_only !== true &&
-        c.status !== 'deleted' &&
-        c.status !== 'soft_deleted' &&
-        c.status !== 'merged'
+        c.diagnostic_only !== true
       );
 
       // Persist to localStorage so next page load is instant
@@ -214,10 +213,17 @@ export function useOwnedCharacters(
   // Runtime code does not manufacture or substitute a different type.
   // If character_type is absent, the character remains in allCharacters but
   // does not appear in a type-specific slice — it is not reclassified.
-  const activeCreated    = allCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted");
-  const npcFictitious    = allCharacters.filter(c => c.character_type === "npc_fictitious");
-  const npcFamilyMembers = allCharacters.filter(c => c.character_type === "npc_family_member");
-  const npcRegular       = allCharacters.filter(c => c.character_type === "npc_regular");
+  //
+  // LIVE-OPERATIONAL LIFECYCLE EXCLUSION: These slices represent live gameplay
+  // participants. Terminal lifecycle states (deleted, soft_deleted, merged) are
+  // excluded here so they do not function as active gameplay characters. The
+  // broad allCharacters universe retains them for inspection/management.
+  // moved_away is NOT terminal — it remains in live slices.
+  const _isTerminal = (c) => c.status === "deleted" || c.status === "soft_deleted" || c.status === "merged";
+  const activeCreated    = allCharacters.filter(c => c.character_type === "active_created_character" && !_isTerminal(c));
+  const npcFictitious    = allCharacters.filter(c => c.character_type === "npc_fictitious" && !_isTerminal(c));
+  const npcFamilyMembers = allCharacters.filter(c => c.character_type === "npc_family_member" && !_isTerminal(c));
+  const npcRegular       = allCharacters.filter(c => c.character_type === "npc_regular" && !_isTerminal(c));
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
   // ── 3. Prefetch CharacterFinancial for all characters ────────────────────────

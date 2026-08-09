@@ -55,10 +55,7 @@ Deno.serve(async (req) => {
 
     for (const character of characters) {
       // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────
-      const isActiveCreated =
-        character.character_type === 'active_created_character' ||
-        character.is_active_created_character === true ||
-        character.is_active_character === true;
+      const isActiveCreated = character.character_type === 'active_created_character';
       if (!isActiveCreated) {
         console.log(`[processRecurringExpenses] SKIP ${character.name} (${character.character_type || 'no type'}) — not active_created_character`);
         continue;

@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
       );
       testChar = tcArr?.[0];
     } else {
-      testChar = characters.find(c => c.is_active_character) || characters[0];
+      testChar = characters.find(c => c.character_type === 'active_created_character') || characters[0];
     }
 
     // 4. User location

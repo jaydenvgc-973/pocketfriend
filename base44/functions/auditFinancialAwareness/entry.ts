@@ -27,9 +27,7 @@ Deno.serve(async (req) => {
       50
     );
     const characters = allActive.filter(c =>
-      c.character_type === 'active_created_character' ||
-      c.is_active_created_character === true ||
-      c.is_active_character === true
+      c.character_type === 'active_created_character'
     );
 
     if (!characters.length) {

@@ -47,10 +47,7 @@ Deno.serve(async (req) => {
 
     for (const char of characters) {
       // ── ACTIVE CREATED CHARACTER GUARD ──────────────────────────────────
-      const isActiveCreated =
-        char.character_type === 'active_created_character' ||
-        char.is_active_created_character === true ||
-        char.is_active_character === true;
+      const isActiveCreated = char.character_type === 'active_created_character';
       if (!isActiveCreated) {
         console.log(`[processHousingCosts] SKIP ${char.name} (${char.character_type || 'no type'}) — not active_created_character`);
         continue;

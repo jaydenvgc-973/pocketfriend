@@ -27,11 +27,7 @@ Deno.serve(async (req) => {
     // other types → lighter awareness: interpersonal transfers only (no autonomous expense context)
     const charRecords = await base44.entities.Character.filter({ id: character_id }, null, 1);
     const char = charRecords[0];
-    const isActiveCreated = !char || (
-      char.character_type === 'active_created_character' ||
-      char.is_active_created_character === true ||
-      char.is_active_character === true
-    );
+    const isActiveCreated = !char || char.character_type === 'active_created_character';
 
     // Load canonical financial record + recent transactions in parallel
     // Fetches 20 most recent transactions across ALL charge types (rent, food, venue, payroll, etc.)

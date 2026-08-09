@@ -454,7 +454,7 @@ Deno.serve(async (req) => {
 });
 
 function recommendPrimary(chars) {
-  let candidate = chars.find(c => c.is_active_character && c.character_type === 'active');
+  let candidate = chars.find(c => c.character_type === 'active_created_character');
   if (candidate) return candidate;
   candidate = chars.find(c => c.is_protected || c.is_default);
   if (candidate) return candidate;
