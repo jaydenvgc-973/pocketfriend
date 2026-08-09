@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import StoryEventCreator from '@/components/moments/StoryEventCreator';
+import { buildCommunityActivityContextParagraph } from '@/lib/communityActivityContextParagraph';
 import { X, BookOpen, Calendar, MapPin, Users } from 'lucide-react';
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
@@ -14,6 +15,7 @@ function formatTimeForInput(date) {
 export default function CommunityActivityStoryEventModal({
   activity,
   attendees = [],
+  allDiagnostics = [],
   characters = [],
   allCharacters = [],
   currentUser = null,
@@ -31,9 +33,13 @@ export default function CommunityActivityStoryEventModal({
   const startTimeStr = formatTimeForInput(startDate);
   const endTimeStr = formatTimeForInput(endDate);
 
-  const initialPlot = activity.description
-    ? `${activity.name}${activity.location_name ? ` at ${activity.location_name}` : ''}. ${activity.description}`
-    : `${activity.name}${activity.location_name ? ` at ${activity.location_name}` : ''}.`;
+  // Context paragraph assembled from information already surfaced on the
+  // Community Activity side: event details + the established character facts
+  // from the existing attendee reasoning (allDiagnostics). Selection mechanics
+  // (scores, ranking, friendship/energy weighting, "likely attendee" language)
+  // are stripped by the builder. This paragraph is the initial plot value and
+  // remains fully editable in the Story Event textarea below.
+  const initialPlot = buildCommunityActivityContextParagraph(activity, attendees, allDiagnostics);
 
   const participantIds = attendees.map(a => a.id);
 

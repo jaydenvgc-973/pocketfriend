@@ -524,6 +524,7 @@ export default function CommunityEventsStrip({ currentUser, characters = [], all
         <CommunityActivityStoryEventModal
           activity={storyEventActivity}
           attendees={eventData[storyEventActivity.id]?.attendees || []}
+          allDiagnostics={eventData[storyEventActivity.id]?.allDiagnostics || []}
           characters={characters}
           allCharacters={allCharacters}
           currentUser={currentUser}
