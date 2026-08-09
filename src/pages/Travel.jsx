@@ -288,8 +288,53 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       const char = travelCompanions.find(c => c.id === wakeUpModal.pendingCharacterId);
       if (!char) return;
 
-      // ── ENERGY FINALIZATION before wake ──────────────────────────────────
-      // Calculate partial energy recovery based on elapsed sleep time.
+      // ── CANONICAL NAP/SLEEP TERMINATION (One Truth) ──────────────────────────
+      // Route the manual wake through the existing canonical nap-ending mechanism
+      // (scheduleNap action='wake' → enforceCharacterLocationPresence). This commits
+      // resolved_presence_status='home', writes last_wake_time, releases the stay lock,
+      // clears pending_alarm_time, and writes the nap_end/sleep_end SleepTransition +
+      // LifeEvent + Memory — the single committed truth every consumer reads. The
+      // authority preserves the character's current location if it is a valid home; it
+      // does NOT force the character home merely because the nap ended. Clearing
+      // pending_alarm_time supersedes the remaining timed-nap duration so its original
+      // expiration (processScheduledCharacterAlarms) cannot later reassert napping.
+      const wasSleeping = char.resolved_presence_status === 'sleeping';
+      const wasNapping = char.resolved_presence_status === 'napping';
+      if (wasSleeping || wasNapping) {
+        let canonicalWakeOk = false;
+        let canonicalWakeErr = null;
+        try {
+          const canonicalRes = await base44.functions.invoke('scheduleNap', {
+            characterId: char.id,
+            action: 'wake',
+            sleepMode: wasSleeping,
+          });
+          canonicalWakeOk = !!canonicalRes?.data?.success;
+          canonicalWakeErr = canonicalRes?.data?.error || null;
+        } catch (invokeErr) {
+          canonicalWakeErr = invokeErr?.message || 'invoke_failed';
+        }
+        // wake_not_committed = authority did not commit (e.g., character already awake
+        // via a concurrent path). Treat as non-fatal — the character is already awake,
+        // so proceed with the dialogue. Only hard failures abort.
+        if (!canonicalWakeOk && canonicalWakeErr !== 'wake_not_committed') {
+          console.error('[handleWakeUp] canonical wake failed:', canonicalWakeErr);
+          setUnavailablePopup([{
+            character: wakeUpModal.character,
+            reason: { iconType: 'error', message: 'Failed to wake them up', color: 'text-destructive' },
+            availableAt: 'Try again',
+          }]);
+          return;
+        }
+        // Invalidate the shared character cache so Travel, Character Card, and Home
+        // re-read the committed awake state immediately instead of the stale napping state.
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+        queryClient.invalidateQueries({ queryKey: ['character', char.id] });
+      }
+
+      // ── ENERGY FINALIZATION (supplementary, noncanonical) ────────────────────
+      // Partial energy recovery based on elapsed rest time. The canonical wake above
+      // already committed presence/last_wake_time/alarm; this is a best-effort bar update.
       // Sleep recovery rate: +12/hr. Never exceed 100. Never lower than current.
       // Only for active_created_character and npc_world_service (same scope as needs sim).
       const isEligible = (
