@@ -11,9 +11,26 @@
  *   - Public / semi-public venues only for SYSTEM events
  *   - Jail/confinement facilities are NEVER eligible for community events
  *   - User-created events can use ANY location (including residential)
- *   - Dates are always relative to "today" so they remain upcoming
  *   - Rotates by day-of-week so the ordering shifts naturally each day
  *   - Used as FALLBACK ONLY when the DB produces fewer than 4 real CommunityEvent records
+ *
+ * TEMPORAL CONTINUITY (bug fix — premature occurrence advancement):
+ *   Previously, occurrences were projected exclusively from the current calendar day
+ *   (today + offsetDays) with a dayOfWeek-dependent rotation. Crossing midnight
+ *   re-originated the projection, so an already-presented upcoming occurrence could
+ *   be regenerated one day later before its scheduled time had passed.
+ *
+ *   The generator now evaluates a bounded set of prior Eastern-Time anchor dates
+ *   (bounded by the template offsets themselves) plus today. Each anchor produces
+ *   the occurrence it would have produced on that day (anchor + offsetDays, using
+ *   that anchor's own rotation). For each template, the EARLIEST occurrence whose
+ *   legitimate lifecycle has not yet passed is selected.
+ *
+ *   Result: an occurrence that is still upcoming/current remains stable across a
+ *   calendar-day rollover. It only advances once its own scheduled time + lifecycle
+ *   has actually passed. This is deterministic from authoritative Eastern Time and
+ *   the existing rotation/offset rules — no persistence, localStorage, scheduler, or
+ *   fixed-weekday redesign is introduced.
  *
  * Real app location injection — HARD VENUE INTENT RULES:
  *   - Each event template may declare `venueIntent` tiers:
@@ -39,6 +56,12 @@ export const EVENT_TYPE_ICONS = {
   personal:         '📅',
   other:            '📌',
 };
+
+// ── LIFECYCLE (single shared authority) ───────────────────────────────────────
+// A default Community Activity occurrence remains current/upcoming until its
+// scheduled start + this duration has passed. The ribbon imports this same
+// constant so there is exactly one answer to "is this occurrence still current?".
+export const DEFAULT_EVENT_LIFECYCLE_MS = 2 * 60 * 60 * 1000;
 
 // ── CONFINEMENT / RESIDENTIAL CATEGORIES — never eligible for community events ──
 const EXCLUDED_CATEGORIES = new Set([
@@ -130,6 +153,47 @@ const VENUE_INTENT_RULES = {
   },
 };
 
+// ── EASTERN TIME HELPERS ─────────────────────────────────────────────────────
+// Reuses the app's established America/New_York authority (same pattern as
+// workScheduleUtils.js). UTC is never used as the application time. The calendar-
+// day boundary that can advance rotation is the Eastern midnight, not runtime-
+// local midnight and not UTC midnight.
+function nowET() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+
+const _etFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+  hour12: false,
+});
+
+// ET wall-clock parts for a given instant. dayOfWeek is the weekday of the ET
+// calendar date (a property of the date itself, independent of timezone).
+function etParts(date) {
+  const p = Object.fromEntries(_etFmt.formatToParts(date).map(x => [x.type, x.value]));
+  let h = Number(p.hour);
+  if (h === 24) h = 0; // Intl can emit '24' for midnight with hour12:false
+  const y = Number(p.year), mo = Number(p.month) - 1, d = Number(p.day);
+  return {
+    year: y, month: mo, day: d,
+    hour: h, minute: Number(p.minute), second: Number(p.second),
+    dayOfWeek: new Date(Date.UTC(y, mo, d)).getUTCDay(),
+  };
+}
+
+// Construct an instant whose Eastern wall-clock is Y-M-D H:M. Handles DST
+// automatically by correcting the UTC guess against the actual ET offset.
+function makeETInstant(year, month0, day, hour, minute) {
+  const guess = new Date(Date.UTC(year, month0, day, hour, minute, 0));
+  const et = etParts(guess);
+  const desiredUTC = Date.UTC(year, month0, day, hour, minute, 0);
+  const actualETasUTC = Date.UTC(et.year, et.month, et.day, et.hour, et.minute, et.second);
+  const offsetMs = desiredUTC - actualETasUTC;
+  return new Date(guess.getTime() + offsetMs);
+}
+
 // ── OPERATING HOURS CHECK ─────────────────────────────────────────────────────
 function timeStrToMinutes(t) {
   if (!t || typeof t !== 'string') return null;
@@ -140,7 +204,8 @@ function timeStrToMinutes(t) {
 
 /**
  * Check if a location is open at the given Date using its operating_hours array.
- * If no operating_hours are configured, assume open (safe default).
+ * If no operating hours are configured, assume open (safe default).
+ * All wall-clock interpretation is in Eastern Time (the app's authority).
  * Returns { isOpen, reason, matchedHours }
  */
 function checkLocationOpenAt(location, eventDate) {
@@ -149,8 +214,9 @@ function checkLocationOpenAt(location, eventDate) {
     return { isOpen: true, reason: 'No operating hours configured — assumed open', matchedHours: null };
   }
 
-  const dayOfWeek = eventDate.getDay();
-  const eventMinutes = eventDate.getHours() * 60 + eventDate.getMinutes();
+  const et = etParts(eventDate);
+  const dayOfWeek = et.dayOfWeek;
+  const eventMinutes = et.hour * 60 + et.minute;
 
   const matchingEntry = hours.find(h => h.day_of_week === undefined || h.day_of_week === dayOfWeek);
   if (!matchingEntry) {
@@ -515,36 +581,93 @@ export function buildDefaultCommunityEvents(appLocations = []) {
 
 /**
  * Build default events AND return full proof with per-candidate diagnostics.
+ *
+ * TEMPORAL CONTINUITY:
+ *   Default occurrences are no longer projected exclusively from the current
+ *   calendar day. The generator evaluates a bounded set of prior Eastern-Time
+ *   anchor dates (bounded by the template offsets) plus today. Each anchor uses
+ *   the rotation it would have used on that day and produces an occurrence at
+ *   anchor + offsetDays. For each template, the EARLIEST occurrence whose
+ *   legitimate lifecycle has not yet passed is selected.
+ *
+ *   This keeps an already-presented upcoming occurrence stable across a
+ *   calendar-day rollover: midnight does not regenerate it one day later. The
+ *   occurrence only advances once its own scheduled time + lifecycle has
+ *   actually passed.
+ *
+ *   No persistence, localStorage, scheduler, or fixed-weekday redesign is used.
+ *   The result is deterministic from authoritative Eastern Time and the existing
+ *   rotation/offset rules — reloading, or opening in another session at the same
+ *   Eastern-time moment, yields the same occurrence.
  */
 export function buildDefaultCommunityEventsWithProof(appLocations = []) {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const thisYear = now.getFullYear();
-  const thisMonth = now.getMonth();
-  const today = now.getDate();
+  const now = nowET();
+  const nowMs = now.getTime();
+  const todayParts = etParts(now);
+  const todayY = todayParts.year;
+  const todayM = todayParts.month;
+  const todayD = todayParts.day;
 
   const { eligible, totalLoaded, residentialExcluded } = extractPublicLocations(appLocations);
 
-  // Rotate templates by day-of-week
-  const offset = dayOfWeek % EVENT_TEMPLATES.length;
-  const rotated = [...EVENT_TEMPLATES.slice(offset), ...EVENT_TEMPLATES.slice(0, offset)];
-
-  // Injection slots: at least 1 per 10 events
-  // Additionally: always attempt injection for the coffeemeetup template specifically
-  const injectionSlots = new Set();
-  if (eligible.length > 0) {
-    for (let i = 0; i < rotated.length; i += 10) {
-      injectionSlots.add(i);
-    }
-    // Always try to inject a real location for coffeemeetup regardless of slot
-    const coffeeIdx = rotated.findIndex(t => t.id === 'def_coffeemeetup');
-    if (coffeeIdx !== -1) injectionSlots.add(coffeeIdx);
-  }
+  const N = EVENT_TEMPLATES.length;
+  const maxOffset = Math.max(...EVENT_TEMPLATES.map(t => t.offsetDays));
+  // Bounded lookback derived from the template offsets themselves (+lifecycle buffer).
+  // An occurrence from anchor A is at A + offsetDays; for it to still be valid,
+  // A must be no older than now - offsetDays - lifecycle. The largest offset bounds
+  // how far back any still-valid anchor can be.
+  const lookback = maxOffset + 2;
+  const coffeeOrigIdx = EVENT_TEMPLATES.findIndex(t => t.id === 'def_coffeemeetup');
 
   const proofEntries = [];
+  const injectedIdxList = [];
+  const events = [];
 
-  const events = rotated.map((tmpl, idx) => {
-    const dt = new Date(thisYear, thisMonth, today + tmpl.offsetDays, tmpl.hour, tmpl.minute, 0);
+  for (let origIdx = 0; origIdx < EVENT_TEMPLATES.length; origIdx++) {
+    const tmpl = EVENT_TEMPLATES[origIdx];
+
+    // ── Select earliest still-valid occurrence across bounded anchor lookback ──
+    // Iterate anchor dates from today backward. Each anchor produces the occurrence
+    // it would have produced on that calendar day (anchor + offsetDays at the
+    // template's hour/minute, in Eastern Time). Keep the earliest occurrence whose
+    // legitimate lifecycle (start + DEFAULT_EVENT_LIFECYCLE_MS) has not yet passed.
+    let bestOcc = null;
+    for (let da = 0; da <= lookback; da++) {
+      const anchorInstant = makeETInstant(todayY, todayM, todayD - da, 12, 0);
+      const ap = etParts(anchorInstant);
+      const occInstant = makeETInstant(ap.year, ap.month, ap.day + tmpl.offsetDays, tmpl.hour, tmpl.minute);
+      const occMs = occInstant.getTime();
+      if (occMs + DEFAULT_EVENT_LIFECYCLE_MS >= nowMs) {
+        if (!bestOcc || occMs < bestOcc.occMs) {
+          bestOcc = {
+            occInstant,
+            occMs,
+            anchorY: ap.year,
+            anchorM: ap.month,
+            anchorD: ap.day,
+            anchorDayOfWeek: ap.dayOfWeek,
+          };
+        }
+      }
+    }
+    // today's anchor always yields a future occurrence (offsetDays >= 1), so bestOcc
+    // is never null.
+    const dt = bestOcc.occInstant;
+
+    // ── Venue injection using the winner's source-anchor rotation ──────────────
+    // The rotation/injection eligibility is preserved per anchor: the occurrence
+    // selected above was generated from `bestOcc`'s anchor day, so that anchor's
+    // own rotation determines whether this template receives a real-location
+    // injection. This keeps injection stable across a calendar-day rollover (the
+    // occurrence's source anchor does not change while the occurrence is current).
+    const rotationOffset = bestOcc.anchorDayOfWeek % N;
+    const idx = (origIdx - rotationOffset + N) % N;
+    const injectionSlots = new Set();
+    if (eligible.length > 0) {
+      for (let i = 0; i < N; i += 10) injectionSlots.add(i);
+      if (coffeeOrigIdx !== -1) injectionSlots.add((coffeeOrigIdx - rotationOffset + N) % N);
+    }
+    const inInjectionSlot = eligible.length > 0 && injectionSlots.has(idx);
 
     let locationName = tmpl.location_name;
     let locationId = null;
@@ -552,14 +675,13 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     let usedRealLocation = false;
     let slotProof = null;
 
-    if (injectionSlots.has(idx) && eligible.length > 0) {
+    if (inInjectionSlot) {
       const pick = pickBestLocation(tmpl, dt, eligible);
 
-      // DEBUG: log proof for coffeehouse events
       if (tmpl.id === 'def_coffeemeetup' && pick) {
         console.log('[COFFEEHOUSE_PROOF]', {
           eventName: tmpl.name,
-          eventTime: dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          eventTime: dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }),
           chosenLocation: pick.location.name,
           chosenCategory: pick.location.category,
           chosenSubtype: pick.location.subtype,
@@ -584,6 +706,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
         locationId = pick.location.id;
         locationCategory = pick.location.category || null;
         usedRealLocation = true;
+        injectedIdxList.push(idx);
 
         slotProof = {
           slot: idx,
@@ -591,6 +714,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
           eventName: tmpl.name,
           eventType: tmpl.event_type,
           eventTime: dt.toISOString(),
+          sourceAnchor: `${bestOcc.anchorY}-${String(bestOcc.anchorM + 1).padStart(2, '0')}-${String(bestOcc.anchorD).padStart(2, '0')}`,
           venueIntentRules: VENUE_INTENT_RULES[tmpl.id] || null,
           chosenLocation: pick.location.name,
           chosenLocationId: pick.location.id,
@@ -609,7 +733,6 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
           usedRealLocation: true,
         };
       } else {
-        // No open eligible location — use static fallback
         const allClosed = eligible.map(loc => ({
           locationId: loc.id,
           locationName: loc.name,
@@ -625,6 +748,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
           eventName: tmpl.name,
           eventType: tmpl.event_type,
           eventTime: dt.toISOString(),
+          sourceAnchor: `${bestOcc.anchorY}-${String(bestOcc.anchorM + 1).padStart(2, '0')}-${String(bestOcc.anchorD).padStart(2, '0')}`,
           venueIntentRules: VENUE_INTENT_RULES[tmpl.id] || null,
           chosenLocation: tmpl.location_name,
           chosenLocationId: null,
@@ -642,7 +766,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
       if (slotProof) proofEntries.push(slotProof);
     }
 
-    return {
+    events.push({
       id: tmpl.id,
       name: tmpl.name,
       event_type: tmpl.event_type,
@@ -657,8 +781,11 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
       _isDefault: true,
       _usedRealLocation: usedRealLocation,
       _icon: EVENT_TYPE_ICONS[tmpl.event_type] || '📌',
-    };
-  });
+    });
+  }
+
+  // Chronological order — matches the ribbon's own sort.
+  events.sort((a, b) => new Date(a.start_date) - new Date(b.start_date));
 
   const proof = {
     totalAppLocationsLoaded: totalLoaded,
@@ -672,7 +799,7 @@ export function buildDefaultCommunityEventsWithProof(appLocations = []) {
     })),
     eligibleCount: eligible.length,
     totalDefaultEvents: events.length,
-    injectionSlots: [...injectionSlots],
+    injectionSlots: injectedIdxList,
     realLocationsInjectedCount: proofEntries.filter(p => p.usedRealLocation).length,
     staticFallbackCount: proofEntries.filter(p => !p.usedRealLocation).length,
     proofEntries,

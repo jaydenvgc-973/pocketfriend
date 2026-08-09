@@ -43,7 +43,7 @@ import React, { useRef, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
 import { Calendar, MapPin, Users, ChevronDown, ChevronUp, Info } from 'lucide-react';
-import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS } from '@/lib/defaultCommunityEvents';
+import { buildDefaultCommunityEvents, EVENT_TYPE_ICONS, DEFAULT_EVENT_LIFECYCLE_MS } from '@/lib/defaultCommunityEvents';
 import CommunityActivityStoryEventModal from '@/components/home/CommunityActivityStoryEventModal';
 
 // ── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -464,12 +464,11 @@ export default function CommunityEventsStrip({ currentUser, characters = [], all
   // events are never pushed out by expired or unrelated records.
   const displayEvents = useMemo(() => {
     const now = Date.now();
-    const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
     const isEligible = (e) => {
       if (!e.start_date) return false;
       const eventStart = new Date(e.start_date).getTime();
-      const expirationTime = eventStart + TWO_HOURS_MS;
+      const expirationTime = eventStart + DEFAULT_EVENT_LIFECYCLE_MS;
       return now <= expirationTime;
     };
 
