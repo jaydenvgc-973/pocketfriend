@@ -229,10 +229,10 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   }
 
   const activeDeduped = deduped
-    .filter(e => e.is_active_character)
+    .filter(e => e.character_type === 'active_created_character')
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   const inactiveDeduped = deduped
-    .filter(e => !e.is_active_character)
+    .filter(e => e.character_type !== 'active_created_character')
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
 
   const roster = [

@@ -229,12 +229,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           ` | ref_count=${userRefImageUrls.length}`
         );
 
-        // Active first (desc by created_date), then inactive
+        // Active created character type first (desc by created_date), then others
         const activeChars = liveChars
-          .filter(c => c.is_active_character)
+          .filter(c => c.character_type === 'active_created_character')
           .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
         const inactiveChars = liveChars
-          .filter(c => !c.is_active_character)
+          .filter(c => c.character_type !== 'active_created_character')
           .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
 
         const roster = [userEntry, ...activeChars, ...inactiveChars];
@@ -1098,7 +1098,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                               <span className="font-medium">{char.name}</span>
                               {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
                               {char.is_world_person && <span className="text-[10px] text-muted-foreground/60 ml-auto">{char.source_character_name}</span>}
-                              {char.is_active_character && !char.is_user && <span className="text-[10px] text-primary/60 ml-auto">Active</span>}
+                              {char.character_type === 'active_created_character' && !char.is_user && <span className="text-[10px] text-primary/60 ml-auto">Active</span>}
                             </button>
                           ))}
                         </div>

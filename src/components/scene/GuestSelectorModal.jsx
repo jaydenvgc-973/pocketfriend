@@ -199,12 +199,12 @@ export default function GuestSelectorModal({ location, onSelect, onClose }) {
                         {entry.name}
                       </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        {entry.is_active_character && (
+                        {entry.character_type === 'active_created_character' && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                             Active
                           </span>
                         )}
-                        {entry.character_type && !entry.is_active_character && (
+                        {entry.character_type && entry.character_type !== 'active_created_character' && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground font-medium capitalize">
                             {entry.character_type.replace(/_/g, ' ')}
                           </span>

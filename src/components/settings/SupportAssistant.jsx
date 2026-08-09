@@ -1122,8 +1122,7 @@ export default function SupportAssistant({ user }) {
           base44.functions.invoke('fetchAllLocationsForUser', {}),
         ]);
         const activeCreated = chars.filter(c =>
-          c.character_type === 'active_created_character' ||
-          (!c.character_type && c.is_active_character !== false && c.status === 'active')
+          c.character_type === 'active_created_character'
         );
         const noHome = activeCreated.filter(c => !c.current_home_location_id);
         const locs = (locRes?.data?.locations || []).filter(l => ['home', 'hotel', 'shelter'].includes(l.category));

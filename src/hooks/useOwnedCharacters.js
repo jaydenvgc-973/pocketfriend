@@ -4,122 +4,30 @@
  * Single shared hook that owns ALL character fetching for this app.
  * Source of truth: owner_email. created_by is permanently forbidden.
  *
- * ════════════════════════════════════════════════════════════════════
- * LEGACY BACKWARD COMPATIBILITY — PERMANENT PROTECTION
- * ════════════════════════════════════════════════════════════════════
- * Legacy characters (created before newer schema fields were introduced)
- * MUST remain visible at all times. A missing field is never grounds
- * for exclusion. Rules:
+ * AUTHORITATIVE RESULT POLICY:
+ * A successful current authoritative query result is accepted as current
+ * truth. Historical roster size, cached Character objects, and anchor
+ * absence do not override a successful current fetch. Legitimate roster
+ * reductions (deletion, reclassification, account changes) are accepted
+ * without count-based recovery or stale-state injection.
  *
- * - Missing character_type → safe fallback to 'active_created_character'
- *   if profile data is present, else 'npc_fictitious'. NEVER exclude.
- * - Missing is_test_character → treat as false (keep character visible)
- * - Missing diagnostic_only  → treat as false (keep character visible)
- * - Missing owner_user_id    → acceptable; owner_email is the source of truth
- * - Missing newer metadata   → apply fallback; mark as needing compat repair
+ * CLASSIFICATION AUTHORITY:
+ * Persisted Character.character_type is the sole classification authority.
+ * Runtime code does not manufacture or substitute a different type.
+ * Derived slices (activeCreated, npcFictitious, etc.) filter by the
+ * persisted character_type value directly — no inference, no fallback.
  *
- * If a character was previously visible, it must remain visible across:
- * refreshes, schema changes, migrations, cache resets, optimization
- * passes, diagnostic runs, anchor logic, and partial queries.
- *
- * ════════════════════════════════════════════════════════════════════
- * LAST-KNOWN-GOOD PROTECTION — THREE LAYERS
- * ════════════════════════════════════════════════════════════════════
- *
- * LAYER 1 — RLS snapshot (written synchronously inside queryFn)
- *   The moment the RLS fetch returns > 1 record, we write the ID list
- *   and count to sessionStorage BEFORE returning from queryFn.
- *   This ensures the floor exists before any effect cycle runs.
- *   Subsequent fetches read this snapshot and refuse to return a
- *   smaller list — instead they merge fresh updates into the baseline.
- *
- * LAYER 2 — Floor guard inside queryFn
- *   Before returning a fresh result, queryFn reads the stored RLS
- *   snapshot count. If fresh < snapshot - 1 (beyond 1-deletion
- *   tolerance), the result is treated as partial and merged into the
- *   existing cache rather than replacing it.
- *   No effect cycle needed — this fires synchronously on every fetch.
- *
- * LAYER 3 — Bootstrap guard (effect, fires after stabilization)
- *   After both queries finish loading, evaluates the merged universe.
- *   If the result is partial vs the prior authoritative count, or if
- *   anchor characters are absent, triggers one controlled recovery.
- *   ANCHOR RULE: valid if AT LEAST ONE configured anchor is present.
- *
- * ════════════════════════════════════════════════════════════════════
- * WHY SYNCHRONOUS SNAPSHOT WRITE IS CRITICAL
- * ════════════════════════════════════════════════════════════════════
- * Effects (useEffect) run after React renders the component.
- * A second fetch can fire and complete between queryFn returning and
- * the effect running — creating a window where the snapshot doesn't
- * exist yet and the floor guard passes a partial second result.
- * Writing inside queryFn closes this window completely.
+ * LEGACY BACKWARD COMPATIBILITY:
+ * Missing is_test_character / diagnostic_only → treat as false (keep visible).
+ * Missing owner_user_id → acceptable; owner_email is the source of truth.
+ * Terminal lifecycle states (deleted, soft_deleted, merged) are excluded
+ * from the live roster. moved_away is NOT terminal — Home shows those characters.
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
-
-const BOOTSTRAP_COOLDOWN_MS = 8 * 60 * 1000; // 8 minutes
-const MIN_AUTHORITATIVE_COUNT = 2; // A single record is never authoritative for a multi-char account
-
-// ── sessionStorage key helpers ────────────────────────────────────────────────
-const ssBootstrapKey = (email) => `char_bootstrap_${email}`;
-const ssRlsSnapshotKey = (email) => `char_rls_snapshot_${email}`;
-
-// ── RLS snapshot (written synchronously in queryFn) ───────────────────────────
-function readRlsSnapshot(email) {
-  try {
-    const raw = sessionStorage.getItem(ssRlsSnapshotKey(email));
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-/**
- * Write the RLS snapshot ONLY if it would increase the stored count.
- * Never lowers the floor — the floor only grows.
- * Called synchronously inside queryFn, before React renders.
- */
-function writeRlsSnapshotIfGrows(email, ids, count) {
-  try {
-    if (count < MIN_AUTHORITATIVE_COUNT) return; // too small to establish a floor
-    const existing = readRlsSnapshot(email);
-    if (existing && count <= existing.count - 1) return; // would lower floor — refuse
-    sessionStorage.setItem(ssRlsSnapshotKey(email), JSON.stringify({
-      ids, count, savedAt: Date.now(),
-    }));
-  } catch {}
-}
-
-// ── Bootstrap meta ────────────────────────────────────────────────────────────
-function readBootstrapMeta(email) {
-  try {
-    const raw = sessionStorage.getItem(ssBootstrapKey(email));
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
-}
-
-function writeBootstrapMeta(email, count) {
-  try {
-    const existing = readBootstrapMeta(email);
-    const priorCount = existing?.lastSuccessfulCount ?? null;
-    // Never bless a suspiciously small count as the new authoritative baseline
-    if (count < MIN_AUTHORITATIVE_COUNT && (priorCount === null || priorCount >= MIN_AUTHORITATIVE_COUNT)) {
-      console.warn(`[useOwnedCharacters] Refusing to bless suspect count=${count} (prior=${priorCount ?? 'none'})`);
-      return;
-    }
-    sessionStorage.setItem(ssBootstrapKey(email), JSON.stringify({
-      lastFetchAt: Date.now(), lastSuccessfulCount: count, email,
-    }));
-  } catch {}
-}
-
-function isBootstrapCoolingDown(email) {
-  const meta = readBootstrapMeta(email);
-  if (!meta?.lastFetchAt) return false;
-  return (Date.now() - meta.lastFetchAt) < BOOTSTRAP_COOLDOWN_MS;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -131,34 +39,12 @@ export function useOwnedCharacters(
   const email  = currentUser?.email || null;
   const userId = currentUser?.id    || null;
   const queryClient = useQueryClient();
-  const recoveryFiredRef = useRef(false);
-
-  // Reset recoveryFiredRef when email changes (account switch / new session)
-  // Also reset when anchors transition from empty → populated: the first pass ran
-  // without anchor knowledge (settings still loading), so it must re-evaluate now
-  // that real anchor IDs are available.
-  const prevEmailRef = useRef(null);
-  const prevAnchorKeyRef = useRef('[]');
-  const anchorKey = JSON.stringify((anchorCharacterIds || []).filter(Boolean).sort());
-
-  if (prevEmailRef.current !== email) {
-    prevEmailRef.current = email;
-    recoveryFiredRef.current = false;
-    prevAnchorKeyRef.current = '[]';
-  } else if (prevAnchorKeyRef.current === '[]' && anchorKey !== '[]') {
-    // Anchors just became populated — prior recovery ran without them, must re-arm
-    recoveryFiredRef.current = false;
-    prevAnchorKeyRef.current = anchorKey;
-  } else {
-    prevAnchorKeyRef.current = anchorKey;
-  }
 
   // ── 1. RLS characters (all types, all statuses, owner_email scoped) ──────────
   const {
     data: rlsCharacters = [],
     isLoading: isLoadingRls,
     isFetching: isFetchingRls,
-    refetch: refetchRls,
   } = useQuery({
     queryKey: ["characters", email],
     // Seed React Query cache from localStorage before first server call.
@@ -176,18 +62,6 @@ export function useOwnedCharacters(
     queryFn: async () => {
       if (!email) return [];
 
-      // Read the stored RLS snapshot (written by prior successful fetches).
-      // This is the authoritative floor — never lowered, never cleared mid-session.
-      const snapshot = readRlsSnapshot(email);
-      const snapshotCount = snapshot?.count || 0;
-
-      // Read current RLS cache as a secondary fallback floor
-      // (handles the case where a prior fetch populated the cache but snapshot
-      //  wasn't written yet — e.g. snapshot cleared by browser, cache still warm)
-      const cachedRls = queryClient.getQueryData(["characters", email]) || [];
-
-      // OLDEST-FIRST: ensures partial/rate-limited results return foundational
-      // characters (Ethan, Melody) rather than the newest-created one (Shiloh).
       const fresh = await base44.entities.Character.filter(
         { owner_email: email },
         "created_date", // ascending — oldest first
@@ -196,65 +70,16 @@ export function useOwnedCharacters(
       // LEGACY COMPATIBILITY: is_test_character and diagnostic_only may be absent on
       // older records — treat undefined as false. Never exclude a character because
       // a newer metadata field is missing. Explicit true is required to exclude.
-      const freshFiltered = fresh.filter(c => c.is_test_character !== true && c.diagnostic_only !== true);
-
-      // ── SNAPSHOT WRITE (synchronous, inside queryFn) ──────────────────────
-      // Write the snapshot NOW if this fetch is authoritative (count grows).
-      // This must happen before we return, so the floor is established before
-      // any subsequent fetch or effect cycle runs.
-      writeRlsSnapshotIfGrows(email, freshFiltered.map(c => c.id), freshFiltered.length);
-
-      // ── FLOOR GUARD ────────────────────────────────────────────────────────
-      // PRIMARY: compare fresh count against the stored snapshot count.
-      // SECONDARY: compare fresh count against current RLS cache length.
-      // If either floor is breached, merge instead of replace.
-      const primaryBreach   = snapshotCount >= MIN_AUTHORITATIVE_COUNT &&
-                              freshFiltered.length < snapshotCount - 1;
-      const secondaryBreach = cachedRls.length >= MIN_AUTHORITATIVE_COUNT &&
-                              freshFiltered.length < cachedRls.length - 1;
-
-      if (primaryBreach || secondaryBreach) {
-        const reason = primaryBreach
-          ? `fresh(${freshFiltered.length}) < snapshot(${snapshotCount})`
-          : `fresh(${freshFiltered.length}) < cache(${cachedRls.length})`;
-
-        console.warn(
-          `[useOwnedCharacters] Floor guard: ${reason}. ` +
-          `Merging fresh updates into baseline instead of replacing.`
-        );
-
-        // Use whichever baseline is larger (snapshot IDs if available, else cache)
-        const baseline = (snapshotCount >= cachedRls.length) ? (snapshot?.ids || []).map(id => {
-          // Try to get fresh data for this id; fall back to cached
-          const freshMatch = freshFiltered.find(c => c.id === id);
-          const cacheMatch = cachedRls.find(c => c.id === id);
-          return freshMatch || cacheMatch || null;
-        }).filter(Boolean) : cachedRls;
-
-        const freshById = new Map(freshFiltered.map(c => [c.id, c]));
-        const seen = new Set();
-        const merged = [];
-
-        // Patch baseline records with fresh data where available
-        for (const record of baseline) {
-          if (!record?.id || seen.has(record.id)) continue;
-          seen.add(record.id);
-          merged.push(freshById.get(record.id) || record);
-        }
-        // Add any genuinely new records not in baseline
-        for (const c of freshFiltered) {
-          if (!seen.has(c.id)) {
-            seen.add(c.id);
-            merged.push(c);
-          }
-        }
-
-        // Update snapshot with the merged (larger) result
-        writeRlsSnapshotIfGrows(email, merged.map(c => c.id), merged.length);
-        // Persist merged result to localStorage for next page load
-        lfcWrite(email, 'characters', merged);
-        return merged;
-      }
+      // Terminal lifecycle states (deleted, soft_deleted, merged) are excluded from
+      // the live roster so deleted-character information does not function as current
+      // character authority. moved_away is NOT terminal — Home shows those characters.
+      const freshFiltered = fresh.filter(c =>
+        c.is_test_character !== true &&
+        c.diagnostic_only !== true &&
+        c.status !== 'deleted' &&
+        c.status !== 'soft_deleted' &&
+        c.status !== 'merged'
+      );
 
       // Persist to localStorage so next page load is instant
       if (freshFiltered.length > 0) lfcWrite(email, 'characters', freshFiltered);
@@ -275,9 +100,8 @@ export function useOwnedCharacters(
   });
 
   // ── 2. NPC fictitious via service-role backend ───────────────────────────────
-  // RATE LIMIT PROTECTION: staleTime is 15 minutes (up from 10) to reduce
-  // re-fetch frequency. refetchOnMount=false prevents duplicate invocations
-  // when the component remounts during anchor-missing recovery cycles.
+  // RATE LIMIT PROTECTION: staleTime is 15 minutes to reduce re-fetch frequency.
+  // refetchOnMount=false prevents duplicate invocations on component remounts.
   const {
     data: backendNpcs = [],
     isLoading: isLoadingNpc,
@@ -325,121 +149,12 @@ export function useOwnedCharacters(
     });
   })();
 
-  // ── BOOTSTRAP GUARD ───────────────────────────────────────────────────────────
-  // Runs after both queries stabilize. Checks the merged universe against:
-  //   A) Prior authoritative count (bootstrap meta)
-  //   B) Anchor presence (ANY anchor present = valid; NONE = incomplete)
-  //   C) Default character presence
-  // Triggers one controlled recovery fetch if the result is partial.
-  useEffect(() => {
-    if (!email) return;
-    if (isLoadingRls || isLoadingNpc) return;
-    if (isFetchingRls || isFetchingNpc) return;
-    if (recoveryFiredRef.current) return;
-
-    const mergedCount = allCharacters.length;
-    const meta        = readBootstrapMeta(email);
-    const priorCount  = meta?.lastSuccessfulCount ?? null;
-
-    const isPartialVsPrior    = priorCount !== null && mergedCount < priorCount - 1;
-    const isSuspectFirstFetch = priorCount === null && mergedCount < MIN_AUTHORITATIVE_COUNT;
-    const isEmpty             = mergedCount === 0;
-
-    const isDefaultMissing = !!expectedDefaultCharacterId &&
-      !allCharacters.some(c => c.id === expectedDefaultCharacterId);
-
-    // ANCHOR RULE: ANY present = valid. NONE present (when configured) = incomplete.
-    const validAnchors    = (anchorCharacterIds || []).filter(id => !!id);
-    const anyAnchorPresent = validAnchors.length === 0 ||
-      validAnchors.some(id => allCharacters.some(c => c.id === id));
-    const isAnchorMissing = validAnchors.length > 0 && !anyAnchorPresent;
-
-    if (isAnchorMissing) {
-      console.warn(
-        `[useOwnedCharacters] NO anchor in merged list. ` +
-        `anchors=[${validAnchors.join(',')}] | mergedCount=${mergedCount}`
-      );
-    }
-
-    // isDefaultMissing is intentionally excluded from needsRecovery.
-    // A stale optional default_character_id (UserSettings.default_character_id pointing to a
-    // deleted/inaccessible character) must NEVER trigger a full refetch or recovery loop.
-    // The character roster loaded successfully. The consumer handles missing default by
-    // falling back to the first active character. Only a data integrity issue warrants a refetch.
-    if (isDefaultMissing) {
-      console.log(
-        `[useOwnedCharacters] defaultMissing=true: default_character_id=${expectedDefaultCharacterId} ` +
-        `is not in loaded characters. This is a stale optional preference — NOT a recovery trigger. ` +
-        `merged=${mergedCount}. Consumer should clear stale default_character_id automatically.`
-      );
-    }
-    const needsRecovery = isEmpty || isPartialVsPrior || isSuspectFirstFetch || isAnchorMissing;
-
-    if (!needsRecovery) {
-      writeBootstrapMeta(email, mergedCount);
-      return;
-    }
-
-    // ANCHOR ABSENCE overrides cooldown — an anchor missing is always a hard failure.
-    // The cooldown exists to prevent rapid re-fetch storms, but if the anchor characters
-    // (the continuity-critical records) are confirmed absent, we MUST attempt recovery
-    // regardless of when the last fetch ran. Cooldown still applies to all other
-    // partial-load conditions (count drop, default missing, etc.).
-    const cooldownExempt = isAnchorMissing;
-
-    if (!cooldownExempt && isBootstrapCoolingDown(email)) {
-      console.log(`[useOwnedCharacters] Partial — cooldown active. merged=${mergedCount} prior=${priorCount ?? 'none'}`);
-      return;
-    }
-
-    if (cooldownExempt) {
-      console.warn(`[useOwnedCharacters] Anchor absent — bypassing cooldown to force recovery. merged=${mergedCount}`);
-    }
-
-    recoveryFiredRef.current = true;
-
-    console.warn(
-      `[useOwnedCharacters] Recovery triggered. ` +
-      `merged=${mergedCount} | prior=${priorCount ?? 'none'} | ` +
-      `isEmpty=${isEmpty} | partial=${isPartialVsPrior} | suspectFirst=${isSuspectFirstFetch} | ` +
-      `defaultMissing=${isDefaultMissing} | anchorMissing=${isAnchorMissing}`
-    );
-
-    // Stamp cooldown before firing so rapid re-mounts don't stack
-    try {
-      const existing = readBootstrapMeta(email);
-      sessionStorage.setItem(ssBootstrapKey(email), JSON.stringify({
-        ...(existing || {}), lastFetchAt: Date.now(), email,
-      }));
-    } catch {}
-
-    // RATE LIMIT PROTECTION: Anchor-missing recovery bypasses the cooldown, which
-    // is correct behavior — but it fires immediately on first load because anchors
-    // come from UserSettings (which loads slightly after characters). Adding a
-    // 2-second stabilization delay prevents the recovery from firing during the
-    // normal settings-load window, while still catching genuine anchor absences.
-    //
-    // ANCHOR ALREADY IN MERGED LIST CHECK: anchors may be NPCs returned via
-    // backendNpcs (not visible via owner_email RLS filter). In that case,
-    // "anchor missing from RLS" is a false alarm — the anchor IS present in the
-    // merged allCharacters list. Re-evaluate against the full merged list, not
-    // just the RLS slice. If any anchor is in allCharacters (regardless of which
-    // query returned it), treat as valid and skip the recovery refetch.
-    const anyAnchorInMerged = validAnchors.some(id => allCharacters.some(c => c.id === id));
-    if (isAnchorMissing && anyAnchorInMerged) {
-      console.log(`[useOwnedCharacters] Anchor found in merged list (via NPC or RLS) — skipping recovery refetch.`);
-      writeBootstrapMeta(email, mergedCount);
-      return;
-    }
-
-    // Only anchor-missing gets the 2s delay — isEmpty fires immediately.
-    const recoveryDelay = (isAnchorMissing && !isEmpty) ? 2000 : 0;
-    setTimeout(() => {
-      refetchRls();
-    }, recoveryDelay);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, isLoadingRls, isLoadingNpc, isFetchingRls, isFetchingNpc, allCharacters.length,
-      expectedDefaultCharacterId, JSON.stringify(anchorCharacterIds), backendNpcs.length]);
+  // NOTE: The Snapshot Floor / Bootstrap Guard recovery effect has been removed.
+  // A successful current authoritative query result is accepted as current truth.
+  // Historical roster size, cached Character objects, and anchor-absence no longer
+  // override a successful current fetch. Legitimate roster reductions (deletion,
+  // reclassification, account changes) are accepted without count-based recovery.
+  // Stale default_character_id is handled by the consumer (Home), not by a refetch loop.
 
   // ── Real-time character cache sync — active on every page using this hook ────
   // Moves the Character.subscribe logic here from pages/Home/index so it remains
@@ -495,28 +210,14 @@ export function useOwnedCharacters(
   }, [email, queryClient]);
 
   // ── Derived slices ────────────────────────────────────────────────────────────
-  // LEGACY COMPATIBILITY: character_type may be null/missing on older records.
-  // A character without character_type that has profile data must not be excluded.
-  // Legacy resolution: if character_type is missing, infer from profile completeness.
-  // NEVER exclude a character solely because character_type is absent.
-  const resolveTypeLegacy = (c) => {
-    // STRICT RULE: Only explicit character_type='active_created_character' grants active classification.
-    // Profile data, schedule, needs, memories, or relationships do NOT promote a character.
-    // NPCs can have all of those and remain NPCs.
-    if (c.character_type === 'active_created_character') return 'active_created_character';
-    // All other explicit types returned as-is.
-    if (c.character_type) return c.character_type;
-    // Legacy fallback for records with no character_type — never default to active_created_character.
-    if (c.is_family_member || c.relationship_type === 'family') return 'npc_family_member';
-    if (c.fictional_relationships?.length > 0 && !c.is_family_member) return 'npc_fictitious';
-    // Safe final fallback: visible in NPC systems, not on Home cards.
-    return 'npc_regular';
-  };
-
-  const activeCreated    = allCharacters.filter(c => resolveTypeLegacy(c) === "active_created_character" && c.status !== "deleted");
-  const npcFictitious    = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_fictitious");
-  const npcFamilyMembers = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_family_member");
-  const npcRegular       = allCharacters.filter(c => resolveTypeLegacy(c) === "npc_regular");
+  // Persisted character_type is the sole classification authority.
+  // Runtime code does not manufacture or substitute a different type.
+  // If character_type is absent, the character remains in allCharacters but
+  // does not appear in a type-specific slice — it is not reclassified.
+  const activeCreated    = allCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted");
+  const npcFictitious    = allCharacters.filter(c => c.character_type === "npc_fictitious");
+  const npcFamilyMembers = allCharacters.filter(c => c.character_type === "npc_family_member");
+  const npcRegular       = allCharacters.filter(c => c.character_type === "npc_regular");
   const travelCompanions = [...activeCreated, ...npcFictitious, ...npcFamilyMembers];
 
   // ── 3. Prefetch CharacterFinancial for all characters ────────────────────────

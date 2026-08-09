@@ -225,9 +225,9 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
 
   if (!isOpen) return null;
 
-  // Split roster into active characters and other characters for display grouping
-  const activeChars = roster.filter(e => e.is_active_character);
-  const otherChars = roster.filter(e => !e.is_active_character);
+  // Split roster into active created characters and other characters for display grouping
+  const activeChars = roster.filter(e => e.character_type === 'active_created_character');
+  const otherChars = roster.filter(e => e.character_type !== 'active_created_character');
 
   return createPortal(
     <AnimatePresence>

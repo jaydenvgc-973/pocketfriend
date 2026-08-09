@@ -101,7 +101,7 @@ export default function AdminVerification() {
                       {dryRunResult?.character_roster_sample ? (
                         dryRunResult.character_roster_sample.map(ch => (
                           <option key={ch.id} value={ch.id}>
-                            {ch.name} {ch.is_active_character ? '(active)' : ''}
+                            {ch.name} {ch.character_type === 'active_created_character' ? '(active)' : ''}
                           </option>
                         ))
                       ) : null}

@@ -29,13 +29,13 @@ export async function fetchCharacterListForPicker(base44, userEmail) {
   
   const active = all.filter(c => c.status !== 'deleted');
   
-  // Sort: active characters first (sorted by created_date desc), then others
+  // Sort: active_created_character type first (sorted by created_date desc), then others
   const activeChars = active
-    .filter(c => c.is_active_character)
+    .filter(c => c.character_type === 'active_created_character')
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   const otherChars = active
-    .filter(c => !c.is_active_character)
+    .filter(c => c.character_type !== 'active_created_character')
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   // Include user as special entity at the start
@@ -74,7 +74,7 @@ export function getCharacterDisplayInfo(character) {
     id: character.id,
     name: character.name,
     avatar_url: character.avatar_url,
-    is_active: character.is_active_character || false,
+    is_active: character.character_type === 'active_created_character',
     status: character.status,
   };
 }

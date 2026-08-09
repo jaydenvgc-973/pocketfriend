@@ -191,7 +191,7 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
                     className="w-full text-left p-3 rounded-lg border border-border hover:bg-secondary transition-colors"
                   >
                     <div className="font-semibold">{char.name}</div>
-                    <div className="text-xs text-muted-foreground">{char.is_active_character ? 'Active Character' : 'NPC'}</div>
+                    <div className="text-xs text-muted-foreground">{char.character_type === 'active_created_character' ? 'Active Character' : 'NPC'}</div>
                   </button>
                 ))
               )}

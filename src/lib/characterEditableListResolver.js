@@ -195,43 +195,18 @@ function isCharacterOwnedByCurrentUser(character, currentUserId, currentUserEmai
  * Always resolve to the most appropriate valid type using the fallback chain.
  */
 function resolveCharacterType(character) {
-  if (!character) return 'active_created_character'; // safest visible default
+  if (!character) return null;
 
-  // If character_type is explicitly set and valid, use it
-  // CRITICAL: npc_world_service must be in validTypes so Vick Servicio is never
-  // misclassified as a different type by the legacy fallback chain.
+  // Persisted character_type is the sole classification authority.
+  // Runtime code does not manufacture or substitute a different type.
   const validTypes = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service', 'ambient'];
   if (character.character_type && validTypes.includes(character.character_type)) {
     return character.character_type;
   }
 
-  // LEGACY FALLBACK: infer type from behavior/data if character_type is missing.
-  // This path runs ONLY for legacy records with null/absent character_type.
-  // It must produce a visible type — never 'unknown'.
-
-  // LEGACY FALLBACK for records with missing character_type.
-  // CRITICAL RULE: profile data (backstory, schedule, needs) does NOT promote a character
-  // to active_created_character. Only an explicit character_type='active_created_character'
-  // in the database grants that classification. NPCs can have rich profiles and still be NPCs.
-
-  // If it's explicitly marked as family → npc_family_member
-  if (character.is_family_member || character.relationship_type === 'family') {
-    return 'npc_family_member';
-  }
-
-  // If it's in "People in their world" and is standalone (not family) → npc_fictitious
-  if (character.fictional_relationships?.length > 0 && !character.is_family_member) {
-    return 'npc_fictitious';
-  }
-
-  // Final fallback: npc_regular keeps the character visible in NPC systems
-  // (World Phone, relationships, contacts, scene) without making it a Home card.
-  // This is the safe default for any legacy record whose type cannot be inferred.
-  console.warn(
-    `[resolveCharacterType] Legacy character "${character.name}" (${character.id}) ` +
-    `has no character_type — defaulting to npc_regular (NPC systems only, not Home cards).`
-  );
-  return 'npc_regular';
+  // If character_type is absent or invalid, return null — do not infer.
+  // The character remains in allCharacters but is not reclassified.
+  return null;
 }
 
 /**

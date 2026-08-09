@@ -615,7 +615,7 @@ export default function CharacterManager() {
                            {itemName}
                          </p>
                          {isUser && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">You</span>}
-                         {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                         {!isUser && !isNPC && itemData.character_type === 'active_created_character' && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
                        </div>
                        {isNPC && (item.roles?.length > 0 ? (
                          <p className="text-sm text-muted-foreground">{item.roles.join(', ')}</p>
