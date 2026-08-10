@@ -50,6 +50,35 @@ Deno.serve(async (req) => {
       created_at: nowIso,
     });
 
+    // ── 5. CLEAR CANONICAL CHARACTER LOCATION ──────────────────────────────────
+    // Transition each character out of the Gathering Room through the existing
+    // canonical location fields. The frontend resolver will recompute their real
+    // location (home, work, etc.) on next render since resolved_source_reason
+    // no longer equals 'gathering_room'.
+    for (const charId of (session.character_ids || [])) {
+      try {
+        const chars = await base44.asServiceRole.entities.Character.filter({ id: charId }, null, 1);
+        const char = chars[0];
+        if (char && char.resolved_source_reason === 'gathering_room') {
+          await base44.asServiceRole.entities.Character.update(charId, {
+            resolved_location_type: null,
+            resolved_presence_status: 'home',
+            resolved_current_location_id: char.current_home_location_id || null,
+            resolved_current_location_name: null,
+            resolved_source_reason: 'gathering_room_exit',
+            resolved_last_updated_at: nowIso,
+          });
+        }
+      } catch (_) {}
+    }
+
+    // ── 6. REGENERATE SCENE IMAGE ──
+    try {
+      await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
+        gathering_room_id: gatheringRoomId,
+      });
+    } catch (_) {}
+
     return Response.json({
       success: true,
       session_id: session.id,

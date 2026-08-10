@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
         gathering_room_name: sess.gathering_room_name,
         owner_email: sess.owner_email,
         owner_user_id: sess.owner_user_id,
-        cooldown_until,
+        cooldown_until: cooldownUntil,
         reason: 'expired',
         character_ids: sess.character_ids || [],
         created_at: nowIso,

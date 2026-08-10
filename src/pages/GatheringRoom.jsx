@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X } from "lucide-react";
+import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Play, Music, Video, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 
@@ -13,11 +13,14 @@ export default function GatheringRoom() {
   const queryClient = useQueryClient();
   const [messageText, setMessageText] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [directedTo, setDirectedTo] = useState([]); // participant IDs for directed speech
+  const [directedTo, setDirectedTo] = useState([]);
   const [showDirectPicker, setShowDirectPicker] = useState(false);
   const [error, setError] = useState(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(1800);
+  const [showMediaInput, setShowMediaInput] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaTitle, setMediaTitle] = useState("");
   const messagesEndRef = useRef(null);
 
   // ── Current user ──
@@ -26,8 +29,8 @@ export default function GatheringRoom() {
     queryFn: () => base44.auth.me(),
   });
 
-  // ── Load room ──
-  const { data: room } = useQuery({
+  // ── Load room (with realtime updates for scene_image + active_media) ──
+  const { data: room, refetch: refetchRoom } = useQuery({
     queryKey: ["gatheringRoom", roomId],
     queryFn: async () => {
       const rooms = await base44.entities.GatheringRoom.filter({ id: roomId }, null, 1);
@@ -80,7 +83,7 @@ export default function GatheringRoom() {
     }
   }, [mySession]);
 
-  // ── Session countdown timer ──
+  // ── Session countdown timer (display only — authoritative expiration is server-side) ──
   useEffect(() => {
     if (!sessionExpiresAt) return;
     const interval = setInterval(() => {
@@ -110,11 +113,18 @@ export default function GatheringRoom() {
       }
     });
 
+    const unsubRoom = base44.entities.GatheringRoom.subscribe((event) => {
+      if (event.data?.id === roomId) {
+        refetchRoom();
+      }
+    });
+
     return () => {
       unsubMessages();
       unsubParticipants();
+      unsubRoom();
     };
-  }, [roomId, refetchMessages, refetchParticipants]);
+  }, [roomId, refetchMessages, refetchParticipants, refetchRoom]);
 
   // ── Auto-scroll to bottom on new messages ──
   useEffect(() => {
@@ -135,7 +145,6 @@ export default function GatheringRoom() {
     return participants.find(p => p.owner_email === currentUser?.email && p.participant_type === "user");
   }, [participants, currentUser?.email]);
 
-  // ── Am I in the room? ──
   const isInRoom = !!mySession && mySession.status === "active";
 
   // ── Handle send message ──
@@ -175,6 +184,41 @@ export default function GatheringRoom() {
     }
   };
 
+  // ── Handle shared media ──
+  const handleSetMedia = async (type) => {
+    if (type === "none") {
+      try {
+        await base44.functions.invoke("setGatheringRoomMedia", {
+          gathering_room_id: roomId,
+          media_type: "none",
+        });
+        refetchRoom();
+        setShowMediaInput(false);
+        setMediaUrl("");
+        setMediaTitle("");
+      } catch (err) {
+        setError("Failed to stop media");
+      }
+      return;
+    }
+
+    if (!mediaUrl.trim()) return;
+    try {
+      await base44.functions.invoke("setGatheringRoomMedia", {
+        gathering_room_id: roomId,
+        media_type: type,
+        url: mediaUrl.trim(),
+        title: mediaTitle.trim() || null,
+      });
+      refetchRoom();
+      setShowMediaInput(false);
+      setMediaUrl("");
+      setMediaTitle("");
+    } catch (err) {
+      setError("Failed to set media");
+    }
+  };
+
   // ── Format time remaining ──
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -182,7 +226,7 @@ export default function GatheringRoom() {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
-  // ── Format message timestamp ──
+  // ── Format message timestamp (Eastern Time) ──
   const formatMsgTime = (ts) => {
     if (!ts) return "";
     return new Date(ts).toLocaleTimeString("en-US", {
@@ -198,6 +242,9 @@ export default function GatheringRoom() {
       </div>
     );
   }
+
+  const activeMedia = room.active_media;
+  const sceneImage = room.scene_image_url || room.image_url;
 
   return (
     <div className="min-h-screen bg-background pb-20">
@@ -223,12 +270,12 @@ export default function GatheringRoom() {
         )}
       </div>
 
-      {/* ── Scene Image ── */}
+      {/* ── Scene Image (dynamic — reflects current occupants) ── */}
       <div className="pt-14">
         <div className="relative w-full h-48 sm:h-64 overflow-hidden">
-          {room.image_url ? (
+          {sceneImage ? (
             <img
-              src={room.image_url}
+              src={sceneImage}
               alt={room.name}
               className="w-full h-full object-cover"
             />
@@ -245,6 +292,34 @@ export default function GatheringRoom() {
           )}
         </div>
       </div>
+
+      {/* ── Shared Media Bar ── */}
+      {activeMedia && activeMedia.media_type && activeMedia.media_type !== "none" && (
+        <div className="px-4 py-2 bg-secondary/50 border-b border-border flex items-center gap-2">
+          {activeMedia.media_type === "video" ? (
+            <Video className="w-4 h-4 text-primary flex-shrink-0" />
+          ) : (
+            <Music className="w-4 h-4 text-primary flex-shrink-0" />
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-foreground truncate">
+              {activeMedia.title || activeMedia.media_type}
+            </p>
+            <p className="text-[10px] text-muted-foreground">
+              Started by {activeMedia.started_by_participant_name}
+            </p>
+          </div>
+          {isInRoom && (
+            <button
+              onClick={() => handleSetMedia("none")}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+              title="Stop media"
+            >
+              <Square className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Participant Bar ── */}
       <div className="px-4 py-3 border-b border-border">
@@ -335,6 +410,16 @@ export default function GatheringRoom() {
                     {msg.image_url && (
                       <img src={msg.image_url} alt="" className="mt-1 rounded-xl max-w-[200px]" />
                     )}
+                    {msg.media_share && (
+                      <div className="mt-1 rounded-xl bg-secondary p-2 flex items-center gap-2 max-w-[200px]">
+                        {msg.media_share.media_type === "video" ? (
+                          <Video className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                        ) : (
+                          <Music className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                        )}
+                        <span className="text-xs truncate">{msg.media_share.title || "Shared media"}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -412,6 +497,51 @@ export default function GatheringRoom() {
             )}
           </AnimatePresence>
 
+          {/* ── Media input popup ── */}
+          <AnimatePresence>
+            {showMediaInput && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-4"
+                onClick={() => setShowMediaInput(false)}
+              >
+                <motion.div
+                  initial={{ y: 50 }}
+                  animate={{ y: 0 }}
+                  exit={{ y: 50 }}
+                  className="bg-card border border-border rounded-2xl p-4 w-full max-w-sm space-y-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <h3 className="text-sm font-bold">Share media with the room</h3>
+                  <input
+                    type="text"
+                    placeholder="Title (optional)"
+                    value={mediaTitle}
+                    onChange={(e) => setMediaTitle(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-sm text-foreground"
+                  />
+                  <input
+                    type="text"
+                    placeholder="URL"
+                    value={mediaUrl}
+                    onChange={(e) => setMediaUrl(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-sm text-foreground"
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => handleSetMedia("video")}>
+                      <Video className="w-3.5 h-3.5" /> Video
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1 gap-1" onClick={() => handleSetMedia("music")}>
+                      <Music className="w-3.5 h-3.5" /> Music
+                    </Button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* ── Message Input ── */}
           <div className="fixed bottom-0 left-0 right-0 z-40 bg-background/90 backdrop-blur-xl border-t border-border px-4 py-3">
             <div className="max-w-lg mx-auto">
@@ -440,6 +570,13 @@ export default function GatheringRoom() {
                   }`}
                 >
                   <AtSign className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setShowMediaInput(true)}
+                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors"
+                  title="Share media"
+                >
+                  <Play className="w-5 h-5" />
                 </button>
                 <input
                   type="text"

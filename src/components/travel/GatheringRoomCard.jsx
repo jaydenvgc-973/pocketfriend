@@ -3,14 +3,22 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Clock, X, Check, AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Users, Clock, AlertCircle } from "lucide-react";
 
-export default function GatheringRoomCard({ room, currentUser, activeCharacters }) {
+/**
+ * GatheringRoomCard — displays a Gathering Room on the Travel page.
+ *
+ * SINGLE SELECTION AUTHORITY: This component does NOT maintain its own character
+ * selection state. It consumes the existing Travel page character picker
+ * (selectedCharacterIds) directly. When the user taps a card, admission is
+ * attempted with whatever characters are already selected in the Travel picker.
+ *
+ * If capacity fails, the error is shown inline — the user returns to the
+ * existing Travel picker to adjust their selection. No second picker modal.
+ */
+export default function GatheringRoomCard({ room, currentUser, selectedCharacterIds = [] }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [showEntryModal, setShowEntryModal] = useState(false);
-  const [selectedCharIds, setSelectedCharIds] = useState([]);
   const [isAdmitting, setIsAdmitting] = useState(false);
   const [admitError, setAdmitError] = useState(null);
 
@@ -60,30 +68,37 @@ export default function GatheringRoomCard({ room, currentUser, activeCharacters 
   });
 
   const handleEnter = async () => {
+    setAdmitError(null);
+
+    // Already in the room → just navigate
     if (mySession) {
       navigate(`/gathering-room/${room.id}`);
       return;
     }
-    setShowEntryModal(true);
-    setSelectedCharIds([]);
-    setAdmitError(null);
-  };
 
-  const handleConfirmAdmit = async () => {
+    // Use the EXISTING Travel picker selection — no second picker
+    const partySize = 1 + selectedCharacterIds.length;
+
+    // Pre-check capacity locally for instant feedback
+    if (partySize > availableSlots) {
+      setAdmitError(
+        `Your party of ${partySize} exceeds ${availableSlots} available slot${availableSlots !== 1 ? "s" : ""}. Adjust your selection above.`
+      );
+      return;
+    }
+
     setIsAdmitting(true);
-    setAdmitError(null);
     try {
       const res = await base44.functions.invoke("admitToGatheringRoom", {
         gathering_room_id: room.id,
-        character_ids: selectedCharIds,
+        character_ids: selectedCharacterIds,
       });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomParticipants", room.id] });
-      setShowEntryModal(false);
       navigate(`/gathering-room/${room.id}`);
     } catch (err) {
-      const data = err?.response?.data || {};
+      const data = err?.response?.data || err?.data || {};
       if (data.error === "capacity_exceeded") {
-        setAdmitError(data.message || `Room is full. ${data.available_slots} slot(s) available.`);
+        setAdmitError(data.message || `Room has only ${data.available_slots} slot(s) open. Adjust your selection above.`);
       } else if (data.error === "cooldown_active") {
         const mins = Math.ceil((new Date(data.cooldown_until).getTime() - Date.now()) / 60000);
         setAdmitError(`You're on cooldown for this room. Try again in ${mins} minute(s).`);
@@ -96,15 +111,6 @@ export default function GatheringRoomCard({ room, currentUser, activeCharacters 
     setIsAdmitting(false);
   };
 
-  const toggleChar = (id) => {
-    setSelectedCharIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
-
-  const partySize = 1 + selectedCharIds.length;
-  const wouldFit = partySize <= availableSlots;
-
   return (
     <>
       <motion.div
@@ -112,9 +118,11 @@ export default function GatheringRoomCard({ room, currentUser, activeCharacters 
         onClick={handleEnter}
         className="relative rounded-2xl overflow-hidden border border-border bg-card cursor-pointer group"
       >
-        {/* Room image */}
+        {/* Room scene image — prefer dynamically generated scene, fall back to base image */}
         <div className="relative h-28 overflow-hidden">
-          {room.image_url ? (
+          {room.scene_image_url ? (
+            <img src={room.scene_image_url} alt={room.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+          ) : room.image_url ? (
             <img src={room.image_url} alt={room.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-primary/20 via-secondary to-background" />
@@ -156,110 +164,36 @@ export default function GatheringRoomCard({ room, currentUser, activeCharacters 
             ) : (
               <span className="text-[10px] text-muted-foreground">
                 {availableSlots} slot{availableSlots !== 1 ? "s" : ""} open
+                {selectedCharacterIds.length > 0 && (
+                  <span className="text-primary/70"> · your party: {1 + selectedCharacterIds.length}</span>
+                )}
               </span>
             )}
           </div>
+
+          {/* Inline error — no second picker, user adjusts selection in Travel picker */}
+          <AnimatePresence>
+            {admitError && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="flex items-start gap-1.5 pt-1"
+              >
+                <AlertCircle className="w-3 h-3 text-destructive flex-shrink-0 mt-0.5" />
+                <span className="text-[10px] text-destructive">{admitError}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {isAdmitting && (
+            <div className="flex items-center gap-2 pt-1">
+              <div className="w-3 h-3 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+              <span className="text-[10px] text-muted-foreground">Entering…</span>
+            </div>
+          )}
         </div>
       </motion.div>
-
-      {/* ── Entry Modal (character selector) ── */}
-      <AnimatePresence>
-        {showEntryModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-4"
-            onClick={() => !isAdmitting && setShowEntryModal(false)}
-          >
-            <motion.div
-              initial={{ y: 50 }}
-              animate={{ y: 0 }}
-              exit={{ y: 50 }}
-              className="bg-card border border-border rounded-2xl p-5 w-full max-w-sm"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-sm font-bold">Enter {room.name}</h3>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {occupancy}/8 here · {availableSlots} slot{availableSlots !== 1 ? "s" : ""} open
-                  </p>
-                </div>
-                <button onClick={() => !isAdmitting && setShowEntryModal(false)}>
-                  <X className="w-4 h-4 text-muted-foreground" />
-                </button>
-              </div>
-
-              <p className="text-xs text-muted-foreground mb-2">Choose who's coming with you:</p>
-
-              {/* Character selector */}
-              <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
-                {activeCharacters.length === 0 && (
-                  <p className="text-xs text-muted-foreground py-4 text-center">No characters available to bring.</p>
-                )}
-                {activeCharacters.map(char => {
-                  const isSelected = selectedCharIds.includes(char.id);
-                  return (
-                    <button
-                      key={char.id}
-                      onClick={() => toggleChar(char.id)}
-                      disabled={isAdmitting}
-                      className={`w-full flex items-center gap-2.5 p-2 rounded-xl transition-colors text-left ${
-                        isSelected ? "bg-primary/10 border border-primary/30" : "hover:bg-secondary border border-transparent"
-                      }`}
-                    >
-                      <div className="w-9 h-9 rounded-full overflow-hidden border border-border flex-shrink-0">
-                        {char.avatar_url || char.image_avatar_url ? (
-                          <img src={char.avatar_url || char.image_avatar_url} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full bg-secondary flex items-center justify-center text-xs font-bold">
-                            {char.name?.charAt(0)}
-                          </div>
-                        )}
-                      </div>
-                      <span className="flex-1 text-sm font-medium truncate">{char.name}</span>
-                      {isSelected && <Check className="w-4 h-4 text-primary flex-shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Party size + capacity check */}
-              <div className="flex items-center justify-between text-xs mb-3">
-                <span className="text-muted-foreground">
-                  Your party: <span className={`font-bold ${wouldFit ? "text-foreground" : "text-destructive"}`}>{partySize}</span>
-                  {" "}/ {availableSlots} available
-                </span>
-                {!wouldFit && partySize > 0 && (
-                  <span className="text-destructive flex items-center gap-1">
-                    <AlertCircle className="w-3 h-3" />
-                    Too many
-                  </span>
-                )}
-              </div>
-
-              {admitError && (
-                <div className="mb-3 p-2.5 rounded-lg bg-destructive/10 text-destructive text-xs flex items-start gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                  <span>{admitError}</span>
-                </div>
-              )}
-
-              <Button
-                onClick={handleConfirmAdmit}
-                disabled={isAdmitting || (partySize > availableSlots)}
-                className="w-full"
-              >
-                {isAdmitting ? "Entering…" : `Enter with ${selectedCharIds.length} ${selectedCharIds.length === 1 ? "character" : "characters"}`}
-              </Button>
-              <p className="text-[10px] text-muted-foreground text-center mt-2">
-                30-minute session · 5-min cooldown after
-              </p>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </>
   );
 }

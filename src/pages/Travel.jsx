@@ -624,7 +624,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   key={room.id}
                   room={room}
                   currentUser={currentUser}
-                  activeCharacters={activeCharacters}
+                  selectedCharacterIds={selectedCharacterIds}
                 />
               ))}
             </div>

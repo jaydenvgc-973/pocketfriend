@@ -169,6 +169,33 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── 12. SET CANONICAL CHARACTER LOCATION ──────────────────────────────────
+    // Each owned character's resolved location is set to the Gathering Room.
+    // This integrates with the existing location resolver via a guard in
+    // locationResolutionEngine.js that checks resolved_source_reason === 'gathering_room'.
+    // Uses existing fields (resolved_current_location_id, resolved_presence_status, etc.)
+    // — no new resolver, no parallel location truth.
+    // Only the character's OWN authoritative account record is updated.
+    for (const c of ownedChars) {
+      try {
+        await base44.asServiceRole.entities.Character.update(c.id, {
+          resolved_current_location_id: gatheringRoomId,
+          resolved_current_location_name: room.name,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'gathering_room',
+          resolved_last_updated_at: nowIso,
+        });
+      } catch (_) {}
+    }
+
+    // ── 13. REGENERATE SCENE IMAGE with current occupants ────────────────────
+    try {
+      await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
+        gathering_room_id: gatheringRoomId,
+      });
+    } catch (_) {}
+
     return Response.json({
       success: true,
       session_id: session.id,

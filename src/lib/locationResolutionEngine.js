@@ -100,6 +100,26 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     // Clear the stale resolved fields from local view so layers don't read them.
   }
 
+  // GATHERING ROOM GUARD: If the character is in a Gathering Room (indicated by
+  // resolved_source_reason === 'gathering_room'), return that location immediately.
+  // This integrates Gathering Room presence into the existing canonical location
+  // authority without creating a second resolver. The backend function
+  // (admitToGatheringRoom) sets these fields on the character's own account record.
+  // When the session ends (exit/expire), the backend clears resolved_source_reason
+  // and the resolver recomputes the character's real location (home, work, etc.).
+  // Foreign characters' Gathering Room presence is NEVER injected into another
+  // account's resolver — each account only reads its own Character records.
+  if (character.resolved_source_reason === 'gathering_room' && character.resolved_current_location_id) {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: character.resolved_current_location_name || 'Gathering Room',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: 'gathering_room',
+      resolved_zone: null,
+    };
+  }
+
   // HOSPITALIZATION GUARD: a hospitalized character is physically at the hospital
   // already committed by the authority (resolved_current_location_id). The
   // schedule/visit/home layers below must NOT re-resolve a hospitalized character

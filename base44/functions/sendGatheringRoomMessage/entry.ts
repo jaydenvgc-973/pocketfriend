@@ -89,7 +89,6 @@ Deno.serve(async (req) => {
       sender_participant_id: sender.id,
       sender_participant_name: sender.participant_name,
       sender_avatar_url: sender.avatar_url,
-      sender_participant_type: sender.participant_type,
       content,
       is_directed: isDirected,
       directed_to_participant_ids: directedToParticipantIds,
@@ -109,7 +108,14 @@ Deno.serve(async (req) => {
 
     if (characterParticipants.length > 0) {
       // Build room context for character LLM
-      const room = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+      const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+      const room = roomResult[0];
+
+      // Include active shared media in character context
+      const activeMedia = room?.active_media;
+      const mediaContext = activeMedia && activeMedia.media_type && activeMedia.media_type !== 'none'
+        ? `\nThere is currently ${activeMedia.media_type === 'video' ? 'a video' : activeMedia.media_type === 'music' ? 'music' : 'an image'} playing in the room${activeMedia.title ? ` ("${activeMedia.title}")` : ''}. You can naturally react to it if appropriate.`
+        : '';
 
       // Recent messages for context (last 12)
       const recentMessages = await base44.asServiceRole.entities.GatheringRoomMessage.filter(
@@ -148,6 +154,7 @@ Deno.serve(async (req) => {
           `The people currently present are: ${participantNames.join(', ')}.`,
           `Everyone here is simply a person. Do not speculate about or reveal whether anyone is a user, character, AI, human, NPC, or bot.`,
           `Do not refer to anyone as "the user," "a character," "an AI," or similar labels.`,
+          mediaContext,
           '',
           `Recent conversation:`,
           conversationHistory || '(no conversation yet)',
@@ -186,7 +193,6 @@ Deno.serve(async (req) => {
               sender_participant_id: charPart.id,
               sender_participant_name: charPart.participant_name,
               sender_avatar_url: charPart.avatar_url,
-              sender_participant_type: 'character',
               content: trimmed,
               is_directed: false,
               directed_to_participant_ids: [],
