@@ -1,0 +1,65 @@
+{
+  "name": "GatheringRoomCooldown",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": true,
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "gathering_room_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoom this cooldown applies to"
+    },
+    "gathering_room_name": {
+      "type": "string",
+      "description": "Denormalized room name for display"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email of the user on cooldown. Authoritative ownership field."
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "Platform user ID of the user on cooldown"
+    },
+    "cooldown_until": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the cooldown expires (UTC ISO). User + their characters cannot re-enter THIS room until this time."
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "expired",
+        "exited"
+      ],
+      "description": "Why the cooldown was applied: expired = 30-min limit, exited = voluntary exit"
+    },
+    "character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Character IDs that were part of the session and are also on cooldown"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the cooldown was created (UTC ISO)"
+    }
+  },
+  "required": [
+    "gathering_room_id",
+    "owner_email",
+    "cooldown_until"
+  ]
+}

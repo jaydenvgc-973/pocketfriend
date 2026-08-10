@@ -1,0 +1,88 @@
+{
+  "name": "GatheringRoom",
+  "type": "object",
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": true,
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  },
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Display name of the Gathering Room"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description of the room's vibe and purpose"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Scene image URL for the room"
+    },
+    "image_prompt": {
+      "type": "string",
+      "description": "Prompt used to generate the scene image"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "social",
+        "entertainment",
+        "relaxation",
+        "creative",
+        "celebration",
+        "other"
+      ],
+      "default": "social",
+      "description": "Category affecting scene ambiance"
+    },
+    "vibe": {
+      "type": "string",
+      "enum": [
+        "quiet",
+        "social",
+        "energetic",
+        "mixed"
+      ],
+      "default": "social",
+      "description": "Atmosphere/energy level"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this room is available for admission"
+    },
+    "max_capacity": {
+      "type": "integer",
+      "default": 8,
+      "minimum": 2,
+      "maximum": 8,
+      "description": "Hard maximum total participants (users + characters combined)"
+    },
+    "sort_order": {
+      "type": "integer",
+      "default": 0,
+      "description": "Display order on Travel page"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "Admin who created this room"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

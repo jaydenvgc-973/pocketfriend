@@ -1,0 +1,89 @@
+{
+  "name": "GatheringRoomSession",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": true,
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "gathering_room_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoom"
+    },
+    "gathering_room_name": {
+      "type": "string",
+      "description": "Denormalized room name for display"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email of the user who started this session \u2014 authoritative ownership field"
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "Platform user ID of the session owner"
+    },
+    "owner_display_name": {
+      "type": "string",
+      "description": "World name of the session owner"
+    },
+    "owner_avatar_url": {
+      "type": "string",
+      "description": "Avatar URL of the session owner"
+    },
+    "character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "IDs of characters brought into this session by the owner"
+    },
+    "character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Display names of characters brought into this session"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the session started (UTC ISO)"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Hard expiration time \u2014 started_at + 30 minutes (UTC ISO)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "expired",
+        "exited"
+      ],
+      "default": "active",
+      "description": "Lifecycle status. active = currently in room. expired = 30-min limit reached. exited = voluntary exit."
+    },
+    "ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the session actually ended (UTC ISO)"
+    }
+  },
+  "required": [
+    "gathering_room_id",
+    "owner_email",
+    "started_at",
+    "expires_at"
+  ]
+}

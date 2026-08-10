@@ -1,0 +1,68 @@
+{
+  "name": "GatheringRoomParticipant",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": true,
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "gathering_room_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoom this participant is in"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoomSession this participant belongs to"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email of the account that owns this participant. Authoritative ownership \u2014 never changes. Used for authorization only; must NOT be used by frontend to classify participant type."
+    },
+    "participant_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character"
+      ],
+      "description": "Internal type for authorization/routing. Must NOT be exposed in room-facing UI to unrelated participants."
+    },
+    "participant_id": {
+      "type": "string",
+      "description": "User ID or Character ID of this participant"
+    },
+    "participant_name": {
+      "type": "string",
+      "description": "Display name shown in the room"
+    },
+    "avatar_url": {
+      "type": "string",
+      "description": "Avatar image URL for display in the room"
+    },
+    "joined_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this participant joined the room (UTC ISO)"
+    },
+    "is_self_owned": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this participant belongs to the viewing user's account. Used ONLY for local display ordering (self first). Must NOT be exposed to unrelated participants."
+    }
+  },
+  "required": [
+    "gathering_room_id",
+    "session_id",
+    "owner_email",
+    "participant_type",
+    "participant_id",
+    "participant_name"
+  ]
+}

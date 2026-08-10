@@ -1,0 +1,118 @@
+{
+  "name": "GatheringRoomMessage",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": true,
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "gathering_room_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoom this message belongs to"
+    },
+    "session_id": {
+      "type": "string",
+      "description": "ID of the sender's GatheringRoomSession"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email of the account that sent this message. Authoritative \u2014 used for authorization only."
+    },
+    "sender_participant_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoomParticipant who sent this message"
+    },
+    "sender_participant_name": {
+      "type": "string",
+      "description": "Display name of the sender"
+    },
+    "sender_avatar_url": {
+      "type": "string",
+      "description": "Avatar URL of the sender"
+    },
+    "sender_participant_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character"
+      ],
+      "description": "Internal type for authorization. Must NOT be exposed to unrelated participants in UI."
+    },
+    "content": {
+      "type": "string",
+      "description": "Message text content"
+    },
+    "is_directed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this message is directed at specific participants rather than the whole room"
+    },
+    "directed_to_participant_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "IDs of participants this message is directed at (when is_directed=true)"
+    },
+    "directed_to_participant_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Display names of participants this message is directed at"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the message was sent (UTC ISO)"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Optional attached image URL"
+    },
+    "media_share": {
+      "type": "object",
+      "description": "Shared media activity (video, music) attached to this message",
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "music",
+            "image"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "thumbnail": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "gathering_room_id",
+    "owner_email",
+    "sender_participant_id",
+    "sender_participant_name",
+    "content",
+    "timestamp"
+  ]
+}

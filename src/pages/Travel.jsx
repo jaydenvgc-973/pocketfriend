@@ -18,6 +18,7 @@ import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import RealLocationModal from "@/components/travel/RealLocationModal";
 import EnvironmentSelectorModal, { getLocationEnvironments } from "@/components/location/EnvironmentSelectorModal";
+import GatheringRoomCard from "@/components/travel/GatheringRoomCard";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -75,6 +76,17 @@ export default function Travel() {
 
   // Shared stable location hook — same LKG rules and cache key as Home
   const { locationsData } = useStableLocationReferences(currentUser?.email);
+
+  // Gathering Rooms — globally shared cross-account social spaces
+  const { data: gatheringRooms = [] } = useQuery({
+    queryKey: ["gatheringRooms"],
+    queryFn: async () => {
+      return await base44.entities.GatheringRoom.filter(
+        { is_active: true },
+        "sort_order", 20
+      );
+    },
+  });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   // settingsObj is the single UserSettings record (object shape) from useUserSettings
@@ -597,6 +609,27 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             presenceEntities={allPresenceEntities}
           />
         </div>
+
+        {/* Gathering Rooms — globally shared cross-account social spaces */}
+        {gatheringRooms.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <Users className="w-4 h-4 text-primary" />
+              <p className="text-xs font-medium text-primary uppercase tracking-wider">Gathering Rooms</p>
+              <span className="text-[10px] text-muted-foreground">Shared social spaces</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {gatheringRooms.map(room => (
+                <GatheringRoomCard
+                  key={room.id}
+                  room={room}
+                  currentUser={currentUser}
+                  activeCharacters={activeCharacters}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Search or select location:</p>

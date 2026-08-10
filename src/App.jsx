@@ -36,6 +36,7 @@ import EditCharacterProfile from './pages/EditCharacterProfile';
 import EditCharacterNeeds from './pages/EditCharacterNeeds';
 import MyProfile from './pages/MyProfile';
 import Travel from './pages/Travel';
+import GatheringRoom from './pages/GatheringRoom';
 import Scene from './pages/Scene';
 import Moments from './pages/Moments';
 import MemoryReelCreator from './pages/MemoryReelCreator';
@@ -149,6 +150,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/admin-verification" element={<AdminVerification />} />
       <Route path="/vick-diagnostic-proof" element={<VickDiagnosticProof />} />
       <Route path="/travel" element={<Travel />} />
+      <Route path="/gathering-room/:roomId" element={<GatheringRoom />} />
       <Route path="/scene" element={<Scene />} />
       <Route path="/image-diagnostics" element={<ImageGenerationDiagnostics />} />
       <Route path="/school-contamination-proof" element={<SchoolContaminationProof />} />
