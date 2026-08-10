@@ -629,17 +629,18 @@ Deno.serve(async (req) => {
       });
       generated = llmRes;
 
-      // ── STEP 1b: FINALIZE STORY EVENT STATUS IMMEDIATELY ──────────────────────
-      // The substantive generation result (narrative, memories, emotional outcomes,
-      // relationship changes, image prompts) now exists. The parent StoryEvent is
-      // considered successfully created at this point. Finalize its lifecycle NOW
-      // so that trailing work (memory persistence, image generation, LifeEvents,
-      // LocationHistory, EventParticipation, chat injection) cannot strand the
-      // parent in 'generating' if the runtime terminates during that trailing work.
-      // This is the existing lifecycle's completion write, repositioned to the
-      // point where the event has already been substantively generated.
+      // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA (NOT status) ───────────────
+      // The substantive LLM result (narrative, memories, emotional outcomes,
+      // relationship changes, image prompts) now exists. Persist these generated
+      // fields so trailing work can use them. But do NOT set status: 'complete'
+      // here — the Story Event is not finished until all required trailing work
+      // (memory persistence, relationship/emotional processing, participation
+      // records, participant coverage, Chat/Text narrative injection) has
+      // completed. Image generation is recoverable (failed images get regenerable
+      // records), but narrative injection is required and must complete before
+      // the parent is finalized. The status: 'complete' write happens in STEP 7
+      // after all required work is done.
       await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-        status: 'complete',
         generated_narrative: generated.narrative || '',
         narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
         emotional_outcomes: generated.emotional_outcomes || [],
@@ -1418,11 +1419,28 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 7: FINALIZATION ──────────────────────────────────────────────────
-    // The parent StoryEvent was already finalized as 'complete' in STEP 1b
-    // immediately after the LLM produced the substantive generated result.
-    // Trailing work (memories, images, LifeEvents, LocationHistory,
-    // EventParticipation, chat injection) ran after that finalization and cannot
-    // strand the parent in 'generating'. No duplicate status write is needed here.
+    // All required Story Event work has now completed:
+    //   - narrative generated and persisted (STEP 1b)
+    //   - character StoryEventMemory records created (STEP 2)
+    //   - Character.memories array updated (STEP 2b)
+    //   - Memory entity records created (STEP 2c)
+    //   - CharacterMemory records created (STEP 2d)
+    //   - relationship scores updated (STEP 3)
+    //   - emotional states updated (STEP 4)
+    //   - images generated or recorded as failed/regenerable (STEP 5)
+    //   - LifeEvent records created (STEP 5b)
+    //   - LocationHistory records written (STEP 5e)
+    //   - EventParticipation records created (STEP 5d)
+    //   - participant coverage guaranteed (STEP 6)
+    //   - Chat/Text narrative injection completed (STEP 6.5)
+    //
+    // Only now is the parent StoryEvent finalized as 'complete'.
+    // Image failure does NOT prevent completion — each failed image moment has
+    // a regenerable StoryEventImage record that surfaces the existing
+    // regeneration control so the user can retry later.
+    await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+      status: 'complete',
+    });
 
     return Response.json({
       success: true,
@@ -1446,13 +1464,14 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
-    // CRITICAL: Only transition to 'failed' if the event has NOT already been
-    // substantively completed. Once the LLM generation succeeded (STEP 1b),
-    // the parent was finalized as 'complete'. Errors in trailing work (memory
-    // persistence, image generation, LifeEvents, etc.) must NOT overwrite
-    // that success — the event already happened and its consequences already
-    // exist. Overwriting 'complete' with 'failed' would misclassify a
-    // successful event as failed and invite a duplicate regeneration.
+    // CRITICAL: Only transition to 'failed' if the event is still 'generating'.
+    // The parent is not finalized as 'complete' until STEP 7 — after all required
+    // trailing work (memories, relationships, emotional states, participation,
+    // narrative injection) has completed. If an error reached this outer catch,
+    // it means a required pipeline stage failed before STEP 7 ran, so the event
+    // is still 'generating' and should be marked 'failed'. Image-generation
+    // failures do NOT reach this catch — each image attempt has its own
+    // try/catch that records a regenerable failed-image record and continues.
     if (eventId) {
       try {
         const currentRecords = await base44.asServiceRole.entities.StoryEvent.filter({ id: eventId }, null, 1);
