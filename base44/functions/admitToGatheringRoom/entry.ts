@@ -112,7 +112,12 @@ Deno.serve(async (req) => {
           }
         } catch (_) {}
       }
-      // Regenerate scene image for the other room
+      // Recalculate occupancy + regenerate scene image for the other room
+      try {
+        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+          gathering_room_id: sess.gathering_room_id,
+        });
+      } catch (_) {}
       try {
         await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
           gathering_room_id: sess.gathering_room_id,
@@ -229,6 +234,75 @@ Deno.serve(async (req) => {
         avatar_url: c.avatar_url || c.image_avatar_url || null,
         joined_at: nowIso,
       });
+    }
+
+    // ── 11.5. POST-CREATION CAPACITY VALIDATION (atomic race safety) ──────────
+    // The pre-creation capacity check (step 7) is based on valid active membership
+    // (the authoritative source). But under concurrency, two requests could both
+    // pass the check and both create participants, exceeding capacity.
+    //
+    // This post-creation validation is the atomic safety net. After all participants
+    // are created, we recount valid active participants. If the total exceeds
+    // MAX_CAPACITY, we determine which sessions must roll back using a deterministic
+    // tiebreaker: sessions created earlier (oldest started_at) win. The newest
+    // session(s) that push the count over capacity must roll back.
+    //
+    // current_occupancy is NOT used here — the authority is the valid participant
+    // count, same as recalculateGatheringRoomOccupancy.
+    //
+    // This guarantees: no state above MAX_CAPACITY survives in normal operation.
+    const postSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+      { gathering_room_id: gatheringRoomId, status: 'active' },
+      'started_at', 50
+    );
+    const postValidSessions = postSessions.filter(
+      s => new Date(s.expires_at).getTime() > now.getTime()
+    );
+    const postValidSessionIds = new Set(postValidSessions.map(s => s.id));
+    const postParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+      { gathering_room_id: gatheringRoomId },
+      null, 50
+    );
+    const postCount = postParticipants.filter(
+      p => postValidSessionIds.has(p.session_id)
+    ).length;
+
+    if (postCount > MAX_CAPACITY) {
+      // Over capacity — determine which sessions to keep (oldest first)
+      let cumulative = 0;
+      const keepSet = new Set();
+      for (const sess of postValidSessions) {
+        const sessCount = postParticipants.filter(
+          p => p.session_id === sess.id
+        ).length;
+        if (cumulative + sessCount <= MAX_CAPACITY) {
+          keepSet.add(sess.id);
+          cumulative += sessCount;
+        }
+      }
+
+      if (!keepSet.has(session.id)) {
+        // Our session lost the race — roll back completely
+        await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({
+          session_id: session.id,
+        });
+        await base44.asServiceRole.entities.GatheringRoomSession.update(session.id, {
+          status: 'exited',
+          ended_at: nowIso,
+        });
+        // Recalculate occupancy after rollback so current_occupancy self-corrects
+        try {
+          await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+            gathering_room_id: gatheringRoomId,
+          });
+        } catch (_) {}
+        return Response.json({
+          error: 'capacity_exceeded',
+          current_occupancy: MAX_CAPACITY,
+          requested_party: partySize,
+          message: 'The room filled up while you were entering. Please try again.',
+        }, { status: 409 });
+      }
     }
 
     // ── 12. SET CANONICAL CHARACTER LOCATION ──────────────────────────────────
