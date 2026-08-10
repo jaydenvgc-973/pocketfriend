@@ -64,7 +64,7 @@ export default function GatheringRoom() {
   });
 
   // ── Load my active session ──
-  const { data: mySession } = useQuery({
+  const { data: mySession, refetch: refetchSession } = useQuery({
     queryKey: ["myGatheringRoomSession", roomId, currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return null;
@@ -119,12 +119,25 @@ export default function GatheringRoom() {
       }
     });
 
+    // Session subscription: when any session changes (exit, expire, new),
+    // refetch our session + global session state so Travel cards update immediately.
+    // If our session was ended (by expiration or another tab), navigate to Travel.
+    const unsubSessions = base44.entities.GatheringRoomSession.subscribe((event) => {
+      refetchSession();
+      queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
+      if (mySession && event.type === 'update' && event.data?.id === mySession.id && event.data?.status !== 'active') {
+        navigate("/travel");
+      }
+    });
+
     return () => {
       unsubMessages();
       unsubParticipants();
       unsubRoom();
+      unsubSessions();
     };
-  }, [roomId, refetchMessages, refetchParticipants, refetchRoom]);
+  }, [roomId, refetchMessages, refetchParticipants, refetchRoom, refetchSession, queryClient, mySession, navigate]);
 
   // ── Auto-scroll to bottom on new messages ──
   useEffect(() => {
@@ -176,6 +189,9 @@ export default function GatheringRoom() {
       await base44.functions.invoke("exitGatheringRoom", {
         gathering_room_id: roomId,
       });
+      // Invalidate ALL session state so Travel cards immediately reflect the exit
+      queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomParticipants", roomId] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomMessages", roomId] });
       navigate("/travel");

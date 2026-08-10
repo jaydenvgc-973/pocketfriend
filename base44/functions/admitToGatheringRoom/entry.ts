@@ -57,17 +57,67 @@ Deno.serve(async (req) => {
       }, { status: 403 });
     }
 
-    // ── 3. EXISTING SESSION CHECK: user already in this room? ──
-    const existingSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
-      { gathering_room_id: gatheringRoomId, owner_email: user.email, status: 'active' },
-      null, 1
+    // ── 3. ONE ACTIVE SESSION GLOBALLY: terminate any existing active session ──
+    // A user may have at most ONE active Gathering Room session globally.
+    // Check across ALL rooms, not just this one. If an active session exists:
+    // - In THIS room → return already_in_room
+    // - in ANOTHER room → terminate it through the canonical exit authority first
+    const allUserActiveSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+      { owner_email: user.email, status: 'active' },
+      null, 10
     );
-    if (existingSessions.length > 0) {
-      return Response.json({
-        error: 'already_in_room',
-        session_id: existingSessions[0].id,
-        expires_at: existingSessions[0].expires_at,
-      }, { status: 409 });
+    const trulyActiveSessions = allUserActiveSessions.filter(
+      s => new Date(s.expires_at).getTime() > now.getTime()
+    );
+
+    for (const sess of trulyActiveSessions) {
+      if (sess.gathering_room_id === gatheringRoomId) {
+        // Already in THIS room — return already_in_room
+        return Response.json({
+          error: 'already_in_room',
+          session_id: sess.id,
+          expires_at: sess.expires_at,
+        }, { status: 409 });
+      }
+      // Active session in ANOTHER room — terminate it through canonical exit authority
+      await base44.asServiceRole.entities.GatheringRoomSession.update(sess.id, {
+        status: 'exited',
+        ended_at: nowIso,
+      });
+      await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({ session_id: sess.id });
+      await base44.asServiceRole.entities.GatheringRoomCooldown.create({
+        gathering_room_id: sess.gathering_room_id,
+        gathering_room_name: sess.gathering_room_name,
+        owner_email: user.email,
+        owner_user_id: user.id,
+        cooldown_until: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+        reason: 'exited',
+        character_ids: sess.character_ids || [],
+        created_at: nowIso,
+      });
+      // Clear canonical character locations for the other session's characters
+      for (const charId of (sess.character_ids || [])) {
+        try {
+          const chars = await base44.asServiceRole.entities.Character.filter({ id: charId }, null, 1);
+          const char = chars[0];
+          if (char && char.resolved_source_reason === 'gathering_room') {
+            await base44.asServiceRole.entities.Character.update(charId, {
+              resolved_location_type: null,
+              resolved_presence_status: 'home',
+              resolved_current_location_id: char.current_home_location_id || null,
+              resolved_current_location_name: null,
+              resolved_source_reason: 'gathering_room_exit',
+              resolved_last_updated_at: nowIso,
+            });
+          }
+        } catch (_) {}
+      }
+      // Regenerate scene image for the other room
+      try {
+        await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
+          gathering_room_id: sess.gathering_room_id,
+        });
+      } catch (_) {}
     }
 
     // ── 4. CHARACTER OWNERSHIP VERIFICATION ──

@@ -8,21 +8,24 @@ import { Users, Clock, AlertCircle } from "lucide-react";
 /**
  * GatheringRoomCard — displays a Gathering Room on the Travel page.
  *
- * SINGLE SELECTION AUTHORITY: This component does NOT maintain its own character
- * selection state. It consumes the existing Travel page character picker
- * (selectedCharacterIds) directly. When the user taps a card, admission is
- * attempted with whatever characters are already selected in the Travel picker.
+ * SINGLE SELECTION AUTHORITY: Consumes the existing Travel page character picker
+ * (selectedCharacterIds) directly. No second picker modal.
  *
- * If capacity fails, the error is shown inline — the user returns to the
- * existing Travel picker to adjust their selection. No second picker modal.
+ * SINGLE SESSION AUTHORITY: "You're in this room" is derived from the global
+ * myActiveSession prop (the user's ONE active session across all rooms), NOT
+ * from a per-room query. This prevents stale "You're in this room" after exit.
+ *
+ * OCCUPANCY INTEGRITY: Occupancy counts only participants whose parent session
+ * is active (filtered through activeSessionIds). Stale participant records from
+ * ended sessions do NOT count toward occupancy.
  */
-export default function GatheringRoomCard({ room, currentUser, selectedCharacterIds = [] }) {
+export default function GatheringRoomCard({ room, currentUser, selectedCharacterIds = [], myActiveSession, activeSessionIds }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isAdmitting, setIsAdmitting] = useState(false);
   const [admitError, setAdmitError] = useState(null);
 
-  // ── Load current participants for this room (occupancy count) ──
+  // ── Load current participants for this room ──
   const { data: participants = [] } = useQuery({
     queryKey: ["gatheringRoomParticipants", room.id],
     queryFn: async () => {
@@ -32,6 +35,14 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
       );
     },
   });
+
+  // ── Filter participants to only those from ACTIVE sessions ──────────────────
+  // Stale participants from ended/expired sessions do NOT count toward occupancy.
+  // This is the authoritative occupancy number.
+  const activeParticipants = useMemo(() => {
+    if (!activeSessionIds || activeSessionIds.size === 0) return [];
+    return participants.filter(p => activeSessionIds.has(p.session_id));
+  }, [participants, activeSessionIds]);
 
   // ── Load cooldown for this user + room ──
   const { data: cooldowns = [] } = useQuery({
@@ -50,22 +61,14 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
     return cooldowns.find(c => new Date(c.cooldown_until).getTime() > Date.now());
   }, [cooldowns]);
 
-  const occupancy = participants.length;
+  const occupancy = activeParticipants.length;
   const availableSlots = 8 - occupancy;
 
-  // ── Check if user already has an active session in this room ──
-  const { data: mySession } = useQuery({
-    queryKey: ["myGatheringRoomSession", room.id, currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return null;
-      const sessions = await base44.entities.GatheringRoomSession.filter(
-        { gathering_room_id: room.id, owner_email: currentUser.email, status: "active" },
-        "-started_at", 1
-      );
-      return sessions[0] || null;
-    },
-    enabled: !!currentUser?.email,
-  });
+  // ── "You're in this room" — derived from the GLOBAL active session ───────────
+  // NOT from a per-room query or cached local state. The user has at most ONE
+  // active session globally; this card shows "You're in this room" only if that
+  // session is for THIS exact room.
+  const mySession = myActiveSession?.gathering_room_id === room.id ? myActiveSession : null;
 
   const handleEnter = async () => {
     setAdmitError(null);
@@ -89,10 +92,13 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
 
     setIsAdmitting(true);
     try {
-      const res = await base44.functions.invoke("admitToGatheringRoom", {
+      await base44.functions.invoke("admitToGatheringRoom", {
         gathering_room_id: room.id,
         character_ids: selectedCharacterIds,
       });
+      // Invalidate global session state so all cards update immediately
+      queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomParticipants", room.id] });
       navigate(`/gathering-room/${room.id}`);
     } catch (err) {

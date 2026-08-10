@@ -88,6 +88,57 @@ export default function Travel() {
     },
   });
 
+  // ── Global active session for this user (ONE at most) ──────────────────────
+  // Single source of truth for "which room is the user in" across all Travel cards.
+  // A user may have at most ONE active Gathering Room session globally.
+  // Each card derives "You're in this room" from this query, NOT from per-room queries.
+  const { data: myActiveGatheringRoomSession } = useQuery({
+    queryKey: ["myActiveGatheringRoomSession", currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return null;
+      const sessions = await base44.entities.GatheringRoomSession.filter(
+        { owner_email: currentUser.email, status: "active" },
+        "-started_at", 10
+      );
+      const now = Date.now();
+      const trulyActive = sessions.filter(s =>
+        s.status === "active" && new Date(s.expires_at).getTime() > now
+      );
+      return trulyActive[0] || null;
+    },
+    enabled: !!currentUser?.email,
+  });
+
+  // ── All active sessions globally (for occupancy filtering) ──────────────────
+  // Participants are only counted toward occupancy if their parent session is active.
+  // This Set of active session IDs is passed to each card to filter stale participants.
+  const { data: allActiveGatheringRoomSessions = [] } = useQuery({
+    queryKey: ["allActiveGatheringRoomSessions"],
+    queryFn: async () => {
+      const sessions = await base44.entities.GatheringRoomSession.filter(
+        { status: "active" },
+        null, 100
+      );
+      const now = Date.now();
+      return sessions.filter(s => new Date(s.expires_at).getTime() > now);
+    },
+  });
+
+  const activeSessionIds = useMemo(() => {
+    return new Set(allActiveGatheringRoomSessions.map(s => s.id));
+  }, [allActiveGatheringRoomSessions]);
+
+  // ── Realtime subscription for session changes (event-driven, no polling) ────
+  // When any session is created/updated/deleted, refetch the global session state
+  // so Travel cards immediately reflect the correct "You're in this room" and occupancy.
+  useEffect(() => {
+    const unsub = base44.entities.GatheringRoomSession.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
+    });
+    return () => unsub();
+  }, [queryClient]);
+
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   // settingsObj is the single UserSettings record (object shape) from useUserSettings
   // It shares the same React Query cache key as Home, so writeToCache patches propagate here instantly.
@@ -625,6 +676,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   room={room}
                   currentUser={currentUser}
                   selectedCharacterIds={selectedCharacterIds}
+                  myActiveSession={myActiveGatheringRoomSession}
+                  activeSessionIds={activeSessionIds}
                 />
               ))}
             </div>

@@ -89,9 +89,29 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // ── 7. CLEAN UP ORPHANED PARTICIPANTS from non-active sessions ────────────
+    // Defensive integrity safeguard: delete participants whose parent session
+    // is no longer active. This catches any deletion failures from exit/expire
+    // and ensures stale participant records never inflate occupancy counts.
+    const recentSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+      {}, '-ended_at', 50
+    );
+    const nonActiveSessions = recentSessions.filter(s => s.status !== 'active');
+    let orphanedCount = 0;
+    for (const sess of nonActiveSessions) {
+      const orphans = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+        { session_id: sess.id }, null, 20
+      );
+      if (orphans.length > 0) {
+        await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({ session_id: sess.id });
+        orphanedCount += orphans.length;
+      }
+    }
+
     return Response.json({
       success: true,
       expired_count: expiredCount,
+      orphaned_participants_removed: orphanedCount,
       checked_at: nowIso,
     });
   } catch (error) {
