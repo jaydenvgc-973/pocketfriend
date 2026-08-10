@@ -30,11 +30,20 @@
     },
     "image_url": {
       "type": "string",
-      "description": "Scene image URL for the room"
+      "description": "Base scene image URL for the room"
     },
     "image_prompt": {
       "type": "string",
-      "description": "Prompt used to generate the scene image"
+      "description": "Prompt used to generate the base scene image"
+    },
+    "scene_image_url": {
+      "type": "string",
+      "description": "Dynamically generated scene image reflecting current occupants. Updated when room composition changes."
+    },
+    "scene_image_updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the dynamic scene image was last generated"
     },
     "category": {
       "type": "string",
@@ -76,6 +85,40 @@
       "type": "integer",
       "default": 0,
       "description": "Display order on Travel page"
+    },
+    "active_media": {
+      "type": "object",
+      "description": "Current shared media activity in the room. Null when no media is active.",
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "video",
+            "music",
+            "image",
+            "none"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "thumbnail": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "started_by_participant_name": {
+          "type": "string"
+        }
+      }
     },
     "created_by": {
       "type": "string",
