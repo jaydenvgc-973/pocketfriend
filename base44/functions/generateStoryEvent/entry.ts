@@ -186,11 +186,13 @@ function buildUserIdentityLockBlock(userBundle) {
 }
 
 Deno.serve(async (req) => {
+  let eventId = null;
+  let base44 = null;
   try {
-    const base44 = createClientFromRequest(req);
+    base44 = createClientFromRequest(req);
     const body = await req.json();
 
-    const eventId = body.event_id || (body.data ? body.data.id : null);
+    eventId = body.event_id || (body.data ? body.data.id : null);
     if (!eventId) {
       return Response.json({ error: 'No story event id found' }, { status: 400 });
     }
@@ -626,6 +628,23 @@ Deno.serve(async (req) => {
         model: 'gemini_3_1_pro',
       });
       generated = llmRes;
+
+      // ── STEP 1b: FINALIZE STORY EVENT STATUS IMMEDIATELY ──────────────────────
+      // The substantive generation result (narrative, memories, emotional outcomes,
+      // relationship changes, image prompts) now exists. The parent StoryEvent is
+      // considered successfully created at this point. Finalize its lifecycle NOW
+      // so that trailing work (memory persistence, image generation, LifeEvents,
+      // LocationHistory, EventParticipation, chat injection) cannot strand the
+      // parent in 'generating' if the runtime terminates during that trailing work.
+      // This is the existing lifecycle's completion write, repositioned to the
+      // point where the event has already been substantively generated.
+      await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+        status: 'complete',
+        generated_narrative: generated.narrative || '',
+        narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
+        emotional_outcomes: generated.emotional_outcomes || [],
+        relationship_changes: generated.relationship_changes || [],
+      });
     } catch (e) {
       await base44.asServiceRole.entities.StoryEvent.update(eventId, {
         status: 'failed',
@@ -1398,14 +1417,12 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 7: UPDATE STORY EVENT STATUS ────────────────────────────────────
-    await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-      status: 'complete',
-      generated_narrative: generated.narrative || '',
-      narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
-      emotional_outcomes: emotionalOutcomes,
-      relationship_changes: relChanges,
-    });
+    // ── STEP 7: FINALIZATION ──────────────────────────────────────────────────
+    // The parent StoryEvent was already finalized as 'complete' in STEP 1b
+    // immediately after the LLM produced the substantive generated result.
+    // Trailing work (memories, images, LifeEvents, LocationHistory,
+    // EventParticipation, chat injection) ran after that finalization and cannot
+    // strand the parent in 'generating'. No duplicate status write is needed here.
 
     return Response.json({
       success: true,
@@ -1429,15 +1446,23 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
-    // CRITICAL: Ensure the StoryEvent never stays stuck in 'generating'.
-    // Any uncaught error must transition the status to 'failed' so the user
-    // sees a clear failure state and can retry — not an infinite spinner.
+    // CRITICAL: Only transition to 'failed' if the event has NOT already been
+    // substantively completed. Once the LLM generation succeeded (STEP 1b),
+    // the parent was finalized as 'complete'. Errors in trailing work (memory
+    // persistence, image generation, LifeEvents, etc.) must NOT overwrite
+    // that success — the event already happened and its consequences already
+    // exist. Overwriting 'complete' with 'failed' would misclassify a
+    // successful event as failed and invite a duplicate regeneration.
     if (eventId) {
       try {
-        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-          status: 'failed',
-          generation_error: error.message || 'Generation failed unexpectedly',
-        });
+        const currentRecords = await base44.asServiceRole.entities.StoryEvent.filter({ id: eventId }, null, 1);
+        const currentEvent = currentRecords?.[0];
+        if (currentEvent && currentEvent.status === 'generating') {
+          await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+            status: 'failed',
+            generation_error: error.message || 'Generation failed unexpectedly',
+          });
+        }
       } catch (_) {}
     }
     return Response.json({ error: error.message }, { status: 500 });
