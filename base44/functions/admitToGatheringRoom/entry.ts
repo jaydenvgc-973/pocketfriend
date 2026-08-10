@@ -192,7 +192,9 @@ Deno.serve(async (req) => {
     );
     const settings = settingsList[0];
     const userDisplayName = settings?.fictional_world_name || user.full_name || 'You';
-    const userAvatarUrl = settings?.avatar_url || settings?.image_avatar_url || null;
+    // User avatar comes from the User entity (same source as UserCard on Home),
+    // NOT from UserSettings which does not have avatar fields.
+    const userAvatarUrl = user.generated_avatar_urls?.[0] || user.reference_image_urls?.[0] || null;
 
     // ── 10. CREATE SESSION (30-minute hard limit) ──
     const expiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();

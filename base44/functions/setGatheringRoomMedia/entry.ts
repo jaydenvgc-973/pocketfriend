@@ -20,6 +20,7 @@ Deno.serve(async (req) => {
     const url = body.url || null;
     const thumbnail = body.thumbnail || null;
     const description = body.description || null;
+    const embedType = body.embed_type || null; // 'iframe' | 'video' — for playback rendering
 
     if (!gatheringRoomId) {
       return Response.json({ error: 'Missing gathering_room_id' }, { status: 400 });
@@ -50,6 +51,7 @@ Deno.serve(async (req) => {
       url,
       thumbnail,
       description,
+      embed_type: embedType,
       started_at: nowIso,
       started_by_participant_name: senderName,
     };
