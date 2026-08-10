@@ -168,103 +168,130 @@ Deno.serve(async (req) => {
     const characterResponses = [];
 
     if (roomCharacterPool.length > 0) {
-      // Build shared room context for all candidates
-      const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
-      const room = roomResult[0];
-
-      const activeMedia = room?.active_media;
-      const mediaContext = activeMedia && activeMedia.media_type && activeMedia.media_type !== 'none'
-        ? `\nThere is currently ${activeMedia.media_type === 'video' ? 'a video' : activeMedia.media_type === 'music' ? 'music' : 'an image'} playing in the room${activeMedia.title ? ` ("${activeMedia.title}")` : ''}. You can naturally react to it if appropriate.`
-        : '';
-
-      // Recent messages for context (last 12)
-      const recentMessages = await base44.asServiceRole.entities.GatheringRoomMessage.filter(
-        { gathering_room_id: gatheringRoomId },
-        '-timestamp', 12
-      );
-      const conversationHistory = recentMessages.reverse().map(m => {
-        let line = `${m.sender_participant_name}`;
-        if (m.is_directed && m.directed_to_participant_names?.length > 0) {
-          line += ` (to ${m.directed_to_participant_names.join(', ')})`;
-        }
-        line += `: ${m.content}`;
-        return line;
-      }).join('\n');
-
-      // Participant names only — NO type disclosure
-      const participantNames = validRoomParticipants.map(p => p.participant_name);
-
-      // 6d. Generate responses in parallel — each character independently decides
-      // whether to respond. Responses commit as each LLM call completes, producing
-      // natural sequencing rather than an account-grouped block.
-      const responsePromises = roomCharacterPool.map(async (charPart) => {
+      // Load all character records in parallel
+      const characterRecords = [];
+      for (const charPart of roomCharacterPool) {
         try {
-          // Load full character record by ID — NO owner_email filter.
-          // The character may belong to any account present in the room.
-          // owner_email is used only for message attribution, not eligibility.
           const charRecords = await base44.asServiceRole.entities.Character.filter(
-            { id: charPart.participant_id },
-            null, 1
+            { id: charPart.participant_id }, null, 1
           );
           const charRecord = charRecords[0];
-          if (!charRecord) return null;
+          if (charRecord) characterRecords.push({ participant: charPart, record: charRecord });
+        } catch (_) {}
+      }
 
-          const prompt = [
-            `You are ${charRecord.name}, currently in a shared social space called "${room?.name || 'a Gathering Room'}".`,
-            room?.description ? `The space: ${room.description}` : '',
-            '',
-            `You are one of several people currently present in this shared space.`,
-            `The people currently present are: ${participantNames.join(', ')}.`,
-            `Everyone here is simply a person. Do not speculate about or reveal whether anyone is a user, character, AI, human, NPC, or bot.`,
-            `Do not refer to anyone as "the user," "a character," "an AI," or similar labels.`,
-            mediaContext,
-            '',
-            `Recent conversation:`,
-            conversationHistory || '(no conversation yet)',
-            '',
-            `Your personality: ${charRecord.personality_summary || 'Not specified'}`,
-            `Your communication style: ${charRecord.communication_style || 'Natural and conversational'}`,
-            charRecord.emotional_state ? `Your current emotional state: ${charRecord.emotional_state}` : '',
-            '',
-            isDirected && directedToNames.includes(charRecord.name)
-              ? `Someone just directed a message at you. Respond naturally.`
-              : `Someone just said something in the shared space. Respond naturally if you have something to add — or stay silent if you wouldn't naturally speak up right now.`,
-            '',
-            `Rules:`,
-            `- Stay in character as ${charRecord.name}.`,
-            `- Keep your response brief and natural (1-3 sentences).`,
-            `- Never reveal or speculate about whether other participants are users, characters, AI, or any other entity type.`,
-            `- Refer to everyone by name only.`,
-            `- If you have nothing natural to say, respond with exactly: [SILENCE]`,
-          ].filter(Boolean).join('\n');
+      if (characterRecords.length > 0) {
+        // Build shared room context
+        const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+        const room = roomResult[0];
 
+        const activeMedia = room?.active_media;
+        const mediaContext = activeMedia && activeMedia.media_type && activeMedia.media_type !== 'none'
+          ? `\nThere is currently ${activeMedia.media_type === 'video' ? 'a video' : activeMedia.media_type === 'music' ? 'music' : 'an image'} playing in the room${activeMedia.title ? ` ("${activeMedia.title}")` : ''}. Characters can naturally react to it if appropriate.`
+          : '';
+
+        // Recent messages for context (last 12)
+        const recentMessages = await base44.asServiceRole.entities.GatheringRoomMessage.filter(
+          { gathering_room_id: gatheringRoomId }, '-timestamp', 12
+        );
+        const conversationHistory = recentMessages.reverse().map(m => {
+          let line = `${m.sender_participant_name}`;
+          if (m.is_directed && m.directed_to_participant_names?.length > 0) {
+            line += ` (to ${m.directed_to_participant_names.join(', ')})`;
+          }
+          line += `: ${m.content}`;
+          return line;
+        }).join('\n');
+
+        const participantNames = validRoomParticipants.map(p => p.participant_name);
+
+        // Character descriptions for the LLM
+        const characterDescriptions = characterRecords.map(c =>
+          `${c.record.name}: ${c.record.personality_summary || 'Not specified'}. Communication style: ${c.record.communication_style || 'Natural and conversational'}. Emotional state: ${c.record.emotional_state || 'calm'}`
+        ).join('\n');
+
+        // ── SINGLE LLM CALL: select which character(s) should respond + generate responses ──
+        // This prevents account clustering (characters don't wait for their account user)
+        // and robotic all-respond behavior (not every character speaks after every message).
+        // The LLM decides who has a natural reason to speak based on personality and context.
+        const prompt = [
+          `You are moderating responses in a shared social space called "${room?.name || 'a Gathering Room'}".`,
+          room?.description ? `The space: ${room.description}` : '',
+          '',
+          `The people currently present are: ${participantNames.join(', ')}.`,
+          `Everyone here is simply a person. Do not speculate about or reveal whether anyone is a user, character, AI, human, NPC, or bot.`,
+          `Do not refer to anyone as "the user," "a character," "an AI," or similar labels.`,
+          mediaContext,
+          '',
+          `Recent conversation:`,
+          conversationHistory || '(no conversation yet)',
+          '',
+          `The characters who are present and could respond:`,
+          characterDescriptions,
+          '',
+          isDirected && directedToNames.length > 0
+            ? `The latest message was directed at: ${directedToNames.join(', ')}. Those people should prioritize responding if they have something natural to say. Others may also react if context makes it natural.`
+            : `Based on the conversation and each character's personality, determine which character(s) naturally have a reason to respond.`,
+          `Not everyone needs to respond. Some might stay silent. One character might respond, several might react, or nobody might answer immediately.`,
+          '',
+          `For each character who should respond, generate their response in character.`,
+          `Rules:`,
+          `- Stay in character.`,
+          `- Keep responses brief and natural (1-3 sentences).`,
+          `- Never reveal or speculate about whether participants are users, characters, AI, or any other entity type.`,
+          `- Refer to everyone by name only.`,
+          `- Only include characters who have something natural to say.`,
+        ].filter(Boolean).join('\n');
+
+        let llmResponses = [];
+        try {
           const llmRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
             prompt,
             model: 'gemini_3_flash',
+            response_json_schema: {
+              type: "object",
+              properties: {
+                responses: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      character_name: { type: "string" },
+                      response: { type: "string" }
+                    },
+                    required: ["character_name", "response"]
+                  }
+                }
+              },
+              required: ["responses"]
+            }
           });
+          llmResponses = llmRes?.responses || [];
+        } catch (err) {
+          console.warn(`[gatheringRoom] LLM response selection failed: ${err?.message}`);
+        }
 
-          const responseText = typeof llmRes === 'string' ? llmRes : (llmRes?.response || llmRes?.text || JSON.stringify(llmRes));
-          const trimmed = responseText.trim();
+        // Commit each response as an individual message, attributed to the character's own account
+        for (const resp of llmResponses) {
+          if (!resp.response?.trim()) continue;
+          const matchedChar = characterRecords.find(c =>
+            c.record.name.toLowerCase() === resp.character_name?.toLowerCase() ||
+            c.participant.participant_name.toLowerCase() === resp.character_name?.toLowerCase()
+          );
+          if (!matchedChar) continue;
 
-          // Skip if character chooses to stay silent
-          if (!trimmed || trimmed.includes('[SILENCE]')) return null;
-
-          // Resolve character avatar (participant record, then Character entity fallback)
-          let charAvatarUrl = charPart.avatar_url;
+          const trimmed = resp.response.trim();
+          let charAvatarUrl = matchedChar.participant.avatar_url;
           if (!charAvatarUrl) {
-            charAvatarUrl = charRecord.avatar_url || charRecord.image_avatar_url || null;
+            charAvatarUrl = matchedChar.record.avatar_url || matchedChar.record.image_avatar_url || null;
           }
 
-          // Commit the response with the CHARACTER's owner_email and session_id,
-          // not the sender's. This correctly attributes the message to the
-          // character's owning account — the character speaks for itself, not
-          // as part of the sender's account batch.
           const charMsg = await base44.asServiceRole.entities.GatheringRoomMessage.create({
             gathering_room_id: gatheringRoomId,
-            session_id: charPart.session_id,
-            owner_email: charPart.owner_email,
-            sender_participant_id: charPart.id,
-            sender_participant_name: charPart.participant_name,
+            session_id: matchedChar.participant.session_id,
+            owner_email: matchedChar.participant.owner_email,
+            sender_participant_id: matchedChar.participant.id,
+            sender_participant_name: matchedChar.participant.participant_name,
             sender_avatar_url: charAvatarUrl,
             content: trimmed,
             is_directed: false,
@@ -272,17 +299,86 @@ Deno.serve(async (req) => {
             directed_to_participant_names: [],
             timestamp: new Date().toISOString(),
           });
-          return charMsg;
-        } catch (err) {
-          console.warn(`[gatheringRoom] Character response failed for ${charPart.participant_name}: ${err?.message}`);
-          return null;
+          characterResponses.push(charMsg);
         }
-      });
 
-      const results = await Promise.allSettled(responsePromises);
-      for (const r of results) {
-        if (r.status === 'fulfilled' && r.value) {
-          characterResponses.push(r.value);
+        // ── MEMORY EXTRACTION ── same Memory entity as normal Chat/Text/Scene ──
+        // Gathering Room experiences become retrievable through buildCanonicalCharacterContext.
+        // The LLM decides what's salient — not every casual exchange becomes memory.
+        // Location is embedded in the description. No participant-type or auth metadata leaked.
+        if (characterResponses.length > 0) {
+          try {
+            const memoryPrompt = [
+              `You are analyzing a conversation that just occurred in a shared social space called "${room?.name || 'a Gathering Room'}".`,
+              room?.description ? `The space: ${room.description}` : '',
+              '',
+              `Recent conversation:`,
+              conversationHistory || '(no conversation yet)',
+              '',
+              `The characters present were:`,
+              characterRecords.map(c => `${c.record.name}: ${c.record.personality_summary || 'Not specified'}`).join('\n'),
+              '',
+              `Determine which characters would form a lasting memory from this conversation.`,
+              `Only form memories for salient, meaningful interactions — not every casual exchange.`,
+              `Include the location ("${room?.name || 'a Gathering Room'}") in the description so the character remembers WHERE it happened.`,
+              `Do NOT reveal or speculate about whether any participant is a user, character, AI, or any entity type.`,
+              `Do NOT include internal metadata like owner emails, account IDs, session IDs, or participant types.`,
+              `Memory should be from the character's perspective — what they experienced, said, were told, or witnessed.`,
+              '',
+              `Return a JSON object with "memories" array. Each item has:`,
+              `- character_name: exact character name`,
+              `- title: brief summary (5-10 words)`,
+              `- description: what happened, including the location and who was involved`,
+              `- emotional_impact: how it emotionally affected the character`,
+              `Empty array if nothing salient enough to remember.`,
+            ].filter(Boolean).join('\n');
+
+            const memoryRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+              prompt: memoryPrompt,
+              model: 'gemini_3_flash',
+              response_json_schema: {
+                type: "object",
+                properties: {
+                  memories: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        character_name: { type: "string" },
+                        title: { type: "string" },
+                        description: { type: "string" },
+                        emotional_impact: { type: "string" }
+                      },
+                      required: ["character_name", "title", "description"]
+                    }
+                  }
+                },
+                required: ["memories"]
+              }
+            });
+
+            const memories = memoryRes?.memories || [];
+            for (const mem of memories) {
+              if (!mem.title?.trim() || !mem.description?.trim()) continue;
+              const matchedChar = characterRecords.find(c =>
+                c.record.name.toLowerCase() === mem.character_name?.toLowerCase() ||
+                c.participant.participant_name.toLowerCase() === mem.character_name?.toLowerCase()
+              );
+              if (!matchedChar) continue;
+
+              // Write to the SAME Memory entity used by normal Chat/Text/Scene continuity.
+              await base44.asServiceRole.entities.Memory.create({
+                character_id: matchedChar.record.id,
+                title: mem.title.trim(),
+                description: mem.description.trim(),
+                emotional_impact: mem.emotional_impact?.trim() || 'neutral',
+                timestamp: nowIso,
+                source_context: `gathering_room:${gatheringRoomId}:${room?.name || ''}`,
+              });
+            }
+          } catch (memErr) {
+            console.warn(`[gatheringRoom] Memory extraction failed: ${memErr?.message}`);
+          }
         }
       }
     }

@@ -243,9 +243,9 @@ export default function GatheringRoom() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Header */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="flex-shrink-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/travel" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -293,7 +293,7 @@ export default function GatheringRoom() {
 
       {/* Not in room */}
       {!isInRoom && (
-        <div className="flex flex-col items-center justify-center py-20 px-4 gap-4">
+        <div className="flex-1 flex flex-col items-center justify-center px-4 gap-4">
           <Users className="w-10 h-10 text-muted-foreground/40" />
           <p className="text-sm text-muted-foreground text-center">You're not in this Gathering Room. Go to Travel to enter.</p>
           <Link to="/travel"><Button variant="outline" size="sm">Go to Travel</Button></Link>
@@ -303,9 +303,9 @@ export default function GatheringRoom() {
       {/* Conversation + input */}
       {isInRoom && (
         <>
-          <div className="max-w-lg mx-auto px-4 py-4 space-y-3 min-h-[30vh]">
+          <div className="flex-1 overflow-y-auto max-w-lg mx-auto px-4 py-4 space-y-3">
             {messages.map((msg) => {
-              const isMine = msg.owner_email === currentUser?.email;
+              const isMine = msg.sender_participant_id === myUserParticipant?.id;
               // ── Unified avatar authority ──
               // Resolve the sender's room-facing avatar from the same source as the
               // participant bar. If the message's stored avatar is null (legacy
@@ -374,7 +374,7 @@ export default function GatheringRoom() {
           </AnimatePresence>
 
           {/* Message input — z-50, no BottomNav covering it */}
-          <div className="fixed bottom-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-t border-border px-4 py-3">
+          <div className="flex-shrink-0 bg-background/90 backdrop-blur-xl border-t border-border px-4 py-3">
             <div className="max-w-lg mx-auto">
               {directedTo.length > 0 && (
                 <div className="flex items-center gap-1 mb-2 flex-wrap">
