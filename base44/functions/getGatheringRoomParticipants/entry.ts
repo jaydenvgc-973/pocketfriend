@@ -34,6 +34,24 @@ Deno.serve(async (req) => {
 
     const now = new Date();
 
+    // 0. SESSION GATE: The authenticated user MUST have a valid active session in
+    //    this exact room before cross-account participant identities are returned.
+    //    Without this gate, any authenticated user could enumerate occupants of
+    //    any room they are not in. Cross-account visibility is granted ONLY to
+    //    co-occupants of the same room.
+    const mySessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+      { gathering_room_id: gatheringRoomId, owner_email: user.email, status: 'active' },
+      null, 5
+    );
+    const iHaveValidSession = mySessions.some(
+      s => new Date(s.expires_at).getTime() > now.getTime()
+    );
+    if (!iHaveValidSession) {
+      // Not in the room (or session expired) — return empty. The room page
+      // handles the "not in room" state separately via its own session query.
+      return Response.json({ participants: [] });
+    }
+
     // 1. Get all active sessions for this room (cross-account via asServiceRole)
     const sessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
       { gathering_room_id: gatheringRoomId, status: 'active' },
