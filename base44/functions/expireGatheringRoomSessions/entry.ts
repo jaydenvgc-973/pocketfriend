@@ -79,9 +79,13 @@ Deno.serve(async (req) => {
       expiredCount++;
     }
 
-    // ── 6. REGENERATE SCENE IMAGES for rooms whose composition changed ──
-    // This keeps the scene image current with the actual occupants.
+    // ── 6. RECALCULATE OCCUPANCY + REGENERATE SCENE IMAGES for changed rooms ──
     for (const roomId of roomIdsToUpdate) {
+      try {
+        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+          gathering_room_id: roomId,
+        });
+      } catch (_) {}
       try {
         await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
           gathering_room_id: roomId,

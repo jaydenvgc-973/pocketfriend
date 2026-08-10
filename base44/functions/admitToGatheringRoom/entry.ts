@@ -136,12 +136,24 @@ Deno.serve(async (req) => {
       ownedChars.push(chars[0]);
     }
 
-    // ── 5. COUNT CURRENT ACTIVE PARTICIPANTS (cross-account) ──
-    const activeParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
-      { gathering_room_id: gatheringRoomId },
-      null, 20
+    // ── 5. COUNT VALID ACTIVE PARTICIPANTS (server-authoritative) ──────────────
+    // Only participants from active, non-expired sessions count toward occupancy.
+    // This is the same validity rule applied by recalculateGatheringRoomOccupancy.
+    // The client never performs this calculation — the backend is the sole authority.
+    const roomSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+      { gathering_room_id: gatheringRoomId, status: 'active' },
+      null, 50
     );
-    const currentCount = activeParticipants.length;
+    const validSessionIds = new Set(
+      roomSessions
+        .filter(s => new Date(s.expires_at).getTime() > now.getTime())
+        .map(s => s.id)
+    );
+    const allRoomParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+      { gathering_room_id: gatheringRoomId },
+      null, 50
+    );
+    const currentCount = allRoomParticipants.filter(p => validSessionIds.has(p.session_id)).length;
 
     // ── 6. PARTY SIZE: user + characters (all count toward same capacity) ──
     const partySize = 1 + characterIds.length;
@@ -239,7 +251,14 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── 13. REGENERATE SCENE IMAGE with current occupants ────────────────────
+    // ── 13. RECALCULATE ROOM OCCUPANCY + REGENERATE SCENE IMAGE ──────────────
+    // Occupancy is backend-authoritative. The sanitized count is written to the
+    // GatheringRoom entity so Travel reads it without raw session/participant access.
+    try {
+      await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+        gathering_room_id: gatheringRoomId,
+      });
+    } catch (_) {}
     try {
       await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
         gathering_room_id: gatheringRoomId,

@@ -8,43 +8,22 @@ import { Users, Clock, AlertCircle } from "lucide-react";
 /**
  * GatheringRoomCard — displays a Gathering Room on the Travel page.
  *
- * SINGLE SELECTION AUTHORITY: Consumes the existing Travel page character picker
- * (selectedCharacterIds) directly. No second picker modal.
+ * DATA BOUNDARY: This card reads ONLY:
+ *   - The public GatheringRoom entity (room.current_occupancy, room.is_full) — sanitized.
+ *   - The current user's OWN active session (myActiveSession prop) — for "You're in this room".
+ *   - The current user's OWN cooldowns — for re-entry restriction display.
  *
- * SINGLE SESSION AUTHORITY: "You're in this room" is derived from the global
- * myActiveSession prop (the user's ONE active session across all rooms), NOT
- * from a per-room query. This prevents stale "You're in this room" after exit.
- *
- * OCCUPANCY INTEGRITY: Occupancy counts only participants whose parent session
- * is active (filtered through activeSessionIds). Stale participant records from
- * ended sessions do NOT count toward occupancy.
+ * It does NOT read raw GatheringRoomParticipant records.
+ * It does NOT read other users' sessions, participants, or cooldowns.
+ * Occupancy is the backend-authoritative room.current_occupancy field — never client-calculated.
  */
-export default function GatheringRoomCard({ room, currentUser, selectedCharacterIds = [], myActiveSession, activeSessionIds }) {
+export default function GatheringRoomCard({ room, currentUser, selectedCharacterIds = [], myActiveSession }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isAdmitting, setIsAdmitting] = useState(false);
   const [admitError, setAdmitError] = useState(null);
 
-  // ── Load current participants for this room ──
-  const { data: participants = [] } = useQuery({
-    queryKey: ["gatheringRoomParticipants", room.id],
-    queryFn: async () => {
-      return await base44.entities.GatheringRoomParticipant.filter(
-        { gathering_room_id: room.id },
-        "joined_at", 20
-      );
-    },
-  });
-
-  // ── Filter participants to only those from ACTIVE sessions ──────────────────
-  // Stale participants from ended/expired sessions do NOT count toward occupancy.
-  // This is the authoritative occupancy number.
-  const activeParticipants = useMemo(() => {
-    if (!activeSessionIds || activeSessionIds.size === 0) return [];
-    return participants.filter(p => activeSessionIds.has(p.session_id));
-  }, [participants, activeSessionIds]);
-
-  // ── Load cooldown for this user + room ──
+  // ── Load cooldown for this user + room (user's OWN data only) ──
   const { data: cooldowns = [] } = useQuery({
     queryKey: ["gatheringRoomCooldown", room.id, currentUser?.email],
     queryFn: async () => {
@@ -61,13 +40,14 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
     return cooldowns.find(c => new Date(c.cooldown_until).getTime() > Date.now());
   }, [cooldowns]);
 
-  const occupancy = activeParticipants.length;
+  // ── Occupancy: backend-authoritative, sanitized ──
+  // Read from the public GatheringRoom entity. Never client-calculated from raw participants.
+  const occupancy = room.current_occupancy ?? 0;
+  const isFull = room.is_full ?? (occupancy >= 8);
   const availableSlots = 8 - occupancy;
 
-  // ── "You're in this room" — derived from the GLOBAL active session ───────────
-  // NOT from a per-room query or cached local state. The user has at most ONE
-  // active session globally; this card shows "You're in this room" only if that
-  // session is for THIS exact room.
+  // ── "You're in this room" — derived from the user's ONE global active session ──
+  // NOT from per-room queries or raw participant records.
   const mySession = myActiveSession?.gathering_room_id === room.id ? myActiveSession : null;
 
   const handleEnter = async () => {
@@ -82,7 +62,7 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
     // Use the EXISTING Travel picker selection — no second picker
     const partySize = 1 + selectedCharacterIds.length;
 
-    // Pre-check capacity locally for instant feedback
+    // Pre-check capacity locally for instant feedback (backend is the authority)
     if (partySize > availableSlots) {
       setAdmitError(
         `Your party of ${partySize} exceeds ${availableSlots} available slot${availableSlots !== 1 ? "s" : ""}. Adjust your selection above.`
@@ -96,10 +76,9 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
         gathering_room_id: room.id,
         character_ids: selectedCharacterIds,
       });
-      // Invalidate global session state so all cards update immediately
+      // Invalidate room list (for occupancy) + own session (for "You're in this room")
+      queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
       queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
-      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
-      queryClient.invalidateQueries({ queryKey: ["gatheringRoomParticipants", room.id] });
       navigate(`/gathering-room/${room.id}`);
     } catch (err) {
       const data = err?.response?.data || err?.data || {};
@@ -146,7 +125,7 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
               )}
             </div>
             <div className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full flex-shrink-0 ${
-              occupancy >= 8 ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
+              isFull ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"
             }`}>
               <Users className="w-3 h-3" />
               {occupancy}/8
@@ -165,7 +144,7 @@ export default function GatheringRoomCard({ room, currentUser, selectedCharacter
                 <Clock className="w-3 h-3" />
                 Cooldown active
               </span>
-            ) : availableSlots === 0 ? (
+            ) : isFull ? (
               <span className="text-[10px] text-destructive">Room is full</span>
             ) : (
               <span className="text-[10px] text-muted-foreground">

@@ -45,6 +45,16 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Recalculate room occupancy after lazy expiration so the sanitized
+    // current_occupancy on the GatheringRoom entity stays authoritative.
+    if (stale.length > 0) {
+      try {
+        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+          gathering_room_id: gatheringRoomId,
+        });
+      } catch (_) {}
+    }
+
     // ── 2. VERIFY SENDER HAS ACTIVE SESSION ──
     const userSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
       { gathering_room_id: gatheringRoomId, owner_email: user.email, status: 'active' },

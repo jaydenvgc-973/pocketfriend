@@ -109,32 +109,17 @@ export default function Travel() {
     enabled: !!currentUser?.email,
   });
 
-  // ── All active sessions globally (for occupancy filtering) ──────────────────
-  // Participants are only counted toward occupancy if their parent session is active.
-  // This Set of active session IDs is passed to each card to filter stale participants.
-  const { data: allActiveGatheringRoomSessions = [] } = useQuery({
-    queryKey: ["allActiveGatheringRoomSessions"],
-    queryFn: async () => {
-      const sessions = await base44.entities.GatheringRoomSession.filter(
-        { status: "active" },
-        null, 100
-      );
-      const now = Date.now();
-      return sessions.filter(s => new Date(s.expires_at).getTime() > now);
-    },
-  });
-
-  const activeSessionIds = useMemo(() => {
-    return new Set(allActiveGatheringRoomSessions.map(s => s.id));
-  }, [allActiveGatheringRoomSessions]);
-
-  // ── Realtime subscription for session changes (event-driven, no polling) ────
-  // When any session is created/updated/deleted, refetch the global session state
-  // so Travel cards immediately reflect the correct "You're in this room" and occupancy.
+  // ── Realtime subscription for room availability changes ──────────────────────
+  // Travel subscribes to the PUBLIC GatheringRoom entity — NOT to raw sessions or
+  // participants. When the backend updates a room's current_occupancy (after
+  // admission, exit, or expiration), this subscription fires and refetches:
+  //   - the room list (for sanitized occupancy: room.current_occupancy)
+  //   - the user's OWN active session (for "You're in this room")
+  // No cross-account session or participant data is exposed to the browser.
   useEffect(() => {
-    const unsub = base44.entities.GatheringRoomSession.subscribe(() => {
+    const unsub = base44.entities.GatheringRoom.subscribe(() => {
+      queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
       queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
-      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
     });
     return () => unsub();
   }, [queryClient]);
@@ -677,7 +662,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   currentUser={currentUser}
                   selectedCharacterIds={selectedCharacterIds}
                   myActiveSession={myActiveGatheringRoomSession}
-                  activeSessionIds={activeSessionIds}
                 />
               ))}
             </div>

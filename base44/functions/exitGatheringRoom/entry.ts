@@ -72,7 +72,12 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── 6. REGENERATE SCENE IMAGE ──
+    // ── 6. RECALCULATE ROOM OCCUPANCY + REGENERATE SCENE IMAGE ──
+    try {
+      await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+        gathering_room_id: gatheringRoomId,
+      });
+    } catch (_) {}
     try {
       await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', {
         gathering_room_id: gatheringRoomId,

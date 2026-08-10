@@ -81,6 +81,16 @@
       "maximum": 8,
       "description": "Hard maximum total participants (users + characters combined)"
     },
+    "current_occupancy": {
+      "type": "integer",
+      "default": 0,
+      "description": "Backend-authoritative current occupancy count. Updated by backend functions whenever membership changes. Counts only participants from active, non-expired sessions. The client reads this sanitized number \u2014 never raw session/participant records."
+    },
+    "is_full": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when current_occupancy >= max_capacity. Backend-authoritative."
+    },
     "sort_order": {
       "type": "integer",
       "default": 0,

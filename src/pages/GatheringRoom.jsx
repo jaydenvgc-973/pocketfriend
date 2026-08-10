@@ -125,7 +125,7 @@ export default function GatheringRoom() {
     const unsubSessions = base44.entities.GatheringRoomSession.subscribe((event) => {
       refetchSession();
       queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
-      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
+      queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
       if (mySession && event.type === 'update' && event.data?.id === mySession.id && event.data?.status !== 'active') {
         navigate("/travel");
       }
@@ -191,7 +191,7 @@ export default function GatheringRoom() {
       });
       // Invalidate ALL session state so Travel cards immediately reflect the exit
       queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
-      queryClient.invalidateQueries({ queryKey: ["allActiveGatheringRoomSessions"] });
+      queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomParticipants", roomId] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRoomMessages", roomId] });
       navigate("/travel");
