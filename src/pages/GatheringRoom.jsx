@@ -120,8 +120,23 @@ export default function GatheringRoom() {
   useEffect(() => {
     if (!roomId) return;
 
+    // ── MESSAGE EVENTS: direct cache update for immediate cross-account delivery ──
+    // A committed message must appear immediately — no refetch round-trip, no polling.
+    // The subscription event carries the full message record; we append it directly
+    // to the query cache. This is event-driven, not polling.
     const unsubMessages = base44.entities.GatheringRoomMessage.subscribe((event) => {
-      if (event.data?.gathering_room_id === roomId) refetchMessages();
+      if (!event.data || event.data.gathering_room_id !== roomId) return;
+      const msg = event.data;
+      queryClient.setQueryData(["gatheringRoomMessages", roomId], (old = []) => {
+        if (event.type === 'delete') return (old || []).filter(m => m.id !== msg.id);
+        const exists = (old || []).some(m => m.id === msg.id);
+        if (exists) {
+          return (old || []).map(m => m.id === msg.id ? { ...m, ...msg } : m);
+        }
+        // Append new message, maintain timestamp order
+        const updated = [...(old || []), msg];
+        return updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+      });
     });
 
     const unsubRoom = base44.entities.GatheringRoom.subscribe((event) => {
@@ -139,7 +154,7 @@ export default function GatheringRoom() {
     });
 
     return () => { unsubMessages(); unsubRoom(); unsubSessions(); };
-  }, [roomId, refetchMessages, refetchRoom, refetchParticipants, refetchSession, queryClient]);
+  }, [roomId, refetchRoom, refetchParticipants, refetchSession, queryClient]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
