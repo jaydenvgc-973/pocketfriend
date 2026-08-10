@@ -151,6 +151,31 @@ const VENUE_INTENT_RULES = {
     tier2_categories: ['social', 'community', 'public', 'generic'],
     tier3_exclude_name_fragments: [],
   },
+  def_soundrush: {
+    tier1_name_keywords: ['stage', 'venue', 'hall', 'arena', 'amphitheater', 'theater', 'theatre', 'lounge', 'bar', 'club'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_ampfest: {
+    tier1_name_keywords: ['festival', 'park', 'grounds', 'field', 'stage', 'amphitheater', 'arena', 'venue'],
+    tier2_categories: ['outdoor', 'social', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_pulsefest: {
+    tier1_name_keywords: ['festival', 'park', 'amphitheater', 'grounds', 'field', 'stage', 'venue'],
+    tier2_categories: ['outdoor', 'social', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_quickchemistry: {
+    tier1_name_keywords: ['lounge', 'bar', 'café', 'cafe', 'coffee', 'venue', 'social', 'community', 'center'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
+  def_singlessocial: {
+    tier1_name_keywords: ['lounge', 'bar', 'venue', 'hall', 'community', 'center', 'social', 'club'],
+    tier2_categories: ['social', 'food_drink', 'community', 'public', 'generic'],
+    tier3_exclude_name_fragments: [],
+  },
 };
 
 // ── EASTERN TIME HELPERS ─────────────────────────────────────────────────────
@@ -359,6 +384,51 @@ const EVENT_TEMPLATES = [
     offsetDays: 7, hour: 17, minute: 0,
     vibe: 'quiet',
     description: 'Peer support group. Safe, confidential, drop-in.',
+  },
+  {
+    id: 'def_soundrush',
+    name: 'SoundRush Live',
+    event_type: 'entertainment',
+    location_name: 'The Velvet Stage',
+    offsetDays: 8, hour: 20, minute: 0,
+    vibe: 'energetic',
+    description: 'Contemporary pop, R&B, and hip-hop live concert with local and regional acts. Presented by Gem Duel — that satisfying gem game in your app drawer.',
+  },
+  {
+    id: 'def_ampfest',
+    name: 'AmpFest',
+    event_type: 'entertainment',
+    location_name: 'Riverside Festival Grounds',
+    offsetDays: 9, hour: 16, minute: 0,
+    vibe: 'energetic',
+    description: 'High-energy live music festival featuring local bands and solo performers across rock, indie, and alternative sets. Presented by Dots & Boxes — that classic connect-the-dots challenge in your app drawer.',
+  },
+  {
+    id: 'def_pulsefest',
+    name: 'PulseFest',
+    event_type: 'entertainment',
+    location_name: 'Liberty Park Amphitheater',
+    offsetDays: 10, hour: 15, minute: 0,
+    vibe: 'energetic',
+    description: 'Mixed-genre music festival — pop, indie, hip-hop, and more across multiple short sets on an open-air stage. Presented by Pool — your anytime game of pool, right in your app drawer.',
+  },
+  {
+    id: 'def_quickchemistry',
+    name: 'Quick Chemistry',
+    event_type: 'social',
+    location_name: 'The Mixing Room Lounge',
+    offsetDays: 11, hour: 19, minute: 0,
+    vibe: 'social',
+    description: 'Speed-dating social with short rotating conversations — a relaxed way to meet new people. Brought to you by Chemistry — discover your chemistry in the game waiting in your app drawer.',
+  },
+  {
+    id: 'def_singlessocial',
+    name: 'The Singles Social',
+    event_type: 'social',
+    location_name: 'Skyline Lounge & Bar',
+    offsetDays: 12, hour: 18, minute: 0,
+    vibe: 'social',
+    description: 'A relaxed singles social with mingling, light refreshments, and optional speed-dating rounds alongside ordinary conversation. Presented by Checkers — that classic strategy game waiting in your app drawer.',
   },
 ];
 
