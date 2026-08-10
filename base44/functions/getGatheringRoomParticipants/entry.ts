@@ -20,8 +20,14 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const url = new URL(req.url);
-    const gatheringRoomId = url.searchParams.get('gathering_room_id');
+    let gatheringRoomId = null;
+    try {
+      const body = await req.json();
+      gatheringRoomId = body?.gathering_room_id || null;
+    } catch (_) {
+      const url = new URL(req.url);
+      gatheringRoomId = url.searchParams.get('gathering_room_id');
+    }
     if (!gatheringRoomId) {
       return Response.json({ error: 'Missing gathering_room_id' }, { status: 400 });
     }
