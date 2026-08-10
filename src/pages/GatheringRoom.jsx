@@ -356,9 +356,19 @@ export default function GatheringRoom() {
           <div className="max-w-lg mx-auto px-4 py-4 space-y-3 min-h-[30vh]">
             {messages.map((msg) => {
               const isMine = msg.owner_email === currentUser?.email;
+              // ── Unified avatar authority ──
+              // Resolve the sender's room-facing avatar from the same source as the
+              // participant bar. If the message's stored avatar is null (legacy
+              // messages created before the avatar fix), fall back to the live
+              // participant list, then to the authenticated user's own avatar for
+              // self-messages. This prevents a generic icon from revealing which
+              // senders are users vs characters.
+              const senderInParticipants = participants.find(p => p.id === msg.sender_participant_id);
+              const myAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+              const resolvedAvatarUrl = msg.sender_avatar_url || senderInParticipants?.avatar_url || (isMine ? myAvatar : null);
               return (
                 <div key={msg.id} className={`flex gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}>
-                  <ParticipantAvatar url={msg.sender_avatar_url} name={msg.sender_participant_name} size="w-8 h-8" />
+                  <ParticipantAvatar url={resolvedAvatarUrl} name={msg.sender_participant_name} size="w-8 h-8" />
                   <div className={`max-w-[75%] ${isMine ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
                     <div className="flex items-baseline gap-1.5">
                       <span className={`text-[10px] font-medium ${isMine ? "text-primary" : "text-muted-foreground"}`}>
