@@ -3,9 +3,9 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video, Square, Tv, AlertTriangle, Loader2 } from "lucide-react";
+import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { sanitizeVideoInput } from "@/lib/videoEmbedSanitizer";
+import GatheringRoomWatchParty from "@/components/gatheringroom/GatheringRoomWatchParty";
 
 // Type-neutral avatar: identical presentation for all participants.
 // No branching on entity type. Falls back to a generic person icon identically.
@@ -35,11 +35,7 @@ export default function GatheringRoom() {
   const [error, setError] = useState(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(1800);
-  const [showWatchPanel, setShowWatchPanel] = useState(false);
-  const [videoInput, setVideoInput] = useState("");
-  const [videoTitle, setVideoTitle] = useState("");
-  const [videoError, setVideoError] = useState(null);
-  const [isSettingMedia, setIsSettingMedia] = useState(false);
+  const [showWatchPartyInput, setShowWatchPartyInput] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -212,40 +208,27 @@ export default function GatheringRoom() {
     }
   };
 
-  // ── Handle watch-party video (reuses existing Scenes sanitizeVideoInput) ──
-  const handleStartVideo = async () => {
-    const result = sanitizeVideoInput(videoInput);
-    if (!result.valid) { setVideoError(result.error); return; }
-    setVideoError(null);
-    setIsSettingMedia(true);
-    try {
-      await base44.functions.invoke("setGatheringRoomMedia", {
-        gathering_room_id: roomId,
-        media_type: "video",
-        url: result.embedUrl,
-        title: videoTitle.trim() || null,
-        embed_type: result.type, // 'iframe' or 'video'
-      });
-      refetchRoom();
-      setShowWatchPanel(false);
-      setVideoInput("");
-      setVideoTitle("");
-    } catch (err) {
-      setVideoError("Failed to set video");
-    }
-    setIsSettingMedia(false);
+  // ── Watch-party callbacks (shared room media state via setGatheringRoomMedia) ──
+  // These update the GatheringRoom.active_media field, which propagates to all
+  // valid occupants via the realtime subscription on the GatheringRoom entity.
+  // Local viewing state (isWatching) is managed inside GatheringRoomWatchParty.
+  const handleStartWatchParty = async (data) => {
+    await base44.functions.invoke("setGatheringRoomMedia", {
+      gathering_room_id: roomId,
+      media_type: "video",
+      url: data.url,
+      title: data.title,
+      embed_type: data.embed_type,
+    });
+    refetchRoom();
   };
 
-  const handleStopMedia = async () => {
-    try {
-      await base44.functions.invoke("setGatheringRoomMedia", {
-        gathering_room_id: roomId,
-        media_type: "none",
-      });
-      refetchRoom();
-    } catch (err) {
-      setError("Failed to stop media");
-    }
+  const handleStopWatchParty = async () => {
+    await base44.functions.invoke("setGatheringRoomMedia", {
+      gathering_room_id: roomId,
+      media_type: "none",
+    });
+    refetchRoom();
   };
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
@@ -258,10 +241,6 @@ export default function GatheringRoom() {
       </div>
     );
   }
-
-  const activeMedia = room.active_media;
-  const sceneImage = room.scene_image_url || room.image_url;
-  const hasActiveVideo = activeMedia && activeMedia.media_type === "video" && activeMedia.url;
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -283,44 +262,15 @@ export default function GatheringRoom() {
         )}
       </div>
 
-      {/* Scene image or Watch-party video */}
-      <div className="pt-14">
-        <div className="relative w-full h-48 sm:h-64 overflow-hidden">
-          {hasActiveVideo ? (
-            activeMedia.embed_type === "iframe" ? (
-              <iframe src={activeMedia.url} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowFullScreen title="Watch party" referrerPolicy="strict-origin-when-cross-origin" />
-            ) : (
-              <video src={activeMedia.url} className="w-full h-full" controls playsInline />
-            )
-          ) : sceneImage ? (
-            <img src={sceneImage} alt={room.name} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full bg-gradient-to-br from-primary/20 via-secondary to-background flex items-center justify-center">
-              <Users className="w-12 h-12 text-muted-foreground/40" />
-            </div>
-          )}
-          {!hasActiveVideo && <div className="absolute inset-0 bg-gradient-to-t from-background via-background/30 to-transparent" />}
-          {!hasActiveVideo && room.description && (
-            <p className="absolute bottom-2 left-4 right-4 text-xs text-foreground/70 line-clamp-2">{room.description}</p>
-          )}
-        </div>
-      </div>
-
-      {/* Active media bar */}
-      {hasActiveVideo && (
-        <div className="px-4 py-2 bg-secondary/50 border-b border-border flex items-center gap-2">
-          <Video className="w-4 h-4 text-primary flex-shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-foreground truncate">{activeMedia.title || "Watch Party"}</p>
-            <p className="text-[10px] text-muted-foreground">Started by {activeMedia.started_by_participant_name}</p>
-          </div>
-          {isInRoom && (
-            <button onClick={handleStopMedia} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors" title="Stop video">
-              <Square className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
+      {/* Watch party — reuses exact Scenes player path with shared/local state separation */}
+      <GatheringRoomWatchParty
+        room={room}
+        isInRoom={isInRoom}
+        showInputPanel={showWatchPartyInput}
+        onCloseInputPanel={() => setShowWatchPartyInput(false)}
+        onStartWatchParty={handleStartWatchParty}
+        onStopWatchParty={handleStopWatchParty}
+      />
 
       {/* Participant bar — normalized avatars, no type disclosure */}
       <div className="px-4 py-3 border-b border-border">
@@ -423,40 +373,6 @@ export default function GatheringRoom() {
             )}
           </AnimatePresence>
 
-          {/* Watch-party video panel — reuses existing sanitizeVideoInput from Scenes */}
-          <AnimatePresence>
-            {showWatchPanel && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-4"
-                onClick={() => setShowWatchPanel(false)}>
-                <motion.div initial={{ y: 50 }} animate={{ y: 0 }} exit={{ y: 50 }}
-                  className="bg-card border border-border rounded-2xl p-4 w-full max-w-sm space-y-3"
-                  onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold flex items-center gap-2"><Tv className="w-4 h-4 text-primary" /> Watch Party</h3>
-                    <button onClick={() => setShowWatchPanel(false)}><X className="w-4 h-4 text-muted-foreground" /></button>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">Paste any public video link — YouTube, Vimeo, or direct MP4/WebM. Everyone in the room watches together.</p>
-                  <input type="url" value={videoInput} onChange={(e) => setVideoInput(e.target.value)}
-                    placeholder="Paste video link…"
-                    className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                  <input type="text" value={videoTitle} onChange={(e) => setVideoTitle(e.target.value)}
-                    placeholder="Title (optional)"
-                    className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
-                  {videoError && (
-                    <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/30">
-                      <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-                      <p className="text-xs text-destructive">{videoError}</p>
-                    </div>
-                  )}
-                  <Button onClick={handleStartVideo} disabled={!videoInput.trim() || isSettingMedia} className="w-full rounded-xl" size="sm">
-                    {isSettingMedia ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> Starting…</> : <><Video className="w-4 h-4 mr-1.5" /> Start Watching</>}
-                  </Button>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
           {/* Message input — z-50, no BottomNav covering it */}
           <div className="fixed bottom-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-t border-border px-4 py-3">
             <div className="max-w-lg mx-auto">
@@ -479,8 +395,8 @@ export default function GatheringRoom() {
                   className={`p-2 rounded-lg transition-colors ${directedTo.length > 0 ? "text-primary bg-primary/10" : "text-muted-foreground hover:bg-secondary"}`}>
                   <AtSign className="w-5 h-5" />
                 </button>
-                <button onClick={() => setShowWatchPanel(true)}
-                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Watch party">
+                <button onClick={() => setShowWatchPartyInput(true)}
+                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Start watch party">
                   <Video className="w-5 h-5" />
                 </button>
                 <input ref={inputRef} type="text" value={messageText}
