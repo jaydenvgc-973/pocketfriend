@@ -78,7 +78,7 @@ export function buildMultiCharacterIdentityLocks(characters = []) {
       char.appearance_notes || null,
     ].filter(Boolean).join(', ');
     const genderLine = char.gender
-      ? `GENDER: ${char.gender.toUpperCase()} — established identity. ⛔ DO NOT infer gender from the name "${char.name}". ⛔ DO NOT render as a different gender. Render as ${char.gender === 'male' ? 'a man' : char.gender === 'female' ? 'a woman' : 'this gender'}.`
+      ? `GENDER: ${char.gender.toUpperCase()} — established identity. ⛔ DO NOT infer gender from the name "${char.name}". ⛔ DO NOT render as a different gender.`
       : `⛔ DO NOT infer gender from the name "${char.name}".`;
     return `
 [${idx + 1}] ${char.name}
@@ -123,7 +123,7 @@ export function buildUserIdentityLock(user = null, userGender = null) {
   if (!userAvatarUrl && !gender) return '';
 
   const genderLine = gender
-    ? `\nGENDER: ${gender.toUpperCase()} — this is established profile identity, NOT inference. ⛔ DO NOT infer gender from the name "${userName}". ⛔ DO NOT render this person as a different gender. Render as ${gender === 'male' ? 'a man' : gender === 'female' ? 'a woman' : 'this gender'}.`
+    ? `\nGENDER: ${gender.toUpperCase()} — established profile identity, NOT inference. ⛔ DO NOT infer gender from the name "${userName}". ⛔ DO NOT render this person as a different gender.`
     : `\n⛔ DO NOT infer gender from the name "${userName}".`;
 
   if (!userAvatarUrl) {
@@ -131,7 +131,7 @@ export function buildUserIdentityLock(user = null, userGender = null) {
     return `
 
 🔒 USER IDENTITY LOCK: ${userName}${genderLine}
-No avatar reference available — render as a realistic person matching the established gender.`;
+No avatar reference available — use the established GENDER value above.`;
   }
 
   return `
