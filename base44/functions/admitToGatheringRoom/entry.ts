@@ -185,6 +185,31 @@ Deno.serve(async (req) => {
     if (!room) return Response.json({ error: 'Gathering Room not found' }, { status: 404 });
     if (!room.is_active) return Response.json({ error: 'This Gathering Room is not currently available.' }, { status: 403 });
 
+    // ── 8.5. GATHERING EPOCH — 30-minute empty-room expiration boundary ──────
+    // The gathering_epoch scopes the live transcript to the CURRENT gathering.
+    // Messages from a previous gathering (timestamp < gathering_epoch) are
+    // excluded from the live 20-message window — they do NOT repopulate the
+    // active room. Character memory is preserved independently via the Memory
+    // entity and is NOT affected by epoch changes.
+    //
+    // Rules:
+    //   - No epoch yet (first-ever entry or legacy room) → start a new gathering.
+    //   - Room was empty before this admission AND last_emptied_at >= 30 min ago
+    //     → the previous gathering has expired; start a new gathering (new epoch).
+    //   - Room was empty before this admission AND last_emptied_at < 30 min ago
+    //     → the gathering is still active; keep the existing epoch (continues).
+    //   - Room was NOT empty (someone is already here) → keep the existing epoch.
+    const THIRTY_MIN_MS = 30 * 60 * 1000;
+    const lastEmptiedMs = room.last_emptied_at ? new Date(room.last_emptied_at).getTime() : null;
+    const needsNewEpoch = !room.gathering_epoch ||
+      (currentCount === 0 && lastEmptiedMs !== null && (now.getTime() - lastEmptiedMs) >= THIRTY_MIN_MS);
+
+    if (needsNewEpoch) {
+      await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
+        gathering_epoch: nowIso,
+      });
+    }
+
     // ── 9. RESOLVE USER DISPLAY INFO ──
     const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
       { owner_email: user.email },

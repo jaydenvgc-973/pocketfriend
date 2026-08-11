@@ -38,6 +38,7 @@ export default function GatheringRoom() {
   const [showWatchPartyInput, setShowWatchPartyInput] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
+  const gatheringEpochRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -69,15 +70,24 @@ export default function GatheringRoom() {
   });
 
   // ── Load messages ──
+  // ── Live 20-message window — scoped to the current gathering ──────────────
+  // Only the 20 newest messages from the CURRENT gathering (timestamp >=
+  // gathering_epoch) are loaded. Past gatherings do not repopulate the active
+  // room. If gathering_epoch is null (room not yet entered or transition state),
+  // no messages are loaded — the room starts clean. Character memory is
+  // preserved independently through the canonical Memory entity.
   const { data: messages = [], refetch: refetchMessages } = useQuery({
-    queryKey: ["gatheringRoomMessages", roomId],
+    queryKey: ["gatheringRoomMessages", roomId, room?.gathering_epoch],
     queryFn: async () => {
-      return await base44.entities.GatheringRoomMessage.filter(
-        { gathering_room_id: roomId },
-        "timestamp", 100
+      const epoch = room?.gathering_epoch;
+      if (!epoch) return [];
+      const msgs = await base44.entities.GatheringRoomMessage.filter(
+        { gathering_room_id: roomId, timestamp: { $gte: epoch } },
+        "-timestamp", 20
       );
+      return msgs.reverse();
     },
-    enabled: !!roomId,
+    enabled: !!roomId && !!room?.gathering_epoch,
   });
 
   // ── My active session ──
@@ -97,6 +107,15 @@ export default function GatheringRoom() {
   useEffect(() => {
     if (mySession?.expires_at) setSessionExpiresAt(mySession.expires_at);
   }, [mySession]);
+
+  // ── Track gathering epoch for subscription-based message filtering ──
+  // The epoch scopes the live transcript to the current gathering. Messages from
+  // previous gatherings (timestamp < epoch) are excluded from the live room.
+  // The ref is read inside the realtime subscription handler (which captures the
+  // stable ref object, not a stale value) so it always reflects the current epoch.
+  useEffect(() => {
+    gatheringEpochRef.current = room?.gathering_epoch || null;
+  }, [room?.gathering_epoch]);
 
   // ── Session countdown ──
   useEffect(() => {
@@ -123,15 +142,28 @@ export default function GatheringRoom() {
     const unsubMessages = base44.entities.GatheringRoomMessage.subscribe((event) => {
       if (!event.data || event.data.gathering_room_id !== roomId) return;
       const msg = event.data;
-      queryClient.setQueryData(["gatheringRoomMessages", roomId], (old = []) => {
+      const epoch = gatheringEpochRef.current;
+      // ── Filter: only messages from the current gathering ──
+      // Messages from a previous gathering (timestamp < gathering_epoch) are
+      // excluded — they must not repopulate the active room.
+      if (epoch && new Date(msg.timestamp).getTime() < new Date(epoch).getTime()) return;
+      queryClient.setQueryData(["gatheringRoomMessages", roomId, epoch], (old = []) => {
         if (event.type === 'delete') return (old || []).filter(m => m.id !== msg.id);
         const exists = (old || []).some(m => m.id === msg.id);
         if (exists) {
           return (old || []).map(m => m.id === msg.id ? { ...m, ...msg } : m);
         }
         // Append new message, maintain timestamp order
-        const updated = [...(old || []), msg];
-        return updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        let updated = [...(old || []), msg];
+        updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        // ── Rolling 20-message window: trim oldest, newest survives ──
+        // The newest message is NEVER removed to preserve older ones. When the
+        // transcript exceeds 20, the oldest live message rolls off. Character
+        // memory of rolled-off messages is preserved through the Memory entity.
+        if (updated.length > 20) {
+          updated = updated.slice(updated.length - 20);
+        }
+        return updated;
       });
     });
 

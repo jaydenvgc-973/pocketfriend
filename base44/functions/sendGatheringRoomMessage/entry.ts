@@ -204,18 +204,38 @@ Deno.serve(async (req) => {
     let conversationHistory = '';
     let participantNames = validRoomParticipants.map(p => p.participant_name);
 
-    if (allRoomCharacterRecords.length > 0 || roomCharacterPool.length > 0) {
-      const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
-      room = roomResult[0];
+    // ── LOAD ROOM + ENSURE GATHERING EPOCH ──────────────────────────────────
+    // The gathering_epoch scopes the live transcript to the current gathering.
+    // Set it if null (transition for rooms admitted before the epoch field was
+    // introduced). This does NOT affect character memory — the Memory entity
+    // is written by the memory extraction block below and persists independently.
+    const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+    room = roomResult[0];
+    if (room && !room.gathering_epoch) {
+      await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
+        gathering_epoch: nowIso,
+      });
+      room = { ...room, gathering_epoch: nowIso };
+    }
 
+    if (allRoomCharacterRecords.length > 0 || roomCharacterPool.length > 0) {
       const activeMedia = room?.active_media;
       mediaContext = activeMedia && activeMedia.media_type && activeMedia.media_type !== 'none'
         ? `\nThere is currently ${activeMedia.media_type === 'video' ? 'a video' : activeMedia.media_type === 'music' ? 'music' : 'an image'} playing in the room${activeMedia.title ? ` ("${activeMedia.title}")` : ''}. Characters can naturally react to it if appropriate.`
         : '';
 
       // Recent messages for context (last 12) — includes the message just committed
+      // ── LIVE 20-MESSAGE WINDOW — scoped to current gathering ──────────────
+      // Only messages from the current gathering (timestamp >= gathering_epoch)
+      // are included in the LLM context, limited to the 20 newest. This is the
+      // same bounded live transcript the frontend renders. Past gatherings do
+      // not bloat the active interaction context. Character memory is written
+      // separately by the memory extraction block below and is NOT truncated.
+      const epochFilter = room?.gathering_epoch
+        ? { gathering_room_id: gatheringRoomId, timestamp: { $gte: room.gathering_epoch } }
+        : { gathering_room_id: gatheringRoomId };
       const recentMessages = await base44.asServiceRole.entities.GatheringRoomMessage.filter(
-        { gathering_room_id: gatheringRoomId }, '-timestamp', 12
+        epochFilter, '-timestamp', 20
       );
       conversationHistory = recentMessages.reverse().map(m => {
         let line = `${m.sender_participant_name}`;

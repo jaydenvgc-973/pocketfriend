@@ -47,12 +47,33 @@ Deno.serve(async (req) => {
       p => validSessionIds.has(p.session_id)
     ).length;
 
-    // ── 3. Update the room with sanitized occupancy ──
+    // ── 3. Update the room with sanitized occupancy + manage last_emptied_at ──
+    // last_emptied_at tracks when the room transitioned to zero participants.
+    // It is used by admitToGatheringRoom to detect the 30-minute empty-room
+    // expiration boundary. Set once when the room becomes empty; cleared when
+    // the room becomes occupied again. This is the authoritative room-presence
+    // timing — all occupancy changes (admit, exit, expire) flow through here.
     const MAX_CAPACITY = 8;
-    await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
+    const nowIso = now.toISOString();
+    const rooms = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+    const room = rooms[0];
+
+    const updateFields = {
       current_occupancy: validParticipantCount,
       is_full: validParticipantCount >= MAX_CAPACITY,
-    });
+    };
+
+    if (room) {
+      if (validParticipantCount === 0 && !room.last_emptied_at) {
+        // Room just became empty — stamp the time (only if not already stamped)
+        updateFields.last_emptied_at = nowIso;
+      } else if (validParticipantCount > 0 && room.last_emptied_at) {
+        // Room is occupied again — clear the empty timestamp
+        updateFields.last_emptied_at = null;
+      }
+    }
+
+    await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, updateFields);
 
     return Response.json({
       success: true,

@@ -91,6 +91,16 @@
       "default": false,
       "description": "True when current_occupancy >= max_capacity. Backend-authoritative."
     },
+    "gathering_epoch": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Start timestamp of the current gathering. Messages with timestamp < gathering_epoch belong to a previous gathering and are excluded from the live transcript. Set on first admission; reset to a new value when the room has been continuously empty for 30+ minutes (expired gathering). This scopes the live 20-message window to the CURRENT gathering only \u2014 past gatherings do not repopulate the active room. Character memory is unaffected: lived experiences are preserved through the canonical Memory entity independently of this field."
+    },
+    "last_emptied_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the room last transitioned to zero valid participants. Used by admitToGatheringRoom to detect the 30-minute empty-room expiration boundary. Set by recalculateGatheringRoomOccupancy when occupancy reaches 0; cleared when occupancy rises above 0."
+    },
     "sort_order": {
       "type": "integer",
       "default": 0,
