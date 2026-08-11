@@ -161,7 +161,7 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
 
         const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
         const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
-        const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser);
+        const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser, settings?.user_gender);
         const avatarRefInstructions = buildAvatarIdentityBlock(validResidentialPeople);
         const outfitBlock = buildOutfitEnforcementBlock(
           [...validResidentialPeople.slice(0, 3), ...(taggedUser ? [taggedUser] : [])],
@@ -185,7 +185,7 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
           const visiblePeople = resolvedWhosHereList.slice(0, 3);
           const charNames = visiblePeople.map(c => c.name).join(", ");
           const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-          const charIdentityLocks = buildIdentityLockBlock(visiblePeople, currentUser);
+          const charIdentityLocks = buildIdentityLockBlock(visiblePeople, currentUser, settings?.user_gender);
           const avatarRefInstructions = buildAvatarIdentityBlock(visiblePeople);
           const outfitBlock = buildOutfitEnforcementBlock(
             [...visiblePeople, ...(taggedUser ? [taggedUser] : [])],
@@ -199,7 +199,7 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
             ? `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`
             : `The space is completely empty — no silhouettes, no background figures, nobody.`;
 
-          const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
+          const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser, settings?.user_gender);
           const avatarRefInstructions = buildAvatarIdentityBlock(physicallyPresent);
           const outfitBlock = buildOutfitEnforcementBlock(
             [...physicallyPresent, ...(taggedUser ? [taggedUser] : [])],
@@ -220,7 +220,7 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
     } finally {
       setIsGeneratingImage(false);
     }
-  }, [location, locationZones, currentUser, displayName, isGeneratingImage]);
+  }, [location, locationZones, currentUser, displayName, isGeneratingImage, settings]);
 
   return {
     sceneImage,

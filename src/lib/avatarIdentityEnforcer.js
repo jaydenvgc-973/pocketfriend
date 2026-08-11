@@ -29,7 +29,7 @@ export function buildAvatarIdentityEnforcementBlock(characters) {
   }
 
   const characterList = characters
-    .map(c => c.name)
+    .map(c => c.gender ? `${c.name} (${c.gender.toUpperCase()})` : c.name)
     .filter(Boolean)
     .join(', ');
 

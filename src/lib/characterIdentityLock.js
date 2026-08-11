@@ -70,16 +70,21 @@ export function buildMultiCharacterIdentityLocks(characters = []) {
     const avatarUrl = char.avatar_url || char.image_avatar_url || '';
     const refUrls = (char.reference_image_urls || []).filter(u => u && !u.includes('generated_image'));
     const appearanceSummary = [
+      char.gender ? `gender: ${char.gender}` : null,
       char.appearance_lock?.skin_tone ? `skin: ${char.appearance_lock.skin_tone}` : null,
       char.appearance_lock?.hairstyle ? `hair: ${char.appearance_lock.hairstyle}` : null,
       char.appearance_lock?.facial_hair ? `facial hair: ${char.appearance_lock.facial_hair}` : null,
       char.avatar_description_text || null,
       char.appearance_notes || null,
     ].filter(Boolean).join(', ');
+    const genderLine = char.gender
+      ? `GENDER: ${char.gender.toUpperCase()} — established identity. ⛔ DO NOT infer gender from the name "${char.name}". ⛔ DO NOT render as a different gender. Render as ${char.gender === 'male' ? 'a man' : char.gender === 'female' ? 'a woman' : 'this gender'}.`
+      : `⛔ DO NOT infer gender from the name "${char.name}".`;
     return `
 [${idx + 1}] ${char.name}
 ${avatarUrl ? `Avatar: ${avatarUrl}` : '(no avatar — use appearance description below)'}
 ${refUrls.length > 0 ? `Reference photos: ${refUrls.slice(0, 2).join(', ')}` : ''}
+${genderLine}
 ${appearanceSummary ? `Appearance: ${appearanceSummary}` : ''}
 MUST match face/identity exactly — same person every time, no drift`;
   }).join('\n');
@@ -104,18 +109,35 @@ CRITICAL RULES:
 /**
  * Builds user identity lock if user appears in the image
  */
-export function buildUserIdentityLock(user = null) {
+export function buildUserIdentityLock(user = null, userGender = null) {
   if (!user || !user.id) return '';
 
-  const userAvatarUrl = user.generated_avatar_urls?.[0] || user.avatar_url || null;
-  if (!userAvatarUrl) return '';
+  // Gender is established profile identity — not something the model may infer from the name.
+  // It must be included even when no avatar URL is available.
+  const gender = userGender || user.user_gender || user.gender || null;
 
+  const userAvatarUrl = user.generated_avatar_urls?.[0] || user.avatar_url || null;
   const userName = user.fictional_world_name || user.full_name || 'You';
+
+  // If we have neither avatar nor gender, there is nothing to lock.
+  if (!userAvatarUrl && !gender) return '';
+
+  const genderLine = gender
+    ? `\nGENDER: ${gender.toUpperCase()} — this is established profile identity, NOT inference. ⛔ DO NOT infer gender from the name "${userName}". ⛔ DO NOT render this person as a different gender. Render as ${gender === 'male' ? 'a man' : gender === 'female' ? 'a woman' : 'this gender'}.`
+    : `\n⛔ DO NOT infer gender from the name "${userName}".`;
+
+  if (!userAvatarUrl) {
+    // No avatar but gender is established — still lock gender so the model never guesses.
+    return `
+
+🔒 USER IDENTITY LOCK: ${userName}${genderLine}
+No avatar reference available — render as a realistic person matching the established gender.`;
+  }
 
   return `
 
 🔒 USER IDENTITY LOCK: ${userName}
-Avatar: ${userAvatarUrl}
+Avatar: ${userAvatarUrl}${genderLine}
 CRITICAL: The user's face MUST match their avatar exactly.
 Same person every time. No drift. No variation.
 Expression, pose, lighting can change. Face structure cannot.`;
@@ -125,9 +147,9 @@ Expression, pose, lighting can change. Face structure cannot.`;
  * Builds combined identity lock constraints for scene image generation
  * Combines character + user identity locks into a single strong constraint block
  */
-export function buildIdentityLockBlock(characters = [], user = null) {
+export function buildIdentityLockBlock(characters = [], user = null, userGender = null) {
   const charLocks = buildMultiCharacterIdentityLocks(characters);
-  const userLock = buildUserIdentityLock(user);
+  const userLock = buildUserIdentityLock(user, userGender);
 
   if (!charLocks && !userLock) return '';
 

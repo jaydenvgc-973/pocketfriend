@@ -1055,7 +1055,7 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
-            finalPrompt += buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
+            finalPrompt += buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
           }
         }
       }
@@ -1135,7 +1135,7 @@ export default function Scene() {
 
       const visibleNames = residentialPeople.map((c) => c.name);
 
-      const identityLockBlock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser);
+      const identityLockBlock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser, settings?.user_gender);
 
       const strictPeopleRule = visibleNames.length > 0 ?
       `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
@@ -1194,7 +1194,7 @@ export default function Scene() {
         nonResidentialParticipants = globalPeople;
         const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser);
+        const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser, settings?.user_gender);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
@@ -1211,7 +1211,7 @@ export default function Scene() {
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
         `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
 
-        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser);
+        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
