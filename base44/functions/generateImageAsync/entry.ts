@@ -844,7 +844,7 @@ Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/leng
 ⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
   : userAppearanceLockText ? `Subject 2 Reference Images: NONE — use canonical appearance below. ⛔ DO NOT default to any assumed ethnicity/gender/body type.\nCanonical: ${userAppearanceLockText}` : `Subject 2 Reference Images: NONE — render the user as a realistic human consistent with scene context. Do NOT substitute a child or irrelevant person.`
 }
-✅ SUBJECT 2 GENDER: ${userGender ? `${userGender.toUpperCase()} — render the user as ${userGender === 'male' ? 'a man' : userGender === 'female' ? 'a woman' : 'this gender'}. This is an established profile fact. ⛔ DO NOT infer gender from the name "${userWorldName || 'the user'}". ⛔ DO NOT render the user as a different gender.` : 'Do NOT infer gender from the name — use reference photos and scene context only.'}
+✅ SUBJECT 2 GENDER: ${userGender ? `${userGender.toUpperCase()} — established profile identity, NOT inference. ⛔ DO NOT infer gender from the name "${userWorldName || 'the user'}". ⛔ DO NOT render the user as a different gender.` : 'Do NOT infer gender from the name — use reference photos and scene context only.'}
 ✅ SUBJECT 2 OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute, modify, or reinterpret.` : 'Use clothing appropriate to scene context.'}
 ⛔ Subject 2 MUST look like the person in the reference photos (if provided). Do NOT use a generic face.
 ⛔ Do NOT let Subject 1's appearance overwrite or bleed into Subject 2.
@@ -943,7 +943,7 @@ GENERATION INVALID if the face is not recognizably the same person shown in imag
       ? `No reference photos. Canonical appearance (ABSOLUTE — do NOT default to any ethnicity/gender/body type):\n${userAppearanceLockText}`
       : `No reference photos. Render as a realistic human. ⛔ DO NOT default to Caucasian/white/female.`
     }
-✅ USER GENDER: ${userGender ? `${userGender.toUpperCase()} — render the user as ${userGender === 'male' ? 'a man' : userGender === 'female' ? 'a woman' : 'this gender'}. This is an established profile fact. ⛔ DO NOT infer gender from the name "${userWorldName || 'the user'}". ⛔ DO NOT render the user as a different gender.` : 'Do NOT infer gender from the name — use reference photos and scene context only.'}
+✅ USER GENDER: ${userGender ? `${userGender.toUpperCase()} — established profile identity, NOT inference. ⛔ DO NOT infer gender from the name "${userWorldName || 'the user'}". ⛔ DO NOT render the user as a different gender.` : 'Do NOT infer gender from the name — use reference photos and scene context only.'}
 ✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
   }
 

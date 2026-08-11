@@ -54,6 +54,16 @@ ${charName} must be instantly recognizable as the same person.${appearanceLockBl
 export function buildMultiCharacterIdentityLocks(characters = []) {
   // CRITICAL FIX: Do NOT exclude characters only because avatar_url is missing.
   // Characters with reference_image_urls OR appearance_lock data are still valid identity sources.
+  //
+  // GENDER PROPAGATION BOUNDARY:
+  //   user with stored gender       → propagate user-profile gender. No guessing.
+  //   character with stored gender  → propagate character gender. No guessing.
+  //   npc_fictitious without gender → do NOT fabricate gender. The avatar/reference
+  //                                   image is the established visual identity. The
+  //                                   no-gender branch only forbids name-based inference;
+  //                                   it never invents a gender value.
+  // Missing gender on a legitimately gender-unassigned NPC is NOT a defect and must
+  // never trigger a backfill that writes a guessed gender to the character record.
   const validChars = characters.filter(c =>
     c && c.id && (
       c.avatar_url ||
@@ -114,6 +124,10 @@ export function buildUserIdentityLock(user = null, userGender = null) {
 
   // Gender is established profile identity — not something the model may infer from the name.
   // It must be included even when no avatar URL is available.
+  // NOTE: Users always have gender on their user profile (UserSettings.user_gender). A user
+  // reaching this function without a resolved gender is a defect in retrieval/propagation,
+  // NOT a valid "gender-unassigned" state (that exception applies only to npc_fictitious
+  // characters in buildMultiCharacterIdentityLocks, never to users).
   const gender = userGender || user.user_gender || user.gender || null;
 
   const userAvatarUrl = user.generated_avatar_urls?.[0] || user.avatar_url || null;
