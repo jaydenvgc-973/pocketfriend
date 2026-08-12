@@ -226,6 +226,8 @@ Deno.serve(async (req) => {
     let mediaContext = '';
     let conversationHistory = '';
     let participantNames = validRoomParticipants.map(p => p.participant_name);
+    let relationshipContextBlock = '';
+    let livedMemoryContextBlock = '';
 
     if (allRoomCharacterRecords.length > 0 || roomCharacterPool.length > 0) {
       const activeMedia = room?.active_media;
@@ -254,6 +256,172 @@ Deno.serve(async (req) => {
         line += `: ${m.content}`;
         return line;
       }).join('\n');
+
+      // ── 6f.1. RELATIONSHIP CONTEXT — PREVENT RELATIONSHIP-ROLE DRIFT ────────
+      // The Gathering Room must carry each character's established relationships
+      // into the generation context. Without this, the LLM infers relationships
+      // from surnames or proximity, causing role drift (e.g., a cousin being
+      // treated as a father).
+      //
+      // Sources checked for each pair (Character A, Character B):
+      //   1. A.family_members — account-scoped profile Family list
+      //   2. A.backstory / A.family_history — written family/back history
+      //      (this is how cross-account family relationships are established)
+      //   3. A.fictional_relationships — established character relationships
+      //   4. Memory entity for A — lived memories mentioning B
+      //
+      // CRITICAL: Each relationship fact is bound to the character whose record
+      // it comes from. "Ethan's father is Vick" must never become "Eddie's father
+      // is Vick." Profile Family list absence does NOT mean two characters are
+      // unrelated — cross-account family lives in written history.
+      const otherCharacterParticipants = validRoomParticipants.filter(
+        p => p.participant_type === 'character'
+      );
+      const relLines = [];
+      for (const charRec of allRoomCharacterRecords) {
+        const charName = charRec.record.name;
+        const charId = charRec.record.id;
+        const charRelationships = [];
+
+        for (const otherPart of otherCharacterParticipants) {
+          if (otherPart.participant_id === charId) continue; // skip self
+
+          const otherName = otherPart.participant_name;
+          const otherId = otherPart.participant_id;
+          let found = false;
+
+          // 1. Check profile Family list (account-scoped)
+          const familyMembers = charRec.record.family_members || [];
+          const familyMatch = familyMembers.find(m =>
+            (m.name && m.name.toLowerCase() === otherName.toLowerCase()) ||
+            m.character_id === otherId
+          );
+          if (familyMatch) {
+            charRelationships.push({
+              name: otherName,
+              relationship: familyMatch.relationship_type || 'family member',
+              source: 'profile Family list',
+              detail: familyMatch.description || null,
+            });
+            found = true;
+          }
+
+          // 2. Check written family/back history (cross-account family source)
+          if (!found) {
+            const backstory = charRec.record.backstory || '';
+            const familyHistory = charRec.record.family_history || '';
+            const combinedHistory = `${backstory} ${familyHistory}`;
+            const lowerHistory = combinedHistory.toLowerCase();
+            const otherLower = otherName.toLowerCase();
+
+            if (otherLower.length > 1 && lowerHistory.includes(otherLower)) {
+              const idx = lowerHistory.indexOf(otherLower);
+              const start = Math.max(0, idx - 120);
+              const end = Math.min(combinedHistory.length, idx + otherName.length + 120);
+              const context = combinedHistory.substring(start, end).trim();
+              charRelationships.push({
+                name: otherName,
+                relationship: 'established in family/back history',
+                source: 'written family history',
+                detail: context,
+              });
+              found = true;
+            }
+          }
+
+          // 3. Check fictional_relationships (established character relationships)
+          if (!found) {
+            const ficRels = charRec.record.fictional_relationships || [];
+            const ficMatch = ficRels.find(r =>
+              (r.person_name && r.person_name.toLowerCase() === otherName.toLowerCase()) ||
+              r.related_character_id === otherId
+            );
+            if (ficMatch) {
+              charRelationships.push({
+                name: otherName,
+                relationship: ficMatch.relationship_type || 'acquaintance',
+                source: 'established relationship record',
+                detail: ficMatch.description || ficMatch.history_summary || null,
+              });
+              found = true;
+            }
+          }
+          // If no established relationship found, do NOT add anything.
+          // Unknown relationship remains unknown — never invent one.
+        }
+
+        if (charRelationships.length > 0) {
+          const lines = charRelationships.map(r => {
+            let line = `  - ${r.name}: ${r.relationship} (source: ${r.source})`;
+            if (r.detail) line += ` — ${r.detail.substring(0, 150)}`;
+            return line;
+          });
+          relLines.push(`${charName} knows:\n${lines.join('\n')}`);
+        }
+      }
+
+      if (relLines.length > 0) {
+        relationshipContextBlock = [
+          `════════════════════════════════════`,
+          `ESTABLISHED RELATIONSHIPS — AUTHORITATIVE`,
+          `Each fact below is bound to the character whose record it comes from.`,
+          `Profile Family list absence does NOT mean two characters are unrelated —`,
+          `cross-account family lives in written family/back history.`,
+          `These facts take precedence over any inference from surnames, ages, or dialogue.`,
+          `Never transfer one character's relationship role to another character.`,
+          `If no relationship is listed for a pair, they may be strangers — do NOT invent one.`,
+          `════════════════════════════════════`,
+          relLines.join('\n\n'),
+          `════════════════════════════════════`,
+        ].join('\n');
+      }
+
+      // ── 6f.2. LIVED MEMORY — PREVIOUS ENCOUNTERS (canonical Memory entity) ──
+      // Lived memories persist independently of the 20-message transcript and
+      // 30-minute room expiration. They add recognition continuity: "I remember
+      // meeting this person before." They do NOT replace established back history.
+      const memoryLines = [];
+      for (const charRec of allRoomCharacterRecords) {
+        const charName = charRec.record.name;
+        const charId = charRec.record.id;
+        const otherNames = otherCharacterParticipants
+          .filter(p => p.participant_id !== charId)
+          .map(p => p.participant_name)
+          .filter(Boolean);
+
+        if (otherNames.length === 0) continue;
+
+        try {
+          const memories = await base44.asServiceRole.entities.Memory.filter(
+            { character_id: charId },
+            '-timestamp',
+            20
+          ).catch(() => []);
+
+          const relevant = memories.filter(m => {
+            const memText = `${m.title || ''} ${m.description || ''}`.toLowerCase();
+            return otherNames.some(name => memText.includes(name.toLowerCase()));
+          });
+
+          if (relevant.length > 0) {
+            const memLines = relevant.slice(0, 4).map(m => {
+              const title = m.title || 'Memory';
+              const desc = (m.description || '').substring(0, 150);
+              return `  - ${title}: ${desc}`;
+            });
+            memoryLines.push(`${charName} remembers:\n${memLines.join('\n')}`);
+          }
+        } catch (_) {}
+      }
+
+      if (memoryLines.length > 0) {
+        livedMemoryContextBlock = [
+          `LIVED MEMORY — PREVIOUS ENCOUNTERS (canonical memory, not transcript):`,
+          `These are lived experiences from the canonical Memory entity.`,
+          `They persist independently of the 20-message transcript and 30-minute room expiration.`,
+          memoryLines.join('\n\n'),
+        ].join('\n');
+      }
     }
 
     // ── 6g. CHARACTER RESPONSE GENERATION (response candidates exclude sender) ──
@@ -282,6 +450,25 @@ Deno.serve(async (req) => {
           `The characters who are present and could respond:`,
           characterDescriptions,
           '',
+          relationshipContextBlock,
+          livedMemoryContextBlock,
+          relationshipContextBlock || livedMemoryContextBlock ? '' : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `CRITICAL — RELATIONSHIP BINDING RULES:`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `- Each relationship fact above is bound to the character whose record it comes from.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `- Never transfer one character's relationship role to another participant.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `- If no relationship is listed for a pair, they may be strangers — do NOT invent one from surnames, ages, or proximity.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `- These relationship facts take precedence over any inference from dialogue or generated text.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock ? '' : '',
           isDirected && directedToNames.length > 0
             ? `The latest message was directed at: ${directedToNames.join(', ')}. Those people should prioritize responding if they have something natural to say. Others may also react if context makes it natural.`
             : `Based on the conversation and each character's personality, determine which character(s) naturally have a reason to respond.`,
@@ -385,6 +572,12 @@ Deno.serve(async (req) => {
           `The characters present were:`,
           memoryCharacterDescriptions,
           '',
+          relationshipContextBlock,
+          livedMemoryContextBlock,
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `Use the established relationships above to accurately describe who was involved and their actual relationship. Do NOT invent or alter relationships in memory descriptions.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock ? '' : '',
           `Determine which characters would form a lasting memory from this conversation.`,
           `Only form memories for salient, meaningful interactions — not every casual exchange.`,
           `Include the location ("${room?.name || 'a Gathering Room'}") in the description so the character remembers WHERE it happened.`,
