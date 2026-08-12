@@ -34,6 +34,26 @@ Deno.serve(async (req) => {
     const room = rooms[0];
     if (!room) return Response.json({ error: 'Room not found' }, { status: 404 });
 
+    // ── 1.5. COOLDOWN: 5-minute minimum between automatic image refreshes ──────
+    // Event-driven: generateGatheringRoomScene is called from admitToGatheringRoom
+    // on participant entry. This cooldown prevents generation spam when multiple
+    // participants arrive within 5 minutes. The first qualifying entry generates;
+    // subsequent entries within the cooldown are skipped. After 5 minutes elapse,
+    // the next qualifying participant-entry event may refresh the image.
+    // No polling — this check only runs when the function is invoked.
+    const FIVE_MIN_MS = 5 * 60 * 1000;
+    if (room.scene_image_updated_at) {
+      const lastUpdateMs = new Date(room.scene_image_updated_at).getTime();
+      if (now.getTime() - lastUpdateMs < FIVE_MIN_MS) {
+        return Response.json({
+          success: true,
+          skipped: true,
+          reason: 'cooldown',
+          scene_image_url: room.scene_image_url,
+        });
+      }
+    }
+
     // ── 2. LOAD VALID ACTIVE PARTICIPANTS (same validity rule as occupancy) ──
     const sessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
       { gathering_room_id: gatheringRoomId, status: 'active' },

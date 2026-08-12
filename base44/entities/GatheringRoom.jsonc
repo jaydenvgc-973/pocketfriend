@@ -131,6 +131,14 @@
         "description": {
           "type": "string"
         },
+        "embed_type": {
+          "type": "string",
+          "enum": [
+            "iframe",
+            "video"
+          ],
+          "description": "Playback rendering type: 'iframe' for embeddable players (YouTube, Vimeo, etc.), 'video' for direct media files (MP4, WebM). Determines whether the player renders an <iframe> or a <video> element."
+        },
         "started_at": {
           "type": "string",
           "format": "date-time"

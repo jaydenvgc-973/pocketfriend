@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Play, AlertTriangle, Tv, Loader2, Video, Square, Eye, EyeOff, ChevronUp, ChevronDown } from "lucide-react";
+import { X, Play, AlertTriangle, Tv, Loader2, Video, Square, Eye, EyeOff, ChevronUp, ChevronDown, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { sanitizeVideoInput } from "@/lib/videoEmbedSanitizer";
 
@@ -28,6 +28,7 @@ export default function GatheringRoomWatchParty({
   onCloseInputPanel,
   onStartWatchParty,
   onStopWatchParty,
+  onShareImage,
 }) {
   const [isWatching, setIsWatching] = useState(false);
   const [isSceneCollapsed, setIsSceneCollapsed] = useState(false);
@@ -211,15 +212,26 @@ export default function GatheringRoomWatchParty({
               </>
             )}
 
-            {/* Collapse button — only on scene image, not on video player or input panel */}
+            {/* Share + Collapse buttons — only on scene image, not on video player or input panel */}
             {showSceneImage && (
-              <button
-                onClick={() => setIsSceneCollapsed(true)}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors z-10"
-                title="Collapse scene image"
-              >
-                <ChevronUp className="w-4 h-4" />
-              </button>
+              <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
+                {isInRoom && sceneImage && onShareImage && (
+                  <button
+                    onClick={onShareImage}
+                    className="p-1.5 rounded-lg bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors"
+                    title="Share room image"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsSceneCollapsed(true)}
+                  className="p-1.5 rounded-lg bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors"
+                  title="Collapse scene image"
+                >
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+              </div>
             )}
           </div>
         )}

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GatheringRoomWatchParty from "@/components/gatheringroom/GatheringRoomWatchParty";
+import GatheringRoomImageShare from "@/components/gatheringroom/GatheringRoomImageShare";
 
 // Type-neutral avatar: identical presentation for all participants.
 // No branching on entity type. Falls back to a generic person icon identically.
@@ -36,6 +37,7 @@ export default function GatheringRoom() {
   const [sessionExpiresAt, setSessionExpiresAt] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(1800);
   const [showWatchPartyInput, setShowWatchPartyInput] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const gatheringEpochRef = useRef(null);
@@ -171,6 +173,7 @@ export default function GatheringRoom() {
       if (event.data?.id === roomId) {
         refetchRoom();
         refetchParticipants(); // occupancy changed → refetch sanitized participants
+        refetchMessages(); // room state changed → refetch messages for cross-user resilience
       }
     });
 
@@ -182,7 +185,7 @@ export default function GatheringRoom() {
     });
 
     return () => { unsubMessages(); unsubRoom(); unsubSessions(); };
-  }, [roomId, refetchRoom, refetchParticipants, refetchSession, queryClient]);
+  }, [roomId, refetchRoom, refetchParticipants, refetchSession, refetchMessages, queryClient]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -205,28 +208,46 @@ export default function GatheringRoom() {
 
   const isInRoom = !!mySession && mySession.status === "active";
 
-  // ── Handle send message ──
+  // ── User's own characters (from their session) — for image sharing ──
+  const myCharacters = useMemo(() => {
+    if (!mySession) return [];
+    return (mySession.character_ids || []).map((id, i) => ({
+      id,
+      name: mySession.character_names?.[i] || "Character",
+      avatar_url: null,
+    }));
+  }, [mySession]);
+
+  // ── Handle send message (non-blocking) ──
+  // The backend commits the message immediately and returns early. Character
+  // response generation + memory extraction run non-blocking on the backend.
+  // We clear the input instantly and fire the invoke without blocking the UI.
+  // This prevents "Network Error" from LLM timeout being shown as a send
+  // failure when the message was actually committed. Realtime delivers the
+  // committed message to all participants (cross-user, cross-account).
   const handleSend = useCallback(async () => {
     if (!messageText.trim() || !isInRoom) return;
-    setIsSending(true);
+    const content = messageText.trim();
+    const directed = [...directedTo];
+    setMessageText("");
+    setDirectedTo([]);
+    setShowDirectPicker(false);
     setError(null);
-    try {
-      await base44.functions.invoke("sendGatheringRoomMessage", {
-        gathering_room_id: roomId,
-        content: messageText.trim(),
-        is_directed: directedTo.length > 0,
-        directed_to_participant_ids: directedTo,
-      });
-      setMessageText("");
-      setDirectedTo([]);
-      setShowDirectPicker(false);
-      refetchMessages();
-    } catch (err) {
-      const data = err?.response?.data || err?.data || {};
-      setError(data.error || err?.message || "Failed to send message");
-    }
-    setIsSending(false);
-  }, [messageText, isInRoom, roomId, directedTo, refetchMessages]);
+    base44.functions.invoke("sendGatheringRoomMessage", {
+      gathering_room_id: roomId,
+      content,
+      is_directed: directed.length > 0,
+      directed_to_participant_ids: directed,
+    }).catch(err => {
+      const status = err?.response?.status || err?.status;
+      if (status === 403) {
+        const data = err?.response?.data || err?.data || {};
+        setError(data.error || "You are not authorized to send messages here.");
+      }
+      // Network errors are silently handled — the message was likely committed
+      // and will arrive via realtime. If it didn't commit, the user can retype.
+    });
+  }, [messageText, isInRoom, roomId, directedTo]);
 
   // ── Handle exit ──
   const handleExit = async () => {
@@ -302,6 +323,7 @@ export default function GatheringRoom() {
         onCloseInputPanel={() => setShowWatchPartyInput(false)}
         onStartWatchParty={handleStartWatchParty}
         onStopWatchParty={handleStopWatchParty}
+        onShareImage={() => setShowShareModal(true)}
       />
 
       {/* Participant bar — normalized avatars, no type disclosure */}
@@ -444,6 +466,17 @@ export default function GatheringRoom() {
             </div>
           </div>
         </>
+      )}
+      {/* Image share modal — uses existing media-delivery pathways */}
+      {showShareModal && (
+        <GatheringRoomImageShare
+          imageUrl={room?.scene_image_url || room?.image_url}
+          roomName={room?.name}
+          roomId={roomId}
+          myCharacters={myCharacters}
+          roomParticipants={participants}
+          onClose={() => setShowShareModal(false)}
+        />
       )}
     </div>
   );

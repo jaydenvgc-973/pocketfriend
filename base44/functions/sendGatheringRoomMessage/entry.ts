@@ -106,6 +106,19 @@ Deno.serve(async (req) => {
         .map(p => p.participant_name);
     }
 
+    // ── 4.5. LOAD ROOM + ENSURE GATHERING EPOCH (synchronous) ──────────────────
+    // The gathering_epoch scopes the live transcript. Set it before the message
+    // commit so the message timestamp is always >= epoch. This runs synchronously
+    // so the epoch is authoritative before any message is visible.
+    const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+    let room = roomResult[0];
+    if (room && !room.gathering_epoch) {
+      await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
+        gathering_epoch: nowIso,
+      });
+      room = { ...room, gathering_epoch: nowIso };
+    }
+
     // ── 5. CREATE MESSAGE ──
     const message = await base44.asServiceRole.entities.GatheringRoomMessage.create({
       gathering_room_id: gatheringRoomId,
@@ -123,8 +136,18 @@ Deno.serve(async (req) => {
       media_share: mediaShare,
     });
 
-    // ── 6. GENERATE CHARACTER RESPONSES + MEMORY EXTRACTION ─────────────────────
-    // The response candidate pool is ALL valid active characters currently present
+    // Return immediately — the message is committed. Character responses and
+    // memory extraction run without blocking the HTTP response. The sender sees
+    // their message instantly; character responses arrive via realtime when ready.
+    // This prevents "Network Error" when LLM calls take longer than the HTTP timeout.
+    const __grResponse = Response.json({ success: true, message });
+
+    // ── 6. GENERATE CHARACTER RESPONSES + MEMORY EXTRACTION (NON-BLOCKING) ─────
+    // Fire LLM work without blocking — do not await. The HTTP response is already
+    // prepared above; these operations commit their results via realtime.
+    (async () => {
+      try {
+        // The response candidate pool is ALL valid active characters currently present
     // in this Gathering Room — NOT just the sender's own characters. This prevents
     // account-structure leakage through response timing and grouping.
     //
@@ -199,24 +222,10 @@ Deno.serve(async (req) => {
     }
 
     // 6f. Build shared room context (used by both response generation and memory extraction)
-    let room = null;
+    // Room was already loaded and epoch ensured in step 4.5 (before message commit).
     let mediaContext = '';
     let conversationHistory = '';
     let participantNames = validRoomParticipants.map(p => p.participant_name);
-
-    // ── LOAD ROOM + ENSURE GATHERING EPOCH ──────────────────────────────────
-    // The gathering_epoch scopes the live transcript to the current gathering.
-    // Set it if null (transition for rooms admitted before the epoch field was
-    // introduced). This does NOT affect character memory — the Memory entity
-    // is written by the memory extraction block below and persists independently.
-    const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
-    room = roomResult[0];
-    if (room && !room.gathering_epoch) {
-      await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
-        gathering_epoch: nowIso,
-      });
-      room = { ...room, gathering_epoch: nowIso };
-    }
 
     if (allRoomCharacterRecords.length > 0 || roomCharacterPool.length > 0) {
       const activeMedia = room?.active_media;
@@ -444,11 +453,12 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({
-      success: true,
-      message,
-      character_responses: characterResponses,
-    });
+      } catch (err) {
+        console.warn(`[gatheringRoom] Background LLM work failed: ${err?.message}`);
+      }
+    })();
+
+    return __grResponse;
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
