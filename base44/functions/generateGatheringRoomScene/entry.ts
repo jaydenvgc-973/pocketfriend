@@ -134,6 +134,7 @@ Deno.serve(async (req) => {
       prompt += `The space is currently empty, with seating and social areas ready for guests. `;
     }
 
+    prompt += `Any background or ambient patrons visible in the scene should reflect a naturally diverse public social venue — a believable mix of skin tones, racial and ethnic appearances, hairstyles, body types, genders, and adult ages. Do not default to a single racial or ethnic appearance for background figures. The primary participants must match their reference photos exactly; this diversity instruction applies to ambient background figures only. `;
     prompt += `Photorealistic, cinematic composition, warm color palette, no text overlays, no captions.`;
 
     // ── 6. GENERATE IMAGE WITH REFERENCE IMAGES FOR LIKENESS ──

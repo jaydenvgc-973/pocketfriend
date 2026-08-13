@@ -293,10 +293,6 @@ export default function GatheringRoomGamesModal({
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-foreground">{game.label}</p>
                         <p className="text-xs text-muted-foreground">{game.desc}</p>
-                        <div className="flex gap-1.5 mt-1">
-                          {game.supportsCharacter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">🤖 character</span>}
-                          {game.supportsHuman && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">👤 human</span>}
-                        </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
                     </motion.button>
@@ -333,7 +329,6 @@ export default function GatheringRoomGamesModal({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{p.participant_name}</p>
-                        <p className="text-[10px] text-muted-foreground">{p.participant_type === "user" ? "Human in room" : "Character in room"}</p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
                     </button>
