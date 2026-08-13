@@ -41,12 +41,14 @@
     "status": {
       "type": "string",
       "enum": [
+        "pending",
         "active",
         "completed",
-        "abandoned"
+        "abandoned",
+        "cancelled"
       ],
       "default": "active",
-      "description": "Lifecycle status. active = in progress, completed = finished with a result, abandoned = closed early."
+      "description": "Lifecycle status. pending = invite sent, awaiting acceptance. active = in progress. completed = finished with a result. abandoned = closed early by participant leaving. cancelled = invite declined or expired."
     },
     "participants": {
       "type": "array",
@@ -86,7 +88,7 @@
     },
     "state": {
       "type": "object",
-      "description": "Game-specific shared authoritative state JSON. For bowling: frames, scores, current player/frame, pins. Both human clients read this; mutations go through updateGatheringRoomGame.",
+      "description": "Game-specific shared authoritative state JSON. For bowling: frames, scores, current player/frame, pins. For tictactoe: board, currentPlayer, winner. For dotsandboxes: h/v lines, boxes, scores, currentPlayer. Both human clients read this; mutations go through updateGatheringRoomGame.",
       "additionalProperties": true
     },
     "winner_index": {

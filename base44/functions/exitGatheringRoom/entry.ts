@@ -72,7 +72,29 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── 6. RECALCULATE ROOM OCCUPANCY + REGENERATE SCENE IMAGE ──
+    // ── 6. ABANDON ACTIVE GAMES where this user is a participant ──
+    // When a user leaves a Gathering Room, any active or pending games they're
+    // participating in are abandoned/cancelled. This prevents stale game instances
+    // from persisting after participants leave. The game belongs to this room only
+    // — it does not carry to another venue.
+    try {
+      const activeGames = await base44.asServiceRole.entities.GatheringRoomGame.filter(
+        { gathering_room_id: gatheringRoomId, status: { $in: ['active', 'pending'] } },
+        null, 50
+      );
+      for (const g of activeGames) {
+        const userInGame = (g.participants || []).some(p => p.owner_email === user.email);
+        if (userInGame) {
+          const newStatus = g.status === 'pending' ? 'cancelled' : 'abandoned';
+          await base44.asServiceRole.entities.GatheringRoomGame.update(g.id, {
+            status: newStatus,
+            completed_at: nowIso,
+          });
+        }
+      }
+    } catch (_) {}
+
+    // ── 7. RECALCULATE ROOM OCCUPANCY + REGENERATE SCENE IMAGE ──
     try {
       await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
         gathering_room_id: gatheringRoomId,

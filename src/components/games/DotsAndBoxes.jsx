@@ -1,13 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { base44 } from "@/api/base44Client";
 import { useGameBackground } from "./useGameBackground";
 
-const DOTS = 5; // 5x5 dots = 4x4 boxes
+const DOTS = 5;
 const BOXES = DOTS - 1;
-
-// Lines stored as flat arrays
-// H lines: row 0..BOXES, col 0..BOXES-1  → index = row*(BOXES) + col
-// V lines: row 0..BOXES-1, col 0..DOTS-1 → index = row*(DOTS) + col
 
 function hIdx(r, c) { return r * BOXES + c; }
 function vIdx(r, c) { return r * DOTS + c; }
@@ -19,7 +16,7 @@ function initState() {
   return {
     h: new Array(H_COUNT).fill(false),
     v: new Array(V_COUNT).fill(false),
-    boxes: new Array(BOXES * BOXES).fill(null), // null | "user" | "char"
+    boxes: new Array(BOXES * BOXES).fill(null),
   };
 }
 
@@ -52,8 +49,6 @@ function getAvailableLines(h, v) {
 function aiMove(h, v) {
   const available = getAvailableLines(h, v);
   if (available.length === 0) return null;
-
-  // 1. Win now: complete a box
   for (const line of available) {
     const nh = [...h], nv = [...v];
     if (line.type === "h") nh[hIdx(line.r, line.c)] = true;
@@ -61,8 +56,6 @@ function aiMove(h, v) {
     const { scored } = claimBoxes(nh, nv, "char");
     if (scored > 0) return line;
   }
-
-  // 2. Avoid giving opponent a box (don't make 3-sided box)
   const safe = available.filter(line => {
     const nh = [...h], nv = [...v];
     if (line.type === "h") nh[hIdx(line.r, line.c)] = true;
@@ -70,32 +63,66 @@ function aiMove(h, v) {
     const { scored } = claimBoxes(nh, nv, "user");
     return scored === 0;
   });
-
   const pool = safe.length > 0 ? safe : available;
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-// TURN STATES: "user_turn" | "char_turn" | "game_over"
-export default function DotsAndBoxes({ character, onGameEnd }) {
+export default function DotsAndBoxes({ character, onGameEnd, mode = "character", gameId, myPlayerIndex = 0, opponent }) {
+  // ── Character mode state ──
   const [state, setState] = useState(initState);
   const [turnState, setTurnState] = useState("user_turn");
   const [scores, setScores] = useState({ user: 0, char: 0 });
   const [thinking, setThinking] = useState(false);
   const [lastLine, setLastLine] = useState(null);
-  const { bgUrl, loading: bgLoading } = useGameBackground("dotsandboxes");
 
+  // ── Human shared mode state ──
+  const [sharedState, setSharedState] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const { bgUrl, loading: bgLoading } = useGameBackground("dotsandboxes");
+  const isHuman = mode === "human";
+  const oppName = isHuman ? (opponent?.participant_name || "Opponent") : (character?.name || "Opponent");
+
+  // ── Load + subscribe to shared game (human mode) ──
+  useEffect(() => {
+    if (!isHuman || !gameId) return;
+    let unsub = () => {};
+    (async () => {
+      try {
+        const games = await base44.entities.GatheringRoomGame.filter({ id: gameId }, null, 1);
+        if (games[0]?.state) setSharedState(games[0].state);
+      } catch (_) {}
+      unsub = base44.entities.GatheringRoomGame.subscribe((event) => {
+        if (event.data?.id === gameId && event.data?.state) {
+          setSharedState(event.data.state);
+        }
+      });
+    })();
+    return () => unsub();
+  }, [isHuman, gameId]);
+
+  // ── Handle game completion (human mode) ──
+  useEffect(() => {
+    if (!isHuman || sharedState?.winner === null || sharedState?.winner === undefined) return;
+    const outcome = sharedState.winner === -1 ? "draw"
+      : sharedState.winner === myPlayerIndex ? "user_win" : "char_win";
+    const timer = setTimeout(() => onGameEnd?.(outcome), 600);
+    return () => clearTimeout(timer);
+  }, [isHuman, sharedState, myPlayerIndex, onGameEnd]);
+
+  // ── Character mode line application ──
   const applyLine = useCallback((prevState, line, player) => {
     const nh = [...prevState.h], nv = [...prevState.v];
     if (line.type === "h") nh[hIdx(line.r, line.c)] = true;
     else nv[vIdx(line.r, line.c)] = true;
     const { boxes, scored } = claimBoxes(nh, nv, player);
-    // Merge existing claimed boxes with new
     const merged = prevState.boxes.map((b, i) => b || boxes[i]);
     return { h: nh, v: nv, boxes: merged, scored };
   }, []);
 
+  // ── Character mode click ──
   const handleLineClick = useCallback((type, r, c) => {
-    if (turnState !== "user_turn" || thinking) return;
+    if (isHuman || turnState !== "user_turn" || thinking) return;
     const lineKey = `${type}_${r}_${c}`;
     if (type === "h" && state.h[hIdx(r, c)]) return;
     if (type === "v" && state.v[vIdx(r, c)]) return;
@@ -115,34 +142,40 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
       setTimeout(() => onGameEnd(outcome), 600);
       return;
     }
-
-    // If no box scored, hand to character
     if (scored === 0) setTurnState("char_turn");
-    // else user gets another turn
-  }, [turnState, thinking, state, scores, applyLine, onGameEnd]);
+  }, [isHuman, turnState, thinking, state, scores, applyLine, onGameEnd]);
 
-  // Character AI turn
+  // ── Human mode click ──
+  const handleHumanLineClick = async (type, r, c) => {
+    if (submitting || !sharedState || sharedState.winner !== null) return;
+    if (sharedState.currentPlayer !== myPlayerIndex) return;
+    if (type === "h" && sharedState.h[hIdx(r, c)]) return;
+    if (type === "v" && sharedState.v[vIdx(r, c)]) return;
+    setSubmitting(true);
+    setLastLine(`${type}_${r}_${c}`);
+    try {
+      await base44.functions.invoke("updateGatheringRoomGame", {
+        game_id: gameId, action: "move", as_player_index: myPlayerIndex, move: { type, r, c },
+      });
+    } catch (err) { console.warn("Move failed", err?.message); }
+    setSubmitting(false);
+  };
+
+  // ── Character AI turn ──
   useEffect(() => {
-    if (turnState !== "char_turn") return;
+    if (isHuman || turnState !== "char_turn") return;
     setThinking(true);
     let extraTurns = 0;
     const doCharTurn = (currentState, currentScores) => {
       const move = aiMove(currentState.h, currentState.v);
-      if (!move) {
-        setThinking(false);
-        setTurnState("user_turn");
-        return;
-      }
-
+      if (!move) { setThinking(false); setTurnState("user_turn"); return; }
       const timer = setTimeout(() => {
         const { h: nh, v: nv, boxes, scored } = applyLine(currentState, move, "char");
         const newState = { h: nh, v: nv, boxes };
         const newScores = { ...currentScores, char: currentScores.char + scored };
-        const lineKey = `${move.type}_${move.r}_${move.c}`;
-        setLastLine(lineKey);
+        setLastLine(`${move.type}_${move.r}_${move.c}`);
         setState(newState);
         setScores(newScores);
-
         const total = BOXES * BOXES;
         const claimed = boxes.filter(Boolean).length;
         if (claimed >= total) {
@@ -152,20 +185,15 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
           setTimeout(() => onGameEnd(outcome), 600);
           return;
         }
-
-        if (scored > 0 && extraTurns < 5) {
-          extraTurns++;
-          doCharTurn(newState, newScores);
-        } else {
-          setThinking(false);
-          setTurnState("user_turn");
-        }
+        if (scored > 0 && extraTurns < 5) { extraTurns++; doCharTurn(newState, newScores); }
+        else { setThinking(false); setTurnState("user_turn"); }
       }, 600 + Math.random() * 500);
     };
     doCharTurn(state, scores);
-  }, [turnState]);
+  }, [turnState, isHuman]);
 
   const reset = () => {
+    if (isHuman) return;
     setState(initState());
     setTurnState("user_turn");
     setScores({ user: 0, char: 0 });
@@ -173,38 +201,50 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
     setLastLine(null);
   };
 
-  // Grid rendering
+  // ── Unified display state ──
+  const displayH = isHuman ? (sharedState?.h || new Array(H_COUNT).fill(false)) : state.h;
+  const displayV = isHuman ? (sharedState?.v || new Array(V_COUNT).fill(false)) : state.v;
+  const displayBoxes = isHuman ? (sharedState?.boxes || new Array(BOXES * BOXES).fill(null)) : state.boxes;
+  const displayScores = isHuman ? (sharedState?.scores || [0, 0]) : [scores.user, scores.char];
+  const isMyTurn = isHuman
+    ? (sharedState?.currentPlayer === myPlayerIndex && sharedState?.winner === null && !submitting)
+    : (turnState === "user_turn" && !thinking);
+  const gameWinner = isHuman ? sharedState?.winner : null;
+  const isGameOver = isHuman ? (gameWinner !== null && gameWinner !== undefined) : turnState === "game_over";
+
   const DOT_GAP = 52;
   const BOARD_W = DOTS * DOT_GAP;
   const BOARD_H = DOTS * DOT_GAP;
   const DOT_R = 5;
 
-  const statusText = turnState === "game_over"
-    ? (scores.user > scores.char ? "You win! 🎉" : scores.char > scores.user ? `${character.name} wins!` : "Draw! 🤝")
-    : thinking
-    ? `${character.name} is thinking…`
-    : turnState === "user_turn"
-    ? "Your turn — tap a line segment"
-    : "";
+  const statusText = isHuman
+    ? (gameWinner === -1 ? "Draw! 🤝"
+      : gameWinner !== null && gameWinner !== undefined ? (gameWinner === myPlayerIndex ? "You win! 🎉" : `${oppName} wins!`)
+      : isMyTurn ? "Your turn — tap a line"
+      : submitting ? "Sending…"
+      : `Waiting for ${oppName}…`)
+    : (turnState === "game_over"
+      ? (scores.user > scores.char ? "You win! 🎉" : scores.char > scores.user ? `${oppName} wins!` : "Draw! 🤝")
+      : thinking ? `${oppName} is thinking…`
+      : turnState === "user_turn" ? "Your turn — tap a line segment"
+      : "");
+
+  const onLineClick = isHuman ? handleHumanLineClick : handleLineClick;
 
   return (
     <div className="relative flex flex-col items-center" style={{ minHeight: 380 }}>
-      {/* BG */}
       <div className="absolute inset-0 overflow-hidden rounded-t-3xl">
-        {bgUrl ? (
-          <img src={bgUrl} alt="" className="w-full h-full object-cover opacity-20" draggable={false} />
-        ) : (
-          <div className="w-full h-full bg-gradient-to-br from-purple-950/40 to-blue-900/20" />
-        )}
+        {bgUrl ? <img src={bgUrl} alt="" className="w-full h-full object-cover opacity-20" draggable={false} />
+          : <div className="w-full h-full bg-gradient-to-br from-purple-950/40 to-blue-900/20" />}
         <div className="absolute inset-0 bg-card/65" />
       </div>
 
       <div className="relative z-10 flex flex-col items-center gap-4 py-5 px-4 w-full">
         {/* Scores */}
         <div className="flex gap-8 text-sm font-bold">
-          <span className="text-primary">You: {scores.user}</span>
+          <span className="text-primary">{isHuman ? (myPlayerIndex === 0 ? "You" : oppName) : "You"}: {displayScores[0]}</span>
           <span className="text-muted-foreground">/{BOXES*BOXES} boxes</span>
-          <span className="text-rose-400">{character.name}: {scores.char}</span>
+          <span className="text-rose-400">{isHuman ? (myPlayerIndex === 1 ? "You" : oppName) : oppName}: {displayScores[1]}</span>
         </div>
 
         <AnimatePresence mode="wait">
@@ -212,7 +252,7 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
             key={statusText}
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`text-xs font-medium ${thinking ? "text-rose-400 animate-pulse" : "text-muted-foreground"}`}
+            className={`text-xs font-medium ${isHuman && !isMyTurn && !isGameOver ? "text-amber-400" : "text-muted-foreground"}`}
           >
             {statusText}
           </motion.p>
@@ -221,21 +261,21 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
         {/* Board */}
         <div className="overflow-x-auto">
           <div className="relative" style={{ width: BOARD_W + 20, height: BOARD_H + 20 }}>
-
             {/* Claimed boxes */}
-            {state.boxes.map((owner, idx) => {
-              if (!owner) return null;
+            {displayBoxes.map((owner, idx) => {
+              if (owner === null || owner === undefined) return null;
               const r = Math.floor(idx / BOXES), c = idx % BOXES;
+              const isMine = isHuman ? owner === myPlayerIndex : owner === "user";
               return (
                 <motion.div
                   key={idx}
                   initial={{ opacity: 0, scale: 0.6 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className={`absolute rounded-md ${owner === "user" ? "bg-primary/35" : "bg-rose-400/35"}`}
+                  className={`absolute rounded-md ${isMine ? "bg-primary/35" : "bg-rose-400/35"}`}
                   style={{ left: c * DOT_GAP + DOT_R + 4, top: r * DOT_GAP + DOT_R + 4, width: DOT_GAP - DOT_R, height: DOT_GAP - DOT_R }}
                 >
-                  <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${owner === "user" ? "text-primary/70" : "text-rose-400/70"}`}>
-                    {owner === "user" ? "✕" : "○"}
+                  <span className={`absolute inset-0 flex items-center justify-center text-sm font-bold ${isMine ? "text-primary/70" : "text-rose-400/70"}`}>
+                    {isMine ? "✕" : "○"}
                   </span>
                 </motion.div>
               );
@@ -244,15 +284,14 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
             {/* Horizontal lines */}
             {Array.from({ length: BOXES + 1 }, (_, r) =>
               Array.from({ length: BOXES }, (_, c) => {
-                const active = state.h[hIdx(r, c)];
+                const active = displayH[hIdx(r, c)];
                 const key = `h_${r}_${c}`;
                 return (
                   <div
                     key={key}
-                    onClick={() => handleLineClick("h", r, c)}
-                    title={!active && turnState === "user_turn" ? "Click to draw line" : ""}
+                    onClick={() => onLineClick("h", r, c)}
                     className={`absolute rounded-full transition-all duration-200
-                      ${active ? (lastLine === key ? "bg-foreground shadow-md" : "bg-foreground/80") : turnState === "user_turn" && !thinking ? "bg-border hover:bg-primary hover:scale-y-150 cursor-pointer" : "bg-border/50 cursor-default"}`}
+                      ${active ? (lastLine === key ? "bg-foreground shadow-md" : "bg-foreground/80") : isMyTurn ? "bg-border hover:bg-primary hover:scale-y-150 cursor-pointer" : "bg-border/50 cursor-default"}`}
                     style={{ left: c * DOT_GAP + DOT_R + 5, top: r * DOT_GAP + DOT_R - 3, width: DOT_GAP - DOT_R * 2, height: 6 }}
                   />
                 );
@@ -262,14 +301,14 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
             {/* Vertical lines */}
             {Array.from({ length: BOXES }, (_, r) =>
               Array.from({ length: BOXES + 1 }, (_, c) => {
-                const active = state.v[vIdx(r, c)];
+                const active = displayV[vIdx(r, c)];
                 const key = `v_${r}_${c}`;
                 return (
                   <div
                     key={key}
-                    onClick={() => handleLineClick("v", r, c)}
+                    onClick={() => onLineClick("v", r, c)}
                     className={`absolute rounded-full transition-all duration-200
-                      ${active ? (lastLine === key ? "bg-foreground shadow-md" : "bg-foreground/80") : turnState === "user_turn" && !thinking ? "bg-border hover:bg-primary hover:scale-x-150 cursor-pointer" : "bg-border/50 cursor-default"}`}
+                      ${active ? (lastLine === key ? "bg-foreground shadow-md" : "bg-foreground/80") : isMyTurn ? "bg-border hover:bg-primary hover:scale-x-150 cursor-pointer" : "bg-border/50 cursor-default"}`}
                     style={{ left: c * DOT_GAP + DOT_R - 3, top: r * DOT_GAP + DOT_R + 5, width: 6, height: DOT_GAP - DOT_R * 2 }}
                   />
                 );
@@ -279,19 +318,18 @@ export default function DotsAndBoxes({ character, onGameEnd }) {
             {/* Dots */}
             {Array.from({ length: DOTS }, (_, r) =>
               Array.from({ length: DOTS }, (_, c) => (
-                <div
-                  key={`d_${r}_${c}`}
-                  className="absolute rounded-full bg-foreground shadow-sm"
-                  style={{ left: c * DOT_GAP + 4, top: r * DOT_GAP + 4, width: DOT_R*2, height: DOT_R*2 }}
-                />
+                <div key={`d_${r}_${c}`} className="absolute rounded-full bg-foreground shadow-sm"
+                  style={{ left: c * DOT_GAP + 4, top: r * DOT_GAP + 4, width: DOT_R*2, height: DOT_R*2 }} />
               ))
             )}
           </div>
         </div>
 
-        <button onClick={reset} className="px-5 py-2 rounded-xl bg-secondary text-sm text-muted-foreground hover:text-foreground transition-colors">
-          {turnState === "game_over" ? "🔄 Rematch" : "↺ New Game"}
-        </button>
+        {!isHuman && (
+          <button onClick={reset} className="px-5 py-2 rounded-xl bg-secondary text-sm text-muted-foreground hover:text-foreground transition-colors">
+            {isGameOver ? "🔄 Rematch" : "↺ New Game"}
+          </button>
+        )}
       </div>
     </div>
   );

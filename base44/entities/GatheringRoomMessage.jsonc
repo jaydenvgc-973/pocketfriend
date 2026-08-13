@@ -50,6 +50,36 @@
       "type": "string",
       "description": "Message text content"
     },
+    "is_game_event": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when this message is a game activity/result event, not user-authored speech. Rendered as a game event card, not a chat bubble. Characters react to it as an event, not as someone speaking."
+    },
+    "game_event_data": {
+      "type": "object",
+      "description": "Game event metadata when is_game_event=true. Null for regular messages.",
+      "properties": {
+        "game_type": {
+          "type": "string",
+          "description": "Which game was played (bowling, tictactoe, etc.)"
+        },
+        "result_summary": {
+          "type": "string",
+          "description": "Human-readable result (e.g. 'You beat Ethan at Bowling 112-98')"
+        },
+        "winner_name": {
+          "type": "string",
+          "description": "Display name of the winner, or 'Draw' if tied"
+        },
+        "participant_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Display names of all participants in the game"
+        }
+      }
+    },
     "is_directed": {
       "type": "boolean",
       "default": false,

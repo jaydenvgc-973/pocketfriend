@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video, Gamepad2 } from "lucide-react";
+import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video, Gamepad2, Trophy, Check, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GatheringRoomWatchParty from "@/components/gatheringroom/GatheringRoomWatchParty";
 import GatheringRoomImageShare from "@/components/gatheringroom/GatheringRoomImageShare";
@@ -40,6 +40,9 @@ export default function GatheringRoom() {
   const [showWatchPartyInput, setShowWatchPartyInput] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showGamesModal, setShowGamesModal] = useState(false);
+  const [pendingGameInvites, setPendingGameInvites] = useState([]);
+  const [activeGames, setActiveGames] = useState([]);
+  const [joinGame, setJoinGame] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const gatheringEpochRef = useRef(null);
@@ -192,6 +195,47 @@ export default function GatheringRoom() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // ── Game invites + active games subscription ──
+  // Subscribe to GatheringRoomGame for this room. Pending games where the current
+  // user is a participant (but not the initiator) appear as invites. Active games
+  // where the user is a participant appear as "Join" buttons. This is event-driven
+  // (no polling) — the subscription delivers game state changes in realtime.
+  useEffect(() => {
+    if (!roomId || !currentUser?.email) return;
+    let unsub = () => {};
+    const loadGames = async () => {
+      try {
+        const games = await base44.entities.GatheringRoomGame.filter(
+          { gathering_room_id: roomId, status: { $in: ["pending", "active"] } },
+          "-created_at", 20
+        );
+        const mine = games.filter(g => (g.participants || []).some(p => p.owner_email === currentUser.email));
+        setPendingGameInvites(mine.filter(g => g.status === "pending" && g.owner_email !== currentUser.email));
+        setActiveGames(mine.filter(g => g.status === "active"));
+      } catch (_) {}
+    };
+    loadGames();
+    unsub = base44.entities.GatheringRoomGame.subscribe(() => loadGames());
+    return () => unsub();
+  }, [roomId, currentUser?.email]);
+
+  const handleAcceptInvite = async (game) => {
+    try {
+      await base44.functions.invoke("updateGatheringRoomGame", { game_id: game.id, action: "accept" });
+    } catch (err) { setError("Failed to accept invite"); }
+  };
+
+  const handleDeclineInvite = async (game) => {
+    try {
+      await base44.functions.invoke("updateGatheringRoomGame", { game_id: game.id, action: "decline" });
+    } catch (err) {}
+  };
+
+  const handleJoinGame = (game) => {
+    setJoinGame(game);
+    setShowGamesModal(true);
+  };
 
   // ── Sorted participants: owned first (self first within owned), then others ──
   const sortedParticipants = useMemo(() => {
@@ -359,6 +403,45 @@ export default function GatheringRoom() {
       {/* Conversation + input */}
       {isInRoom && (
         <>
+          {/* Game invites + active games — event-driven, no polling */}
+          {(pendingGameInvites.length > 0 || activeGames.length > 0) && (
+            <div className="px-4 py-2 space-y-2 border-b border-border">
+              {pendingGameInvites.map(g => {
+                const inviter = g.participants?.[0];
+                const gameLabel = g.game_type === "bowling" ? "Bowling" : g.game_type === "tictactoe" ? "Tic-Tac-Toe" : g.game_type === "dotsandboxes" ? "Dots & Boxes" : g.game_type;
+                return (
+                  <div key={g.id} className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-primary/10 border border-primary/30">
+                    <Gamepad2 className="w-4 h-4 text-primary flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">
+                        {inviter?.participant_name} invited you to play {gameLabel}
+                      </p>
+                    </div>
+                    <button onClick={() => handleAcceptInvite(g)} className="p-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors" title="Accept">
+                      <Check className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => handleDeclineInvite(g)} className="p-1.5 rounded-lg bg-secondary text-muted-foreground hover:text-destructive transition-colors" title="Decline">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+              {activeGames.map(g => {
+                const gameLabel = g.game_type === "bowling" ? "Bowling" : g.game_type === "tictactoe" ? "Tic-Tac-Toe" : g.game_type === "dotsandboxes" ? "Dots & Boxes" : g.game_type;
+                return (
+                  <div key={g.id} className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30">
+                    <Trophy className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{gameLabel} in progress</p>
+                    </div>
+                    <button onClick={() => handleJoinGame(g)} className="px-3 py-1 rounded-lg bg-amber-500 text-white text-xs font-medium hover:bg-amber-500/90 transition-colors">
+                      Join
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto max-w-lg mx-auto px-4 py-4 space-y-3">
             {messages.map((msg) => {
               const isMine = msg.sender_participant_id === myUserParticipant?.id;
@@ -372,6 +455,22 @@ export default function GatheringRoom() {
               const senderInParticipants = participants.find(p => p.id === msg.sender_participant_id);
               const myAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
               const resolvedAvatarUrl = msg.sender_avatar_url || senderInParticipants?.avatar_url || (isMine ? myAvatar : null);
+              // ── Game event messages render as centered cards, not chat bubbles ──
+              // These are game activity/result events, not user-authored speech.
+              // They are visually distinct so no one mistakes them for someone talking.
+              if (msg.is_game_event) {
+                const gt = msg.game_event_data?.game_type;
+                const emoji = gt === "bowling" ? "🎳" : gt === "tictactoe" ? "⭕" : gt === "dotsandboxes" ? "📦" : gt === "pool" ? "🎱" : gt === "gemduel" ? "💎" : gt === "chemistry" ? "🧪" : "🎮";
+                return (
+                  <div key={msg.id} className="flex flex-col items-center gap-1 py-1">
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-secondary/60 border border-border text-xs text-muted-foreground max-w-[85%]">
+                      <span className="text-base flex-shrink-0">{emoji}</span>
+                      <span>{msg.content}</span>
+                    </div>
+                    <span className="text-[9px] text-muted-foreground/50">{formatMsgTime(msg.timestamp)}</span>
+                  </div>
+                );
+              }
               return (
                 <div key={msg.id} className={`flex gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}>
                   <ParticipantAvatar url={resolvedAvatarUrl} name={msg.sender_participant_name} size="w-8 h-8" />
@@ -487,12 +586,13 @@ export default function GatheringRoom() {
       {/* Games modal — launches existing app games + Bowling as shared room activities */}
       <GatheringRoomGamesModal
         open={showGamesModal}
-        onClose={() => setShowGamesModal(false)}
+        onClose={() => { setShowGamesModal(false); setJoinGame(null); }}
         roomId={roomId}
         roomName={room?.name}
         participants={participants}
         myUserParticipant={myUserParticipant}
         currentUser={currentUser}
+        joinGame={joinGame}
       />
     </div>
   );
