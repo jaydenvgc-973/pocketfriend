@@ -3,10 +3,11 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video } from "lucide-react";
+import { ArrowLeft, Send, LogOut, Clock, Users, AtSign, X, Video, Gamepad2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GatheringRoomWatchParty from "@/components/gatheringroom/GatheringRoomWatchParty";
 import GatheringRoomImageShare from "@/components/gatheringroom/GatheringRoomImageShare";
+import GatheringRoomGamesModal from "@/components/gatheringroom/GatheringRoomGamesModal";
 
 // Type-neutral avatar: identical presentation for all participants.
 // No branching on entity type. Falls back to a generic person icon identically.
@@ -38,6 +39,7 @@ export default function GatheringRoom() {
   const [timeRemaining, setTimeRemaining] = useState(1800);
   const [showWatchPartyInput, setShowWatchPartyInput] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showGamesModal, setShowGamesModal] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const gatheringEpochRef = useRef(null);
@@ -453,6 +455,10 @@ export default function GatheringRoom() {
                   className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Start watch party">
                   <Video className="w-5 h-5" />
                 </button>
+                <button onClick={() => setShowGamesModal(true)}
+                  className="p-2 rounded-lg text-muted-foreground hover:bg-secondary transition-colors" title="Play games">
+                  <Gamepad2 className="w-5 h-5" />
+                </button>
                 <input ref={inputRef} type="text" value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSend()}
@@ -478,6 +484,16 @@ export default function GatheringRoom() {
           onClose={() => setShowShareModal(false)}
         />
       )}
+      {/* Games modal — launches existing app games + Bowling as shared room activities */}
+      <GatheringRoomGamesModal
+        open={showGamesModal}
+        onClose={() => setShowGamesModal(false)}
+        roomId={roomId}
+        roomName={room?.name}
+        participants={participants}
+        myUserParticipant={myUserParticipant}
+        currentUser={currentUser}
+      />
     </div>
   );
 }

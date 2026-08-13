@@ -1,0 +1,115 @@
+{
+  "name": "GatheringRoomGame",
+  "type": "object",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": true,
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "game_type": {
+      "type": "string",
+      "enum": [
+        "bowling",
+        "tictactoe",
+        "dotsandboxes",
+        "pool",
+        "gemduel",
+        "chemistry"
+      ],
+      "description": "Which app game is being played"
+    },
+    "gathering_room_id": {
+      "type": "string",
+      "description": "ID of the GatheringRoom this game is happening inside"
+    },
+    "gathering_room_name": {
+      "type": "string",
+      "description": "Denormalized room name for display/memory context"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email of the user who started this game (the initiator)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "completed",
+        "abandoned"
+      ],
+      "default": "active",
+      "description": "Lifecycle status. active = in progress, completed = finished with a result, abandoned = closed early."
+    },
+    "participants": {
+      "type": "array",
+      "description": "Ordered list of players. Index matches player_turn_index and winner_index.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "participant_id": {
+            "type": "string",
+            "description": "GatheringRoomParticipant ID (or a synthetic id for the initiator user if not a participant record)"
+          },
+          "participant_name": {
+            "type": "string"
+          },
+          "participant_type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "character"
+            ],
+            "description": "Internal type. user = a human room participant, character = a character participant."
+          },
+          "owner_email": {
+            "type": "string",
+            "description": "Account owner email of this participant (for characters, the owning account; for users, their own email)."
+          },
+          "avatar_url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "player_turn_index": {
+      "type": "integer",
+      "default": 0,
+      "description": "Index into participants of whose turn it is."
+    },
+    "state": {
+      "type": "object",
+      "description": "Game-specific shared authoritative state JSON. For bowling: frames, scores, current player/frame, pins. Both human clients read this; mutations go through updateGatheringRoomGame.",
+      "additionalProperties": true
+    },
+    "winner_index": {
+      "type": "integer",
+      "description": "Index into participants of the winner. -1 = draw, null/absent = game not yet complete."
+    },
+    "result_summary": {
+      "type": "string",
+      "description": "Human-readable result summary used for character memory and room conversation (e.g. 'User beat Ethan at Bowling 112-98')."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "game_type",
+    "gathering_room_id",
+    "owner_email",
+    "participants"
+  ]
+}

@@ -1,0 +1,322 @@
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { Gamepad2, X, Users, ChevronRight, Trophy } from "lucide-react";
+import { base44 } from "@/api/base44Client";
+import Bowling from "@/components/games/Bowling";
+import TicTacToe from "@/components/games/TicTacToe";
+import DotsAndBoxes from "@/components/games/DotsAndBoxes";
+import Pool from "@/components/games/Pool";
+import GemDuel from "@/components/games/GemDuel";
+import ChemistryGame from "@/components/games/ChemistryGame";
+
+const GAMES = [
+  { id: "bowling",      label: "Bowling",       emoji: "🎳", desc: "Ten frames, strikes & spares",          supportsHuman: true,  supportsCharacter: true,  color: "from-amber-500/20 to-orange-600/10" },
+  { id: "tictactoe",    label: "Tic-Tac-Toe",   emoji: "⭕", desc: "Classic 3×3 strategy",                   supportsHuman: false, supportsCharacter: true,  color: "from-yellow-500/20 to-amber-600/10" },
+  { id: "dotsandboxes", label: "Dots & Boxes",  emoji: "📦", desc: "Connect lines, claim boxes",             supportsHuman: false, supportsCharacter: true,  color: "from-blue-500/20 to-indigo-600/10" },
+  { id: "pool",         label: "Pool",           emoji: "🎱", desc: "Aim & shoot — sink your balls first",  supportsHuman: false, supportsCharacter: true,  color: "from-green-500/20 to-emerald-700/10" },
+  { id: "gemduel",      label: "Gem Duel",       emoji: "💎", desc: "Match gems, chain combos",              supportsHuman: false, supportsCharacter: true,  color: "from-purple-500/20 to-violet-700/10" },
+  { id: "chemistry",    label: "Chemistry",      emoji: "🧪", desc: "Truth or Tension — 5 rounds",           supportsHuman: false, supportsCharacter: true,  color: "from-pink-500/20 to-purple-600/10" },
+];
+
+export default function GatheringRoomGamesModal({
+  open,
+  onClose,
+  roomId,
+  roomName,
+  participants, // sanitized cross-account participants from getGatheringRoomParticipants
+  myUserParticipant, // the current user's own participant object (is_self)
+  currentUser,
+}) {
+  const [stage, setStage] = useState("picker"); // picker | select | play | result
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [opponent, setOpponent] = useState(null); // participant object
+  const [characterRecord, setCharacterRecord] = useState(null);
+  const [loadingChar, setLoadingChar] = useState(false);
+  const [gameResult, setGameResult] = useState(null);
+  const [sharedGameId, setSharedGameId] = useState(null);
+  const [postingResult, setPostingResult] = useState(false);
+
+  useEffect(() => {
+    if (open) { setStage("picker"); setSelectedGame(null); setOpponent(null); setCharacterRecord(null); setGameResult(null); setSharedGameId(null); }
+  }, [open]);
+
+  // Eligible opponents for a game: exclude self; filter by supported type
+  const eligibleOpponents = (participants || []).filter(p => {
+    if (!p || p.is_self) return false;
+    if (!selectedGame) return false;
+    if (p.participant_type === "user") return selectedGame.supportsHuman;
+    if (p.participant_type === "character") return selectedGame.supportsCharacter;
+    return false;
+  });
+
+  const handleSelectGame = (game) => {
+    setSelectedGame(game);
+    setStage("select");
+  };
+
+  const handleSelectOpponent = async (participant) => {
+    setOpponent(participant);
+    if (participant.participant_type === "character") {
+      setLoadingChar(true);
+      try {
+        const chars = await base44.entities.Character.filter({ id: participant.participant_id }, null, 1);
+        setCharacterRecord(chars[0] || null);
+      } catch (_) { setCharacterRecord(null); }
+      setLoadingChar(false);
+    }
+    // For human-vs-human bowling, create the shared game entity
+    if (selectedGame.id === "bowling" && participant.participant_type === "user") {
+      try {
+        const game = await base44.entities.GatheringRoomGame.create({
+          game_type: "bowling",
+          gathering_room_id: roomId,
+          gathering_room_name: roomName,
+          owner_email: currentUser?.email,
+          status: "active",
+          participants: [
+            { participant_id: myUserParticipant?.id, participant_name: myUserParticipant?.participant_name || "You", participant_type: "user", owner_email: currentUser?.email, avatar_url: myUserParticipant?.avatar_url },
+            { participant_id: participant.id, participant_name: participant.participant_name, participant_type: "user", owner_email: participant.owner_email, avatar_url: participant.avatar_url },
+          ],
+          player_turn_index: 0,
+          state: { frames: Array.from({ length: 2 }, () => Array.from({ length: 10 }, () => ({ rolls: [] }))), currentPlayer: 0, currentFrame: 0, pinsStanding: 10 },
+          created_at: new Date().toISOString(),
+        });
+        setSharedGameId(game.id);
+      } catch (err) {
+        console.warn("Failed to create shared game", err?.message);
+      }
+    }
+    setStage("play");
+  };
+
+  // ── Post game result to the room transcript ─────────────────────────────────
+  // This reuses the existing sendGatheringRoomMessage pipeline: the message
+  // enters the room transcript (visible to all), triggers the existing character-
+  // response pipeline (characters react naturally), and triggers the existing
+  // memory-extraction pipeline (all present characters form lived memories of
+  // the game result — cross-account safe via service role). No separate memory
+  // code is needed; the game result becomes a lived gathering experience.
+  const postGameResultToRoom = async (resultSummary) => {
+    if (!myUserParticipant?.id || !roomId) return;
+    setPostingResult(true);
+    try {
+      await base44.functions.invoke("sendGatheringRoomMessage", {
+        gathering_room_id: roomId,
+        content: `🎮 ${resultSummary}`,
+        sender_participant_id: myUserParticipant.id,
+      });
+    } catch (err) {
+      console.warn("Failed to post game result to room", err?.message);
+    }
+    setPostingResult(false);
+  };
+
+  const handleGameEnd = async (outcome) => {
+    const gameName = selectedGame?.label || "the game";
+    const oppName = opponent?.participant_name || "opponent";
+    let summary;
+    if (outcome === "draw") summary = `Drawn game of ${gameName} with ${oppName} at ${roomName}.`;
+    else if (outcome === "user_win") summary = `Beat ${oppName} at ${gameName} at ${roomName}!`;
+    else summary = `Lost to ${oppName} at ${gameName} at ${roomName}.`;
+    setGameResult({ outcome, summary });
+    await postGameResultToRoom(summary);
+    setStage("result");
+  };
+
+  const handleClose = () => {
+    // Abandon shared game if still active
+    if (sharedGameId && stage !== "result") {
+      base44.functions.invoke("updateGatheringRoomGame", { game_id: sharedGameId, action: "abandon" }).catch(() => {});
+    }
+    setStage("picker");
+    setSelectedGame(null);
+    setOpponent(null);
+    setCharacterRecord(null);
+    setGameResult(null);
+    setSharedGameId(null);
+    onClose();
+  };
+
+  if (!open) return null;
+
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-black/80"
+          onClick={handleClose}
+        >
+          <motion.div
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ type: "spring", damping: 28, stiffness: 280 }}
+            onClick={e => e.stopPropagation()}
+            className="w-full max-w-lg bg-card border border-border rounded-t-3xl overflow-hidden flex flex-col"
+            style={{ maxHeight: "94vh" }}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0 bg-card/90 backdrop-blur-sm">
+              <div className="flex items-center gap-2">
+                {stage !== "picker" && stage !== "result" && (
+                  <button onClick={() => setStage(stage === "play" ? "select" : "picker")} className="text-muted-foreground hover:text-foreground text-xs">‹ Back</button>
+                )}
+                <div>
+                  <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                    <Gamepad2 className="w-4 h-4 text-primary" />
+                    {stage === "picker" && "Play a Game"}
+                    {stage === "select" && selectedGame?.label}
+                    {stage === "play" && selectedGame?.label}
+                    {stage === "result" && "Game Over"}
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground">
+                    {stage === "picker" && `Games inside ${roomName || "the room"}`}
+                    {stage === "select" && "Choose who to play with"}
+                    {stage === "play" && `vs ${opponent?.participant_name || "..."}`}
+                    {stage === "result" && gameResult?.summary}
+                  </p>
+                </div>
+              </div>
+              <button onClick={handleClose} className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-lg hover:bg-secondary">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {/* Picker */}
+              {stage === "picker" && (
+                <div className="p-3 space-y-2">
+                  {GAMES.map((game, i) => (
+                    <motion.button
+                      key={game.id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => handleSelectGame(game)}
+                      className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-gradient-to-r ${game.color} border border-border/60 hover:border-primary/40 hover:shadow-md transition-all text-left group`}
+                    >
+                      <span className="text-3xl group-hover:scale-110 transition-transform">{game.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-foreground">{game.label}</p>
+                        <p className="text-xs text-muted-foreground">{game.desc}</p>
+                        <div className="flex gap-1.5 mt-1">
+                          {game.supportsCharacter && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">🤖 character</span>}
+                          {game.supportsHuman && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">👤 human</span>}
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-primary transition-colors" />
+                    </motion.button>
+                  ))}
+                  {eligibleOpponents.length === 0 && selectedGame === null && (participants || []).length <= 1 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">No one else is here right now. Invite someone or wait for others to join.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Opponent selector */}
+              {stage === "select" && (
+                <div className="p-3 space-y-1.5">
+                  <p className="text-xs text-muted-foreground px-2 pb-1">
+                    {selectedGame?.supportsHuman ? "Pick anyone currently in the room." : "This game supports character opponents. Pick a character currently in the room."}
+                  </p>
+                  {eligibleOpponents.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-6">No eligible participants for this game right now.</p>
+                  )}
+                  {eligibleOpponents.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleSelectOpponent(p)}
+                      className="w-full flex items-center gap-3 px-3 py-3 rounded-2xl bg-secondary/50 hover:bg-secondary border border-border/40 hover:border-primary/40 transition-all text-left"
+                    >
+                      <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-border flex-shrink-0 bg-secondary">
+                        {p.avatar_url ? <img src={p.avatar_url} alt="" className="w-full h-full object-cover" /> : <Users className="w-1/2 h-1/2 text-muted-foreground m-auto mt-3" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{p.participant_name}</p>
+                        <p className="text-[10px] text-muted-foreground">{p.participant_type === "user" ? "Human in room" : "Character in room"}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground/50" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Game play */}
+              {stage === "play" && (
+                <div className="min-h-[400px]">
+                  {loadingChar && (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                    </div>
+                  )}
+                  {!loadingChar && selectedGame?.id === "bowling" && (
+                    <Bowling
+                      mode={opponent?.participant_type === "user" ? "human" : "character"}
+                      opponent={{ ...opponent, character: characterRecord }}
+                      gameId={sharedGameId}
+                      myPlayerIndex={0}
+                      roomName={roomName}
+                      onGameEnd={handleGameEnd}
+                    />
+                  )}
+                  {!loadingChar && selectedGame?.id === "tictactoe" && characterRecord && (
+                    <TicTacToe character={characterRecord} onGameEnd={handleGameEnd} />
+                  )}
+                  {!loadingChar && selectedGame?.id === "dotsandboxes" && characterRecord && (
+                    <DotsAndBoxes character={characterRecord} onGameEnd={handleGameEnd} />
+                  )}
+                  {!loadingChar && selectedGame?.id === "pool" && characterRecord && (
+                    <Pool character={characterRecord} onGameEnd={handleGameEnd} />
+                  )}
+                  {!loadingChar && selectedGame?.id === "gemduel" && characterRecord && (
+                    <GemDuel character={characterRecord} onGameEnd={handleGameEnd} />
+                  )}
+                  {!loadingChar && selectedGame?.id === "chemistry" && characterRecord && (
+                    <ChemistryGame character={characterRecord} conversationId={null} onEnd={() => handleGameEnd("user_win")} />
+                  )}
+                </div>
+              )}
+
+              {/* Result */}
+              {stage === "result" && gameResult && (
+                <div className="flex flex-col items-center justify-center gap-5 py-14 px-6">
+                  <motion.span
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", damping: 12, stiffness: 200, delay: 0.1 }}
+                    className="text-6xl"
+                  >
+                    {gameResult.outcome === "user_win" ? "🏆" : gameResult.outcome === "draw" ? "🤝" : "🎳"}
+                  </motion.span>
+                  <div className="text-center">
+                    <h2 className="text-xl font-black text-foreground">
+                      {gameResult.outcome === "user_win" ? "You Won!" : gameResult.outcome === "draw" ? "Draw!" : `${opponent?.participant_name} Won`}
+                    </h2>
+                    <p className="text-xs text-muted-foreground mt-1">{gameResult.summary}</p>
+                    <p className="text-[10px] text-muted-foreground/60 mt-2">
+                      {postingResult ? "Sharing with the room…" : "Shared with the room — characters may react"}
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                    <button onClick={() => { setStage("select"); setOpponent(null); setCharacterRecord(null); setGameResult(null); setSharedGameId(null); }} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 transition-colors">
+                      Play Again
+                    </button>
+                    <button onClick={handleClose} className="px-5 py-2.5 rounded-xl bg-secondary text-foreground font-semibold text-sm hover:bg-secondary/70 transition-colors">
+                      Back to Room
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
+}
