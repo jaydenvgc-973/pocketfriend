@@ -306,7 +306,8 @@ Deno.serve(async (req) => {
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Occupation: ${character.occupation || 'their job'}
 - Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
-- Do NOT depict them at home, relaxing, or away from work.`;
+- Do NOT depict them at home, relaxing, or away from work.
+- WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.`;
     } else {
       situationBlock = `SITUATION: ${character.name} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}

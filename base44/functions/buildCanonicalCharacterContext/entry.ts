@@ -574,7 +574,7 @@ function buildHardFacts(character) {
     lines.push("AUTHORITATIVE PRESENCE: AT SCHOOL. You are awake, at school, and engaged in your education.");
   }
   if (rp === 'at_work') {
-    lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working.");
+    lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working. Your experience of this workday is derived from your personality, knowledge, history, and how work is actually going — not from a default assumption that work is stressful. You may be engaged, focused, routine, bored, satisfied, or frustrated — depending on who you are and what is actually happening.");
   }
 
   // Incarceration
@@ -588,6 +588,34 @@ function buildHardFacts(character) {
   // Work
   if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}.`);
   if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}.`);
+
+  // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived ──────────
+  // There is no default attitude toward work. The character's experience of
+  // employment is derived from their personality, education, history, skills,
+  // actual circumstances, and the specific workday — not from a generic
+  // assumption that work is stressful, dreaded, or unpleasant. This applies
+  // to all generation: dialogue, narration, memory, autonomous behavior.
+  if (character.occupation) {
+    const expFactors = [];
+    if (character.work_details?.is_new_job) expFactors.push('relatively new to this role');
+    const hasRelevantEducation = (character.completed_education || []).some(e =>
+      e.course_name && character.occupation && (
+        character.occupation.toLowerCase().includes((e.course_name || '').toLowerCase().split(' ')[0]) ||
+        (e.course_name || '').toLowerCase().includes(character.occupation.toLowerCase().split(' ')[0])
+      )
+    );
+    if (hasRelevantEducation) expFactors.push('formally educated in a related field — their knowledge is usable');
+    const traitHints = [];
+    if (character.trait_competitive) traitHints.push('may find challenges engaging rather than stressful');
+    if (character.trait_conscientious) traitHints.push('takes responsibilities seriously — may find satisfaction in competence');
+    if (character.trait_compassionate) traitHints.push('work involving people may carry emotional weight — positive or negative');
+    if (character.trait_leader) traitHints.push('may find leadership responsibilities natural rather than burdensome');
+    if (character.trait_cynical) traitHints.push('may view workplace dynamics skeptically');
+    if (character.trait_adaptable) traitHints.push('adjusts to workplace changes more easily');
+    const factorLine = expFactors.length > 0 ? `\nRELEVANT CONTEXT: ${expFactors.join('; ')}.` : '';
+    const traitLine = traitHints.length > 0 ? `\nPERSONALITY INFLUENCE: ${traitHints.join('; ')}.` : '';
+    lines.push(`EMPLOYMENT EXPERIENCE — CHARACTER-DERIVED (no default work stress):${factorLine}${traitLine}\nPRINCIPLE: There is no default attitude toward work. Derive their experience from who they are, what they know, why they have this job, and how work is actually going. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a competent character may find problems engaging. A normal workday does not require a crisis or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.`);
+  }
 
   // School — live presence only (full education block is in buildEducationBlock injected separately)
   if (character.current_education_activity && character.current_education_activity !== 'none') {
@@ -675,7 +703,19 @@ function buildSoapOperaLifeContext(character) {
   if (fam.length > 0) threads.push(`FAMILY: Active ties — ${fam.join(', ')}.`);
   if (character.is_homeless) threads.push(`HOUSING: Without stable housing.`);
   else if (character.housing_context === 'temporary_shelter') threads.push(`HOUSING: Temporary shelter.`);
-  if (character.occupation) threads.push(`WORK: ${character.occupation}.`);
+  if (character.occupation) {
+    const workFactors = [];
+    if (character.work_details?.is_new_job) workFactors.push('new to this role');
+    const hasRelevantEducation = (character.completed_education || []).some(e =>
+      e.course_name && character.occupation && (
+        character.occupation.toLowerCase().includes((e.course_name || '').toLowerCase().split(' ')[0]) ||
+        (e.course_name || '').toLowerCase().includes(character.occupation.toLowerCase().split(' ')[0])
+      )
+    );
+    if (hasRelevantEducation) workFactors.push('formally trained in a related field');
+    const workNote = workFactors.length > 0 ? ` (${workFactors.join('; ')})` : '';
+    threads.push(`WORK: ${character.occupation}${workNote}. Their experience of work is derived from their personality, education, history, and actual circumstances — not from a default assumption that work is stressful.`);
+  }
   if ((character.financial_need_value ?? 60) < 40) threads.push(`FINANCES: Under real financial pressure.`);
   const religion = (character.religion || '').trim();
   if (religion && religion !== 'None' && religion.toLowerCase() !== 'none') {

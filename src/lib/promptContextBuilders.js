@@ -470,12 +470,21 @@ export function buildSoapOperaLifeContext(character, recentMemories = []) {
     threads.push(`HEALTH THREAD: ${character.health_status}. This is an active part of life — it may affect energy, mood, plans, or what they talk about.`);
   }
 
-  // Work/career thread
+  // Work/career thread — character-derived, no default stress assumption
   if (character.occupation) {
     const workDetails = character.work_details;
-    const workNote = workDetails?.stress_level === 'high' ? ' — currently high stress' :
-      workDetails?.is_new_job ? ' — relatively new to this role' : '';
-    threads.push(`WORK THREAD: ${character.occupation}${workNote}. Work history, workplace dynamics, and career pressures are real and present.`);
+    const workFactors = [];
+    if (workDetails?.is_new_job) workFactors.push('relatively new to this role');
+    // Surface relevant education/qualifications when they match the occupation
+    const hasRelevantEducation = (character.completed_education || []).some(e =>
+      e.course_name && character.occupation && (
+        character.occupation.toLowerCase().includes((e.course_name || '').toLowerCase().split(' ')[0]) ||
+        (e.course_name || '').toLowerCase().includes(character.occupation.toLowerCase().split(' ')[0])
+      )
+    );
+    if (hasRelevantEducation) workFactors.push('formally trained in a related field');
+    const workNote = workFactors.length > 0 ? ` — ${workFactors.join('; ')}` : '';
+    threads.push(`WORK THREAD: ${character.occupation}${workNote}. Their experience of work is shaped by their personality, education, history, and actual circumstances — not by a default assumption that work is stressful or unpleasant. Derive their relationship with employment from who they are and how work is actually going.`);
   }
 
   // Financial thread
@@ -666,7 +675,9 @@ A character can struggle and still have hope.
 
 OFF-SCREEN LIFE RULE:
 Characters have experiences the user did not witness. They went places. Things happened.
-Work was hard. A call came in. They saw something. They felt something.
+A call came in. They saw something. They felt something. Work happened — and their
+experience of it depends on who they are and how work actually went. It may have been
+rewarding, routine, frustrating, easy, or unremarkable. Do not default to "work was hard."
 These off-screen moments give them MORE to bring to the conversation — not less.
 
 When returning to a conversation, a character may reference:
