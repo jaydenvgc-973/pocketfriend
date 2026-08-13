@@ -85,29 +85,113 @@ function characterThrowQuality(character) {
   return Math.max(0.1, Math.min(0.95, skill + (Math.random() * 0.3 - 0.15)));
 }
 
-// ── Canvas dimensions ───────────────────────────────────────────────────────
-const LW = 200, LH = 340;
-const PIN_R = 7, BALL_R = 11;
-const LANE_LEFT = 40, LANE_RIGHT = LW - 40;
-const LANE_TOP = 16, LANE_BOTTOM = LH - 16;
-const BALL_REST_Y = LH - 40;
+// ── Canvas dimensions (bowler's-eye perspective) ────────────────────────────
+const LW = 280, LH = 440;
+const PIN_R = 5;
+const BALL_R = 22;           // large foreground ball
+const LANE_TOP = 20;
+const LANE_BOTTOM = 420;
+const BALL_REST_Y = 380;
+const FAR_HALF_W = 32;       // lane half-width at far end (pins)
+const NEAR_HALF_W = 118;     // lane half-width at near end (bowler)
+const PIN_AREA_Y = 110;      // y where ball reaches pins
+const CX = LW / 2;
+
+// Lane half-width at a given y (perspective interpolation)
+function laneHalfWidthAt(y) {
+  const t = Math.max(0, Math.min(1, (y - LANE_TOP) / (LANE_BOTTOM - LANE_TOP)));
+  return FAR_HALF_W + (NEAR_HALF_W - FAR_HALF_W) * t;
+}
+
+// Ball radius at a given y (perspective: small when far, large when near)
+function ballRadiusAt(y) {
+  const t = Math.max(0, Math.min(1, (y - LANE_TOP) / (LANE_BOTTOM - LANE_TOP)));
+  return BALL_R * (0.25 + 0.75 * t);
+}
 
 function pinPositions() {
-  // Standard 4-row triangle, head pin at top center
-  const cx = LW / 2;
-  const topY = 36;
-  const dy = 22, dx = 14;
+  // Standard 4-3-2-1 rack: 4 pins farthest from bowler, 1 head pin closest.
+  // Head pin is closest to the ball (which sits below the rack).
+  const cx = CX;
+  const topY = 38;
+  const dy = 19;
+  const spacing = 13;
   const pins = [];
-  for (let row = 0; row < 4; row++) {
-    for (let i = 0; i <= row; i++) {
-      pins.push({
-        x: cx + (i - row / 2) * dx * 2,
-        y: topY + row * dy,
-        standing: true,
-      });
-    }
+  // Row 0: 4 pins (farthest from ball)
+  for (let i = 0; i < 4; i++) {
+    pins.push({ x: cx + (i - 1.5) * spacing, y: topY, standing: true, r: PIN_R });
   }
+  // Row 1: 3 pins
+  for (let i = 0; i < 3; i++) {
+    pins.push({ x: cx + (i - 1) * spacing, y: topY + dy, standing: true, r: PIN_R });
+  }
+  // Row 2: 2 pins
+  for (let i = 0; i < 2; i++) {
+    pins.push({ x: cx + (i - 0.5) * spacing, y: topY + dy * 2, standing: true, r: PIN_R });
+  }
+  // Row 3: 1 head pin (closest to ball)
+  pins.push({ x: cx, y: topY + dy * 3, standing: true, r: PIN_R });
   return pins;
+}
+
+// ── Pin rendering (bottle-shaped, not circles) ──────────────────────────────
+function drawPin(ctx, x, y, r) {
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowBlur = 3;
+  ctx.shadowOffsetY = 1;
+  // Pin body silhouette
+  ctx.fillStyle = "#f5f5f0";
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.35, y - r * 2.2);
+  ctx.bezierCurveTo(x - r * 0.35, y - r * 1.6, x - r * 0.55, y - r * 0.9, x - r, y - r * 0.2);
+  ctx.bezierCurveTo(x - r, y + r * 0.4, x - r * 0.85, y + r * 0.8, x - r * 0.75, y + r);
+  ctx.lineTo(x + r * 0.75, y + r);
+  ctx.bezierCurveTo(x + r * 0.85, y + r * 0.8, x + r, y + r * 0.4, x + r, y - r * 0.2);
+  ctx.bezierCurveTo(x + r * 0.55, y - r * 0.9, x + r * 0.35, y - r * 1.6, x + r * 0.35, y - r * 2.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // Red neck stripe
+  ctx.strokeStyle = "#dc2626";
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.42, y - r * 1.35);
+  ctx.lineTo(x + r * 0.42, y - r * 1.35);
+  ctx.stroke();
+  // Subtle shading
+  ctx.fillStyle = "rgba(0,0,0,0.08)";
+  ctx.beginPath();
+  ctx.ellipse(x + r * 0.3, y, r * 0.25, r * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// ── Ball rendering (dimensional, with finger holes) ──────────────────────────
+function drawBall(ctx, x, y, r) {
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 4;
+  const bg = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+  bg.addColorStop(0, "#a78bfa");
+  bg.addColorStop(0.55, "#7c3aed");
+  bg.addColorStop(1, "#4c1d95");
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.restore();
+  // Highlight
+  ctx.fillStyle = "rgba(255,255,255,0.18)";
+  ctx.beginPath();
+  ctx.ellipse(x - r * 0.35, y - r * 0.35, r * 0.25, r * 0.18, -0.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Finger holes
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  const hr = r * 0.11;
+  ctx.beginPath(); ctx.arc(x - r * 0.22, y - r * 0.12, hr, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x + r * 0.14, y - r * 0.12, hr, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x - r * 0.04, y + r * 0.22, hr, 0, Math.PI * 2); ctx.fill();
 }
 
 export default function Bowling({
@@ -188,108 +272,143 @@ export default function Bowling({
     }
   }, [mode, currentPlayer, myPlayerIndex, turnState]);
 
-  // ── Drawing ─────────────────────────────────────────────────────────────────
+  // ── Drawing (bowler's-eye perspective) ─────────────────────────────────────
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
-    // Lane background
-    const grad = ctx.createLinearGradient(0, 0, 0, LH);
-    grad.addColorStop(0, "#3d2a1a");
-    grad.addColorStop(0.5, "#5a3f28");
-    grad.addColorStop(1, "#3d2a1a");
-    ctx.fillStyle = grad;
-    ctx.fillRect(LANE_LEFT, LANE_TOP, LANE_RIGHT - LANE_LEFT, LANE_BOTTOM - LANE_TOP);
-    // Gutters
-    ctx.fillStyle = "#1a1208";
-    ctx.fillRect(LANE_LEFT - 10, LANE_TOP, 10, LANE_BOTTOM - LANE_TOP);
-    ctx.fillRect(LANE_RIGHT, LANE_TOP, 10, LANE_BOTTOM - LANE_TOP);
-    // Arrow markers
-    ctx.fillStyle = "rgba(255,255,255,0.15)";
-    for (let i = 0; i < 4; i++) {
-      const y = LH - 120 + i * 14;
-      ctx.beginPath();
-      ctx.moveTo(LW / 2, y);
-      ctx.lineTo(LW / 2 - 6, y + 8);
-      ctx.lineTo(LW / 2 + 6, y + 8);
-      ctx.closePath();
-      ctx.fill();
-    }
-    // Foul line
-    ctx.strokeStyle = "rgba(255,80,80,0.5)";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(LANE_LEFT, LH - 70);
-    ctx.lineTo(LANE_RIGHT, LH - 70);
-    ctx.stroke();
 
-    // Pins
-    for (const p of pinsRef.current) {
-      if (!p.standing) continue;
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.4)";
-      ctx.shadowBlur = 4;
-      ctx.shadowOffsetY = 2;
+    // Background (surrounding area — dark venue)
+    ctx.fillStyle = "#0f0a06";
+    ctx.fillRect(0, 0, LW, LH);
+
+    // Lane (trapezoid — narrow at far end, wide at near end)
+    const grad = ctx.createLinearGradient(0, LANE_TOP, 0, LANE_BOTTOM);
+    grad.addColorStop(0, "#7a5c3a");
+    grad.addColorStop(0.4, "#9a7a4f");
+    grad.addColorStop(0.85, "#b89568");
+    grad.addColorStop(1, "#c9a878");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(CX - FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX + FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX + NEAR_HALF_W, LANE_BOTTOM);
+    ctx.lineTo(CX - NEAR_HALF_W, LANE_BOTTOM);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wood grain lines (perspective)
+    ctx.strokeStyle = "rgba(80,55,30,0.25)";
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 8; i++) {
+      const t = i / 8;
+      const y = LANE_TOP + t * (LANE_BOTTOM - LANE_TOP);
+      const hw = laneHalfWidthAt(y);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, PIN_R, 0, Math.PI * 2);
-      ctx.fillStyle = "#f5f5f0";
-      ctx.fill();
-      ctx.restore();
-      // Red stripe
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, PIN_R, 0, Math.PI * 2);
-      ctx.strokeStyle = "#dc2626";
-      ctx.lineWidth = 1.5;
+      ctx.moveTo(CX - hw, y);
+      ctx.lineTo(CX + hw, y);
       ctx.stroke();
     }
 
-    // Aim line
-    const aim = aimRef.current;
-    const ball = ballRef.current;
-    if (aim.active && !ball.rolling && (turnState === "aiming")) {
-      const dx = ball.x - aim.currentX;
-      const dy = ball.y - aim.currentY;
-      const len = Math.hypot(dx, dy);
-      if (len > 6) {
-        const ux = dx / len, uy = dy / len;
-        ctx.save();
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = "rgba(255,255,255,0.55)";
-        ctx.lineWidth = 1.5;
+    // Gutters (angled dark regions on both sides)
+    ctx.fillStyle = "#241a0e";
+    ctx.beginPath();
+    ctx.moveTo(CX - FAR_HALF_W - 7, LANE_TOP);
+    ctx.lineTo(CX - FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX - NEAR_HALF_W, LANE_BOTTOM);
+    ctx.lineTo(CX - NEAR_HALF_W - 22, LANE_BOTTOM);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(CX + FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX + FAR_HALF_W + 7, LANE_TOP);
+    ctx.lineTo(CX + NEAR_HALF_W + 22, LANE_BOTTOM);
+    ctx.lineTo(CX + NEAR_HALF_W, LANE_BOTTOM);
+    ctx.closePath();
+    ctx.fill();
+
+    // Lane arrows (aiming markers — converging toward center)
+    ctx.fillStyle = "rgba(55,35,15,0.45)";
+    for (let i = 0; i < 4; i++) {
+      const y = LANE_BOTTOM - 70 - i * 28;
+      const hw = laneHalfWidthAt(y);
+      for (let j = -1; j <= 1; j++) {
+        const x = CX + j * hw * 0.38;
         ctx.beginPath();
-        ctx.moveTo(ball.x, ball.y);
-        ctx.lineTo(ball.x + ux * 90, ball.y + uy * 90);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Power bar
-        const power = Math.min(len / 70, 1);
-        ctx.fillStyle = "rgba(0,0,0,0.5)";
-        ctx.fillRect(LANE_LEFT, LANE_BOTTOM + 2, LANE_RIGHT - LANE_LEFT, 5);
-        ctx.fillStyle = power > 0.7 ? "rgba(239,68,68,0.9)" : power > 0.4 ? "rgba(251,191,36,0.9)" : "rgba(34,197,94,0.9)";
-        ctx.fillRect(LANE_LEFT, LANE_BOTTOM + 2, (LANE_RIGHT - LANE_LEFT) * power, 5);
-        ctx.restore();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - 4, y + 9);
+        ctx.lineTo(x + 4, y + 9);
+        ctx.closePath();
+        ctx.fill();
       }
     }
 
-    // Ball
-    ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.5)";
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 3;
-    const bg = ctx.createRadialGradient(ball.x - 3, ball.y - 3, 1, ball.x, ball.y, BALL_R);
-    bg.addColorStop(0, "#7c3aed");
-    bg.addColorStop(0.7, "#5b21b6");
-    bg.addColorStop(1, "#2e1065");
+    // Foul line
+    const foulY = LANE_BOTTOM - 28;
+    const foulHW = laneHalfWidthAt(foulY);
+    ctx.strokeStyle = "rgba(220,70,70,0.65)";
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
-    ctx.fillStyle = bg;
+    ctx.moveTo(CX - foulHW, foulY);
+    ctx.lineTo(CX + foulHW, foulY);
+    ctx.stroke();
+
+    // Pin deck (darker zone behind pins)
+    ctx.fillStyle = "rgba(0,0,0,0.18)";
+    ctx.beginPath();
+    ctx.moveTo(CX - FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX + FAR_HALF_W, LANE_TOP);
+    ctx.lineTo(CX + FAR_HALF_W + 4, LANE_TOP + 12);
+    ctx.lineTo(CX - FAR_HALF_W - 4, LANE_TOP + 12);
+    ctx.closePath();
     ctx.fill();
-    ctx.restore();
-    // Finger holes
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.beginPath(); ctx.arc(ball.x - 3, ball.y - 2, 1.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ball.x + 2, ball.y - 2, 1.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ball.x, ball.y + 3, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // Pins (drawn as pin shapes, back-to-front for correct overlap)
+    const standing = pinsRef.current.filter(p => p.standing).sort((a, b) => a.y - b.y);
+    for (const p of standing) {
+      drawPin(ctx, p.x, p.y, p.r || PIN_R);
+    }
+
+    // Aim line (converges toward pin area)
+    const aim = aimRef.current;
+    const ball = ballRef.current;
+    if (aim.active && !ball.rolling && turnState === "aiming") {
+      const dx = ball.x - aim.currentX;
+      const dy = ball.y - aim.currentY;
+      const len = Math.hypot(dx, dy);
+      if (len > 8) {
+        const ux = dx / len, uy = dy / len;
+        // Project the aim line to the pin area
+        const targetY = PIN_AREA_Y;
+        const scale = (targetY - ball.y) / (uy || -0.01);
+        const targetX = ball.x + ux * Math.abs(scale);
+        ctx.save();
+        ctx.setLineDash([7, 6]);
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(ball.x, ball.y);
+        ctx.lineTo(targetX, targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Aim target dot
+        ctx.fillStyle = "rgba(255,255,255,0.5)";
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        // Power bar (bottom of lane)
+        const power = Math.min(len / 80, 1);
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(CX - NEAR_HALF_W, LANE_BOTTOM + 4, NEAR_HALF_W * 2, 6);
+        ctx.fillStyle = power > 0.7 ? "rgba(239,68,68,0.9)" : power > 0.4 ? "rgba(251,191,36,0.9)" : "rgba(34,197,94,0.9)";
+        ctx.fillRect(CX - NEAR_HALF_W, LANE_BOTTOM + 4, NEAR_HALF_W * 2 * power, 6);
+      }
+    }
+
+    // Ball (with perspective size based on current y)
+    const ballR = ballRadiusAt(ball.y);
+    drawBall(ctx, ball.x, ball.y, ballR);
   }, [turnState]);
 
   // ── Animation loop ──────────────────────────────────────────────────────────
@@ -299,15 +418,21 @@ export default function Bowling({
       if (ball.rolling) {
         ball.x += ball.vx;
         ball.y += ball.vy;
-        ball.vy *= 0.995;
-        ball.vx *= 0.995;
-        // Gutter check
-        if (ball.x < LANE_LEFT + BALL_R || ball.x > LANE_RIGHT - BALL_R) {
+        ball.vy *= 0.996;
+        ball.vx *= 0.996;
+        // Perspective gutter check — ball must stay within lane at current y
+        const hw = laneHalfWidthAt(ball.y);
+        const br = ballRadiusAt(ball.y);
+        if (ball.x < CX - hw + br * 0.5) {
           ball.vx = 0;
-          ball.x = Math.max(LANE_LEFT + BALL_R, Math.min(LANE_RIGHT - BALL_R, ball.x));
+          ball.x = CX - hw + br * 0.5;
+        }
+        if (ball.x > CX + hw - br * 0.5) {
+          ball.vx = 0;
+          ball.x = CX + hw - br * 0.5;
         }
         // Reached pins area
-        if (ball.y <= 60) {
+        if (ball.y <= PIN_AREA_Y) {
           ball.rolling = false;
           if (throwResolveRef.current) {
             const resolve = throwResolveRef.current;
@@ -316,7 +441,7 @@ export default function Bowling({
           }
         }
         // Off top
-        if (ball.y < 0) {
+        if (ball.y < LANE_TOP) {
           ball.rolling = false;
           if (throwResolveRef.current) {
             const resolve = throwResolveRef.current;
@@ -490,12 +615,12 @@ export default function Bowling({
     const ball = ballRef.current;
     const dx = ball.x - aim.currentX, dy = ball.y - aim.currentY;
     const len = Math.hypot(dx, dy);
-    if (len < 6) return;
+    if (len < 10) return;
     // aimError: deviation from straight up (negative y)
     const angle = Math.atan2(dy, dx);
     const straightAngle = -Math.PI / 2;
     const aimError = Math.abs(angle - straightAngle) / (Math.PI / 2); // 0..~1
-    const power = Math.min(len / 70, 1);
+    const power = Math.min(len / 120, 1);
 
     if (mode === "character") {
       const r = await executeThrow(aimError, power, 0);
@@ -603,14 +728,14 @@ export default function Bowling({
         </motion.p>
       </AnimatePresence>
 
-      {/* Lane canvas */}
-      <div className="relative">
+      {/* Lane canvas — responsive, maintains aspect ratio */}
+      <div className="relative w-full" style={{ maxWidth: LW }}>
         <canvas
           ref={canvasRef}
           width={LW}
           height={LH}
-          className="rounded-xl touch-none"
-          style={{ maxWidth: LW, cursor: canAim ? "crosshair" : "default" }}
+          className="rounded-xl touch-none w-full"
+          style={{ aspectRatio: `${LW} / ${LH}`, cursor: canAim ? "crosshair" : "default" }}
           onMouseDown={onPointerDown}
           onMouseMove={onPointerMove}
           onMouseUp={onPointerUp}

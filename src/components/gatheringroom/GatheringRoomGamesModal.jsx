@@ -136,8 +136,23 @@ export default function GatheringRoomGamesModal({
     if (participant.participant_type === "character") {
       setLoadingChar(true);
       try {
+        // Guard: never silently substitute a different character.
+        // If participant_id is missing, fail the launch rather than
+        // falling back to the first character in the database.
+        if (!participant.participant_id) {
+          setCharacterRecord(null);
+          setLoadingChar(false);
+          return;
+        }
         const chars = await base44.entities.Character.filter({ id: participant.participant_id }, null, 1);
-        setCharacterRecord(chars[0] || null);
+        const resolved = chars[0] || null;
+        // Verify the resolved character matches the requested ID — prevents
+        // silent substitution if the filter returns a different character.
+        if (resolved && resolved.id !== participant.participant_id) {
+          setCharacterRecord(null);
+        } else {
+          setCharacterRecord(resolved);
+        }
       } catch (_) { setCharacterRecord(null); }
       setLoadingChar(false);
     }

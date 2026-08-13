@@ -108,6 +108,7 @@ Deno.serve(async (req) => {
       }
       return {
         id: p.id,
+        participant_id: p.participant_id,
         participant_name: p.participant_name,
         avatar_url: avatarUrl,
         is_self: isSelf,
