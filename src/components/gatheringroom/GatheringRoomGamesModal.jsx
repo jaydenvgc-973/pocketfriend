@@ -61,7 +61,7 @@ export default function GatheringRoomGamesModal({
     if (open && !joinGame) {
       setStage("picker"); setSelectedGame(null); setOpponent(null);
       setCharacterRecord(null); setGameResult(null); setSharedGameId(null);
-      setInviteDeclined(false);
+      setInviteDeclined(false); setIsInitiator(true);
     }
   }, [open, joinGame]);
 
@@ -81,7 +81,7 @@ export default function GatheringRoomGamesModal({
         const status = event.data?.status;
         if (status === "active") setStage("play");
         else if (status === "cancelled" || status === "abandoned") {
-          setInviteDeclined(true); setStage("select"); setSharedGameId(null);
+          setInviteDeclined(true); setStage("select"); setSharedGameId(null); setIsInitiator(true);
         }
       });
     })();
@@ -221,7 +221,7 @@ export default function GatheringRoomGamesModal({
     }
     setStage("picker"); setSelectedGame(null); setOpponent(null);
     setCharacterRecord(null); setGameResult(null); setSharedGameId(null);
-    setInviteDeclined(false);
+    setInviteDeclined(false); setIsInitiator(true);
     onClose();
   };
 
@@ -435,7 +435,7 @@ export default function GatheringRoomGamesModal({
                     </p>
                   </div>
                   <div className="flex gap-3">
-                    <button onClick={() => { setStage("select"); setOpponent(null); setCharacterRecord(null); setGameResult(null); setSharedGameId(null); setInviteDeclined(false); }} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 transition-colors">
+                    <button onClick={() => { setStage("select"); setOpponent(null); setCharacterRecord(null); setGameResult(null); setSharedGameId(null); setInviteDeclined(false); setIsInitiator(true); }} className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:bg-primary/90 transition-colors">
                       Play Again
                     </button>
                     <button onClick={handleClose} className="px-5 py-2.5 rounded-xl bg-secondary text-foreground font-semibold text-sm hover:bg-secondary/70 transition-colors">
