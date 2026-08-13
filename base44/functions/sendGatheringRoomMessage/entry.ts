@@ -257,23 +257,32 @@ Deno.serve(async (req) => {
         return line;
       }).join('\n');
 
-      // ── 6f.1. RELATIONSHIP CONTEXT — PREVENT RELATIONSHIP-ROLE DRIFT ────────
+      // ── 6f.1. RELATIONSHIP CONTEXT — ASSEMBLED FROM MULTIPLE SOURCES ────────
       // The Gathering Room must carry each character's established relationships
       // into the generation context. Without this, the LLM infers relationships
-      // from surnames or proximity, causing role drift (e.g., a cousin being
-      // treated as a father).
+      // from surnames or proximity, causing role drift.
       //
-      // Sources checked for each pair (Character A, Character B):
-      //   1. A.family_members — account-scoped profile Family list
-      //   2. A.backstory / A.family_history — written family/back history
-      //      (this is how cross-account family relationships are established)
-      //   3. A.fictional_relationships — established character relationships
-      //   4. Memory entity for A — lived memories mentioning B
+      // IMPORTANT: These sources are NOT a linear precedence chain. They represent
+      // different kinds of information and are ASSEMBLED TOGETHER when
+      // non-contradictory, each attributed to its source:
+      //   - family_members: account-scoped profile Family list (stable character_id)
+      //   - backstory / family_history: written family/back history (cross-account)
+      //   - fictional_relationships: established relationship records (stable ID)
       //
-      // CRITICAL: Each relationship fact is bound to the character whose record
-      // it comes from. "Ethan's father is Vick" must never become "Eddie's father
-      // is Vick." Profile Family list absence does NOT mean two characters are
-      // unrelated — cross-account family lives in written history.
+      // A cross-account cousin pair may legitimately have BOTH:
+      //   family_history → they are cousins
+      //   Memory → they previously met in a Gathering Room
+      // The memory does not establish the cousin relationship and the cousin
+      // history does not substitute for their lived interaction. Both are present.
+      //
+      // Stable IDs (character_id, related_character_id) are preferred over name
+      // matching wherever available. Name matching is used only where the source
+      // has no structured ID (backstory prose).
+      //
+      // CRITICAL: Each fact is bound to the character whose record it comes from.
+      // "Ethan's father is Vick" must never become "Eddie's father is Vick."
+      // If no relationship is listed for a pair from any source, they may be
+      // strangers — do NOT invent one from surnames, ages, or proximity.
       const otherCharacterParticipants = validRoomParticipants.filter(
         p => p.participant_type === 'character'
       );
@@ -288,13 +297,12 @@ Deno.serve(async (req) => {
 
           const otherName = otherPart.participant_name;
           const otherId = otherPart.participant_id;
-          let found = false;
 
-          // 1. Check profile Family list (account-scoped)
+          // 1. Profile Family list (account-scoped) — stable character_id preferred
           const familyMembers = charRec.record.family_members || [];
           const familyMatch = familyMembers.find(m =>
-            (m.name && m.name.toLowerCase() === otherName.toLowerCase()) ||
-            m.character_id === otherId
+            m.character_id === otherId ||
+            (m.name && m.name.toLowerCase() === otherName.toLowerCase())
           );
           if (familyMatch) {
             charRelationships.push({
@@ -303,51 +311,47 @@ Deno.serve(async (req) => {
               source: 'profile Family list',
               detail: familyMatch.description || null,
             });
-            found = true;
           }
 
-          // 2. Check written family/back history (cross-account family source)
-          if (!found) {
-            const backstory = charRec.record.backstory || '';
-            const familyHistory = charRec.record.family_history || '';
-            const combinedHistory = `${backstory} ${familyHistory}`;
-            const lowerHistory = combinedHistory.toLowerCase();
-            const otherLower = otherName.toLowerCase();
+          // 2. Written family/back history (cross-account family source)
+          // No structured ID available — name match in prose is the only mechanism.
+          const backstory = charRec.record.backstory || '';
+          const familyHistory = charRec.record.family_history || '';
+          const combinedHistory = `${backstory} ${familyHistory}`;
+          const lowerHistory = combinedHistory.toLowerCase();
+          const otherLower = otherName.toLowerCase();
 
-            if (otherLower.length > 1 && lowerHistory.includes(otherLower)) {
-              const idx = lowerHistory.indexOf(otherLower);
-              const start = Math.max(0, idx - 120);
-              const end = Math.min(combinedHistory.length, idx + otherName.length + 120);
-              const context = combinedHistory.substring(start, end).trim();
-              charRelationships.push({
-                name: otherName,
-                relationship: 'established in family/back history',
-                source: 'written family history',
-                detail: context,
-              });
-              found = true;
-            }
+          if (otherLower.length > 1 && lowerHistory.includes(otherLower)) {
+            const idx = lowerHistory.indexOf(otherLower);
+            const start = Math.max(0, idx - 120);
+            const end = Math.min(combinedHistory.length, idx + otherName.length + 120);
+            const context = combinedHistory.substring(start, end).trim();
+            charRelationships.push({
+              name: otherName,
+              relationship: 'established in family/back history',
+              source: 'written family history',
+              detail: context,
+            });
           }
 
-          // 3. Check fictional_relationships (established character relationships)
-          if (!found) {
-            const ficRels = charRec.record.fictional_relationships || [];
-            const ficMatch = ficRels.find(r =>
-              (r.person_name && r.person_name.toLowerCase() === otherName.toLowerCase()) ||
-              r.related_character_id === otherId
-            );
-            if (ficMatch) {
-              charRelationships.push({
-                name: otherName,
-                relationship: ficMatch.relationship_type || 'acquaintance',
-                source: 'established relationship record',
-                detail: ficMatch.description || ficMatch.history_summary || null,
-              });
-              found = true;
-            }
+          // 3. Fictional relationships (established character relationships)
+          // Stable related_character_id preferred over name match.
+          const ficRels = charRec.record.fictional_relationships || [];
+          const ficMatch = ficRels.find(r =>
+            r.related_character_id === otherId ||
+            (r.person_name && r.person_name.toLowerCase() === otherName.toLowerCase())
+          );
+          if (ficMatch) {
+            charRelationships.push({
+              name: otherName,
+              relationship: ficMatch.relationship_type || 'acquaintance',
+              source: 'established relationship record',
+              detail: ficMatch.description || ficMatch.history_summary || null,
+            });
           }
-          // If no established relationship found, do NOT add anything.
-          // Unknown relationship remains unknown — never invent one.
+          // All non-contradictory facts from all sources are assembled together.
+          // If no source produced a fact for this pair, nothing is added — the
+          // relationship remains unknown and must NOT be invented.
         }
 
         if (charRelationships.length > 0) {
@@ -365,6 +369,7 @@ Deno.serve(async (req) => {
           `════════════════════════════════════`,
           `ESTABLISHED RELATIONSHIPS — AUTHORITATIVE`,
           `Each fact below is bound to the character whose record it comes from.`,
+          `Sources are assembled together — they are not a precedence chain.`,
           `Profile Family list absence does NOT mean two characters are unrelated —`,
           `cross-account family lives in written family/back history.`,
           `These facts take precedence over any inference from surnames, ages, or dialogue.`,
@@ -376,10 +381,27 @@ Deno.serve(async (req) => {
         ].join('\n');
       }
 
-      // ── 6f.2. LIVED MEMORY — PREVIOUS ENCOUNTERS (canonical Memory entity) ──
+      // ── 6f.2. LIVED MEMORY — RECOGNITION AND CONTINUITY ─────────────────────
       // Lived memories persist independently of the 20-message transcript and
       // 30-minute room expiration. They add recognition continuity: "I remember
-      // meeting this person before." They do NOT replace established back history.
+      // meeting this person before." They do NOT replace or compete with
+      // established family/back history — they are a separate kind of information.
+      //
+      // MEMORY ENTITY IDENTITY NOTE:
+      // The canonical Memory entity stores character_id (the owning character)
+      // and prose title/description. It does NOT have structured participant IDs,
+      // subject/object IDs, or other stable character references. Name matching in
+      // prose is therefore the only available mechanism for finding memories
+      // relevant to other participants. This is NOT equivalent to stable character
+      // binding — it can miss nicknames, renamed characters, duplicate names, or
+      // memories that refer to a person without repeating their full display name.
+      // This limitation is inherited from the canonical Memory schema, not
+      // introduced here. If the Memory entity gains structured participant IDs in
+      // the future, this filter should prefer those IDs over name matching.
+      //
+      // RETRIEVAL: Uses retrieveActiveMemory (the canonical memory pathway with
+      // semantic scoring) where available, falling back to asServiceRole direct
+      // query for cross-account characters — same pattern as buildCanonicalCharacterContext.
       const memoryLines = [];
       for (const charRec of allRoomCharacterRecords) {
         const charName = charRec.record.name;
@@ -392,15 +414,47 @@ Deno.serve(async (req) => {
         if (otherNames.length === 0) continue;
 
         try {
-          const memories = await base44.asServiceRole.entities.Memory.filter(
-            { character_id: charId },
-            '-timestamp',
-            20
-          ).catch(() => []);
+          // Try canonical retrieveActiveMemory first (semantic scoring).
+          // Pass other participants' names as context to boost relevant memories.
+          // This works for same-account characters (user-scoped query).
+          let memories = [];
+          try {
+            const memRes = await base44.functions.invoke('retrieveActiveMemory', {
+              characterId: charId,
+              currentMessage: otherNames.join(' '),
+              recentMessages: [],
+              topK: 20,
+            }).catch(() => null);
 
+            if (memRes?.data?.memories?.length > 0) {
+              memories = memRes.data.memories;
+            } else {
+              // Fallback: asServiceRole direct query (cross-account characters where
+              // retrieveActiveMemory's user-scoped query returns empty)
+              memories = await base44.asServiceRole.entities.Memory.filter(
+                { character_id: charId },
+                '-timestamp',
+                20
+              ).catch(() => []);
+            }
+          } catch (_) {
+            memories = await base44.asServiceRole.entities.Memory.filter(
+              { character_id: charId },
+              '-timestamp',
+              20
+            ).catch(() => []);
+          }
+
+          // Filter for memories mentioning other participants by name.
+          // NOTE: This is prose-based name matching — the only mechanism available
+          // given the Memory entity has no structured participant IDs. It is a
+          // fallback, not a stable character binding.
           const relevant = memories.filter(m => {
             const memText = `${m.title || ''} ${m.description || ''}`.toLowerCase();
-            return otherNames.some(name => memText.includes(name.toLowerCase()));
+            return otherNames.some(name => {
+              const lower = name.toLowerCase();
+              return lower.length > 1 && memText.includes(lower);
+            });
           });
 
           if (relevant.length > 0) {
@@ -416,8 +470,11 @@ Deno.serve(async (req) => {
 
       if (memoryLines.length > 0) {
         livedMemoryContextBlock = [
-          `LIVED MEMORY — PREVIOUS ENCOUNTERS (canonical memory, not transcript):`,
+          `LIVED MEMORY — RECOGNITION AND CONTINUITY (canonical memory, not transcript):`,
           `These are lived experiences from the canonical Memory entity.`,
+          `They add recognition of previous encounters — they do NOT establish or`,
+          `override family/back history. A memory of meeting someone does not make`,
+          `them family; a family history does not substitute for a lived interaction.`,
           `They persist independently of the 20-message transcript and 30-minute room expiration.`,
           memoryLines.join('\n\n'),
         ].join('\n');
@@ -454,19 +511,22 @@ Deno.serve(async (req) => {
           livedMemoryContextBlock,
           relationshipContextBlock || livedMemoryContextBlock ? '' : '',
           relationshipContextBlock || livedMemoryContextBlock
-            ? `CRITICAL — RELATIONSHIP BINDING RULES:`
+            ? `CRITICAL — RELATIONSHIP AND MEMORY BINDING RULES:`
             : '',
           relationshipContextBlock || livedMemoryContextBlock
-            ? `- Each relationship fact above is bound to the character whose record it comes from.`
+            ? `- Established relationships and lived memories are DIFFERENT kinds of information. Assemble both; do not let one overwrite the other.`
             : '',
           relationshipContextBlock || livedMemoryContextBlock
-            ? `- Never transfer one character's relationship role to another participant.`
+            ? `- Each relationship fact is bound to the character whose record it comes from. Never transfer one character's relationship role to another participant.`
             : '',
           relationshipContextBlock || livedMemoryContextBlock
-            ? `- If no relationship is listed for a pair, they may be strangers — do NOT invent one from surnames, ages, or proximity.`
+            ? `- Lived memory adds recognition of previous encounters. It does NOT establish family relationships. A memory of meeting someone does not make them family.`
             : '',
           relationshipContextBlock || livedMemoryContextBlock
-            ? `- These relationship facts take precedence over any inference from dialogue or generated text.`
+            ? `- If no relationship is listed for a pair from any source, they may be strangers — do NOT invent one from surnames, ages, or proximity.`
+            : '',
+          relationshipContextBlock || livedMemoryContextBlock
+            ? `- These facts take precedence over any inference from dialogue or generated text.`
             : '',
           relationshipContextBlock || livedMemoryContextBlock ? '' : '',
           isDirected && directedToNames.length > 0
@@ -575,7 +635,7 @@ Deno.serve(async (req) => {
           relationshipContextBlock,
           livedMemoryContextBlock,
           relationshipContextBlock || livedMemoryContextBlock
-            ? `Use the established relationships above to accurately describe who was involved and their actual relationship. Do NOT invent or alter relationships in memory descriptions.`
+            ? `Use the established relationships and lived memories above to accurately describe who was involved. Do NOT invent or alter relationships in memory descriptions. A lived memory of meeting someone does not establish a family relationship.`
             : '',
           relationshipContextBlock || livedMemoryContextBlock ? '' : '',
           `Determine which characters would form a lasting memory from this conversation.`,
