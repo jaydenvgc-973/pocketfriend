@@ -211,17 +211,14 @@ Deno.serve(async (req) => {
     // ── IDEMPOTENT RE-ENTRY DETECTION ──────────────────────────────────────────
     // Canonical evidence of completed core narrative persistence:
     //   1. status === 'generating' (checked above — event not yet finalized)
-    //   2. generated_narrative exists AND is substantial (> 100 chars)
-    //   3. narrative_preview exists (co-persisted in Step 1b)
-    // Together these prove the LLM core generation succeeded and was persisted,
-    // but required commit effects are incomplete. Skip LLM regeneration and
-    // proceed directly to effects completion. This makes the function safe to
-    // re-invoke after an interrupted attempt without duplicating the narrative.
-    const narrativeAlreadyGenerated = !!(
-      event.generated_narrative &&
-      event.generated_narrative.length > 100 &&
-      event.narrative_preview
-    );
+    //   2. generated_narrative exists as a non-empty string
+    // Step 1b writes generated_narrative and narrative_preview together in a
+    // single update call. If generated_narrative is a non-empty string, that
+    // update committed successfully — the LLM core generation succeeded and was
+    // persisted. No arbitrary length threshold: a 50-char valid narrative is
+    // just as canonical as a 500-char one. An empty string means the LLM
+    // returned nothing, which is a genuine core failure.
+    const narrativeAlreadyGenerated = !!event.generated_narrative;
 
     const ownerEmail = event.owner_email;
     const plot = event.plot || '';
@@ -1252,8 +1249,21 @@ Deno.serve(async (req) => {
       // ── RABBIT-HOLE: skip LocationHistory entirely ──
       // The venue is a non-persisted destination. Production tracks rabbit-hole
       // state through Character.resolved_location_type, not LocationHistory.
-      if (isRabbitHole || !event.venue_id) {
-        lhSkippedReasons.push({ cid, reason: 'rabbit_hole_or_no_venue' });
+      // ONLY is_rabbit_hole=true triggers the rabbit-hole pathway.
+      if (isRabbitHole) {
+        lhSkippedReasons.push({ cid, reason: 'rabbit_hole' });
+        continue;
+      }
+
+      // ── NORMAL EVENT WITH NO VENUE ID — skip LocationHistory ──
+      // This is NOT a rabbit hole. The event was created without a venue_id
+      // (e.g., user forgot to select one, or venue was deleted). We cannot
+      // write LocationHistory without a real venue LocationReference ID.
+      // Do not fabricate one. This is a data gap, not a rabbit-hole
+      // classification. The event venue name is carried in the StoryEvent
+      // record itself.
+      if (!event.venue_id) {
+        lhSkippedReasons.push({ cid, reason: 'no_venue_id' });
         continue;
       }
 
@@ -1471,23 +1481,35 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 7: TERMINAL STATUS — REQUIRED EFFECTS GATE ───────────────────────
-    // 'complete' is set ONLY when the core narrative AND all required commit
-    // effects have succeeded. This preserves One Truth: when the rest of the
-    // application sees status=complete, every participating character has
-    // authoritative continuity records (memories, life events, participation,
-    // location history, narrative injection).
+    // ── STEP 7: DETERMINISTIC TERMINAL LIFECYCLE ────────────────────────────────
+    // The retry contract:
+    //   1. First attempt (narrativeAlreadyGenerated = false):
+    //      LLM generates narrative → Step 1b persists it → effects run.
+    //      If effects fail → stay 'generating' to allow ONE retry.
+    //   2. Re-entry (narrativeAlreadyGenerated = true):
+    //      Narrative already persisted → effects are retried.
+    //      If effects STILL fail → set 'failed' (deterministic terminal).
+    //      No more automatic retries — the user can regenerate from scratch.
     //
-    // If any required effect failed, the event remains 'generating' so the
-    // idempotent re-entry pathway can complete the missing work on the next
-    // invocation. Optional effects (images, relationship scores, emotional
-    // state) do NOT gate completion — their individual failures are logged
-    // and independently recoverable.
+    // This gives exactly 2 attempts. After that, the event is terminal
+    // (either 'complete' or 'failed') and cannot get stuck in 'generating'.
+    // Optional effects (images, relationship scores, emotional state) do
+    // NOT gate completion — their failures are logged and independently
+    // recoverable.
     if (requiredFailures.length === 0) {
       await base44.asServiceRole.entities.StoryEvent.update(eventId, { status: 'complete' });
       console.log(`[generateStoryEvent] ✅ TERMINAL STATUS: event ${eventId} set to 'complete' — all required effects committed`);
+    } else if (narrativeAlreadyGenerated) {
+      // RE-ENTRY with persistent required failures → deterministic terminal
+      const failSummary = requiredFailures.map(f => `${f.step}${f.character_id ? `(${f.character_id})` : ''}`).join(', ');
+      await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+        status: 'failed',
+        generation_error: `Required effects failed on retry: ${failSummary}`,
+      });
+      console.warn(`[generateStoryEvent] ❌ TERMINAL STATUS: event ${eventId} set to 'failed' — required effects failed on re-entry: ${failSummary}`);
     } else {
-      console.warn(`[generateStoryEvent] ⏳ event ${eventId} remains 'generating' — ${requiredFailures.length} required effect failure(s): ${requiredFailures.map(f => f.step).join(', ')}`);
+      // FIRST ATTEMPT with required failures → stay 'generating' for one retry
+      console.warn(`[generateStoryEvent] ⏳ event ${eventId} remains 'generating' (first attempt) — ${requiredFailures.length} required effect failure(s): ${requiredFailures.map(f => f.step).join(', ')}`);
     }
 
     return Response.json({
@@ -1513,11 +1535,13 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
     // CLASSIFICATION:
-    //   narrativePersisted = false → genuine CORE failure (LLM or narrative persistence).
-    //     Set 'failed'. The Story Event itself cannot be created.
-    //   narrativePersisted = true → core succeeded but a required effect threw.
-    //     Do NOT set 'failed'. Leave as 'generating' so the idempotent re-entry
-    //     pathway can complete the missing required work on the next invocation.
+    //   narrativePersisted = false AND first attempt → genuine CORE failure
+    //     (LLM or narrative persistence). Set 'failed'.
+    //   narrativePersisted = false AND re-entry (narrativeAlreadyGenerated) →
+    //     narrative was persisted in a prior run, but this retry crashed during
+    //     effects. Set 'failed' — deterministic terminal (2nd attempt failed).
+    //   narrativePersisted = true → first attempt: core succeeded but a required
+    //     effect threw. Do NOT set 'failed'. Leave as 'generating' for one retry.
     if (eventId && !narrativePersisted) {
       try {
         await base44.asServiceRole.entities.StoryEvent.update(eventId, {
