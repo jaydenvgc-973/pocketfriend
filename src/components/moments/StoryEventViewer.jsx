@@ -38,6 +38,10 @@ export default function StoryEventViewer({ eventId }) {
   const [isCancellingGeneration, setIsCancellingGeneration] = useState(false);
   const [cancelError, setCancelError] = useState(null);
 
+  // Missing-image generation state (per moment type)
+  const [generatingMissing, setGeneratingMissing] = useState({}); // { [moment_type]: true }
+  const [missingGenError, setMissingGenError] = useState(null);
+
   // Impact verification state
   const [impactLoading, setImpactLoading] = useState(false);
   const [impactResult, setImpactResult] = useState(null);
@@ -453,6 +457,36 @@ export default function StoryEventViewer({ eventId }) {
     } finally { setRegenerating(false); }
   };
 
+  // ── MISSING IMAGE GENERATION (for moments with no StoryEventImage record) ──
+  // Uses generateMissingStoryEventImage backend function — same production pipeline
+  // as generateStoryEvent (Name Reference Key, identity lock, diversity law) but
+  // targets a SINGLE missing moment without touching the parent Story Event status
+  // or rerunning continuity effects.
+  const handleGenerateMissingImage = async (momentType) => {
+    setGeneratingMissing(prev => ({ ...prev, [momentType]: true }));
+    setMissingGenError(null);
+    try {
+      const res = await base44.functions.invoke('generateMissingStoryEventImage', {
+        story_event_id: eventId,
+        moment_type: momentType,
+      });
+      if (res?.data?.success) {
+        // Reload images to show the newly created image record
+        const imgs = await base44.entities.StoryEventImage.filter(
+          { story_event_id: eventId }, null, 10
+        ).catch(() => []);
+        setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+      } else {
+        setMissingGenError(res?.data?.error || 'Failed to generate missing image');
+      }
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.response?.data?.error || err?.message || 'Failed to generate missing image';
+      setMissingGenError(detail);
+    } finally {
+      setGeneratingMissing(prev => ({ ...prev, [momentType]: false }));
+    }
+  };
+
   const computeEventParticipantIds = (evt) => {
     const allIds = [...new Set([
       ...(evt.participant_character_ids || []),
@@ -702,72 +736,90 @@ export default function StoryEventViewer({ eventId }) {
                 </div>
               )}
 
-              {/* Images */}
-              {images.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">
-                    <Image className="w-3 h-3 inline mr-1" /> Moments Captured
-                  </p>
-                  <div className="space-y-3">
-                    {['opening', 'key_moment', 'closing'].map(moment => {
-                      const img = imageByMoment[moment];
-                      const hasImage = !!img?.image_url;
-                      const hasRecord = !!img;
-                      const isFailedImg = hasRecord && !hasImage;
-                      return (
-                        <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
-                          {/* Image area — differs by state */}
-                          {hasImage ? (
-                            <img src={img.image_url} alt={img.description || moment} className="w-full aspect-[4/3] object-cover" />
-                          ) : (
-                            <div className={`aspect-[4/3] flex items-center justify-center ${isFailedImg ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
-                              {isFailedImg ? (
-                                <div className="flex flex-col items-center gap-1">
-                                  <AlertCircle className="w-6 h-6 text-destructive/50" />
-                                  <span className="text-[9px] text-destructive/70">Image failed to generate</span>
-                                </div>
-                              ) : (
-                                <span className="text-[9px] text-muted-foreground capitalize">{moment.replace('_', ' ')}</span>
-                              )}
-                            </div>
-                          )}
-                          {/* Controls — ALWAYS rendered for every moment slot */}
-                          <div className="px-3 py-2 flex items-center justify-between">
-                            <div className="min-w-0">
-                              <span className="text-[10px] font-medium text-foreground capitalize">{moment.replace('_', ' ')}</span>
-                              {hasImage && img.description ? (
-                                <p className="text-[9px] text-muted-foreground mt-0.5 line-clamp-1">{img.description}</p>
-                              ) : isFailedImg ? (
-                                <p className="text-[9px] text-destructive/60 mt-0.5">Tap regenerate to retry</p>
-                              ) : (
-                                <p className="text-[9px] text-muted-foreground/60 mt-0.5">No image generated</p>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <button
-                                onClick={() => openRegenModal(img)}
-                                disabled={!hasRecord}
-                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                title={hasRecord ? "Regenerate image" : "No image record to regenerate"}
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => openSendModal(img)}
-                                disabled={!hasImage}
-                                className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                                title={hasImage ? "Send to character" : "Generate image before sending"}
-                              >
-                                <Send className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+              {/* Images — always render all 3 moment slots for complete events */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">
+                  <Image className="w-3 h-3 inline mr-1" /> Moments Captured
+                </p>
+                <div className="space-y-3">
+                  {['opening', 'key_moment', 'closing'].map(moment => {
+                    const img = imageByMoment[moment];
+                    const hasImage = !!img?.image_url;
+                    const hasRecord = !!img;
+                    const isFailedImg = hasRecord && !hasImage;
+                    const isMissingImg = !hasRecord;
+                    const isGeneratingMissing = !!generatingMissing[moment];
+
+                    // Derive meaningful moment description from event context
+                    const momentLabel = moment.replace('_', ' ');
+                    const momentContextDesc = moment === 'opening'
+                      ? `Opening scene at ${venueDisplay}${participantNames.length > 0 ? ` — ${participantNames.slice(0, 3).join(', ')}` : ''}`
+                      : moment === 'key_moment'
+                      ? `Key moment at ${venueDisplay}${focusNames.length > 0 ? ` — ${focusNames.join(', ')}` : participantNames.length > 0 ? ` — ${participantNames.slice(0, 2).join(', ')}` : ''}`
+                      : `Closing scene at ${venueDisplay}${participantNames.length > 0 ? ` — ${participantNames.slice(0, 2).join(', ')}` : ''}`;
+
+                    return (
+                      <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
+                        {/* Image area — 3 states: successful, failed, missing */}
+                        {hasImage ? (
+                          <img src={img.image_url} alt={img.description || momentContextDesc} className="w-full aspect-[4/3] object-cover" />
+                        ) : isGeneratingMissing ? (
+                          <div className="aspect-[4/3] flex flex-col items-center justify-center gap-2 bg-primary/5">
+                            <Loader2 className="w-6 h-6 animate-spin text-primary/60" />
+                            <span className="text-[9px] text-primary/70">Generating {momentLabel}…</span>
+                          </div>
+                        ) : (
+                          <div className={`aspect-[4/3] flex flex-col items-center justify-center gap-1 ${isFailedImg ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
+                            {isFailedImg ? (
+                              <>
+                                <AlertCircle className="w-6 h-6 text-destructive/50" />
+                                <span className="text-[9px] text-destructive/70">Image failed to generate</span>
+                              </>
+                            ) : (
+                              <>
+                                <Image className="w-6 h-6 text-muted-foreground/40" />
+                                <span className="text-[9px] text-muted-foreground/70 capitalize">{momentLabel} not yet generated</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {/* Controls — ALWAYS rendered for every moment slot */}
+                        <div className="px-3 py-2 flex items-center justify-between">
+                          <div className="min-w-0">
+                            <span className="text-[10px] font-medium text-foreground capitalize">{momentLabel}</span>
+                            {hasImage && img.description ? (
+                              <p className="text-[9px] text-muted-foreground mt-0.5 line-clamp-1">{img.description}</p>
+                            ) : (
+                              <p className="text-[9px] text-muted-foreground/70 mt-0.5 line-clamp-2">{momentContextDesc}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => isMissingImg ? handleGenerateMissingImage(moment) : openRegenModal(img)}
+                              disabled={isGeneratingMissing}
+                              className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={isMissingImg ? "Generate this missing image" : "Regenerate image"}
+                            >
+                              {isGeneratingMissing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              onClick={() => openSendModal(img)}
+                              disabled={!hasImage}
+                              className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={hasImage ? "Send to character" : "Generate image before sending"}
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
+                {missingGenError && (
+                  <p className="text-[10px] text-destructive mt-2">{missingGenError}</p>
+                )}
+              </div>
 
               {/* Emotional Outcomes */}
               {event.emotional_outcomes?.length > 0 && (
