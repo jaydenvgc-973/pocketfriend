@@ -890,17 +890,29 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
         },
       };
     }
+    // ONE TRUTH SAFEGUARD: Hospitalization requires an actual medical facility.
+    // A character cannot be "hospitalized" at their home — that is an invalid
+    // state (resolved_presence_status='hospitalized' but resolved_current_location_id
+    // is home, resolved_location_type is not 'medical'). If no medical-category
+    // location exists in the owner's location map, REJECT the transition rather
+    // than committing an invalid hospitalized-at-home state. The caller must
+    // create a medical-category location before hospitalization can proceed.
+    if (!hospitalLocId) {
+      return {
+        disposition: 'rejected',
+        reason: 'no_medical_facility_available',
+        canonicalFields: {},
+      };
+    }
     const canonicalFields = {
       resolved_presence_status: 'hospitalized',
       resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       resolved_last_updated_at: etTime.toISOString(),
       current_activity: 'hospitalized — health collapsed',
       resolved_location_type: 'medical',
+      resolved_current_location_id: hospitalLocId,
+      resolved_current_location_name: hospitalLoc?.name || 'Hospital',
     };
-    if (hospitalLocId) {
-      canonicalFields.resolved_current_location_id = hospitalLocId;
-      canonicalFields.resolved_current_location_name = hospitalLoc?.name || 'Hospital';
-    }
     // One-time stabilization — applied exactly once at the admission commit.
     // These are fixed amounts, NOT recurring rates. Remaining hospitalized
     // never re-triggers this; only a new admission (after discharge) does.
@@ -915,9 +927,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       disposition: 'accepted',
       canonicalFields,
       committed_result: {
-        resolved_current_location_id: hospitalLocId || currentLocId,
-        resolved_current_location_name: hospitalLoc?.name || character.resolved_current_location_name || 'Hospital',
-        resolved_location_type: hospitalLocId ? 'medical' : (character.resolved_location_type || 'medical'),
+        resolved_current_location_id: hospitalLocId,
+        resolved_current_location_name: hospitalLoc?.name || 'Hospital',
+        resolved_location_type: 'medical',
         resolved_presence_status: 'hospitalized',
         resolved_source_reason: requested.requested_source_reason || 'medical_emergency',
       },
@@ -1374,6 +1386,91 @@ Deno.serve(async (req) => {
     // Callers may continue writing noncanonical fields they already own.
     const updatePayload = { ...canonicalFields };
     await base44.asServiceRole.entities.Character.update(character_id, updatePayload);
+
+    // ── EMIT OBLIGATED LIFE-STATE TRANSITION NARRATIVE ──────────────────────────
+    // After the canonical commit, emit an authoritative narrative record for
+    // obligated character transitions (work, school, hospitalization, return-home).
+    // Only for active_created_character types. Non-blocking — errors are caught
+    // and logged, never blocking the response or reverting the commit.
+    if (character.character_type === 'active_created_character' && committed_result) {
+      try {
+        const oldStatus = character.resolved_presence_status || '';
+        const newStatus = committed_result.resolved_presence_status || '';
+        const newLocType = committed_result.resolved_location_type || '';
+        const newLocName = committed_result.resolved_current_location_name || '';
+        const charName = character.name || character.display_name || 'Character';
+
+        let narrativeText = null;
+
+        // 1. Work arrival: old != at_work → new == at_work (location type must be work)
+        if (oldStatus !== 'at_work' && newStatus === 'at_work' && newLocType === 'work') {
+          narrativeText = newLocName && newLocName !== 'Work'
+            ? `${charName} has gone to work at ${newLocName}.`
+            : `${charName} has gone to work.`;
+        }
+        // 2. Work return: old == at_work → new == home
+        else if (oldStatus === 'at_work' && newStatus === 'home') {
+          narrativeText = `${charName} has returned home from work.`;
+        }
+        // 3. School arrival: old != at_school → new == at_school (location type must be school)
+        else if (oldStatus !== 'at_school' && newStatus === 'at_school' && newLocType === 'school') {
+          narrativeText = newLocName && newLocName !== 'School'
+            ? `${charName} has gone to school at ${newLocName}.`
+            : `${charName} has gone to school.`;
+        }
+        // 4. School return: old == at_school → new == home
+        else if (oldStatus === 'at_school' && newStatus === 'home') {
+          narrativeText = `${charName} has returned home from school.`;
+        }
+        // 5. Hospitalization: old != hospitalized → new == hospitalized
+        // Only use the facility name when the committed location type is 'medical'
+        // (a hospital was found). When no hospital exists in the owner's locations,
+        // the committed location name may be the character's home — do NOT use it.
+        else if (oldStatus !== 'hospitalized' && newStatus === 'hospitalized') {
+          narrativeText = (newLocType === 'medical' && newLocName && newLocName !== 'Hospital')
+            ? `${charName} has been hospitalized at ${newLocName}.`
+            : `${charName} has been hospitalized.`;
+        }
+        // 6. Hospital return: old == hospitalized → new == home
+        else if (oldStatus === 'hospitalized' && newStatus === 'home') {
+          narrativeText = `${charName} has returned home from being hospitalized.`;
+        }
+
+        if (narrativeText) {
+          // Find or create a direct conversation for this character
+          let convoId = null;
+          const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
+            { owner_email: effectiveOwnerEmail, type: 'direct', character_ids: character_id },
+            '-last_message_date', 5
+          );
+          if (existingConvos && existingConvos.length > 0) {
+            convoId = existingConvos[0].id;
+          }
+          if (!convoId) {
+            const newConvo = await base44.asServiceRole.entities.Conversation.create({
+              title: `direct with ${charName}`,
+              type: 'direct',
+              character_ids: [character_id],
+              owner_email: effectiveOwnerEmail,
+            });
+            convoId = newConvo.id;
+          }
+
+          // Create the narrative message
+          await base44.asServiceRole.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: 'character',
+            character_id: character_id,
+            character_name: charName,
+            content: narrativeText,
+            is_narrative: true,
+            timestamp: etTime.toISOString(),
+          });
+        }
+      } catch (narrativeErr) {
+        console.warn(`[enforceCharacterLocationPresence] Narrative emission failed (non-blocking): ${narrativeErr.message}`);
+      }
+    }
 
     // ── RETURN EXACT COMMITTED RESULT AND DISPOSITION ──────────────────────────
     return Response.json({
