@@ -711,10 +711,15 @@ export default function StoryEventViewer({ eventId }) {
                   <div className="space-y-3">
                     {['opening', 'key_moment', 'closing'].map(moment => {
                       const img = imageByMoment[moment];
-                      if (!img?.image_url) {
-                        const isFailedImg = !!img && !!img.regeneration_reason;
-                        return (
-                          <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
+                      const hasImage = !!img?.image_url;
+                      const hasRecord = !!img;
+                      const isFailedImg = hasRecord && !hasImage;
+                      return (
+                        <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
+                          {/* Image area — differs by state */}
+                          {hasImage ? (
+                            <img src={img.image_url} alt={img.description || moment} className="w-full aspect-[4/3] object-cover" />
+                          ) : (
                             <div className={`aspect-[4/3] flex items-center justify-center ${isFailedImg ? 'bg-destructive/10' : 'bg-secondary/50'}`}>
                               {isFailedImg ? (
                                 <div className="flex flex-col items-center gap-1">
@@ -725,46 +730,33 @@ export default function StoryEventViewer({ eventId }) {
                                 <span className="text-[9px] text-muted-foreground capitalize">{moment.replace('_', ' ')}</span>
                               )}
                             </div>
-                            {isFailedImg && (
-                              <div className="px-3 py-2 flex items-center justify-between">
-                                <div>
-                                  <span className="text-[10px] font-medium text-foreground capitalize">{moment.replace('_', ' ')}</span>
-                                  <p className="text-[9px] text-destructive/60 mt-0.5">Tap regenerate to retry</p>
-                                </div>
-                                <button
-                                  onClick={() => openRegenModal(img)}
-                                  className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                                  title="Regenerate image"
-                                >
-                                  <RefreshCw className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
-                      return (
-                        <div key={moment} className="rounded-lg overflow-hidden border border-border bg-secondary/20">
-                          <img src={img.image_url} alt={img.description || moment} className="w-full aspect-[4/3] object-cover" />
+                          )}
+                          {/* Controls — ALWAYS rendered for every moment slot */}
                           <div className="px-3 py-2 flex items-center justify-between">
-                            <div>
+                            <div className="min-w-0">
                               <span className="text-[10px] font-medium text-foreground capitalize">{moment.replace('_', ' ')}</span>
-                              {img.description && (
+                              {hasImage && img.description ? (
                                 <p className="text-[9px] text-muted-foreground mt-0.5 line-clamp-1">{img.description}</p>
+                              ) : isFailedImg ? (
+                                <p className="text-[9px] text-destructive/60 mt-0.5">Tap regenerate to retry</p>
+                              ) : (
+                                <p className="text-[9px] text-muted-foreground/60 mt-0.5">No image generated</p>
                               )}
                             </div>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 onClick={() => openRegenModal(img)}
-                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors"
-                                title="Regenerate image"
+                                disabled={!hasRecord}
+                                className="p-1.5 rounded-lg bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={hasRecord ? "Regenerate image" : "No image record to regenerate"}
                               >
                                 <RefreshCw className="w-3.5 h-3.5" />
                               </button>
                               <button
                                 onClick={() => openSendModal(img)}
-                                className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                                title="Send to character"
+                                disabled={!hasImage}
+                                className="p-1.5 rounded-lg bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={hasImage ? "Send to character" : "Generate image before sending"}
                               >
                                 <Send className="w-3.5 h-3.5" />
                               </button>
