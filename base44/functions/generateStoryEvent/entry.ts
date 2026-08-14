@@ -1211,7 +1211,31 @@ Deno.serve(async (req) => {
       if (eventDurationMinutes < 0) eventDurationMinutes = 120;
     }
 
+    // ── LOCATION HISTORY — RESPECT EXISTING LOCATION PIPELINE ──────────────
+    // Story Event generation is a CONSUMER of existing resolved location truth.
+    // It is NOT a location authority. LocationHistory records must only reference
+    // real persisted LocationReference IDs — exactly what the production
+    // writeVerifiedLocationHistory pipeline requires.
+    //
+    // TWO PATHWAYS (existing production contract):
+    //   1. NORMAL LISTED LOCATION (venue_id exists):
+    //      Write LocationHistory with the real venue_id. The prior location
+    //      must also be a real persisted ID (home/work/school/resolved_current).
+    //      If the character has no real prior location ID, skip that character —
+    //      we cannot fabricate a location ID.
+    //
+    //   2. RABBIT-HOLE DESTINATION (is_rabbit_hole=true, venue_id=null):
+    //      Do NOT write LocationHistory. The rabbit-hole state is tracked through
+    //      Character.resolved_location_type and resolved_presence_status, NOT
+    //      through LocationHistory. Production never writes LocationHistory for
+    //      rabbit-hole destinations (resolved_current_location_id is null).
+    //      The event venue name is carried in the StoryEvent record itself.
+    //
+    // NO FABRICATED IDS: never synthesize location_id values like
+    // "story_event_venue_*" or "unknown_prior_*". If a real ID is missing, skip
+    // the LocationHistory record rather than inventing a false location.
     const lhToCreate = [];
+    const lhSkippedReasons = [];
     for (const cid of allIds) {
       // Idempotency: skip if this character already has event LocationHistory
       if (lhCharIds.has(cid)) continue;
@@ -1220,8 +1244,20 @@ Deno.serve(async (req) => {
       if (!c) continue;
       const presenceStatus = c.resolved_presence_status || 'home';
       const isConfined = presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined';
-      if (isConfined) continue;
+      if (isConfined) {
+        lhSkippedReasons.push({ cid, reason: 'confined' });
+        continue;
+      }
 
+      // ── RABBIT-HOLE: skip LocationHistory entirely ──
+      // The venue is a non-persisted destination. Production tracks rabbit-hole
+      // state through Character.resolved_location_type, not LocationHistory.
+      if (isRabbitHole || !event.venue_id) {
+        lhSkippedReasons.push({ cid, reason: 'rabbit_hole_or_no_venue' });
+        continue;
+      }
+
+      // ── NORMAL LISTED LOCATION: resolve real prior location ID ──
       let priorLocId = c.current_home_location_id;
       let priorLocName = c.resolved_current_location_name || 'home';
       let priorCategory = 'home';
@@ -1256,9 +1292,16 @@ Deno.serve(async (req) => {
           : resolvedType === 'school' ? 'education'
           : 'home';
       }
-      if (!priorLocId) priorLocId = `unknown_prior_${cid}`;
-      // Venue location ID — must be a string (schema requires string, not null)
-      const venueLocId = event.venue_id || `story_event_venue_${eventId}`;
+
+      // ── SKIP IF NO REAL PRIOR LOCATION ID ──
+      // Cannot record travel from an unknown location. Do not fabricate.
+      if (!priorLocId) {
+        lhSkippedReasons.push({ cid, reason: 'no_real_prior_location' });
+        continue;
+      }
+
+      // Venue location ID — real persisted ID only (rabbit holes already skipped above)
+      const venueLocId = event.venue_id;
 
       lhToCreate.push(
         { character_id: cid, character_name: cname, owner_email: ownerEmail,
