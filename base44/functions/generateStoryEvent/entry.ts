@@ -206,6 +206,13 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, skipped: true, reason: `status is ${event.status}` });
     }
 
+    // ── IDEMPOTENT RE-ENTRY DETECTION ──────────────────────────────────────────
+    // If generated_narrative already exists, the LLM step completed in a prior
+    // partial run but effects may be incomplete. Skip LLM regeneration and
+    // proceed directly to effects completion. This makes the function safe to
+    // re-invoke after an interrupted attempt without duplicating the narrative.
+    const narrativeAlreadyGenerated = !!(event.generated_narrative && event.generated_narrative.length > 0);
+
     const ownerEmail = event.owner_email;
     const plot = event.plot || '';
     const additionalNotes = event.additional_notes || '';
@@ -561,126 +568,207 @@ Deno.serve(async (req) => {
     ].join('\n');
 
     let generated;
-    try {
-      const llmRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: narrativePrompt,
-        response_json_schema: {
-          type: 'object',
-          properties: {
-            narrative: { type: 'string' },
-            narrative_preview: { type: 'string' },
-            emotional_outcomes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  character_id: { type: 'string' },
-                  character_name: { type: 'string' },
-                  emotion: { type: 'string' },
-                  intensity: { type: 'string' },
-                  reason: { type: 'string' },
+
+    if (narrativeAlreadyGenerated) {
+      // ── IDEMPOTENT RE-ENTRY: Use existing generated data from the event record ──
+      // The LLM step completed in a prior run. Reconstruct the generated object
+      // from persisted fields so effects can complete without regenerating.
+      generated = {
+        narrative: event.generated_narrative,
+        narrative_preview: event.narrative_preview,
+        emotional_outcomes: event.emotional_outcomes || [],
+        relationship_changes: event.relationship_changes || [],
+        memories: [],
+        image_prompts: [],
+      };
+
+      // Load existing StoryEventMemory records to know which characters are covered
+      try {
+        const existingMems = await base44.asServiceRole.entities.StoryEventMemory.filter(
+          { story_event_id: eventId }, null, 200
+        );
+        generated.memories = existingMems.map(m => ({
+          character_id: m.character_id,
+          character_name: m.character_name,
+          memory_text: m.memory_text,
+          memory_summary: m.memory_summary,
+          importance_score: m.importance_score,
+          emotional_tone: m.emotional_tone,
+        }));
+      } catch (_) {}
+
+      // Load existing StoryEventImage records to know which moments are covered
+      try {
+        const existingImgs = await base44.asServiceRole.entities.StoryEventImage.filter(
+          { story_event_id: eventId }, null, 10
+        );
+        // Reconstruct minimal image_prompts for moments that don't have images yet
+        // (failed moments have records but no image_url). We only need moment types.
+        generated.image_prompts = existingImgs
+          .filter(img => !img.image_url) // only retry failed/missing images
+          .map(img => ({ moment: img.moment_type, prompt: img.prompt || '', description: img.description || '' }));
+      } catch (_) {}
+
+      console.log(`[generateStoryEvent] IDEMPOTENT RE-ENTRY: narrative already generated, completing effects for event ${eventId}`);
+    } else {
+      // ── STEP 1: GENERATE NARRATIVE (CORE — failure = failed) ──────────────────
+      // This is the ONLY path to 'failed'. If the LLM cannot produce the narrative,
+      // the Story Event itself cannot be created. All other failures are secondary.
+      try {
+        const llmRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+          prompt: narrativePrompt,
+          response_json_schema: {
+            type: 'object',
+            properties: {
+              narrative: { type: 'string' },
+              narrative_preview: { type: 'string' },
+              emotional_outcomes: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    character_id: { type: 'string' },
+                    character_name: { type: 'string' },
+                    emotion: { type: 'string' },
+                    intensity: { type: 'string' },
+                    reason: { type: 'string' },
+                  },
                 },
               },
-            },
-            relationship_changes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  source_character_id: { type: 'string' },
-                  target_character_id: { type: 'string' },
-                  source_name: { type: 'string' },
-                  target_name: { type: 'string' },
-                  dimension: { type: 'string' },
-                  change: { type: 'string' },
-                  amount: { type: 'number' },
-                  reason: { type: 'string' },
+              relationship_changes: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    source_character_id: { type: 'string' },
+                    target_character_id: { type: 'string' },
+                    source_name: { type: 'string' },
+                    target_name: { type: 'string' },
+                    dimension: { type: 'string' },
+                    change: { type: 'string' },
+                    amount: { type: 'number' },
+                    reason: { type: 'string' },
+                  },
                 },
               },
-            },
-            memories: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  character_id: { type: 'string' },
-                  character_name: { type: 'string' },
-                  memory_text: { type: 'string' },
-                  memory_summary: { type: 'string' },
-                  importance_score: { type: 'number' },
-                  emotional_tone: { type: 'string' },
+              memories: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    character_id: { type: 'string' },
+                    character_name: { type: 'string' },
+                    memory_text: { type: 'string' },
+                    memory_summary: { type: 'string' },
+                    importance_score: { type: 'number' },
+                    emotional_tone: { type: 'string' },
+                  },
                 },
               },
-            },
-            image_prompts: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  moment: { type: 'string' },
-                  prompt: { type: 'string' },
-                  description: { type: 'string' },
+              image_prompts: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    moment: { type: 'string' },
+                    prompt: { type: 'string' },
+                    description: { type: 'string' },
+                  },
                 },
               },
             },
           },
-        },
-        model: 'gemini_3_1_pro',
-      });
-      generated = llmRes;
-
-      // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA (NOT status) ───────────────
-      // The substantive LLM result (narrative, memories, emotional outcomes,
-      // relationship changes, image prompts) now exists. Persist these generated
-      // fields so trailing work can use them. But do NOT set status: 'complete'
-      // here — the Story Event is not finished until all required trailing work
-      // (memory persistence, relationship/emotional processing, participation
-      // records, participant coverage, Chat/Text narrative injection) has
-      // completed. Image generation is recoverable (failed images get regenerable
-      // records), but narrative injection is required and must complete before
-      // the parent is finalized. The status: 'complete' write happens in STEP 7
-      // after all required work is done.
-      await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-        generated_narrative: generated.narrative || '',
-        narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
-        emotional_outcomes: generated.emotional_outcomes || [],
-        relationship_changes: generated.relationship_changes || [],
-      });
-    } catch (e) {
-      await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-        status: 'failed',
-        generation_error: `LLM error: ${e.message}`,
-      });
-      return Response.json({ error: e.message }, { status: 500 });
-    }
-
-    // ── STEP 2: CREATE STORY EVENT MEMORIES ──────────────────────────────────────
-    const memories = generated.memories || [];
-    for (const mem of memories) {
-      if (!mem.character_id || !mem.memory_text) continue;
-      try {
-        await base44.asServiceRole.entities.StoryEventMemory.create({
-          story_event_id: eventId,
-          character_id: mem.character_id,
-          character_name: mem.character_name || '',
-          memory_text: mem.memory_text,
-          memory_summary: mem.memory_summary || mem.memory_text.substring(0, 80),
-          memory_type: 'event',
-          importance_score: mem.importance_score || 5,
-          emotional_tone: mem.emotional_tone || 'neutral',
-          owner_email: ownerEmail,
+          model: 'gemini_3_1_pro',
         });
-      } catch (_) {}
+        generated = llmRes;
+
+        // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA + TERMINAL STATUS ───────
+        // The narrative IS the Story Event. Once it is generated and persisted,
+        // the parent Story Event is COMPLETE. All subsequent work (memories,
+        // relationships, emotional states, images, life events, participation,
+        // location history, conversation/message injection) is SECONDARY EFFECTS.
+        // Individual secondary effect failures must NOT leave the parent nonterminal.
+        //
+        // This is the SINGLE AUTHORITATIVE terminal status transition. There is
+        // no other path that sets 'complete'. The only path to 'failed' is the
+        // LLM core failure in the catch block below.
+        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+          generated_narrative: generated.narrative || '',
+          narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
+          emotional_outcomes: generated.emotional_outcomes || [],
+          relationship_changes: generated.relationship_changes || [],
+          status: 'complete',
+        });
+
+        console.log(`[generateStoryEvent] ✅ TERMINAL STATUS: event ${eventId} set to 'complete' after narrative persistence`);
+      } catch (e) {
+        // GENUINE CORE FAILURE: LLM narrative generation failed.
+        // The Story Event itself cannot be created. This is the only path to 'failed'.
+        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+          status: 'failed',
+          generation_error: `LLM error: ${e.message}`,
+        });
+        return Response.json({ error: e.message }, { status: 500 });
+      }
     }
 
-    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY ────────────────────────────
-    for (const mem of memories) {
+    // ── IDEMPOTENCY: Query existing derivative records in parallel ──────────────
+    // Prevents duplicate effects when the function is re-entered after partial
+    // persistence (e.g., automation re-trigger, timeout recovery, or retry).
+    const [existingSEM, existingEP, existingLE, existingLH, existingSEI, existingMemEntity] = await Promise.all([
+      base44.asServiceRole.entities.StoryEventMemory.filter({ story_event_id: eventId }, null, 200).catch(() => []),
+      base44.asServiceRole.entities.EventParticipation.filter({ event_id: eventId }, null, 200).catch(() => []),
+      base44.asServiceRole.entities.LifeEvent.filter({ context_tags: eventId }, null, 200).catch(() => []),
+      base44.asServiceRole.entities.LocationHistory.filter({ travel_source: 'event' }, null, 200).catch(() => []),
+      base44.asServiceRole.entities.StoryEventImage.filter({ story_event_id: eventId }, null, 20).catch(() => []),
+      base44.asServiceRole.entities.Memory.filter({ source_context: `story_event_${eventId}` }, null, 200).catch(() => []),
+    ]);
+    const semCharIds = new Set(existingSEM.map(r => r.character_id));
+    const epCharIds = new Set(existingEP.map(r => r.character_id));
+    const leCharIds = new Set(existingLE.map(r => r.character_id));
+    const lhCharIds = new Set(existingLH.filter(r => r.travel_reason?.includes(title)).map(r => r.character_id));
+    const existingImageMoments = new Set(existingSEI.filter(r => r.image_url).map(r => r.moment_type));
+    const memEntityCharIds = new Set(existingMemEntity.map(r => r.character_id));
+
+    // ── STEP 2: CREATE STORY EVENT MEMORIES (idempotent + bulk) ──────────────────
+    const memories = generated.memories || [];
+    const _memoryCoveredIds = new Set(memories.map(m => m.character_id));
+    const _uncoveredIds = allIds.filter(id => !_memoryCoveredIds.has(id));
+    const _fallbackMemories = _uncoveredIds.map(cid => {
+      const c = charById[cid];
+      const cname = c?.name || c?.display_name || cid;
+      return {
+        character_id: cid, character_name: cname,
+        memory_text: `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.`,
+        memory_summary: `Attended "${title}" at ${venueName} on ${eventDate}`,
+        importance_score: 3, emotional_tone: 'neutral',
+      };
+    });
+    const _allMemoryEntries = [...memories, ..._fallbackMemories];
+    const semToCreate = _allMemoryEntries
+      .filter(m => m.character_id && !semCharIds.has(m.character_id))
+      .map(m => ({
+        story_event_id: eventId, character_id: m.character_id,
+        character_name: m.character_name || '', memory_text: m.memory_text,
+        memory_summary: m.memory_summary || m.memory_text.substring(0, 80),
+        memory_type: 'event', importance_score: m.importance_score || 5,
+        emotional_tone: m.emotional_tone || 'neutral', owner_email: ownerEmail,
+      }));
+    if (semToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.StoryEventMemory.bulkCreate(semToCreate); }
+      catch (e) { console.warn(`[generateStoryEvent] StoryEventMemory bulkCreate: ${e.message}`); }
+    }
+
+    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY (idempotent) ──────────────
+    for (const mem of _allMemoryEntries) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
         const freshChars = await base44.asServiceRole.entities.Character.filter({ id: mem.character_id }, null, 1);
         const freshChar = freshChars[0];
         if (!freshChar) continue;
         const existingMemories = freshChar.memories || [];
+        // Idempotency: skip if already has a memory entry for this event
+        if (existingMemories.some(m => m.title === `Story Event: ${title}` && m.date === eventDate)) continue;
         const newMemoryEntry = {
           title: `Story Event: ${title}`,
           description: mem.memory_text,
@@ -694,37 +782,49 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
-    // ── STEP 2c: WRITE TO MEMORY ENTITY ──────────────────────────────────────
-    for (const mem of memories) {
-      if (!mem.character_id || !mem.memory_text) continue;
-      try {
+    // ── STEP 2c: WRITE TO MEMORY ENTITY (idempotent + bulk) ───────────────────
+    const memEntityToCreate = _allMemoryEntries
+      .filter(m => m.character_id && !memEntityCharIds.has(m.character_id))
+      .map(m => {
         const eventContext = `[Story Event: ${title} — ${eventDate} at ${venueName}]`;
-        await base44.asServiceRole.entities.Memory.create({
-          character_id: mem.character_id,
+        return {
+          character_id: m.character_id,
           title: `Attended: ${title}`,
-          description: `${eventContext} ${mem.memory_text}`,
-          emotional_impact: mem.emotional_tone || 'neutral',
+          description: `${eventContext} ${m.memory_text}`,
+          emotional_impact: m.emotional_tone || 'neutral',
           source_context: `story_event_${eventId}`,
           timestamp: new Date().toISOString(),
-        });
-      } catch (_) {}
+        };
+      });
+    if (memEntityToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.Memory.bulkCreate(memEntityToCreate); }
+      catch (e) { console.warn(`[generateStoryEvent] Memory bulkCreate: ${e.message}`); }
     }
 
-    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS ──────────────────────────────
-    for (const mem of memories) {
+    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (idempotent + bulk) ───────────
+    // Idempotency: query existing CharacterMemory records for participants and
+    // skip those that already have a memory_text containing this event's title.
+    const charMemToCreate = [];
+    for (const mem of _allMemoryEntries) {
       if (!mem.character_id || !mem.memory_text) continue;
-      try {
-        await base44.asServiceRole.entities.CharacterMemory.create({
-          character_id: mem.character_id,
-          memory_type: 'event',
-          memory_text: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${mem.memory_text}`,
-          memory_summary: mem.memory_summary || `Attended "${title}" at ${venueName} on ${eventDate}`,
-          importance_score: mem.importance_score || 5,
-          confidence_score: 0.95,
-          permanence: (mem.importance_score || 5) >= 7 ? 'protected' : 'long_term',
-          validation_status: 'confirmed',
-        });
-      } catch (_) {}
+      if (semCharIds.has(mem.character_id) && leCharIds.has(mem.character_id)) {
+        // If both SEM and LifeEvent exist for this char, CharacterMemory likely exists too
+        continue;
+      }
+      charMemToCreate.push({
+        character_id: mem.character_id,
+        memory_type: 'event',
+        memory_text: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${mem.memory_text}`,
+        memory_summary: mem.memory_summary || `Attended "${title}" at ${venueName} on ${eventDate}`,
+        importance_score: mem.importance_score || 5,
+        confidence_score: 0.95,
+        permanence: (mem.importance_score || 5) >= 7 ? 'protected' : 'long_term',
+        validation_status: 'confirmed',
+      });
+    }
+    if (charMemToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.CharacterMemory.bulkCreate(charMemToCreate); }
+      catch (e) { console.warn(`[generateStoryEvent] CharacterMemory bulkCreate: ${e.message}`); }
     }
 
     // ── STEP 3: UPDATE RELATIONSHIP SCORES ────────────────────────────────────
@@ -1040,23 +1140,22 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 5b: CREATE LIFEEVENT RECORDS ─────────────────────────────────────
+    // ── STEP 5b: CREATE LIFEEVENT RECORDS (idempotent + bulk) ──────────────────
     const isMajorEvent = (generated.narrative || '').length > 600 || (focusIds.length >= 2);
     const defaultEventType = isMajorEvent ? 'life_milestone_event' : 'bonding_event';
 
-    for (const mem of memories) {
-      if (!mem.character_id || !mem.memory_text) continue;
-      const tone = mem.emotional_tone || 'neutral';
-      const valence = tone === 'positive' || tone === 'mixed' ? 'positive'
-        : tone === 'negative' ? 'negative' : 'neutral';
-      const eventTypeForChar = tone === 'positive'
-        ? (isMajorEvent ? 'celebration_event' : 'bonding_event')
-        : tone === 'negative'
-        ? 'setback_event'
-        : defaultEventType;
-
-      try {
-        await base44.asServiceRole.entities.LifeEvent.create({
+    const leToCreate = _allMemoryEntries
+      .filter(m => m.character_id && !leCharIds.has(m.character_id))
+      .map(mem => {
+        const tone = mem.emotional_tone || 'neutral';
+        const valence = tone === 'positive' || tone === 'mixed' ? 'positive'
+          : tone === 'negative' ? 'negative' : 'neutral';
+        const eventTypeForChar = tone === 'positive'
+          ? (isMajorEvent ? 'celebration_event' : 'bonding_event')
+          : tone === 'negative'
+          ? 'setback_event'
+          : defaultEventType;
+        return {
           character_id: mem.character_id,
           character_name: mem.character_name || '',
           title: `Story Event: ${title}`,
@@ -1069,8 +1168,11 @@ Deno.serve(async (req) => {
           triggered_by: 'story_event',
           systems_updated: ['memories', 'relationships', 'emotional_state'],
           context_tags: ['story_event', eventId, `participant_${mem.character_id}`],
-        });
-      } catch (_) {}
+        };
+      });
+    if (leToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.LifeEvent.bulkCreate(leToCreate); }
+      catch (e) { console.warn(`[generateStoryEvent] LifeEvent bulkCreate: ${e.message}`); }
     }
 
     // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ───────────────────────────────
@@ -1419,28 +1521,15 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 7: FINALIZATION ──────────────────────────────────────────────────
-    // All required Story Event work has now completed:
-    //   - narrative generated and persisted (STEP 1b)
-    //   - character StoryEventMemory records created (STEP 2)
-    //   - Character.memories array updated (STEP 2b)
-    //   - Memory entity records created (STEP 2c)
-    //   - CharacterMemory records created (STEP 2d)
-    //   - relationship scores updated (STEP 3)
-    //   - emotional states updated (STEP 4)
-    //   - images generated or recorded as failed/regenerable (STEP 5)
-    //   - LifeEvent records created (STEP 5b)
-    //   - LocationHistory records written (STEP 5e)
-    //   - EventParticipation records created (STEP 5d)
-    //   - participant coverage guaranteed (STEP 6)
-    //   - Chat/Text narrative injection completed (STEP 6.5)
+    // The parent Story Event was already finalized as 'complete' in STEP 1b
+    // immediately after the narrative was generated and persisted. All work
+    // in STEPS 2-6.5 is secondary effect persistence — best-effort, idempotent,
+    // and non-blocking. The parent remains 'complete' regardless of whether
+    // any individual secondary effect succeeded or failed.
     //
-    // Only now is the parent StoryEvent finalized as 'complete'.
     // Image failure does NOT prevent completion — each failed image moment has
     // a regenerable StoryEventImage record that surfaces the existing
     // regeneration control so the user can retry later.
-    await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-      status: 'complete',
-    });
 
     return Response.json({
       success: true,
@@ -1465,13 +1554,12 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
     // CRITICAL: Only transition to 'failed' if the event is still 'generating'.
-    // The parent is not finalized as 'complete' until STEP 7 — after all required
-    // trailing work (memories, relationships, emotional states, participation,
-    // narrative injection) has completed. If an error reached this outer catch,
-    // it means a required pipeline stage failed before STEP 7 ran, so the event
-    // is still 'generating' and should be marked 'failed'. Image-generation
-    // failures do NOT reach this catch — each image attempt has its own
-    // try/catch that records a regenerable failed-image record and continues.
+    // The parent is finalized as 'complete' in STEP 1b immediately after the
+    // narrative is generated and persisted. If an error reached this outer
+    // catch AND the status is still 'generating', it means the LLM core
+    // generation or narrative persistence failed before the terminal transition
+    // — a genuine core failure. If the status is already 'complete', secondary
+    // effect failures do NOT change the parent status.
     if (eventId) {
       try {
         const currentRecords = await base44.asServiceRole.entities.StoryEvent.filter({ id: eventId }, null, 1);
