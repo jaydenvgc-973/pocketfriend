@@ -1303,6 +1303,107 @@ function validateTransition(character, canonicalFields, locationMap) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// OBLIGATED TRANSITION NARRATIVE EMISSION
+// ═══════════════════════════════════════════════════════════════════════════
+// Emits an authoritative narrative record for obligated life-state transitions
+// (work arrival, work return, school arrival, school return, hospitalization,
+// hospital return) at the sole canonical commit point. The narrative is saved
+// as a Message with is_narrative=true in the character's direct conversation.
+//
+// ONE TRUTH: The narrative is derived from the committed_result — the actual
+// committed state — not from the request. This guarantees the narrative matches
+// the authoritative state.
+//
+// IDEMPOTENCY: This function is only called when disposition='accepted' AND
+// the transition represents an actual state change (oldStatus != newStatus).
+// Repeated evaluations of an already-committed state return 'no_change'
+// before reaching the commit point, so no duplicate narratives are created.
+async function emitObligatedTransitionNarrative(base44, character, committed_result, ownerEmail, etTime) {
+  const oldStatus = character.resolved_presence_status || '';
+  const newStatus = committed_result.resolved_presence_status || '';
+  const newLocType = committed_result.resolved_location_type || '';
+  const newLocName = committed_result.resolved_current_location_name || '';
+  const newReason = committed_result.resolved_source_reason || '';
+  const charName = character.name || character.display_name || 'Character';
+
+  // No transition — nothing to narrate
+  if (oldStatus === newStatus) return;
+
+  let narrativeText = null;
+
+  // 1. Work arrival: old != at_work → new == at_work (location type must be work or rabbit_hole)
+  if (oldStatus !== 'at_work' && newStatus === 'at_work' && (newLocType === 'work' || newLocType === 'rabbit_hole')) {
+    narrativeText = newLocName && newLocName !== 'Work'
+      ? `${charName} has gone to work at ${newLocName}.`
+      : `${charName} has gone to work.`;
+  }
+  // 2. Work return: old == at_work → new == home (reason must indicate work_end)
+  else if (oldStatus === 'at_work' && newStatus === 'home' && (newReason === 'work_end' || newReason.includes('work_end'))) {
+    narrativeText = `${charName} has returned home from work.`;
+  }
+  // 3. School arrival: old != at_school → new == at_school (location type must be school)
+  else if (oldStatus !== 'at_school' && newStatus === 'at_school' && newLocType === 'school') {
+    narrativeText = newLocName && newLocName !== 'School'
+      ? `${charName} has gone to school at ${newLocName}.`
+      : `${charName} has gone to school.`;
+  }
+  // 4. School return: old == at_school → new == home (reason must indicate school end)
+  else if (oldStatus === 'at_school' && newStatus === 'home' && (newReason === 'school_end' || newReason.includes('school_end'))) {
+    narrativeText = `${charName} has returned home from school.`;
+  }
+  // 5. Hospitalization: old != hospitalized → new == hospitalized (location type must be medical)
+  else if (oldStatus !== 'hospitalized' && newStatus === 'hospitalized' && newLocType === 'medical') {
+    narrativeText = newLocName && newLocName !== 'Hospital'
+      ? `${charName} has been hospitalized at ${newLocName}.`
+      : `${charName} has been hospitalized.`;
+  }
+  // 6. Hospital return: old == hospitalized → new == home
+  else if (oldStatus === 'hospitalized' && newStatus === 'home') {
+    narrativeText = `${charName} has returned home from being hospitalized.`;
+  }
+
+  if (!narrativeText) return;
+
+  // Find or create the character's direct conversation
+  let convoId = null;
+  try {
+    const convos = await base44.asServiceRole.entities.Conversation.filter(
+      { owner_email: ownerEmail, type: 'direct', character_ids: character.id },
+      '-last_message_date', 10
+    );
+    const directConvo = convos.find(c => {
+      const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+      return ids.length === 1 && ids[0] === character.id && !c.shared_conversation_key;
+    });
+    if (directConvo) convoId = directConvo.id;
+  } catch (_) {}
+
+  if (!convoId) {
+    try {
+      const newConvo = await base44.asServiceRole.entities.Conversation.create({
+        title: `direct with ${charName}`,
+        type: 'direct',
+        character_ids: [character.id],
+        owner_email: ownerEmail,
+      });
+      convoId = newConvo.id;
+    } catch (_) { return; }
+  }
+
+  // Save the narrative as a system message
+  await base44.asServiceRole.entities.Message.create({
+    conversation_id: convoId,
+    sender_type: 'character',
+    character_id: character.id,
+    character_name: charName,
+    content: narrativeText,
+    timestamp: etTime.toISOString(),
+    is_narrative: true,
+    channel: 'scene',
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════════
 Deno.serve(async (req) => {
@@ -1387,88 +1488,19 @@ Deno.serve(async (req) => {
     const updatePayload = { ...canonicalFields };
     await base44.asServiceRole.entities.Character.update(character_id, updatePayload);
 
-    // ── EMIT OBLIGATED LIFE-STATE TRANSITION NARRATIVE ──────────────────────────
-    // After the canonical commit, emit an authoritative narrative record for
-    // obligated character transitions (work, school, hospitalization, return-home).
-    // Only for active_created_character types. Non-blocking — errors are caught
-    // and logged, never blocking the response or reverting the commit.
+    // ── OBLIGATED TRANSITION NARRATIVE EMISSION ────────────────────────────────
+    // Emit an authoritative narrative record for obligated life-state transitions
+    // (work, school, hospitalization, return-home) directly at the sole canonical
+    // commit point. Only for active_created_character types. Non-blocking —
+    // narrative failures do not prevent the committed result from returning.
+    // Idempotent by design: only fires on disposition='accepted' with an actual
+    // state transition (oldStatus != newStatus). Repeated evaluations of an
+    // already-committed state return 'no_change' and never reach this code.
     if (character.character_type === 'active_created_character' && committed_result) {
       try {
-        const oldStatus = character.resolved_presence_status || '';
-        const newStatus = committed_result.resolved_presence_status || '';
-        const newLocType = committed_result.resolved_location_type || '';
-        const newLocName = committed_result.resolved_current_location_name || '';
-        const charName = character.name || character.display_name || 'Character';
-
-        let narrativeText = null;
-
-        // 1. Work arrival: old != at_work → new == at_work (location type must be work)
-        if (oldStatus !== 'at_work' && newStatus === 'at_work' && newLocType === 'work') {
-          narrativeText = newLocName && newLocName !== 'Work'
-            ? `${charName} has gone to work at ${newLocName}.`
-            : `${charName} has gone to work.`;
-        }
-        // 2. Work return: old == at_work → new == home
-        else if (oldStatus === 'at_work' && newStatus === 'home') {
-          narrativeText = `${charName} has returned home from work.`;
-        }
-        // 3. School arrival: old != at_school → new == at_school (location type must be school)
-        else if (oldStatus !== 'at_school' && newStatus === 'at_school' && newLocType === 'school') {
-          narrativeText = newLocName && newLocName !== 'School'
-            ? `${charName} has gone to school at ${newLocName}.`
-            : `${charName} has gone to school.`;
-        }
-        // 4. School return: old == at_school → new == home
-        else if (oldStatus === 'at_school' && newStatus === 'home') {
-          narrativeText = `${charName} has returned home from school.`;
-        }
-        // 5. Hospitalization: old != hospitalized → new == hospitalized
-        // Only use the facility name when the committed location type is 'medical'
-        // (a hospital was found). When no hospital exists in the owner's locations,
-        // the committed location name may be the character's home — do NOT use it.
-        else if (oldStatus !== 'hospitalized' && newStatus === 'hospitalized') {
-          narrativeText = (newLocType === 'medical' && newLocName && newLocName !== 'Hospital')
-            ? `${charName} has been hospitalized at ${newLocName}.`
-            : `${charName} has been hospitalized.`;
-        }
-        // 6. Hospital return: old == hospitalized → new == home
-        else if (oldStatus === 'hospitalized' && newStatus === 'home') {
-          narrativeText = `${charName} has returned home from being hospitalized.`;
-        }
-
-        if (narrativeText) {
-          // Find or create a direct conversation for this character
-          let convoId = null;
-          const existingConvos = await base44.asServiceRole.entities.Conversation.filter(
-            { owner_email: effectiveOwnerEmail, type: 'direct', character_ids: character_id },
-            '-last_message_date', 5
-          );
-          if (existingConvos && existingConvos.length > 0) {
-            convoId = existingConvos[0].id;
-          }
-          if (!convoId) {
-            const newConvo = await base44.asServiceRole.entities.Conversation.create({
-              title: `direct with ${charName}`,
-              type: 'direct',
-              character_ids: [character_id],
-              owner_email: effectiveOwnerEmail,
-            });
-            convoId = newConvo.id;
-          }
-
-          // Create the narrative message
-          await base44.asServiceRole.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: 'character',
-            character_id: character_id,
-            character_name: charName,
-            content: narrativeText,
-            is_narrative: true,
-            timestamp: etTime.toISOString(),
-          });
-        }
-      } catch (narrativeErr) {
-        console.warn(`[enforceCharacterLocationPresence] Narrative emission failed (non-blocking): ${narrativeErr.message}`);
+        await emitObligatedTransitionNarrative(base44, character, committed_result, effectiveOwnerEmail, etTime);
+      } catch (narrErr) {
+        console.warn(`[enforceCharacterLocationPresence] Narrative emission failed (non-blocking): ${narrErr.message}`);
       }
     }
 
