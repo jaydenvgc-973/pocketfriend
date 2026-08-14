@@ -188,6 +188,8 @@ function buildUserIdentityLockBlock(userBundle) {
 Deno.serve(async (req) => {
   let eventId = null;
   let base44 = null;
+  let narrativePersisted = false; // true after Step 1b succeeds — prevents outer catch from setting 'failed'
+  const requiredFailures = []; // tracks REQUIRED effect failures — prevents premature 'complete'
   try {
     base44 = createClientFromRequest(req);
     const body = await req.json();
@@ -207,11 +209,19 @@ Deno.serve(async (req) => {
     }
 
     // ── IDEMPOTENT RE-ENTRY DETECTION ──────────────────────────────────────────
-    // If generated_narrative already exists, the LLM step completed in a prior
-    // partial run but effects may be incomplete. Skip LLM regeneration and
+    // Canonical evidence of completed core narrative persistence:
+    //   1. status === 'generating' (checked above — event not yet finalized)
+    //   2. generated_narrative exists AND is substantial (> 100 chars)
+    //   3. narrative_preview exists (co-persisted in Step 1b)
+    // Together these prove the LLM core generation succeeded and was persisted,
+    // but required commit effects are incomplete. Skip LLM regeneration and
     // proceed directly to effects completion. This makes the function safe to
     // re-invoke after an interrupted attempt without duplicating the narrative.
-    const narrativeAlreadyGenerated = !!(event.generated_narrative && event.generated_narrative.length > 0);
+    const narrativeAlreadyGenerated = !!(
+      event.generated_narrative &&
+      event.generated_narrative.length > 100 &&
+      event.narrative_preview
+    );
 
     const ownerEmail = event.owner_email;
     const plot = event.plot || '';
@@ -682,25 +692,24 @@ Deno.serve(async (req) => {
         });
         generated = llmRes;
 
-        // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA + TERMINAL STATUS ───────
-        // The narrative IS the Story Event. Once it is generated and persisted,
-        // the parent Story Event is COMPLETE. All subsequent work (memories,
-        // relationships, emotional states, images, life events, participation,
-        // location history, conversation/message injection) is SECONDARY EFFECTS.
-        // Individual secondary effect failures must NOT leave the parent nonterminal.
-        //
-        // This is the SINGLE AUTHORITATIVE terminal status transition. There is
-        // no other path that sets 'complete'. The only path to 'failed' is the
-        // LLM core failure in the catch block below.
+        // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA (CORE — not terminal yet) ──
+        // The narrative is the core Story Event content. Once persisted, the
+        // core generation is done and the event cannot be 'failed' by downstream
+        // errors. However, 'complete' is NOT set here — required commit effects
+        // (memories, life events, participation, location history, narrative
+        // injection) must also succeed before the event is exposed to the rest
+        // of the application as fully complete. This prevents a split-brain
+        // state where status=complete but characters don't know the event happened.
         await base44.asServiceRole.entities.StoryEvent.update(eventId, {
           generated_narrative: generated.narrative || '',
           narrative_preview: generated.narrative_preview || (generated.narrative || '').substring(0, 150),
           emotional_outcomes: generated.emotional_outcomes || [],
           relationship_changes: generated.relationship_changes || [],
-          status: 'complete',
+          // status remains 'generating' — terminal 'complete' is set in STEP 7
         });
+        narrativePersisted = true;
 
-        console.log(`[generateStoryEvent] ✅ TERMINAL STATUS: event ${eventId} set to 'complete' after narrative persistence`);
+        console.log(`[generateStoryEvent] ✅ CORE NARRATIVE PERSISTED: event ${eventId} — required effects pending`);
       } catch (e) {
         // GENUINE CORE FAILURE: LLM narrative generation failed.
         // The Story Event itself cannot be created. This is the only path to 'failed'.
@@ -756,10 +765,13 @@ Deno.serve(async (req) => {
       }));
     if (semToCreate.length > 0) {
       try { await base44.asServiceRole.entities.StoryEventMemory.bulkCreate(semToCreate); }
-      catch (e) { console.warn(`[generateStoryEvent] StoryEventMemory bulkCreate: ${e.message}`); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] StoryEventMemory bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'StoryEventMemory', error: e.message, count: semToCreate.length });
+      }
     }
 
-    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY (idempotent) ──────────────
+    // ── STEP 2b: WRITE TO CHARACTER.MEMORIES ARRAY (idempotent, REQUIRED) ────
     for (const mem of _allMemoryEntries) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
@@ -767,7 +779,6 @@ Deno.serve(async (req) => {
         const freshChar = freshChars[0];
         if (!freshChar) continue;
         const existingMemories = freshChar.memories || [];
-        // Idempotency: skip if already has a memory entry for this event
         if (existingMemories.some(m => m.title === `Story Event: ${title}` && m.date === eventDate)) continue;
         const newMemoryEntry = {
           title: `Story Event: ${title}`,
@@ -779,7 +790,10 @@ Deno.serve(async (req) => {
         await base44.asServiceRole.entities.Character.update(mem.character_id, {
           memories: [...existingMemories, newMemoryEntry],
         });
-      } catch (_) {}
+      } catch (e) {
+        console.warn(`[generateStoryEvent] Character.memories update FAILED (required) for ${mem.character_id}: ${e.message}`);
+        requiredFailures.push({ step: 'Character.memories', character_id: mem.character_id, error: e.message });
+      }
     }
 
     // ── STEP 2c: WRITE TO MEMORY ENTITY (idempotent + bulk) ───────────────────
@@ -798,7 +812,10 @@ Deno.serve(async (req) => {
       });
     if (memEntityToCreate.length > 0) {
       try { await base44.asServiceRole.entities.Memory.bulkCreate(memEntityToCreate); }
-      catch (e) { console.warn(`[generateStoryEvent] Memory bulkCreate: ${e.message}`); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] Memory bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'Memory', error: e.message, count: memEntityToCreate.length });
+      }
     }
 
     // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (idempotent + bulk) ───────────
@@ -824,7 +841,10 @@ Deno.serve(async (req) => {
     }
     if (charMemToCreate.length > 0) {
       try { await base44.asServiceRole.entities.CharacterMemory.bulkCreate(charMemToCreate); }
-      catch (e) { console.warn(`[generateStoryEvent] CharacterMemory bulkCreate: ${e.message}`); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] CharacterMemory bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'CharacterMemory', error: e.message, count: charMemToCreate.length });
+      }
     }
 
     // ── STEP 3: UPDATE RELATIONSHIP SCORES ────────────────────────────────────
@@ -1172,10 +1192,13 @@ Deno.serve(async (req) => {
       });
     if (leToCreate.length > 0) {
       try { await base44.asServiceRole.entities.LifeEvent.bulkCreate(leToCreate); }
-      catch (e) { console.warn(`[generateStoryEvent] LifeEvent bulkCreate: ${e.message}`); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] LifeEvent bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'LifeEvent', error: e.message, count: leToCreate.length });
+      }
     }
 
-    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS ───────────────────────────────
+    // ── STEP 5e: WRITE LOCATION HISTORY RECORDS (idempotent + bulk, REQUIRED) ─
     const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
     const eventDepartureTime = endTime
       ? `${eventDate}T${endTime}:00.000`
@@ -1188,249 +1211,134 @@ Deno.serve(async (req) => {
       if (eventDurationMinutes < 0) eventDurationMinutes = 120;
     }
 
+    const lhToCreate = [];
     for (const cid of allIds) {
+      // Idempotency: skip if this character already has event LocationHistory
+      if (lhCharIds.has(cid)) continue;
       const c = charById[cid];
       const cname = c?.name || c?.display_name || cid;
       if (!c) continue;
-      try {
-        let priorLocId = c.current_home_location_id;
-        let priorLocName = c.resolved_current_location_name || 'home';
-        let priorCategory = 'home';
-        const resolvedType = c.resolved_location_type || 'home';
-        const presenceStatus = c.resolved_presence_status || 'home';
-        const isConfined = presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined';
-        const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
-        const isTraveling = presenceStatus === 'traveling';
+      const presenceStatus = c.resolved_presence_status || 'home';
+      const isConfined = presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined';
+      if (isConfined) continue;
 
-        if (isConfined) continue;
+      let priorLocId = c.current_home_location_id;
+      let priorLocName = c.resolved_current_location_name || 'home';
+      let priorCategory = 'home';
+      const resolvedType = c.resolved_location_type || 'home';
+      const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
+      const isTraveling = presenceStatus === 'traveling';
 
-        if (isAsleep && c.current_home_location_id) {
-          priorLocId = c.current_home_location_id;
-          priorLocName = c.resolved_current_location_name || 'home';
-          priorCategory = 'home';
-        } else if (isTraveling && c.traveling_to_location_id) {
-          priorLocId = c.traveling_to_location_id;
-          priorLocName = c.traveling_to_location_name || 'destination';
-          priorCategory = 'travel';
-        } else if (resolvedType === 'work' && c.current_work_location_id) {
-          priorLocId = c.current_work_location_id;
-          priorLocName = c.resolved_current_location_name || 'work';
-          priorCategory = 'workplace';
-        } else if (resolvedType === 'school' && c.current_school_location_id) {
-          priorLocId = c.current_school_location_id;
-          priorLocName = c.resolved_current_location_name || 'school';
-          priorCategory = 'education';
-        } else if (resolvedType === 'temporary_housing' && c.temporary_housing_location_id) {
-          priorLocId = c.temporary_housing_location_id;
-          priorLocName = c.resolved_current_location_name || 'temporary housing';
-          priorCategory = 'home';
-        } else if (c.resolved_current_location_id) {
-          priorLocId = c.resolved_current_location_id;
-          priorLocName = c.resolved_current_location_name || 'previous location';
-          priorCategory = resolvedType === 'work' ? 'workplace'
-            : resolvedType === 'school' ? 'education'
-            : 'home';
-        }
+      if (isAsleep && c.current_home_location_id) {
+        priorLocId = c.current_home_location_id;
+        priorLocName = c.resolved_current_location_name || 'home';
+        priorCategory = 'home';
+      } else if (isTraveling && c.traveling_to_location_id) {
+        priorLocId = c.traveling_to_location_id;
+        priorLocName = c.traveling_to_location_name || 'destination';
+        priorCategory = 'travel';
+      } else if (resolvedType === 'work' && c.current_work_location_id) {
+        priorLocId = c.current_work_location_id;
+        priorLocName = c.resolved_current_location_name || 'work';
+        priorCategory = 'workplace';
+      } else if (resolvedType === 'school' && c.current_school_location_id) {
+        priorLocId = c.current_school_location_id;
+        priorLocName = c.resolved_current_location_name || 'school';
+        priorCategory = 'education';
+      } else if (resolvedType === 'temporary_housing' && c.temporary_housing_location_id) {
+        priorLocId = c.temporary_housing_location_id;
+        priorLocName = c.resolved_current_location_name || 'temporary housing';
+        priorCategory = 'home';
+      } else if (c.resolved_current_location_id) {
+        priorLocId = c.resolved_current_location_id;
+        priorLocName = c.resolved_current_location_name || 'previous location';
+        priorCategory = resolvedType === 'work' ? 'workplace'
+          : resolvedType === 'school' ? 'education'
+          : 'home';
+      }
+      if (!priorLocId) priorLocId = `unknown_prior_${cid}`;
+      // Venue location ID — must be a string (schema requires string, not null)
+      const venueLocId = event.venue_id || `story_event_venue_${eventId}`;
 
-        if (!priorLocId) priorLocId = `unknown_prior_${cid}`;
-
-        await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: priorLocId, location_name: priorLocName,
-          location_category: priorCategory,
-          event_type: 'departure',
-          arrival_time: `${eventDate}T00:00:00.000`,
-          departure_time: eventArrivalTime,
-          travel_source: 'event',
-          travel_reason: `Left to attend "${title}" Story Event`,
-          is_current: false,
-          notes: `Departed from ${priorLocName} for Story Event: ${title}`,
-        });
-
-        await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: event.venue_id || null, location_name: venueName,
-          location_category: 'social', event_type: 'social_visit',
-          arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
+      lhToCreate.push(
+        { character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: priorLocId, location_name: priorLocName, location_category: priorCategory,
+          event_type: 'departure', arrival_time: `${eventDate}T00:00:00.000`,
+          departure_time: eventArrivalTime, travel_source: 'event',
+          travel_reason: `Left to attend "${title}" Story Event`, is_current: false,
+          notes: `Departed from ${priorLocName} for Story Event: ${title}` },
+        { character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: venueLocId, location_name: venueName, location_category: 'social',
+          event_type: 'social_visit', arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
           duration_minutes: eventDurationMinutes, travel_source: 'event',
-          travel_reason: `Story Event: ${title}`,
-          is_current: false,
-          notes: `Attended "${title}" Story Event at ${venueName}.`,
-        });
-
-        await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: event.venue_id || null, location_name: venueName,
-          location_category: 'social', event_type: 'departure',
-          arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
-          travel_source: 'event',
-          travel_reason: `Left "${title}" Story Event`,
-          is_current: false,
-          notes: `Departed from Story Event: ${title}`,
-        });
-
-        await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid, character_name: cname, owner_email: ownerEmail,
-          location_id: priorLocId || null, location_name: priorLocName,
-          location_category: priorCategory,
-          event_type: 'return_home',
-          arrival_time: eventDepartureTime, departure_time: null,
-          travel_source: 'event',
-          travel_reason: `Returned after "${title}" Story Event`,
-          is_current: false,
-          notes: `Returned to ${priorLocName} after Story Event: ${title}`,
-        });
-      } catch (_) {}
+          travel_reason: `Story Event: ${title}`, is_current: false,
+          notes: `Attended "${title}" Story Event at ${venueName}.` },
+        { character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: venueLocId, location_name: venueName, location_category: 'social',
+          event_type: 'departure', arrival_time: eventArrivalTime, departure_time: eventDepartureTime,
+          travel_source: 'event', travel_reason: `Left "${title}" Story Event`,
+          is_current: false, notes: `Departed from Story Event: ${title}` },
+        { character_id: cid, character_name: cname, owner_email: ownerEmail,
+          location_id: priorLocId, location_name: priorLocName, location_category: priorCategory,
+          event_type: 'return_home', arrival_time: eventDepartureTime, departure_time: null,
+          travel_source: 'event', travel_reason: `Returned after "${title}" Story Event`,
+          is_current: false, notes: `Returned to ${priorLocName} after Story Event: ${title}` },
+      );
+    }
+    if (lhToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.LocationHistory.bulkCreate(lhToCreate); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] LocationHistory bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'LocationHistory', error: e.message, count: lhToCreate.length });
+      }
     }
 
-    // ── STEP 5d: CREATE EVENTPARTICIPATION ────────────────────────────────────
-    for (const mem of memories) {
-      if (!mem.character_id) continue;
-      try {
-        await base44.asServiceRole.entities.EventParticipation.create({
-          event_id: eventId,
-          event_name: title,
-          character_id: mem.character_id,
-          character_name: mem.character_name || '',
-          owner_email: ownerEmail,
-          participation_type: 'attended',
-          emotional_tone: mem.emotional_tone || 'neutral',
-          participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
-          memory_strength: (mem.importance_score || 5) >= 7 ? 'strong' : 'moderate',
-          notes: mem.memory_summary || mem.memory_text?.substring(0, 120) || '',
-          saw_character_ids: participantIds.filter(id => id !== mem.character_id),
-        });
-      } catch (_) {}
+    // ── STEP 5d: CREATE EVENTPARTICIPATION (idempotent + bulk, REQUIRED) ─────
+    const epToCreate = _allMemoryEntries
+      .filter(m => m.character_id && !epCharIds.has(m.character_id))
+      .map(mem => ({
+        event_id: eventId,
+        event_name: title,
+        character_id: mem.character_id,
+        character_name: mem.character_name || '',
+        owner_email: ownerEmail,
+        participation_type: 'attended',
+        emotional_tone: mem.emotional_tone || 'neutral',
+        participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
+        memory_strength: (mem.importance_score || 5) >= 7 ? 'strong' : 'moderate',
+        notes: mem.memory_summary || mem.memory_text?.substring(0, 120) || '',
+        saw_character_ids: participantIds.filter(id => id !== mem.character_id),
+      }));
+    if (epToCreate.length > 0) {
+      try { await base44.asServiceRole.entities.EventParticipation.bulkCreate(epToCreate); }
+      catch (e) {
+        console.warn(`[generateStoryEvent] EventParticipation bulkCreate FAILED (required): ${e.message}`);
+        requiredFailures.push({ step: 'EventParticipation', error: e.message, count: epToCreate.length });
+      }
     }
 
-    // ── STEP 6: PARTICIPANT COVERAGE GUARANTEE ────────────────────────────────
-    const memoryCoveredIds = new Set(memories.map(m => m.character_id));
-    const uncoveredIds = allIds.filter(id => !memoryCoveredIds.has(id));
+    // ── STEP 6: REMOVED — Coverage is now handled by _allMemoryEntries ────────
+    // The _allMemoryEntries array (LLM memories + fallback for uncovered) is
+    // used by Steps 2, 2b, 2c, 2d, 5b, 5d, and 5e. Every participant receives
+    // all required continuity records through the idempotent bulk operations.
+    // The separate Step 6 loop was redundant and created duplicate records.
+    const uncoveredIds = []; // kept for response metadata — always empty now
 
-    for (const cid of uncoveredIds) {
-      const c = charById[cid];
-      const cname = c?.name || c?.display_name || cid;
-      const fallbackText = `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.`;
-      const fallbackSummary = `Attended "${title}" at ${venueName} on ${eventDate}`;
-      const fallbackTone = 'neutral';
-
-      try {
-        await base44.asServiceRole.entities.StoryEventMemory.create({
-          story_event_id: eventId, character_id: cid, character_name: cname,
-          memory_text: fallbackText, memory_summary: fallbackSummary,
-          memory_type: 'event', importance_score: 3, emotional_tone: fallbackTone,
-          owner_email: ownerEmail,
-        });
-      } catch (_) {}
-
-      try {
-        const freshChars = await base44.asServiceRole.entities.Character.filter({ id: cid }, null, 1);
-        const freshChar = freshChars[0];
-        if (freshChar) {
-          await base44.asServiceRole.entities.Character.update(cid, {
-            memories: [...(freshChar.memories || []), {
-              title: `Story Event: ${title}`, description: fallbackText,
-              date: eventDate, emotion_state: fallbackTone,
-              created_date: new Date().toISOString(),
-            }],
-          });
-        }
-      } catch (_) {}
-
-      try {
-        await base44.asServiceRole.entities.Memory.create({
-          character_id: cid, title: `Attended: ${title}`,
-          description: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${fallbackText}`,
-          emotional_impact: fallbackTone, source_context: `story_event_${eventId}`,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (_) {}
-
-      try {
-        await base44.asServiceRole.entities.CharacterMemory.create({
-          character_id: cid, memory_type: 'event',
-          memory_text: `[Story Event: ${title} — ${eventDate} at ${venueName}] ${fallbackText}`,
-          memory_summary: fallbackSummary, importance_score: 3,
-          confidence_score: 0.8, permanence: 'long_term', validation_status: 'confirmed',
-        });
-      } catch (_) {}
-
-      try {
-        await base44.asServiceRole.entities.LifeEvent.create({
-          character_id: cid, character_name: cname,
-          title: `Story Event: ${title}`, description: fallbackText,
-          event_type: 'bonding_event', severity: 'significant', valence: 'neutral',
-          emotional_impact: `neutral — bonding event`,
-          timestamp: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
-          triggered_by: 'story_event',
-          systems_updated: ['memories'],
-          context_tags: ['story_event', eventId, `participant_${cid}`],
-        });
-      } catch (_) {}
-
-      try {
-        await base44.asServiceRole.entities.EventParticipation.create({
-          event_id: eventId, event_name: title,
-          character_id: cid, character_name: cname,
-          owner_email: ownerEmail, participation_type: 'attended',
-          emotional_tone: fallbackTone,
-          participation_date: `${eventDate || ''}T${startTime || '12:00'}:00.000`,
-          memory_strength: 'moderate', notes: fallbackSummary,
-          saw_character_ids: participantIds.filter(id => id !== cid),
-        });
-      } catch (_) {}
-
-      try {
-        await base44.asServiceRole.entities.LocationHistory.create({
-          character_id: cid,
-          character_name: cname,
-          owner_email: ownerEmail,
-          location_id: event.venue_id || `story_event_venue_${eventId}`,
-          location_name: venueName,
-          location_category: 'social',
-          event_type: 'social_visit',
-          arrival_time: eventArrivalTime,
-          departure_time: eventDepartureTime,
-          duration_minutes: eventDurationMinutes,
-          travel_source: 'event',
-          travel_reason: `Story Event: ${title}`,
-          is_current: false,
-          notes: `Attended "${title}" Story Event at ${venueName}. (Fallback coverage)`,
-        });
-      } catch (_) {}
-    }
-
-    // ── STEP 6.5: INJECT NARRATIVE INTO CHARACTER CHAT (existing pathway) ─────
+    // ── STEP 6.5: INJECT NARRATIVE INTO CHARACTER CHAT (REQUIRED) ────────────
     // Push each character's memory of the event into their active direct and
     // phone conversations as a narrative message, timestamped at the event's
     // end time. Uses the same Conversation.filter + Message.create pattern as
     // the Chat page (useChatLoadConvo) and submitNarrative.
     const narrativeTimestamp = eventDepartureTime || new Date().toISOString();
 
-    // Build the full list of character memory entries (LLM-generated + fallback coverage)
-    const allMemoryEntries = [
-      ...memories.map(m => ({ character_id: m.character_id, character_name: m.character_name, memory_text: m.memory_text })),
-      ...uncoveredIds.map(cid => {
-        const c = charById[cid];
-        const cname = c?.name || c?.display_name || cid;
-        return { character_id: cid, character_name: cname, memory_text: `${cname} attended the story event "${title}" on ${eventDate} at ${venueName}.` };
-      }),
-    ];
-
-    for (const mem of allMemoryEntries) {
+    for (const mem of _allMemoryEntries) {
       if (!mem.character_id || !mem.memory_text) continue;
       try {
         const memChar = charById[mem.character_id];
         const memCharName = memChar?.name || memChar?.display_name || mem.character_name || mem.character_id;
-        // Narrative content is the raw memory text ONLY — no [Story Event: ...] header.
-        // Narratives should read as natural character inner monologue/journal entries,
-        // not as system-injected metadata blocks. The timestamp on the Message record
-        // is the authoritative placement anchor for chronological sorting.
         const narrativeContent = mem.memory_text;
 
         // ── Resolve or create the character's DIRECT conversation (Chat page) ──
-        // Same resolution pattern as conversationResolver.js / useChatLoadConvo:
-        // type='direct', single character_ids, no shared_conversation_key, no world_phone channel
         const existingDirect = await base44.asServiceRole.entities.Conversation.filter(
           { owner_email: ownerEmail, type: 'direct', character_ids: mem.character_id },
           '-last_message_date', 50
@@ -1443,13 +1351,11 @@ Deno.serve(async (req) => {
 
         let directConvoId = null;
         if (directConvos.length > 0) {
-          // Prefer conversation with message history (same priority as Chat page)
           const withHistory = directConvos.filter(c => c.last_message_date);
           const withoutHistory = directConvos.filter(c => !c.last_message_date);
           const sortByRecency = (a, b) => new Date(b.last_message_date || b.created_date).getTime() - new Date(a.last_message_date || a.created_date).getTime();
           directConvoId = [...withHistory.sort(sortByRecency), ...withoutHistory.sort(sortByRecency)][0]?.id || null;
         } else {
-          // No existing direct conversation — create one (same pattern as conversationResolver.js)
           const newConvo = await base44.asServiceRole.entities.Conversation.create({
             title: `direct with ${memCharName}`,
             type: 'direct',
@@ -1480,7 +1386,6 @@ Deno.serve(async (req) => {
         }
 
         // ── Inject into existing PHONE conversation (Text page) if one exists ──
-        // Do NOT create a new phone conversation — only inject if one already exists
         const existingPhone = await base44.asServiceRole.entities.Conversation.filter(
           { owner_email: ownerEmail, type: 'phone', character_ids: mem.character_id },
           '-last_message_date', 50
@@ -1517,30 +1422,41 @@ Deno.serve(async (req) => {
             }).catch(() => {});
           }
         }
-      } catch (_) {}
+      } catch (e) {
+        console.warn(`[generateStoryEvent] Narrative injection FAILED (required) for ${mem.character_id}: ${e.message}`);
+        requiredFailures.push({ step: 'NarrativeInjection', character_id: mem.character_id, error: e.message });
+      }
     }
 
-    // ── STEP 7: FINALIZATION ──────────────────────────────────────────────────
-    // The parent Story Event was already finalized as 'complete' in STEP 1b
-    // immediately after the narrative was generated and persisted. All work
-    // in STEPS 2-6.5 is secondary effect persistence — best-effort, idempotent,
-    // and non-blocking. The parent remains 'complete' regardless of whether
-    // any individual secondary effect succeeded or failed.
+    // ── STEP 7: TERMINAL STATUS — REQUIRED EFFECTS GATE ───────────────────────
+    // 'complete' is set ONLY when the core narrative AND all required commit
+    // effects have succeeded. This preserves One Truth: when the rest of the
+    // application sees status=complete, every participating character has
+    // authoritative continuity records (memories, life events, participation,
+    // location history, narrative injection).
     //
-    // Image failure does NOT prevent completion — each failed image moment has
-    // a regenerable StoryEventImage record that surfaces the existing
-    // regeneration control so the user can retry later.
+    // If any required effect failed, the event remains 'generating' so the
+    // idempotent re-entry pathway can complete the missing work on the next
+    // invocation. Optional effects (images, relationship scores, emotional
+    // state) do NOT gate completion — their individual failures are logged
+    // and independently recoverable.
+    if (requiredFailures.length === 0) {
+      await base44.asServiceRole.entities.StoryEvent.update(eventId, { status: 'complete' });
+      console.log(`[generateStoryEvent] ✅ TERMINAL STATUS: event ${eventId} set to 'complete' — all required effects committed`);
+    } else {
+      console.warn(`[generateStoryEvent] ⏳ event ${eventId} remains 'generating' — ${requiredFailures.length} required effect failure(s): ${requiredFailures.map(f => f.step).join(', ')}`);
+    }
 
     return Response.json({
       success: true,
       eventId,
-      memoriesCreated: memories.length,
+      memoriesCreated: _allMemoryEntries.length,
       uncoveredFilled: uncoveredIds.length,
       totalParticipants: allIds.length,
       imagesGenerated: imagePrompts.length,
       relationshipChanges: relChanges.length,
+      requiredFailures: requiredFailures.length > 0 ? requiredFailures : undefined,
       participantTypes: allIds.map(id => charById[id]?.character_type || 'unknown'),
-      // Identity grounding proof
       identity_grounding: {
         name_reference_key_injected: true,
         participant_bundles_resolved: participantBundles.length,
@@ -1553,25 +1469,20 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
-    // CRITICAL: Only transition to 'failed' if the event is still 'generating'.
-    // The parent is finalized as 'complete' in STEP 1b immediately after the
-    // narrative is generated and persisted. If an error reached this outer
-    // catch AND the status is still 'generating', it means the LLM core
-    // generation or narrative persistence failed before the terminal transition
-    // — a genuine core failure. If the status is already 'complete', secondary
-    // effect failures do NOT change the parent status.
-    if (eventId) {
+    // CLASSIFICATION:
+    //   narrativePersisted = false → genuine CORE failure (LLM or narrative persistence).
+    //     Set 'failed'. The Story Event itself cannot be created.
+    //   narrativePersisted = true → core succeeded but a required effect threw.
+    //     Do NOT set 'failed'. Leave as 'generating' so the idempotent re-entry
+    //     pathway can complete the missing required work on the next invocation.
+    if (eventId && !narrativePersisted) {
       try {
-        const currentRecords = await base44.asServiceRole.entities.StoryEvent.filter({ id: eventId }, null, 1);
-        const currentEvent = currentRecords?.[0];
-        if (currentEvent && currentEvent.status === 'generating') {
-          await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-            status: 'failed',
-            generation_error: error.message || 'Generation failed unexpectedly',
-          });
-        }
+        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+          status: 'failed',
+          generation_error: error.message || 'Core narrative generation failed',
+        });
       } catch (_) {}
     }
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, narrativePersisted }, { status: 500 });
   }
 });
