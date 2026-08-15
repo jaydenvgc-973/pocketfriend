@@ -64,19 +64,150 @@ Deno.serve(async (req) => {
     let wokenCount = 0;
 
     for (const char of eligibleChars) {
-      // Skip if not sleeping. Naps are NOT wake-time-bound — they are governed by
-      // the 3-hour nap cap in simulateActiveCharacterNeeds. A nap at any time of day
-      // is valid; waking a character from a nap because "it's past their wake-up time"
-      // is incorrect — wake_up_time is for overnight sleep, not midday rest.
-      if (char.resolved_presence_status !== 'sleeping') continue;
+      const isSleeping = char.resolved_presence_status === 'sleeping';
+      const isNapping = char.resolved_presence_status === 'napping';
+
+      // ── STALE ALARM CLEANUP for awake characters ──────────────────────────
+      // If the character is already awake but has a stale pending_alarm_time,
+      // clear it so it doesn't appear as a future scheduled alarm indefinitely.
+      if (!isSleeping && !isNapping) {
+        if (char.pending_alarm_time) {
+          try {
+            let _clearScope = base44.entities.Character;
+            try { await _clearScope.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
+            catch { _clearScope = base44.asServiceRole.entities.Character; await _clearScope.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
+            results.push({ character_id: char.id, character_name: char.name, event: 'stale_alarm_cleared', reason: 'character already awake' });
+          } catch (_) {}
+        }
+        continue;
+      }
 
       // Skip if valid exception (hospitalized, jailed, house arrest, etc.)
       if (VALID_SLEEP_EXCEPTIONS.includes(char.resolved_presence_status)) continue;
       if (char.is_jailed || char.house_arrest_active) continue;
-
-      // Skip if sleep_lock is explicitly on (Vick Servicio only)
       if (char.sleep_lock === true) continue;
 
+      // ── ALARM CHECK (applies to both sleeping and napping) ──────────────
+      // A scheduled alarm is a user-authorized wake trigger. When the alarm time
+      // has arrived, the character must wake — no manual button press required.
+      // The 6-hour sleep minimum does NOT apply to alarms (explicit user authorization).
+      if (char.pending_alarm_time) {
+        const alarmTimeMs = new Date(char.pending_alarm_time).getTime();
+        const nowMs = Date.now();
+        const sessionStartMs = isSleeping
+          ? (char.last_sleep_start ? new Date(char.last_sleep_start).getTime() : null)
+          : (char.last_nap_time ? new Date(char.last_nap_time).getTime() : null);
+
+        // Old-session protection: if the alarm was set BEFORE the current sleep
+        // session started, it belongs to a previous session. Clear it as stale.
+        if (sessionStartMs && alarmTimeMs < sessionStartMs) {
+          try {
+            let _cs = base44.entities.Character;
+            try { await _cs.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
+            catch { _cs = base44.asServiceRole.entities.Character; await _cs.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
+            results.push({ character_id: char.id, character_name: char.name, event: 'stale_alarm_cleared', reason: 'alarm from previous sleep session' });
+          } catch (_) {}
+        } else if (nowMs >= alarmTimeMs) {
+          // ── ALARM IS DUE — wake the character ──────────────────────────
+          const fromStatus = char.resolved_presence_status;
+          const _alarmWakePayload = {
+            resolved_presence_status: 'home', resolved_location_type: 'home', location_status: 'home',
+            current_activity: 'just woke up (scheduled alarm)',
+            resolved_source_reason: 'scheduled_alarm_wake', resolved_last_updated_at: nowETIso,
+            sleep_interrupted_at: nowETIso, pending_alarm_time: null, alarm_woke_at: nowETIso,
+            ...(isSleeping ? { last_wake_time: nowETIso } : {}),
+          };
+          const _alarmRevert = {
+            resolved_presence_status: char.resolved_presence_status, resolved_location_type: char.resolved_location_type,
+            location_status: char.location_status, current_activity: char.current_activity,
+            resolved_source_reason: char.resolved_source_reason, resolved_last_updated_at: char.resolved_last_updated_at,
+            sleep_interrupted_at: char.sleep_interrupted_at, pending_alarm_time: char.pending_alarm_time, last_wake_time: char.last_wake_time,
+          };
+          try {
+            let _ws = base44.entities.Character;
+            try { await _ws.update(char.id, _alarmWakePayload); }
+            catch { _ws = base44.asServiceRole.entities.Character; await _ws.update(char.id, _alarmWakePayload); }
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({
+                character_id: char.id, character_name: char.name, owner_email: char.owner_email,
+                transition_type: isSleeping ? 'sleep_end' : 'nap_end', from_status: fromStatus, to_status: 'home',
+                authority: 'scheduled_alarm', reason: `Scheduled alarm fired (alarm_time=${char.pending_alarm_time}).`,
+                timestamp: nowETIso, state_start_ref: isSleeping ? char.last_sleep_start : char.last_nap_time,
+              });
+            } catch (transitionError) {
+              let _re = null; try { await _ws.update(char.id, _alarmRevert); } catch (e) { _re = e.message; }
+              results.push({ character_id: char.id, character_name: char.name, woken: false, reason: 'alarm SleepTransition proof failed — reverted', transition_error: transitionError.message, revert_error: _re });
+              continue;
+            }
+            try {
+              const _at = new Date(char.pending_alarm_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' });
+              await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'neutral', severity: 'minor', title: `Alarm went off at ${_at}`, description: `${char.name}'s scheduled alarm went off and they woke up.`, emotional_impact: 'Awake and starting their routine', triggered_by: 'scheduled_event', timestamp: nowETIso, context_tags: ['alarm', 'scheduled_alarm', 'wake_up', isSleeping ? 'sleep_end' : 'nap_end'] });
+              await base44.asServiceRole.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `My alarm went off at ${_at}. Got up and started the day.`, memory_summary: `scheduled_alarm_fired::${nowETIso}`, importance_score: 2, permanence: 'short_term' });
+            } catch (e) { console.warn(`[enforceWakeTimeBoundary] alarm LifeEvent/Memory failed: ${e.message}`); }
+            results.push({ character_id: char.id, character_name: char.name, was_status: fromStatus, woken: true, wake_trigger: 'scheduled_alarm', alarm_time: char.pending_alarm_time });
+            wokenCount++;
+            console.log(`[enforceWakeTimeBoundary] ALARM WOKE ${char.name} | was=${fromStatus} | alarm=${char.pending_alarm_time} | et=${etTimeStr}`);
+            continue;
+          } catch (err) {
+            console.error(`[enforceWakeTimeBoundary] FAILED alarm wake ${char.name}: ${err.message}`);
+            results.push({ character_id: char.id, character_name: char.name, woken: false, error: err.message });
+            continue;
+          }
+        }
+        // else: alarm is in the future — fall through to other wake checks
+      }
+
+      // ── Only sleeping characters get 8-hour cap and wake_up_time checks ──
+      // Naps are governed by the 3-hour nap cap in simulateActiveCharacterNeeds.
+      if (!isSleeping) continue;
+
+      // ── 8-HOUR SLEEP CAP (planned/natural wake time) ─────────────────────
+      // The planned/natural wake time is last_sleep_start + 8 hours. When this
+      // cap is reached, the character must wake. This is the dynamic "should wake
+      // around X:XX AM" time derived from the actual sleep session.
+      if (char.last_sleep_start) {
+        const _sleepDurH = (Date.now() - new Date(char.last_sleep_start).getTime()) / 3600000;
+        if (_sleepDurH >= 8) {
+          const fromStatus = char.resolved_presence_status;
+          const _cap8Payload = {
+            resolved_presence_status: 'home', resolved_location_type: 'home', location_status: 'home',
+            current_activity: null, resolved_source_reason: 'sleep_cap_8h', resolved_last_updated_at: nowETIso,
+            sleep_interrupted_at: nowETIso, last_wake_time: nowETIso,
+          };
+          const _cap8Revert = {
+            resolved_presence_status: char.resolved_presence_status, resolved_location_type: char.resolved_location_type,
+            location_status: char.location_status, current_activity: char.current_activity,
+            resolved_source_reason: char.resolved_source_reason, resolved_last_updated_at: char.resolved_last_updated_at,
+            sleep_interrupted_at: char.sleep_interrupted_at, last_wake_time: char.last_wake_time,
+          };
+          try {
+            let _ws = base44.entities.Character;
+            try { await _ws.update(char.id, _cap8Payload); }
+            catch { _ws = base44.asServiceRole.entities.Character; await _ws.update(char.id, _cap8Payload); }
+            try {
+              await base44.asServiceRole.entities.SleepTransition.create({ character_id: char.id, character_name: char.name, owner_email: char.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'home', authority: 'sleep_cap_8h', reason: `Sleep completed 8-hour cap (${Math.round(_sleepDurH * 100) / 100}h elapsed).`, timestamp: nowETIso, state_start_ref: char.last_sleep_start, elapsed_hours: Math.round(_sleepDurH * 100) / 100 });
+            } catch (transitionError) {
+              let _re = null; try { await _ws.update(char.id, _cap8Revert); } catch (e) { _re = e.message; }
+              results.push({ character_id: char.id, character_name: char.name, woken: false, reason: '8h cap SleepTransition proof failed — reverted', transition_error: transitionError.message, revert_error: _re });
+              continue;
+            }
+            try {
+              await base44.asServiceRole.entities.LifeEvent.create({ character_id: char.id, character_name: char.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up after full sleep', description: `${char.name} slept ${Math.round(_sleepDurH * 100) / 100}h and woke rested.`, emotional_impact: 'rested', triggered_by: 'life_simulation', timestamp: nowETIso, context_tags: ['sleep_end', 'woke_up', 'sleep_cap_8h'] });
+              await base44.asServiceRole.entities.CharacterMemory.create({ character_id: char.id, memory_type: 'event', memory_text: `${char.name} slept ${Math.round(_sleepDurH * 100) / 100}h and woke rested.`, memory_summary: `Slept ${Math.round(_sleepDurH * 100) / 100}h — woke rested.`, importance_score: 4, permanence: 'short_term', related_character_id: char.id });
+            } catch (e) { console.warn(`[enforceWakeTimeBoundary] 8h cap LifeEvent/Memory failed: ${e.message}`); }
+            results.push({ character_id: char.id, character_name: char.name, was_status: fromStatus, woken: true, wake_trigger: 'sleep_cap_8h', sleep_duration_hours: Math.round(_sleepDurH * 100) / 100 });
+            wokenCount++;
+            console.log(`[enforceWakeTimeBoundary] 8H CAP WOKE ${char.name} | slept ${Math.round(_sleepDurH * 100) / 100}h | et=${etTimeStr}`);
+            continue;
+          } catch (err) {
+            console.error(`[enforceWakeTimeBoundary] FAILED 8h cap wake ${char.name}: ${err.message}`);
+            results.push({ character_id: char.id, character_name: char.name, woken: false, error: err.message });
+            continue;
+          }
+        }
+      }
+
+      // ── WAKE_UP_TIME BOUNDARY (static configured field, with 6-hour guard) ─
       // Parse wake_up_time (default 07:00)
       const wakeTime = char.wake_up_time || '07:00';
       const [wakeH, wakeM] = wakeTime.split(':').map(Number);
