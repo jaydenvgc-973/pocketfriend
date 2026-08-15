@@ -1,0 +1,342 @@
+{
+  "name": "PublicProfile",
+  "type": "object",
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "read": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Character this public profile belongs to"
+    },
+    "character_name": {
+      "type": "string"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for RLS scoping"
+    },
+    "recognition_level": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "familiar_face",
+        "locally_known",
+        "rising",
+        "established",
+        "major_celebrity",
+        "a_list",
+        "iconic"
+      ],
+      "default": "unknown",
+      "description": "How widely the character is actually known"
+    },
+    "recognition_scope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "neighborhood",
+        "community",
+        "local",
+        "regional",
+        "professional",
+        "industry",
+        "cultural",
+        "national",
+        "international",
+        "specialized"
+      ],
+      "default": "none",
+      "description": "The scope within which the character is recognized"
+    },
+    "recognition_locked": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, recognition_level and recognition_scope do not decay or change from PR processing"
+    },
+    "current_attention": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "How intensely the public is currently paying attention. Dynamic, decays over time."
+    },
+    "attention_scope": {
+      "type": "string",
+      "enum": [
+        "none",
+        "neighborhood",
+        "community",
+        "local",
+        "regional",
+        "professional",
+        "industry",
+        "cultural",
+        "national",
+        "international",
+        "specialized"
+      ],
+      "default": "none"
+    },
+    "respect_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Earned public/community/professional esteem"
+    },
+    "respect_contexts": {
+      "type": "object",
+      "description": "Respect broken down by context",
+      "properties": {
+        "community": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        },
+        "professional": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        },
+        "general_public": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        },
+        "industry": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        }
+      }
+    },
+    "notoriety_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Being notably discussed due to remarkable/controversial/visible circumstances"
+    },
+    "infamy_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Broad recognition associated with negative public history"
+    },
+    "reputation_contexts": {
+      "type": "object",
+      "description": "Accumulated public assessment by context (descriptive labels)",
+      "properties": {
+        "community": {
+          "type": "string"
+        },
+        "professional": {
+          "type": "string"
+        },
+        "general_public": {
+          "type": "string"
+        },
+        "industry": {
+          "type": "string"
+        }
+      }
+    },
+    "public_image": {
+      "type": "string",
+      "description": "How the public currently perceives the character (descriptive)"
+    },
+    "public_persona": {
+      "type": "string",
+      "description": "The version of themselves the character intentionally presents publicly"
+    },
+    "known_for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "What the character is publicly known for"
+    },
+    "world_perception": {
+      "type": "string",
+      "description": "Dynamic paragraph: what the world generally thinks about this character"
+    },
+    "world_perception_updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "world_perception_insufficient": {
+      "type": "boolean",
+      "default": true,
+      "description": "True when insufficient public information exists for a meaningful perception"
+    },
+    "public_record": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "story_event_id": {
+            "type": "string",
+            "description": "Reference to the authoritative Story Event"
+          },
+          "event_title": {
+            "type": "string"
+          },
+          "event_date": {
+            "type": "string"
+          },
+          "public_category": {
+            "type": "string",
+            "enum": [
+              "community_participation",
+              "campaign",
+              "performance",
+              "public_appearance",
+              "public_activism",
+              "fashion_show",
+              "photo_campaign",
+              "charity_event",
+              "award",
+              "publication",
+              "interview",
+              "public_incident",
+              "other"
+            ]
+          },
+          "exposure_scope": {
+            "type": "string",
+            "enum": [
+              "neighborhood",
+              "community",
+              "local",
+              "regional",
+              "professional",
+              "industry",
+              "cultural",
+              "national",
+              "international",
+              "specialized"
+            ]
+          },
+          "impact_tier": {
+            "type": "string",
+            "enum": [
+              "headliner",
+              "feature",
+              "secondary",
+              "minor_mention"
+            ],
+            "default": "secondary"
+          },
+          "role_description": {
+            "type": "string"
+          },
+          "impact_summary": {
+            "type": "string"
+          },
+          "designated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": []
+    },
+    "locks": {
+      "type": "object",
+      "description": "User-controlled locks on specific metrics. Locked metrics do not change from PR processing.",
+      "properties": {
+        "recognition": {
+          "type": "boolean",
+          "default": false
+        },
+        "current_attention": {
+          "type": "boolean",
+          "default": false
+        },
+        "respect": {
+          "type": "boolean",
+          "default": false
+        },
+        "notoriety": {
+          "type": "boolean",
+          "default": false
+        },
+        "infamy": {
+          "type": "boolean",
+          "default": false
+        },
+        "public_image": {
+          "type": "boolean",
+          "default": false
+        },
+        "public_persona": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "last_public_impact_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_publication_appearance_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_attention_decay_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email"
+  ]
+}

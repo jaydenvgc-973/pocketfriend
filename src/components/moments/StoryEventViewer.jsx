@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle, Pencil, Trash2 } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle, Pencil, Trash2, Globe } from 'lucide-react';
 import { format } from 'date-fns';
 import StoryEventEditor from './StoryEventEditor';
+import PublicImpactModal from './PublicImpactModal';
 
 const REGEN_REASONS = [
   { id: 'flawed', label: 'Image is flawed', icon: '⚠️' },
@@ -60,6 +61,7 @@ export default function StoryEventViewer({ eventId }) {
   const [eventDeleting, setEventDeleting] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [showPublicImpact, setShowPublicImpact] = useState(false);
 
   // Load current user + full character roster (all types, no participant filtering)
   useEffect(() => {
@@ -726,6 +728,17 @@ export default function StoryEventViewer({ eventId }) {
                 )}
               </div>
 
+              {/* Public Impact designation */}
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setShowPublicImpact(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Affects Public Relations
+                </button>
+              </div>
+
               {/* Narrative */}
               {event.generated_narrative && (
                 <div>
@@ -1182,6 +1195,11 @@ export default function StoryEventViewer({ eventId }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── PUBLIC IMPACT MODAL ──────────────────────────────────────────────── */}
+      {showPublicImpact && event && (
+        <PublicImpactModal event={event} onClose={() => setShowPublicImpact(false)} />
       )}
     </div>
   );

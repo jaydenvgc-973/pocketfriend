@@ -1,0 +1,148 @@
+{
+  "name": "WeeklyPublication",
+  "type": "object",
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": true,
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  },
+  "properties": {
+    "edition_number": {
+      "type": "integer",
+      "description": "Sequential edition number"
+    },
+    "edition_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Publication date"
+    },
+    "week_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "week_end": {
+      "type": "string",
+      "format": "date"
+    },
+    "headliner": {
+      "type": "object",
+      "description": "The lead story of this edition. Null when no story was strong enough.",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "character_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "character_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "story_event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "community_spotlight",
+              "campaign_watch",
+              "neighborhood_news"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "character_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "character_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "story_event_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "impact_tier": {
+            "type": "string",
+            "enum": [
+              "headliner",
+              "feature",
+              "secondary",
+              "minor_mention"
+            ]
+          }
+        }
+      },
+      "default": []
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "published"
+      ],
+      "default": "draft"
+    },
+    "has_sufficient_material": {
+      "type": "boolean",
+      "default": true,
+      "description": "False when insufficient material existed for this edition"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "edition_date"
+  ]
+}

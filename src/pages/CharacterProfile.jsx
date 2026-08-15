@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -40,6 +40,7 @@ import RelationshipTensionCard from "@/components/character/RelationshipTensionC
 import CharacterEducationSection from "@/components/character/CharacterEducationSection";
 import CharacterReligionSection from "@/components/character/CharacterReligionSection";
 import CharacterDashboard from "@/components/character/CharacterDashboard";
+import PublicRelationsSection from "@/components/character/PublicRelationsSection";
 import HybridNeedsLockPanel from "@/components/character/HybridNeedsLockPanel";
 
 const ZODIAC_SIGNS = {
@@ -1206,6 +1207,10 @@ export default function CharacterProfile() {
                 ) : null;
               })()}
             </div>
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Globe} title="Public Relations">
+            <PublicRelationsSection character={character} />
           </CollapsibleProfileSection>
         </div>
         </div>

@@ -21,6 +21,7 @@ import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import VickServiceCard from "@/components/home/VickServiceCard";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
+import WeeklyPublicationCard from "@/components/home/WeeklyPublicationCard.jsx";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -413,6 +414,8 @@ export default function Home() {
               allCharacters={allCharacters}
             />
           )}
+
+          <WeeklyPublicationCard />
           
           {currentUser?.email && (
             <VickServiceCard ownerEmail={currentUser.email} />
