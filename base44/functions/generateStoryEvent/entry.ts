@@ -721,6 +721,8 @@ Deno.serve(async (req) => {
     // ── IDEMPOTENCY: Query existing derivative records in parallel ──────────────
     // Prevents duplicate effects when the function is re-entered after partial
     // persistence (e.g., automation re-trigger, timeout recovery, or retry).
+    // Each query uses the stable identifying field for that entity so we can
+    // compute missing = expected - existing without guessing.
     const [existingSEM, existingEP, existingLE, existingLH, existingSEI, existingMemEntity] = await Promise.all([
       base44.asServiceRole.entities.StoryEventMemory.filter({ story_event_id: eventId }, null, 200).catch(() => []),
       base44.asServiceRole.entities.EventParticipation.filter({ event_id: eventId }, null, 200).catch(() => []),
@@ -735,6 +737,10 @@ Deno.serve(async (req) => {
     const lhCharIds = new Set(existingLH.filter(r => r.travel_reason?.includes(title)).map(r => r.character_id));
     const existingImageMoments = new Set(existingSEI.filter(r => r.image_url).map(r => r.moment_type));
     const memEntityCharIds = new Set(existingMemEntity.map(r => r.character_id));
+    // CharacterMemory idempotency is resolved per-character in Step 2d below,
+    // querying each participant's CharacterMemory records and checking for the
+    // event title prefix in memory_text. This uses stable identity (character_id
+    // + event title in memory_text) rather than a cross-entity heuristic.
 
     // ── STEP 2: CREATE STORY EVENT MEMORIES (idempotent + bulk) ──────────────────
     const memories = generated.memories || [];
@@ -815,16 +821,26 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (idempotent + bulk) ───────────
-    // Idempotency: query existing CharacterMemory records for participants and
-    // skip those that already have a memory_text containing this event's title.
+    // ── STEP 2d: CREATE CHARACTER MEMORY RECORDS (idempotent, per-character) ───
+    // Idempotency: CharacterMemory has no story_event_id field, so we query
+    // each participant's CharacterMemory records filtered by character_id and
+    // check in code whether any memory_text contains this event's title prefix.
+    // This is a stable identity check (character_id + event title in memory_text),
+    // not a heuristic based on other entities existing.
     const charMemToCreate = [];
+    const charMemEventPrefix = `[Story Event: ${title} —`;
     for (const mem of _allMemoryEntries) {
       if (!mem.character_id || !mem.memory_text) continue;
-      if (semCharIds.has(mem.character_id) && leCharIds.has(mem.character_id)) {
-        // If both SEM and LifeEvent exist for this char, CharacterMemory likely exists too
-        continue;
-      }
+      let alreadyHasCharMem = false;
+      try {
+        const existingCharMems = await base44.asServiceRole.entities.CharacterMemory.filter(
+          { character_id: mem.character_id }, '-created_date', 50
+        ).catch(() => []);
+        alreadyHasCharMem = (existingCharMems || []).some(
+          r => r.memory_text && r.memory_text.includes(charMemEventPrefix)
+        );
+      } catch (_) {}
+      if (alreadyHasCharMem) continue;
       charMemToCreate.push({
         character_id: mem.character_id,
         memory_type: 'event',
@@ -1419,23 +1435,38 @@ Deno.serve(async (req) => {
         }
 
         if (directConvoId) {
-          await base44.asServiceRole.entities.Message.create({
-            conversation_id: directConvoId,
-            sender_type: 'character',
-            character_id: mem.character_id,
-            character_name: memCharName,
-            content: narrativeContent,
-            is_narrative: true,
-            is_read: false,
-            timestamp: narrativeTimestamp,
-            memory_eligible: false,
-            relationship_eligible: false,
-          }).catch(() => {});
+          // ── Idempotency: check if narrative message already exists ──────────
+          // Match by conversation_id + character_id + is_narrative + timestamp.
+          // narrativeTimestamp is deterministic (eventDepartureTime), so re-entry
+          // produces the same timestamp — if a message already exists, skip.
+          let directAlreadyInjected = false;
+          try {
+            const existingDirectMsgs = await base44.asServiceRole.entities.Message.filter(
+              { conversation_id: directConvoId, character_id: mem.character_id, timestamp: narrativeTimestamp },
+              '-created_date', 10
+            );
+            directAlreadyInjected = (existingDirectMsgs || []).some(m => m.is_narrative === true);
+          } catch (_) {}
 
-          await base44.asServiceRole.entities.Conversation.update(directConvoId, {
-            last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
-            last_message_date: narrativeTimestamp,
-          }).catch(() => {});
+          if (!directAlreadyInjected) {
+            await base44.asServiceRole.entities.Message.create({
+              conversation_id: directConvoId,
+              sender_type: 'character',
+              character_id: mem.character_id,
+              character_name: memCharName,
+              content: narrativeContent,
+              is_narrative: true,
+              is_read: false,
+              timestamp: narrativeTimestamp,
+              memory_eligible: false,
+              relationship_eligible: false,
+            }).catch(() => {});
+
+            await base44.asServiceRole.entities.Conversation.update(directConvoId, {
+              last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
+              last_message_date: narrativeTimestamp,
+            }).catch(() => {});
+          }
         }
 
         // ── Inject into existing PHONE conversation (Text page) if one exists ──
@@ -1456,23 +1487,35 @@ Deno.serve(async (req) => {
           const phoneConvoId = [...withHistoryP.sort(sortByRecencyP), ...withoutHistoryP.sort(sortByRecencyP)][0]?.id || null;
 
           if (phoneConvoId) {
-            await base44.asServiceRole.entities.Message.create({
-              conversation_id: phoneConvoId,
-              sender_type: 'character',
-              character_id: mem.character_id,
-              character_name: memCharName,
-              content: narrativeContent,
-              is_narrative: true,
-              is_read: false,
-              timestamp: narrativeTimestamp,
-              memory_eligible: false,
-              relationship_eligible: false,
-            }).catch(() => {});
+            // ── Idempotency: check if narrative message already exists ──────────
+            let phoneAlreadyInjected = false;
+            try {
+              const existingPhoneMsgs = await base44.asServiceRole.entities.Message.filter(
+                { conversation_id: phoneConvoId, character_id: mem.character_id, timestamp: narrativeTimestamp },
+                '-created_date', 10
+              );
+              phoneAlreadyInjected = (existingPhoneMsgs || []).some(m => m.is_narrative === true);
+            } catch (_) {}
 
-            await base44.asServiceRole.entities.Conversation.update(phoneConvoId, {
-              last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
-              last_message_date: narrativeTimestamp,
-            }).catch(() => {});
+            if (!phoneAlreadyInjected) {
+              await base44.asServiceRole.entities.Message.create({
+                conversation_id: phoneConvoId,
+                sender_type: 'character',
+                character_id: mem.character_id,
+                character_name: memCharName,
+                content: narrativeContent,
+                is_narrative: true,
+                is_read: false,
+                timestamp: narrativeTimestamp,
+                memory_eligible: false,
+                relationship_eligible: false,
+              }).catch(() => {});
+
+              await base44.asServiceRole.entities.Conversation.update(phoneConvoId, {
+                last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
+                last_message_date: narrativeTimestamp,
+              }).catch(() => {});
+            }
           }
         }
       } catch (e) {
@@ -1481,35 +1524,40 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── STEP 7: DETERMINISTIC TERMINAL LIFECYCLE ────────────────────────────────
-    // The retry contract:
-    //   1. First attempt (narrativeAlreadyGenerated = false):
-    //      LLM generates narrative → Step 1b persists it → effects run.
-    //      If effects fail → stay 'generating' to allow ONE retry.
-    //   2. Re-entry (narrativeAlreadyGenerated = true):
-    //      Narrative already persisted → effects are retried.
-    //      If effects STILL fail → set 'failed' (deterministic terminal).
-    //      No more automatic retries — the user can regenerate from scratch.
+    // ── STEP 7: VERIFIED COMMIT GATE ────────────────────────────────────────────
+    // The narrative is the resumable boundary. Once persisted, the event is
+    // NEVER marked 'failed' by downstream effect errors — that would destroy
+    // successfully generated narrative work. Instead:
     //
-    // This gives exactly 2 attempts. After that, the event is terminal
-    // (either 'complete' or 'failed') and cannot get stuck in 'generating'.
-    // Optional effects (images, relationship scores, emotional state) do
-    // NOT gate completion — their failures are logged and independently
-    // recoverable.
+    //   - All required effects verified (requiredFailures empty) → 'complete'
+    //   - Required effects still incomplete → stay 'generating' and record
+    //     the exact failures in generation_error so they are surfaced (not
+    //     hidden behind a generic 'generating' label). A future idempotent
+    //     re-entry resumes only the missing work without duplication.
+    //
+    // 'failed' is reserved exclusively for genuine core narrative generation
+    // failure (narrative could not be produced/persisted). That path is
+    // handled in the Step 1 catch block and the outer catch — never here.
+    //
+    // Optional effects (images, relationship scores, emotional state) do NOT
+    // gate completion — their failures are logged and independently recoverable.
     if (requiredFailures.length === 0) {
-      await base44.asServiceRole.entities.StoryEvent.update(eventId, { status: 'complete' });
-      console.log(`[generateStoryEvent] ✅ TERMINAL STATUS: event ${eventId} set to 'complete' — all required effects committed`);
-    } else if (narrativeAlreadyGenerated) {
-      // RE-ENTRY with persistent required failures → deterministic terminal
-      const failSummary = requiredFailures.map(f => `${f.step}${f.character_id ? `(${f.character_id})` : ''}`).join(', ');
       await base44.asServiceRole.entities.StoryEvent.update(eventId, {
-        status: 'failed',
-        generation_error: `Required effects failed on retry: ${failSummary}`,
+        status: 'complete',
+        generation_error: null,
       });
-      console.warn(`[generateStoryEvent] ❌ TERMINAL STATUS: event ${eventId} set to 'failed' — required effects failed on re-entry: ${failSummary}`);
+      console.log(`[generateStoryEvent] ✅ COMMIT GATE PASSED: event ${eventId} set to 'complete' — all required effects verified`);
     } else {
-      // FIRST ATTEMPT with required failures → stay 'generating' for one retry
-      console.warn(`[generateStoryEvent] ⏳ event ${eventId} remains 'generating' (first attempt) — ${requiredFailures.length} required effect failure(s): ${requiredFailures.map(f => f.step).join(', ')}`);
+      // Required effects incomplete — preserve narrative, surface exact failures.
+      // Stay 'generating' so idempotent re-entry can resume missing work.
+      const failSummary = requiredFailures.map(f =>
+        `${f.step}${f.character_id ? `(${f.character_id})` : ''}${f.count ? `[${f.count}]` : ''}: ${f.error || 'verification failed'}`
+      ).join('; ');
+      await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+        status: 'generating',
+        generation_error: `Required effects incomplete: ${failSummary}`,
+      });
+      console.warn(`[generateStoryEvent] ⏳ COMMIT GATE BLOCKED: event ${eventId} remains 'generating' — ${requiredFailures.length} required effect failure(s): ${failSummary}`);
     }
 
     return Response.json({
@@ -1535,18 +1583,34 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('[generateStoryEvent]', error.message, error.stack);
     // CLASSIFICATION:
-    //   narrativePersisted = false AND first attempt → genuine CORE failure
-    //     (LLM or narrative persistence). Set 'failed'.
-    //   narrativePersisted = false AND re-entry (narrativeAlreadyGenerated) →
-    //     narrative was persisted in a prior run, but this retry crashed during
-    //     effects. Set 'failed' — deterministic terminal (2nd attempt failed).
-    //   narrativePersisted = true → first attempt: core succeeded but a required
-    //     effect threw. Do NOT set 'failed'. Leave as 'generating' for one retry.
+    //   Case A — narrative was never persisted (narrativePersisted = false):
+    //     The Story Event generation itself failed. The narrative could not be
+    //     produced or persisted. This is the only legitimate path to 'failed'.
+    //     Use the existing failure handling for this condition.
+    //
+    //   Case B — narrative already persisted (narrativePersisted = true):
+    //     The core narrative exists. A downstream effect threw an uncaught
+    //     error (escaped its per-effect try-catch). Do NOT mark 'failed' — that
+    //     would destroy the successfully generated narrative. Do NOT silently
+    //     leave the event in 'generating' with no explanation. Instead, record
+    //     the exact error in generation_error and leave status as 'generating'
+    //     so idempotent re-entry can resume the missing work.
     if (eventId && !narrativePersisted) {
+      // Case A: genuine core failure
       try {
         await base44.asServiceRole.entities.StoryEvent.update(eventId, {
           status: 'failed',
           generation_error: error.message || 'Core narrative generation failed',
+        });
+      } catch (_) {}
+    } else if (eventId && narrativePersisted) {
+      // Case B: downstream effect crashed after narrative persisted.
+      // Preserve narrative + successful effects. Surface the exact failure.
+      // Stay 'generating' for idempotent re-entry.
+      try {
+        await base44.asServiceRole.entities.StoryEvent.update(eventId, {
+          status: 'generating',
+          generation_error: `Downstream effect error: ${error.message || 'unknown error'}`,
         });
       } catch (_) {}
     }
