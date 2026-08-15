@@ -50,6 +50,7 @@ import ImageGenerationDiagnostics from './pages/ImageGenerationDiagnostics';
 import SchoolContaminationProof from './pages/SchoolContaminationProof';
 import MultiCharacterProof from './pages/MultiCharacterProof';
 import EditCharacterReligion from './pages/EditCharacterReligion';
+import EditCharacterPublicRelations from './pages/EditCharacterPublicRelations';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
 import { ForegroundPriorityProvider } from '@/lib/ForegroundPriorityContext';
@@ -142,6 +143,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
       <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
+      <Route path="/edit-character-public-relations" element={<EditCharacterPublicRelations />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="/edit-character-needs" element={<EditCharacterNeeds />} />
       <Route path="/my-profile" element={<MyProfile />} />

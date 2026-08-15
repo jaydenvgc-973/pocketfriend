@@ -3,7 +3,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search, GitMerge, Wrench } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search, GitMerge, Wrench, Globe } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -826,6 +826,17 @@ export default function Settings() {
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">Edit Occupation, Education & Relationships</p>
                 <p className="text-xs text-muted-foreground">Job, education, inter-character relationships with bi-directional sync</p>
+              </div>
+            </button>
+          </Link>
+          <Link to="/edit-character-public-relations" className="mt-2 block">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Globe className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Public Relations</p>
+                <p className="text-xs text-muted-foreground">Lock or track recognition, attention, respect, notoriety & public image</p>
               </div>
             </button>
           </Link>
