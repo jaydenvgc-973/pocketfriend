@@ -67,18 +67,10 @@ Deno.serve(async (req) => {
       const isSleeping = char.resolved_presence_status === 'sleeping';
       const isNapping = char.resolved_presence_status === 'napping';
 
-      // ── STALE ALARM CLEANUP for awake characters ──────────────────────────
-      // If the character is already awake but has a stale pending_alarm_time,
-      // clear it so it doesn't appear as a future scheduled alarm indefinitely.
+      // Awake characters skip sleep-cap and wake-time boundary checks.
+      // Alarm rescheduling for awake characters is handled by processScheduledCharacterAlarms
+      // (the recurring daily alarm scanner) — this function no longer inspects pending_alarm_time.
       if (!isSleeping && !isNapping) {
-        if (char.pending_alarm_time) {
-          try {
-            let _clearScope = base44.entities.Character;
-            try { await _clearScope.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
-            catch { _clearScope = base44.asServiceRole.entities.Character; await _clearScope.update(char.id, { pending_alarm_time: null, alarm_woke_at: nowETIso, resolved_last_updated_at: nowETIso }); }
-            results.push({ character_id: char.id, character_name: char.name, event: 'stale_alarm_cleared', reason: 'character already awake' });
-          } catch (_) {}
-        }
         continue;
       }
 
