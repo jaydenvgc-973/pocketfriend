@@ -68,8 +68,9 @@ Deno.serve(async (req) => {
       const isNapping = char.resolved_presence_status === 'napping';
 
       // Awake characters skip sleep-cap and wake-time boundary checks.
-      // Alarm rescheduling for awake characters is handled by processScheduledCharacterAlarms
-      // (the recurring daily alarm scanner) — this function no longer inspects pending_alarm_time.
+      // This function handles ONLY normal sleep/wake (8h cap, wake_up_time boundary).
+      // User-set alarms (pending_alarm_time) are NOT processed here — they have their own
+      // targeted execution pathway. This function does not inspect pending_alarm_time.
       if (!isSleeping && !isNapping) {
         continue;
       }
@@ -78,34 +79,6 @@ Deno.serve(async (req) => {
       if (VALID_SLEEP_EXCEPTIONS.includes(char.resolved_presence_status)) continue;
       if (char.is_jailed || char.house_arrest_active) continue;
       if (char.sleep_lock === true) continue;
-
-      // ── USER ALARM CHECK (pending_alarm_time) ──────────────────────────
-      // pending_alarm_time is a USER-SET ALARM for this specific character.
-      // When due, the alarm ITSELF invokes the existing authorized wake
-      // pipeline (processScheduledCharacterAlarms → enforceCharacterLocationPresence).
-      // This is the alarm driving the wake — NOT waiting for another system.
-      // Normal sleep/wake (8h cap, wake_up_time boundary below) is independent
-      // and does NOT require pending_alarm_time.
-      if (char.pending_alarm_time && new Date(char.pending_alarm_time).getTime() <= Date.now()) {
-        try {
-          await base44.asServiceRole.functions.invoke('processScheduledCharacterAlarms', {
-            character_id: char.id,
-          });
-          // Re-read to check if the alarm woke the character.
-          const _reAlarm = await base44.asServiceRole.entities.Character.filter(
-            { id: char.id, owner_email: char.owner_email }, null, 1
-          );
-          const _afterAlarm = _reAlarm?.[0] || null;
-          if (_afterAlarm && !['sleeping', 'napping'].includes(_afterAlarm.resolved_presence_status)) {
-            // Alarm woke the character — skip 8h cap and wake_up_time boundary.
-            results.push({ character_id: char.id, character_name: char.name, alarm_fired: true });
-            wokenCount++;
-            continue;
-          }
-        } catch (e) {
-          console.warn(`[enforceWakeTimeBoundary] alarm invoke failed for ${char.name}: ${e.message}`);
-        }
-      }
 
       // ── Only sleeping characters get 8-hour cap and wake_up_time checks ──
       // Naps are governed by the 3-hour nap cap in simulateActiveCharacterNeeds.
