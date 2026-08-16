@@ -140,13 +140,13 @@ Deno.serve(async (req) => {
       const committed = authRes.committed_result;
       const committedPresence = committed.resolved_presence_status || 'home';
 
-      // Reschedule to next day (daily recurrence) + clear current alarm-fired state.
+      // Reschedule to next day (daily recurrence). Only write alarm state + activity.
+      // Canonical wake state (presence, last_wake_time, sleep_interrupted_at) was
+      // committed by enforceCharacterLocationPresence above — do not overwrite it.
       await base44.asServiceRole.entities.Character.update(char.id, {
         pending_alarm_time: nextDayIso,
         alarm_woke_at: nowIso,
-        sleep_interrupted_at: nowIso,
         current_activity: 'just woke up (scheduled alarm)',
-        resolved_last_updated_at: nowIso,
       }).catch((e) => console.warn(`[processScheduledCharacterAlarms] reschedule failed: ${e.message}`));
 
       // Authoritative transition record — from the committed result.
