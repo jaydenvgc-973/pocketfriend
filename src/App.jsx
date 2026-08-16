@@ -11,7 +11,6 @@ import PlayAsCharacterBanner from '@/components/chat/PlayAsCharacterBanner';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import { useRoutePreservation } from '@/lib/useRoutePreservation';
 import { useForegroundSessionTracking } from '@/hooks/useForegroundSessionTracking';
-import { useAlarmExecutionTimer } from '@/hooks/useAlarmExecutionTimer';
 
 import Onboarding from './pages/Onboarding';
 import CommunityEventsDemo from './pages/CommunityEventsDemo';
@@ -95,10 +94,6 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
 
   // Track foreground session state for background function gating
   useForegroundSessionTracking();
-
-  // ALARM EXECUTION WIRE: Connects registered pending_alarm_time → processScheduledCharacterAlarms
-  // at the exact alarm time via dedicated per-alarm setTimeout (not polling, not a global scanner).
-  useAlarmExecutionTimer();
 
   // PRIORITY ARCHITECTURE: ensureUserVGCTowers removed from App startup.
   // Infrastructure maintenance does not belong in the startup sequence.
