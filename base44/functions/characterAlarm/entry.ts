@@ -319,6 +319,8 @@ Deno.serve(async (req) => {
         energy_value: character.energy_value,
       };
       const fromStatus = character.resolved_presence_status;
+      // Ring Now is an immediate manual wake. Clear the one-time user alarm
+      // so the stale occurrence does not create a duplicate wake later.
       const wakeFields = {
         resolved_presence_status: 'home',
         location_status: 'home',
