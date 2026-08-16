@@ -1706,6 +1706,30 @@ Deno.serve(async (req) => {
       contextLog.push({ step: 'community_events', status: 'error', error: evErr.message });
     }
 
+    // ── Step 10d: Weekly Publication awareness — public world knowledge ──────
+    // Published Weekly content becomes public-world knowledge. Characters can
+    // naturally reference what the newspaper reported. The awareness block
+    // contains ONLY published content (headlines, article bodies, Around Town) —
+    // NOT underlying source records. This follows the same delegate pattern as
+    // buildWorldPhoneAwarenessBlock and buildCommitmentAwarenessBlock.
+    let weeklyPublicationBlock = '';
+    try {
+      const wpRes = await base44.functions.invoke('buildWeeklyPublicationAwarenessBlock', {
+        characterName: character.name,
+      });
+      const wpData = wpRes?.data || wpRes;
+      weeklyPublicationBlock = wpData?.awarenessBlock || '';
+      contextLog.push({
+        step: 'weekly_publication_awareness',
+        editions: wpData?.editionCount ?? 0,
+        latestEditionDate: wpData?.latestEditionDate ?? null,
+        delegate: 'buildWeeklyPublicationAwarenessBlock',
+      });
+    } catch (wpErr) {
+      contextLog.push({ step: 'weekly_publication_awareness', status: 'error', error: wpErr.message, delegate: 'buildWeeklyPublicationAwarenessBlock' });
+      console.warn(`[buildCanonicalCharacterContext] weekly_publication_awareness delegate error (non-blocking): ${wpErr.message}`);
+    }
+
     // ── Step 10c: Pre-build Vick identity override BEFORE prompt construction ──
     // CRITICAL ORDER: Vick's character fields must be overridden BEFORE buildFullCanonicalPrompt
     // is called. The LLM anchors on the first "WHO YOU ARE" block — if old NPC content
@@ -1744,7 +1768,7 @@ Deno.serve(async (req) => {
     const clothingAwarenessBlock = buildClothingAwarenessContextInline(character, coPresenceCharRecords, null);
 
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + weeklyPublicationBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.
