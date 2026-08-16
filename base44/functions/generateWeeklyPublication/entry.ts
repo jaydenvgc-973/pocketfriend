@@ -171,6 +171,13 @@ Deno.serve(async (req) => {
     const allMaterial = [];
 
     for (const e of qualifyingStoryEvents) {
+      // Pair each participant name with its ID so the LLM can return actual IDs
+      const participantIds = e.participant_character_ids || [];
+      const participantNames = e.participant_character_names || [];
+      const participants = participantIds.map((id, i) => ({ id, name: participantNames[i] || '' }));
+      const focusIds = e.focus_character_ids || [];
+      const focusNames = e.focus_character_names || [];
+      const focus_characters = focusIds.map((id, i) => ({ id, name: focusNames[i] || '' }));
       allMaterial.push({
         type: 'story_event',
         id: e.id,
@@ -179,8 +186,8 @@ Deno.serve(async (req) => {
         venue: e.venue_name || e.rabbit_hole_venue_name,
         plot: e.plot,
         narrative_preview: e.narrative_preview || (e.generated_narrative || '').slice(0, 500),
-        participants: e.participant_character_names || [],
-        focus_characters: e.focus_character_names || [],
+        participants,
+        focus_characters,
         previously_reported: previouslyReportedIds.has(e.id),
       });
     }
@@ -204,7 +211,8 @@ Deno.serve(async (req) => {
         id: p.id,
         title: p.event_name,
         event_date: p.participation_date ? new Date(p.participation_date).toISOString().slice(0, 10) : null,
-        character: p.character_name,
+        character_id: p.character_id,
+        character_name: p.character_name,
         participation_type: p.participation_type,
         notes: p.notes,
       });
@@ -216,7 +224,8 @@ Deno.serve(async (req) => {
         id: r.story_event_id || r.id,
         title: r.event_title,
         event_date: r.event_date,
-        character: r.character_name,
+        character_id: r.character_id,
+        character_name: r.character_name,
         public_category: r.public_category,
         exposure_scope: r.exposure_scope,
         impact_tier: r.impact_tier,
@@ -278,7 +287,15 @@ EDITORIAL RULES — VIOLATING THESE IS A SYSTEM FAILURE:
 4. Select the MOST NEWSWORTHY story as the headliner — based on the significance of what happened, NOT the fame of the character involved. A community event with broad impact is more newsworthy than a famous character's routine appearance.
 5. DO NOT FABRICATE stories. Only use the provided events. If there isn't material for a section, leave that section's array empty.
 6. DO NOT force every section to have content. Sections should be populated according to the actual qualifying activity.
-7. For the headliner, write a detailed image_prompt that describes a realistic photograph matching the article content. The image must depict what actually happened — do NOT invent an unrelated scene.
+6b. CHARACTER IDS: The source events include character_id fields with actual database IDs. You MUST return those exact ID values in the "character_ids" array — do NOT return character names as IDs. The character_ids array must contain the actual ID strings from the source data (e.g. "6a80c96f7df8aa5403dec235"), not names like "Ethan Thompson" or "Test Character A".
+7. IMAGE GENERATION — IDENTITY-AWARE:
+   For each article that has an image_prompt, set "image_depicts_characters" to true if the photograph is intended to visibly depict one or more of the established characters named in that article (e.g. a portrait, a photo of the character at an event, a character on a campaign shoot). Set it to false if the image is a general environmental/crowd photograph where no particular established character is intended to be identifiable (e.g. a wide shot of a festival, a building exterior, a crowd scene).
+   When image_depicts_characters is true:
+   - The image_prompt MUST describe the scene, activity, environment, location, pose, and editorial composition — WHAT is happening and WHERE.
+   - The image_prompt MUST NOT describe the character's physical appearance (face, hair, build, race, age, etc.). Character visual identity is supplied separately from the character's authoritative reference imagery. Describing physical appearance in the prompt causes the image generator to invent a generic person.
+   - The image_prompt MAY describe clothing when the article/event specifically establishes what the character is wearing (e.g. a campaign outfit, a performance costume). Otherwise leave clothing to the character's established appearance.
+   When image_depicts_characters is false:
+   - The image_prompt should describe the general event scene, atmosphere, and environment without claiming any particular person is an established character.
 8. Generate a fictional byline (reporter name) and role for each article. Use realistic names, not character names from the world.
 9. PREVIOUSLY REPORTED stories: if a story was previously reported and has a NEW DEVELOPMENT this week, write about the development — do NOT pretend the story just began. If there is no new development, exclude it.
 10. Categories:
@@ -304,7 +321,8 @@ Return JSON with this exact structure:
     "byline": "Reporter Name",
     "role": "Staff Writer",
     "pull_quote": "A quotable line from the article or null",
-    "image_prompt": "Detailed description of a realistic photograph matching the article — describe the scene, setting, people, activity, lighting. Must match what actually happened.",
+    "image_prompt": "Scene/activity/environment description. Do NOT describe character physical appearance — identity comes from reference imagery.",
+    "image_depicts_characters": true | false,
     "image_caption": "Caption for the image",
     "category": "community_spotlight|campaign_watch|neighborhood_news",
     "character_ids": ["..."],
@@ -318,7 +336,8 @@ Return JSON with this exact structure:
       "body": "1-2 paragraphs of actual newspaper writing",
       "byline": "Reporter Name",
       "role": "Staff Writer",
-      "image_prompt": "Optional image description or null",
+      "image_prompt": "Scene/activity/environment description or null. Do NOT describe character physical appearance.",
+      "image_depicts_characters": true | false,
       "image_caption": "Caption or null",
       "character_ids": ["..."],
       "character_names": ["..."],
@@ -348,6 +367,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
               role: { type: "string" },
               pull_quote: { type: "string" },
               image_prompt: { type: "string" },
+              image_depicts_characters: { type: "boolean" },
               image_caption: { type: "string" },
               category: { type: "string" },
               character_ids: { type: "array", items: { type: "string" } },
@@ -366,6 +386,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
                 byline: { type: "string" },
                 role: { type: "string" },
                 image_prompt: { type: "string" },
+                image_depicts_characters: { type: "boolean" },
                 image_caption: { type: "string" },
                 character_ids: { type: "array", items: { type: "string" } },
                 character_names: { type: "array", items: { type: "string" } },
@@ -389,16 +410,104 @@ If no story is strong enough to be a headliner, set headliner to null.`;
 
     const editionData = llmResult;
 
-    // ── GENERATE HEADLINE IMAGE ───────────────────────────────────────────
-    if (editionData.headliner?.image_prompt) {
+    // ── RESOLVE CHARACTER VISUAL IDENTITIES FOR IMAGE GENERATION ─────────
+    // When an article image is intended to depict established characters,
+    // resolve those characters' authoritative visual reference imagery and
+    // supply it to GenerateImage as existing_image_urls. This preserves the
+    // character's recognizable established identity. The image_prompt
+    // supplies the scene/activity/context (WHAT); the reference images
+    // supply the character identity (WHO).
+    const charsNeedingRef = new Set();
+    if (editionData.headliner?.image_prompt && editionData.headliner.image_depicts_characters) {
+      for (const id of editionData.headliner.character_ids || []) charsNeedingRef.add(id);
+    }
+    for (const s of editionData.sections || []) {
+      if (s.image_prompt && s.image_depicts_characters) {
+        for (const id of s.character_ids || []) charsNeedingRef.add(id);
+      }
+    }
+
+    // Build a name→id map from source material so we can resolve character
+    // references even if the LLM returns a name instead of a database ID.
+    const nameToIdMap = {};
+    for (const m of allMaterial) {
+      if (m.type === 'story_event') {
+        for (const p of m.participants || []) { if (p.id && p.name) nameToIdMap[p.name] = p.id; }
+        for (const f of m.focus_characters || []) { if (f.id && f.name) nameToIdMap[f.name] = f.id; }
+      } else if (m.character_id && m.character_name) {
+        nameToIdMap[m.character_name] = m.character_id;
+      }
+    }
+
+    const charRefMap = {}; // charId -> [image URLs]
+    for (const charRef of charsNeedingRef) {
+      try {
+        // Resolve to an actual character ID — try as-is first, then name lookup
+        let resolvedId = charRef;
+        if (!nameToIdMap[charRef] && nameToIdMap[charRef] !== undefined) {
+          // charRef is a name that exists in the map — use the mapped ID
+          resolvedId = nameToIdMap[charRef];
+        } else {
+          // Check if charRef is a name (not an ID) by looking it up in nameToIdMap values
+          for (const [name, id] of Object.entries(nameToIdMap)) {
+            if (name === charRef) { resolvedId = id; break; }
+          }
+        }
+
+        let chars = await base44.asServiceRole.entities.Character.filter({ id: resolvedId }, null, 1);
+        let char = chars?.[0];
+        // Fallback: if ID lookup failed, try by name (LLM may have returned a name)
+        if (!char) {
+          chars = await base44.asServiceRole.entities.Character.filter({ name: resolvedId }, null, 1);
+          char = chars?.[0];
+        }
+        if (char) {
+          const refs = [
+            char.image_avatar_url,
+            char.avatar_url,
+            ...(char.reference_image_urls || []),
+          ].filter(Boolean);
+          if (refs.length > 0) charRefMap[charRef] = refs;
+        }
+      } catch (_) { /* non-fatal — character may not be found */ }
+    }
+
+    // ── GENERATE ARTICLE IMAGES (IDENTITY-AWARE) ────────────────────────
+    // For each article with an image_prompt:
+    //   - If image_depicts_characters is true, supply the resolved character
+    //     reference images as existing_image_urls so the generated person
+    //     preserves the character's established visual identity.
+    //   - If image_depicts_characters is false (general event photo), generate
+    //     from the prompt alone without character references.
+    async function generateArticleImage(article) {
+      if (!article?.image_prompt) return;
+      const refImages = [];
+      if (article.image_depicts_characters) {
+        for (const id of article.character_ids || []) {
+          if (charRefMap[id]) refImages.push(...charRefMap[id]);
+        }
+      }
       try {
         const imgResult = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: `Realistic newspaper photograph, photojournalism style: ${editionData.headliner.image_prompt}. Natural lighting, candid moment, high quality documentary photography.`,
+          prompt: `Realistic newspaper photograph, photojournalism style: ${article.image_prompt}. Natural lighting, candid moment, high quality documentary photography.`,
+          ...(refImages.length > 0 ? { existing_image_urls: refImages.slice(0, 4) } : {}),
         });
-        editionData.headliner.image_url = imgResult?.url || null;
+        article.image_url = imgResult?.url || null;
       } catch (imgErr) {
-        console.warn('[generateWeeklyPublication] Headline image generation failed:', imgErr.message);
-        editionData.headliner.image_url = null;
+        console.warn('[generateWeeklyPublication] Image generation failed:', imgErr.message);
+        article.image_url = null;
+      }
+    }
+
+    // Headline image (required for every genuine headline story)
+    if (editionData.headliner) {
+      await generateArticleImage(editionData.headliner);
+    }
+
+    // Section images (generated when the LLM provides an image_prompt)
+    for (const section of editionData.sections || []) {
+      if (section.image_prompt) {
+        await generateArticleImage(section);
       }
     }
 
