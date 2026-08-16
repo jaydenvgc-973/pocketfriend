@@ -27,6 +27,97 @@ function pickReporter() {
   return REPORTER_NAMES[Math.floor(Math.random() * REPORTER_NAMES.length)];
 }
 
+// ── CDN URL UTILITIES (aligned with generateImageAsync proven pathway) ───────
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('https://media.base44.com/')) return url;
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) return `https://media.base44.com/images/public/${match[1]}`;
+  return url;
+}
+
+function isAccessible(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  if (url.includes('/files/mp/private/') || url.includes('/files/private/')) return false;
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  if (url.includes('base44.app/api/apps/')) return false;
+  return true;
+}
+
+function cdnFilter(urls) {
+  return (urls || []).map(toPublicCDN).filter(isAccessible);
+}
+
+// Resolve character reference images using the SAME authority as generateImageAsync:
+//   1. reference_image_urls (user-uploaded photos) — filtered, no generated_image
+//   2. avatar_url fallback — CDN-hosted generated avatars allowed
+function resolveCharRefUrls(charRecord) {
+  const allRefs = cdnFilter(charRecord.reference_image_urls || []);
+  const refUrls = allRefs.filter(url => !url.includes('generated_image'));
+  if (refUrls.length > 0) return refUrls.slice(0, 4);
+  // Avatar fallback — allow CDN-hosted avatars even if generated_image in URL
+  if (charRecord.avatar_url) {
+    const avatarPublic = toPublicCDN(charRecord.avatar_url);
+    const isCDN = avatarPublic.startsWith('https://media.base44.com/');
+    if (isAccessible(avatarPublic) && (isCDN || !avatarPublic.includes('generated_image'))) {
+      return [avatarPublic];
+    }
+  }
+  if (charRecord.image_avatar_url) {
+    const imgAvatarPublic = toPublicCDN(charRecord.image_avatar_url);
+    const isCDN = imgAvatarPublic.startsWith('https://media.base44.com/');
+    if (isAccessible(imgAvatarPublic) && (isCDN || !imgAvatarPublic.includes('generated_image'))) {
+      return [imgAvatarPublic];
+    }
+  }
+  return [];
+}
+
+// Build appearance lock text from character record — aligned with the proven
+// generateImageAsync buildAppearanceLockText: ethnicity-first, anti-whitewashing
+// guards, hair-type-specific rejection rules, canonical-hierarchy declaration.
+function buildAppearanceLockText(rec) {
+  if (!rec) return null;
+  const lock = rec.appearance_lock || {};
+  const ethnicities = (rec.ethnicities || []).filter(Boolean);
+  const skinTone = lock.skin_tone || null;
+  const hairstyle = lock.hairstyle || lock.hair_type || null;
+  const facialHair = lock.facial_hair || null;
+  const bodyType = lock.body_type || lock.overall_aesthetic || null;
+  const hasAny = ethnicities.length > 0 || skinTone || hairstyle || facialHair || bodyType;
+  if (!hasAny) return null;
+  const r = [];
+  if (ethnicities.length > 0) {
+    r.push(`ETHNICITY / RACE: ${ethnicities.join(', ')} — render EXACTLY this ethnicity. ⛔ DO NOT default to Caucasian/white/European. ⛔ DO NOT soften, lighten, or alter ethnic features toward any other baseline.`);
+  }
+  if (skinTone) {
+    const skinLower = skinTone.toLowerCase();
+    const hasAmbiguousLight = /\b(light|caramel|honey|tan|medium)\b/.test(skinLower);
+    const hasBlackOrAA = ethnicities.some(e => /\b(black|african american|afro)\b/i.test(e));
+    if (hasAmbiguousLight && hasBlackOrAA) {
+      r.push(`SKIN TONE: ${skinTone} — warm brown melanated skin tone. ⛔ DO NOT render as pale, fair, or Caucasian-light. ⛔ DO NOT interpret "light" as white or European.`);
+    } else {
+      r.push(`SKIN TONE: ${skinTone} — do not lighten, soften, or alter in any direction.`);
+    }
+  }
+  if (hairstyle) {
+    r.push(`HAIR: ${hairstyle}`);
+    if (/dreadlocks?|locs?/i.test(hairstyle)) r.push('⛔ REJECT: fade, short, bald, generic curls — DREADLOCKS ONLY');
+    else if (/long hair/i.test(hairstyle)) r.push('⛔ REJECT: short, buzz, fade, cropped — LONG HAIR ONLY');
+    else if (/afro/i.test(hairstyle)) r.push('⛔ REJECT: straight, slicked, fade — AFRO ONLY');
+    else if (/braids?|cornrows/i.test(hairstyle)) r.push('⛔ REJECT: loose/straight/fade — BRAIDS ONLY');
+  }
+  if (facialHair) {
+    r.push(`FACIAL HAIR: ${facialHair}`);
+    if (/clean-?shaven|no facial hair/i.test(facialHair)) r.push('⛔ REJECT beard/stubble — CLEAN-SHAVEN ONLY');
+    else r.push(`⛔ REJECT clean-shaven — ${facialHair} MUST EXIST`);
+  }
+  if (bodyType) r.push(`BODY TYPE: ${bodyType} — do not slim, bulk, age-down, or beautify beyond what is described.`);
+  r.push('CANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY — NOT ethnicity/hair/face/skin/body.');
+  return r.join('\n');
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -288,11 +379,16 @@ EDITORIAL RULES — VIOLATING THESE IS A SYSTEM FAILURE:
 5. DO NOT FABRICATE stories. Only use the provided events. If there isn't material for a section, leave that section's array empty.
 6. DO NOT force every section to have content. Sections should be populated according to the actual qualifying activity.
 6b. CHARACTER IDS: The source events include character_id fields with actual database IDs. You MUST return those exact ID values in the "character_ids" array — do NOT return character names as IDs. The character_ids array must contain the actual ID strings from the source data (e.g. "6a80c96f7df8aa5403dec235"), not names like "Ethan Thompson" or "Test Character A".
-7. IMAGE GENERATION — IDENTITY-AWARE:
-   For each article that has an image_prompt, set "image_depicts_characters" to true if the photograph is intended to visibly depict one or more of the established characters named in that article (e.g. a portrait, a photo of the character at an event, a character on a campaign shoot). Set it to false if the image is a general environmental/crowd photograph where no particular established character is intended to be identifiable (e.g. a wide shot of a festival, a building exterior, a crowd scene).
+7. IMAGE GENERATION — TWO SEPARATE DECISIONS:
+   DECISION 1 — Should this article have an image?
+     - The headliner MUST have an image_prompt (required).
+     - Sections: ONLY include an image_prompt when the article is a feature-tier story that naturally warrants a photograph. Most sections should have image_prompt set to null. Do NOT give every section an image.
+   DECISION 2 — If an image is present, does it depict an established character?
+     - Set "image_depicts_characters" to true if the photograph is intended to visibly depict one or more established characters named in the article (e.g. a portrait, a photo of the character at an event, a character on a campaign shoot).
+     - Set it to false if the image is a general environmental/crowd photograph where no particular established character is intended to be identifiable (e.g. a wide shot of a festival, a building exterior, a crowd scene).
    When image_depicts_characters is true:
    - The image_prompt MUST describe the scene, activity, environment, location, pose, and editorial composition — WHAT is happening and WHERE.
-   - The image_prompt MUST NOT describe the character's physical appearance (face, hair, build, race, age, etc.). Character visual identity is supplied separately from the character's authoritative reference imagery. Describing physical appearance in the prompt causes the image generator to invent a generic person.
+   - The image_prompt MUST NOT describe the character's physical appearance (face, hair, build, race, age, etc.). Character visual identity is supplied separately from authoritative reference imagery. Describing physical appearance causes the image generator to invent a generic person.
    - The image_prompt MAY describe clothing when the article/event specifically establishes what the character is wearing (e.g. a campaign outfit, a performance costume). Otherwise leave clothing to the character's established appearance.
    When image_depicts_characters is false:
    - The image_prompt should describe the general event scene, atmosphere, and environment without claiming any particular person is an established character.
@@ -336,7 +432,7 @@ Return JSON with this exact structure:
       "body": "1-2 paragraphs of actual newspaper writing",
       "byline": "Reporter Name",
       "role": "Staff Writer",
-      "image_prompt": "Scene/activity/environment description or null. Do NOT describe character physical appearance.",
+      "image_prompt": "Scene/activity/environment description. ONLY for feature-tier stories that warrant a photo — null for most sections. Do NOT describe character physical appearance." | null,
       "image_depicts_characters": true | false,
       "image_caption": "Caption or null",
       "character_ids": ["..."],
@@ -385,9 +481,9 @@ If no story is strong enough to be a headliner, set headliner to null.`;
                 body: { type: "string" },
                 byline: { type: "string" },
                 role: { type: "string" },
-                image_prompt: { type: "string" },
+                image_prompt: { type: ["string", "null"] },
                 image_depicts_characters: { type: "boolean" },
-                image_caption: { type: "string" },
+                image_caption: { type: ["string", "null"] },
                 character_ids: { type: "array", items: { type: "string" } },
                 character_names: { type: "array", items: { type: "string" } },
                 story_event_ids: { type: "array", items: { type: "string" } },
@@ -411,12 +507,10 @@ If no story is strong enough to be a headliner, set headliner to null.`;
     const editionData = llmResult;
 
     // ── RESOLVE CHARACTER VISUAL IDENTITIES FOR IMAGE GENERATION ─────────
-    // When an article image is intended to depict established characters,
-    // resolve those characters' authoritative visual reference imagery and
-    // supply it to GenerateImage as existing_image_urls. This preserves the
-    // character's recognizable established identity. The image_prompt
-    // supplies the scene/activity/context (WHAT); the reference images
-    // supply the character identity (WHO).
+    // Uses the SAME proven pathway as generateImageAsync: CDN-filtered
+    // reference_image_urls first, avatar_url fallback. Raw URLs that are
+    // private/signed/internal are rejected — the image generator cannot
+    // fetch them, so they silently fail to influence identity.
     const charsNeedingRef = new Set();
     if (editionData.headliner?.image_prompt && editionData.headliner.image_depicts_characters) {
       for (const id of editionData.headliner.character_ids || []) charsNeedingRef.add(id);
@@ -427,8 +521,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
       }
     }
 
-    // Build a name→id map from source material so we can resolve character
-    // references even if the LLM returns a name instead of a database ID.
+    // Build a name→id map from source material (deterministic source relationships)
     const nameToIdMap = {};
     for (const m of allMaterial) {
       if (m.type === 'story_event') {
@@ -439,58 +532,135 @@ If no story is strong enough to be a headliner, set headliner to null.`;
       }
     }
 
-    const charRefMap = {}; // charId -> [image URLs]
-    for (const charRef of charsNeedingRef) {
+    // charKey -> { record, refUrls, appearanceLockText }
+    const charRefMap = {};
+    for (const charKey of charsNeedingRef) {
       try {
-        // Resolve to an actual character ID — try as-is first, then name lookup
-        let resolvedId = charRef;
-        if (!nameToIdMap[charRef] && nameToIdMap[charRef] !== undefined) {
-          // charRef is a name that exists in the map — use the mapped ID
-          resolvedId = nameToIdMap[charRef];
-        } else {
-          // Check if charRef is a name (not an ID) by looking it up in nameToIdMap values
-          for (const [name, id] of Object.entries(nameToIdMap)) {
-            if (name === charRef) { resolvedId = id; break; }
-          }
-        }
+        let resolvedId = charKey;
+        // If charKey is a name in the map, use the mapped ID
+        if (nameToIdMap[charKey]) resolvedId = nameToIdMap[charKey];
 
         let chars = await base44.asServiceRole.entities.Character.filter({ id: resolvedId }, null, 1);
         let char = chars?.[0];
-        // Fallback: if ID lookup failed, try by name (LLM may have returned a name)
+        // Fallback: try by name if ID lookup failed
         if (!char) {
           chars = await base44.asServiceRole.entities.Character.filter({ name: resolvedId }, null, 1);
           char = chars?.[0];
         }
         if (char) {
-          const refs = [
-            char.image_avatar_url,
-            char.avatar_url,
-            ...(char.reference_image_urls || []),
-          ].filter(Boolean);
-          if (refs.length > 0) charRefMap[charRef] = refs;
+          const refUrls = resolveCharRefUrls(char);
+          const appearanceLockText = buildAppearanceLockText(char);
+          if (refUrls.length > 0 || appearanceLockText) {
+            charRefMap[charKey] = { record: char, refUrls, appearanceLockText };
+          }
         }
-      } catch (_) { /* non-fatal — character may not be found */ }
+      } catch (_) { /* non-fatal */ }
     }
 
-    // ── GENERATE ARTICLE IMAGES (IDENTITY-AWARE) ────────────────────────
-    // For each article with an image_prompt:
-    //   - If image_depicts_characters is true, supply the resolved character
-    //     reference images as existing_image_urls so the generated person
-    //     preserves the character's established visual identity.
-    //   - If image_depicts_characters is false (general event photo), generate
-    //     from the prompt alone without character references.
+    // ── GENERATE ARTICLE IMAGES ────────────────────────────────────────
+    // Image generation decision and identity-reference decision are SEPARATE:
+    //   - Should this article have an image? → only when image_prompt is non-null
+    //   - If image_depicts_characters, supply character refs + identity-lock prompt
+    // The headliner always has an image. Sections only when image_prompt is non-null.
     async function generateArticleImage(article) {
       if (!article?.image_prompt) return;
-      const refImages = [];
-      if (article.image_depicts_characters) {
+
+      const sceneDesc = article.image_prompt;
+      const depictsChars = article.image_depicts_characters === true;
+      const charEntries = [];
+      if (depictsChars) {
         for (const id of article.character_ids || []) {
-          if (charRefMap[id]) refImages.push(...charRefMap[id]);
+          if (charRefMap[id]) charEntries.push(charRefMap[id]);
         }
       }
+      const hasCharRefs = charEntries.length > 0 && charEntries.some(e => e.refUrls.length > 0);
+
+      console.log(`[WeeklyImageGen] article="${article.title?.substring(0, 50)}" depicts_chars=${depictsChars} char_entries=${charEntries.length} has_char_refs=${hasCharRefs}`);
+      if (depictsChars && charEntries.length > 0) {
+        for (const e of charEntries) {
+          console.log(`[WeeklyImageGen]   char="${e.record.name}" ref_urls=${e.refUrls.length} has_lock=${!!e.appearanceLockText}`);
+          e.refUrls.forEach((u, i) => console.log(`[WeeklyImageGen]     ref[${i}]: ${u}`));
+        }
+      }
+
+      let prompt;
+      let existingImageUrls;
+
+      if (depictsChars && hasCharRefs) {
+        // ── IDENTITY-AWARE PATH: build a prompt that instructs the model ──
+        // to use the reference images as face identity photos, exactly like
+        // generateImageAsync does. The model must know WHICH images are WHO.
+        const allRefUrls = [];
+        const subjectBlocks = [];
+        let imgIdx = 1;
+        for (const entry of charEntries) {
+          const charName = entry.record.name || entry.record.display_name || 'the character';
+          const refs = entry.refUrls.slice(0, 3);
+          if (refs.length === 0) continue;
+          const start = imgIdx;
+          const end = imgIdx + refs.length - 1;
+          const refRange = refs.length === 1 ? `Image ${start}` : `Images ${start}–${end}`;
+          allRefUrls.push(...refs);
+          const lines = [];
+          lines.push(`SUBJECT: "${charName}"`);
+          lines.push(`${refRange} are FACE/IDENTITY reference photographs for "${charName}".`);
+          lines.push('Extract ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, facial hair, body type.');
+          lines.push('⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.');
+          lines.push('⛔ FACE RESEMBLANCE IS MANDATORY: the person in this image MUST be recognizably the same person as shown in the reference photos.');
+          lines.push('⛔ DO NOT generate a "similar" person, lookalike, or generic substitute.');
+          if (entry.appearanceLockText) {
+            lines.push(`APPEARANCE LOCK (ABSOLUTE): ${entry.appearanceLockText}`);
+            lines.push('⛔ DO NOT default to Caucasian/white/European. Render EXACTLY the ethnicity and features specified.');
+          }
+          subjectBlocks.push(lines.join('\n'));
+          imgIdx = end + 1;
+        }
+
+        const subjectBlockText = subjectBlocks.length === 1
+          ? subjectBlocks[0]
+          : subjectBlocks.map((b, i) => `─── SUBJECT ${i + 1} ───\n${b}`).join('\n\n');
+
+        const multiRule = subjectBlocks.length > 1
+          ? `\n\nThis image contains ${subjectBlocks.length} distinct established characters. Each subject retains their own distinct face, hair, skin tone, and body type. ⛔ NEVER swap, blend, or cross-assign appearance between subjects.`
+          : '';
+
+        prompt = `═══════════════════════════════════════════════════════════
+⚠️ FICTIONAL CHARACTER NOTICE
+═══════════════════════════════════════════════════════════
+ALL subjects are 100% FICTIONAL CHARACTERS for a storytelling app. Not real people.
+✅ Treat as characters in a novel. Render from reference photos and appearance descriptions only.
+
+═══════════════════════════════════════════════════════════
+⛔ IDENTITY DEFAULT PROHIBITION — NON-NEGOTIABLE
+═══════════════════════════════════════════════════════════
+⛔ DO NOT default to Caucasian, white, fair-skinned, or any assumed ethnicity.
+✅ Use ONLY: reference images, appearance lock, ethnicities field.
+✅ If ethnicities are specified, render EXACTLY those. No whitewashing.
+
+═══════════════════════════════════════════════════════════
+REFERENCE IMAGE INSTRUCTIONS — FACE IDENTITY
+═══════════════════════════════════════════════════════════
+${subjectBlockText}${multiRule}
+
+═══════════════════════════════════════════════════════════
+SCENE — NEWSPAPER PHOTOGRAPH
+═══════════════════════════════════════════════════════════
+${sceneDesc}
+
+Photorealistic newspaper photograph, photojournalism style. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.
+
+⛔ The visible person(s) MUST match the reference photo identity. GENERATION INVALID if the face could be mistaken for a different person.`;
+        existingImageUrls = allRefUrls.slice(0, 6);
+      } else {
+        // ── GENERAL EVENT IMAGE: no character identity references ──
+        prompt = `Realistic newspaper photograph, photojournalism style: ${sceneDesc}. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.`;
+        existingImageUrls = undefined;
+      }
+
       try {
         const imgResult = await base44.asServiceRole.integrations.Core.GenerateImage({
-          prompt: `Realistic newspaper photograph, photojournalism style: ${article.image_prompt}. Natural lighting, candid moment, high quality documentary photography.`,
-          ...(refImages.length > 0 ? { existing_image_urls: refImages.slice(0, 4) } : {}),
+          prompt,
+          ...(existingImageUrls && existingImageUrls.length > 0 ? { existing_image_urls: existingImageUrls } : {}),
         });
         article.image_url = imgResult?.url || null;
       } catch (imgErr) {
@@ -504,7 +674,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
       await generateArticleImage(editionData.headliner);
     }
 
-    // Section images (generated when the LLM provides an image_prompt)
+    // Section images — ONLY when the LLM provided a non-null image_prompt
     for (const section of editionData.sections || []) {
       if (section.image_prompt) {
         await generateArticleImage(section);
