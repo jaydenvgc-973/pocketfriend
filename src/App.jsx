@@ -42,6 +42,7 @@ import Moments from './pages/Moments';
 import MemoryReelCreator from './pages/MemoryReelCreator';
 import MediaGallery from './pages/MediaGallery';
 import Locations from './pages/Locations';
+import TheWeekly from './pages/TheWeekly';
 
 
 import Finance from './pages/Finance';
@@ -138,6 +139,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/memory-reel" element={<MemoryReelCreator />} />
       <Route path="/media-gallery" element={<MediaGallery />} />
       <Route path="/locations" element={<Locations />} />
+      <Route path="/the-weekly" element={<TheWeekly />} />
 
 
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />

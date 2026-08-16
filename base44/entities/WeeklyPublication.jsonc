@@ -22,33 +22,84 @@
   "properties": {
     "edition_number": {
       "type": "integer",
-      "description": "Sequential edition number"
+      "description": "Sequential edition number. Only incremented for official Sunday editions. Manual refreshes reuse the current official edition number."
     },
     "edition_date": {
       "type": "string",
       "format": "date",
-      "description": "Publication date"
+      "description": "Publication date (the Sunday this edition was published)"
     },
     "week_start": {
       "type": "string",
-      "format": "date"
+      "format": "date",
+      "description": "First day of the coverage period"
     },
     "week_end": {
       "type": "string",
-      "format": "date"
+      "format": "date",
+      "description": "Last day of the coverage period"
+    },
+    "publication_type": {
+      "type": "string",
+      "enum": [
+        "official",
+        "manual_refresh"
+      ],
+      "default": "official",
+      "description": "official = scheduled Sunday publication. manual_refresh = user-requested up-to-date view of the current week. Only one manual_refresh per week_start is kept; subsequent refreshes update it in place."
+    },
+    "refreshed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this edition was last refreshed. Set on manual_refresh editions."
     },
     "headliner": {
       "type": "object",
       "description": "The lead story of this edition. Null when no story was strong enough.",
       "properties": {
         "title": {
-          "type": "string"
+          "type": "string",
+          "description": "Headline text"
         },
-        "summary": {
-          "type": "string"
+        "subtitle": {
+          "type": "string",
+          "description": "Sub-headline / deck text"
+        },
+        "body": {
+          "type": "string",
+          "description": "Full article body \u2014 2-3 short paragraphs of actual newspaper writing"
+        },
+        "byline": {
+          "type": "string",
+          "description": "Author name (e.g. 'Jordan Price')"
+        },
+        "role": {
+          "type": "string",
+          "description": "Author role (e.g. 'Staff Writer')"
+        },
+        "pull_quote": {
+          "type": "string",
+          "description": "Optional highlighted quote from the article"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "Lead image URL. Required for every genuine headline story."
+        },
+        "image_prompt": {
+          "type": "string",
+          "description": "Prompt used to generate the lead image"
+        },
+        "image_caption": {
+          "type": "string",
+          "description": "Caption for the lead image"
         },
         "category": {
-          "type": "string"
+          "type": "string",
+          "enum": [
+            "community_spotlight",
+            "campaign_watch",
+            "neighborhood_news"
+          ]
         },
         "character_ids": {
           "type": "array",
@@ -84,10 +135,32 @@
             ]
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "description": "Article headline"
           },
-          "summary": {
-            "type": "string"
+          "body": {
+            "type": "string",
+            "description": "Full article body \u2014 1-2 short paragraphs of actual newspaper writing"
+          },
+          "byline": {
+            "type": "string",
+            "description": "Author name"
+          },
+          "role": {
+            "type": "string",
+            "description": "Author role"
+          },
+          "image_url": {
+            "type": "string",
+            "description": "Optional article image URL"
+          },
+          "image_prompt": {
+            "type": "string",
+            "description": "Prompt used to generate the image"
+          },
+          "image_caption": {
+            "type": "string",
+            "description": "Caption for the image"
           },
           "character_ids": {
             "type": "array",
@@ -119,6 +192,35 @@
         }
       },
       "default": []
+    },
+    "around_town": {
+      "type": "array",
+      "description": "Brief news items \u2014 short bullet-style items for the Around Town section",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The brief news item text"
+          }
+        }
+      },
+      "default": []
+    },
+    "photo_of_the_week": {
+      "type": "object",
+      "description": "Optional featured photo for the footer section",
+      "properties": {
+        "image_url": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "photographer": {
+          "type": "string"
+        }
+      }
     },
     "status": {
       "type": "string",

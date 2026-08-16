@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { Newspaper, Loader2, Star, MapPin } from 'lucide-react';
+import { Newspaper, Loader2, Star, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const SECTION_LABELS = {
   community_spotlight: 'Community Spotlight',
@@ -9,10 +10,12 @@ const SECTION_LABELS = {
 };
 
 export default function WeeklyPublicationCard() {
+  const navigate = useNavigate();
+
   const { data: edition, isLoading } = useQuery({
     queryKey: ['latestWeeklyPublication'],
     queryFn: async () => {
-      const results = await base44.entities.WeeklyPublication.list('-edition_date', 1);
+      const results = await base44.entities.WeeklyPublication.list('-published_at', 1);
       return results[0] || null;
     },
     staleTime: 5 * 60 * 1000,
@@ -30,74 +33,67 @@ export default function WeeklyPublicationCard() {
     return null; // No editions yet — don't show anything
   }
 
-  if (!edition.has_sufficient_material) {
-    return (
-      <div className="bg-card border border-border rounded-2xl p-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Newspaper className="w-4 h-4 text-primary" />
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">The Weekly</h3>
-            <p className="text-[10px] text-muted-foreground">Edition #{edition.edition_number} · {edition.edition_date}</p>
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground italic">
-          A quiet week in the world. No significant public events were recorded for this edition.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="bg-card border border-border rounded-2xl overflow-hidden">
+    <button
+      onClick={() => navigate('/the-weekly')}
+      className="w-full text-left bg-card border border-border rounded-2xl overflow-hidden hover:border-primary/40 transition-colors group"
+    >
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border bg-secondary/30">
-        <div className="flex items-center gap-2">
-          <Newspaper className="w-4 h-4 text-primary" />
-          <div className="flex-1">
-            <h3 className="text-sm font-semibold text-foreground">The Weekly</h3>
-            <p className="text-[10px] text-muted-foreground">Edition #{edition.edition_number} · {edition.edition_date}</p>
-          </div>
+      <div className="px-4 py-3 border-b border-border bg-secondary/30 flex items-center gap-2">
+        <Newspaper className="w-4 h-4 text-primary" />
+        <div className="flex-1">
+          <h3 className="text-sm font-semibold text-foreground">The Weekly</h3>
+          <p className="text-[10px] text-muted-foreground">
+            Edition #{edition.edition_number} · {edition.edition_date}
+            {edition.publication_type === 'manual_refresh' && ' · Updated'}
+          </p>
         </div>
+        <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
       </div>
 
-      <div className="p-4 space-y-4">
-        {/* Headliner */}
-        {edition.headliner && (
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5">
-              <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Headliner</span>
-              <span className="text-[9px] text-muted-foreground ml-auto">{SECTION_LABELS[edition.headliner.category] || edition.headliner.category}</span>
-            </div>
-            <h4 className="text-sm font-bold text-foreground leading-snug">{edition.headliner.title}</h4>
-            <p className="text-xs text-muted-foreground leading-relaxed">{edition.headliner.summary}</p>
-            {edition.headliner.character_names?.length > 0 && (
-              <div className="flex items-center gap-1 mt-1">
-                <MapPin className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground">{edition.headliner.character_names.join(', ')}</span>
+      <div className="p-4 space-y-3">
+        {!edition.has_sufficient_material ? (
+          <p className="text-xs text-muted-foreground italic">
+            A quiet week in the world. No significant public events were recorded for this edition.
+          </p>
+        ) : (
+          <>
+            {/* Headliner preview */}
+            {edition.headliner && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">Headliner</span>
+                </div>
+                <h4 className="text-sm font-bold text-foreground leading-snug">{edition.headliner.title}</h4>
+                {edition.headliner.image_url && (
+                  <img
+                    src={edition.headliner.image_url}
+                    alt={edition.headliner.title}
+                    className="w-full h-32 object-cover rounded-lg mt-1.5"
+                  />
+                )}
+                <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                  {edition.headliner.subtitle || (edition.headliner.body || '').split('\n\n')[0]}
+                </p>
               </div>
             )}
-          </div>
-        )}
 
-        {/* Sections */}
-        {edition.sections?.length > 0 && (
-          <div className="space-y-3 pt-2 border-t border-border">
-            {edition.sections.map((section, i) => (
-              <div key={i} className="space-y-1">
-                <span className="text-[9px] font-bold uppercase tracking-wider text-primary">
-                  {SECTION_LABELS[section.category] || section.category}
+            {/* Section count */}
+            {edition.sections?.length > 0 && (
+              <div className="flex items-center gap-2 pt-2 border-t border-border">
+                <span className="text-[10px] text-muted-foreground">
+                  {edition.sections.length} {edition.sections.length === 1 ? 'story' : 'stories'}
+                  {edition.around_town?.length > 0 && ` · ${edition.around_town.length} briefs`}
                 </span>
-                <p className="text-xs font-medium text-foreground">{section.title}</p>
-                <p className="text-[11px] text-muted-foreground leading-relaxed">{section.summary}</p>
-                {section.character_names?.length > 0 && (
-                  <p className="text-[10px] text-muted-foreground/70">{section.character_names.join(', ')}</p>
-                )}
+                <span className="text-[10px] text-primary font-medium ml-auto flex items-center gap-0.5">
+                  Read full edition <ChevronRight className="w-3 h-3" />
+                </span>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
-    </div>
+    </button>
   );
 }
