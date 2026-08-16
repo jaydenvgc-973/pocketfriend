@@ -42,19 +42,39 @@ Deno.serve(async (req) => {
     let payload = {};
     try { payload = await req.json(); } catch (_) { /* no body */ }
 
-    const character_id = payload.character_id;
-    const alarm_time = payload.alarm_time;
-    const owner_email = payload.owner_email;
+    // Extract character_id and alarm_time from either:
+    // 1. Direct invocation: { character_id, alarm_time, owner_email? }
+    // 2. Entity event: { event: { entity_id }, data: { id, pending_alarm_time, owner_email, ... } }
+    // 3. Entity event with payload_too_large: { event: { entity_id }, data: null } — alarm_time loaded from character record
+    let character_id = payload.character_id;
+    let alarm_time = payload.alarm_time;
+    let owner_email = payload.owner_email;
+
+    // Entity event payload: extract from entity data
+    if (!character_id && payload.event?.entity_id) {
+      character_id = payload.event.entity_id;
+    }
+    if (!character_id && payload.data?.id) {
+      character_id = payload.data.id;
+    }
+    if (!alarm_time && payload.data?.pending_alarm_time) {
+      alarm_time = payload.data.pending_alarm_time;
+    }
+    if (!owner_email && payload.data?.owner_email) {
+      owner_email = payload.data.owner_email;
+    }
 
     // ── GUARD: this function is NOT a scanner ───────────────────────────────
-    // Without a specific character_id + alarm_time it has nothing to validate.
+    // Without a specific character_id it has nothing to validate.
     // It must NEVER fall back to scanning characters or alarm records.
-    if (!character_id || !alarm_time) {
+    // alarm_time may be missing from the payload (entity event with payload_too_large);
+    // it will be loaded from the character record below.
+    if (!character_id) {
       return Response.json({
         success: false,
         executed: false,
-        reason: 'missing_character_id_or_alarm_time',
-        message: 'Single-alarm execution requires { character_id, alarm_time }. This function does not scan characters or alarms.',
+        reason: 'missing_character_id',
+        message: 'Alarm execution requires a character_id. This function does not scan characters or alarms.',
       }, { status: 400 });
     }
 
@@ -73,6 +93,19 @@ Deno.serve(async (req) => {
       return Response.json({
         success: true, executed: false, reason: 'character_not_found',
         character_id, alarm_time,
+      });
+    }
+
+    // ── FALLBACK: if alarm_time was not in the payload (entity event with
+    // payload_too_large), load it from the character record ──────────────────
+    if (!alarm_time) {
+      alarm_time = character.pending_alarm_time;
+    }
+    if (!alarm_time) {
+      return Response.json({
+        success: true, executed: false, reason: 'no_pending_alarm',
+        character_id,
+        message: 'Character has no pending alarm — no wake committed.',
       });
     }
 
@@ -103,6 +136,20 @@ Deno.serve(async (req) => {
         success: true, executed: false, reason: 'already_awake',
         character_id, presence_status: presenceStatus,
         message: 'Character already awake — stale alarm cleared, no wake committed.',
+      });
+    }
+
+    // ── CHECK: has the alarm time arrived? ──────────────────────────────────
+    // If the alarm is in the future, exit without waking. The entity automation
+    // fires when the character is updated; if the alarm time hasn't arrived yet,
+    // no wake should occur. The alarm will be checked again on the next character
+    // update.
+    const alarmMs = new Date(alarm_time).getTime();
+    if (Date.now() < alarmMs) {
+      return Response.json({
+        success: true, executed: false, reason: 'alarm_not_yet_due',
+        character_id, alarm_time,
+        message: 'Alarm time has not arrived yet — no wake committed.',
       });
     }
 
