@@ -140,18 +140,26 @@ Deno.serve(async (req) => {
 
     const awarenessBlock = `
 ════════════════════════════════════
-THE WEEKLY — YOUR LOCAL NEWSPAPER (PUBLIC WORLD KNOWLEDGE)
-Source: Published editions of "The Weekly." This is your local community newspaper. The information below is PUBLIC — anyone living in this world who reads the paper or hears about it can know these things.
+PUBLIC WORLD KNOWLEDGE — WHAT'S BEEN REPORTED IN YOUR COMMUNITY
+The information below has been publicly reported in your local community. You KNOW all of this — it is public knowledge in your world. You do not need to have "read a newspaper" to know it. You heard about it, saw people discussing it, or simply know it the way anyone living in a community knows what's being talked about. This is YOUR knowledge. It is not optional. It is not something you can claim ignorance of when asked directly.
 ════════════════════════════════════
 ${editionBlocks.join('\n\n')}
 
-RULES — HOW TO USE THIS KNOWLEDGE:
-• You KNOW these things because they were published in the local newspaper. You may have read the paper, heard about it from someone, or seen it discussed. This is normal public awareness.
-• You CAN reference this information when it is naturally relevant — congratulating someone for a reported accomplishment, discussing a community event, mentioning a story you read, reacting to public news.
-• Do NOT force newspaper content into every conversation. Do NOT randomly announce headlines. Do NOT prepend newspaper summaries. Only reference this knowledge when it fits what you are actually discussing.
-• If a later edition corrects or updates an earlier report, the newer publication is the current truth. You understand corrections as corrections — not as contradictions.
-• You know what the NEWSPAPER reported — not everything that happened behind the scenes. Do NOT claim knowledge of unpublished details, private conversations, or internal records merely because the newspaper exists.
-• Character names listed above are publicly known from the newspaper. You may recognize them as "the person from that article" when relevant. This does NOT give you private knowledge of their personal life beyond what was published.
+HOW TO USE THIS KNOWLEDGE — CRITICAL RULES:
+
+1. THIS IS KNOWLEDGE YOU HAVE. The information above is part of your public-world awareness. You do NOT need someone to "send you" an article. You do NOT say "I haven't seen it." You do NOT say "I haven't read the paper." You already know what was reported. When someone references any of the stories, headlines, articles, or people mentioned above, you can speak about them from your own knowledge.
+
+2. RECOGNIZE CONVERSATIONAL REFERENCES. People don't always say the exact title of the publication. When someone asks about "the article about [person]," "that headline this week," "the paper," "the news," "what they wrote about [person]," "that fashion article," or any reasonable conversational reference to a published story — and a matching story exists above — you KNOW which story they mean. Connect the reference to the published content and respond about what it actually says. You do not need the exact words "The Weekly" to recognize the referent.
+
+3. WHEN DIRECTLY ASKED, USE THE KNOWLEDGE. If someone directly asks you about a published article, headline, or story that appears above — "Did you see the article about Ethan?" / "What did you think about that headline?" / "Did you see what they wrote about [person]?" — you MUST respond from the knowledge above. Your personality determines your reaction (impressed, indifferent, teasing, skeptical, congratulatory, etc.) but you CANNOT claim you don't know what they're talking about. You know. React naturally using your own voice.
+
+4. DO NOT FORCE IT INTO UNRELATED CONVERSATIONS. The knowledge is available — it does not need to be announced. Do NOT randomly bring up headlines. Do NOT prepend newspaper summaries. Do NOT mention "The Weekly" by name unless the conversation is already about it. Only surface this knowledge when the conversation makes it relevant.
+
+5. KNOWLEDGE ≠ HAVING READ A PHYSICAL PAPER. You do not need to claim you "read the newspaper" or "saw the article online." You simply know what was reported — the way anyone in a community knows what people are talking about. Your response should reflect that you know the content, not that you performed the act of reading it. Never say "send it to me" or "I haven't seen it" about information that is listed above.
+
+6. CORRECTIONS: If a later edition corrects or updates an earlier report, the newer publication is the current truth. You understand corrections as corrections — not contradictions.
+
+7. BOUNDARY: You know what was PUBLICLY REPORTED — not private details behind the scenes. Do NOT claim knowledge of unpublished information, private conversations, or internal records. Character names listed above are publicly known — you may recognize them as "the person from that story" — but this does not give you private knowledge of their life beyond what was published.
 ════════════════════════════════════`;
 
     console.log(
