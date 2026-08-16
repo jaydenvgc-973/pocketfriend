@@ -138,6 +138,87 @@ Deno.serve(async (req) => {
         });
       } catch {}
 
+      // ── Register one-time background execution for this specific alarm occurrence ──
+      // Uses the platform's native one-time scheduling capability via REST API.
+      // This is NOT polling — it's a single scheduled execution at the exact alarm time.
+      // The automation invokes processScheduledCharacterAlarms with character_id and
+      // occurrence_time for validation.
+      let automationDebug = null;
+      try {
+        const authHeader = req.headers.get('Authorization') || '';
+        let appId = '';
+        try {
+          const cfg = await base44.getConfig();
+          appId = cfg?.appId || '';
+        } catch (e) {
+          automationDebug = { getConfigError: e.message };
+        }
+        if (!appId) {
+          const reqUrl = new URL(req.url);
+          const pathParts = reqUrl.pathname.split('/');
+          appId = pathParts[3] || '';
+        }
+
+        // The platform API for automation management lives on the generic base44.app domain,
+        // not the app's custom domain (which returns 405 for management endpoints).
+        const baseUrl = 'https://base44.app';
+        const automationBody = JSON.stringify({
+          automation_type: 'scheduled',
+          name: `Alarm — ${character.name} (${displayTime})`,
+          description: `One-time alarm execution for ${character.name}. Fires processScheduledCharacterAlarms at the user-selected alarm time (${displayTime}).`,
+          function_name: 'processScheduledCharacterAlarms',
+          is_active: true,
+          schedule_mode: 'one-time',
+          one_time_date: scheduled_time,
+          function_args: {
+            character_id: characterId,
+            occurrence_time: scheduled_time,
+          },
+        });
+
+        // Try multiple endpoints to find the correct one for creating automations
+        const endpoints = [
+          `/api/apps/${appId}/scheduled-tasks`,
+          `/api/apps/${appId}/workflows`,
+          `/api/apps/${appId}/automations/scheduled`,
+          `/api/apps/${appId}/automations`,
+        ];
+
+        const endpointResults = [];
+        let automationCreated = false;
+        for (const endpoint of endpoints) {
+          try {
+            const url = `${baseUrl}${endpoint}`;
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Authorization': authHeader,
+                'Content-Type': 'application/json',
+              },
+              body: automationBody,
+            });
+            const text = await response.text();
+            endpointResults.push({ endpoint, status: response.status, ok: response.ok, response: text.slice(0, 300) });
+            if (response.ok) {
+              automationCreated = true;
+              break;
+            }
+          } catch (e) {
+            endpointResults.push({ endpoint, error: e.message });
+          }
+        }
+
+        automationDebug = {
+          baseUrl,
+          appId,
+          authPresent: !!authHeader,
+          automationCreated,
+          endpointResults,
+        };
+      } catch (automationErr) {
+        automationDebug = { error: automationErr.message, stack: automationErr.stack?.slice(0, 300) };
+      }
+
       try {
         await base44.asServiceRole.entities.CharacterMemory.create({
           character_id: characterId,
@@ -155,6 +236,7 @@ Deno.serve(async (req) => {
         success: true,
         pending_alarm_time: scheduled_time,
         message: `Alarm set for ${displayTime}.`,
+        automation_debug: automationDebug,
       });
     }
 
