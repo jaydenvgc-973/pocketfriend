@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
     let body = {};
     try { body = await req.json(); } catch { /* no body */ }
     const singleCharacterId = body.character_id || null;
+    const occurrenceTime = body.occurrence_time || null;
     const testCharacterIds = Array.isArray(body.test_character_ids) ? body.test_character_ids : null;
 
     const nowMs = Date.now();
@@ -52,7 +53,7 @@ Deno.serve(async (req) => {
 
     // ── PER-CHARACTER MODE: process one character ───────────────────────
     if (singleCharacterId) {
-      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso);
+      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso, occurrenceTime);
       return Response.json({ success: true, ...result });
     }
 
@@ -77,7 +78,7 @@ Deno.serve(async (req) => {
     const results = [];
     let firedCount = 0;
     for (const char of dueAlarms) {
-      const r = await processOneCharacter(base44, char.id, nowMs, nowIso);
+      const r = await processOneCharacter(base44, char.id, nowMs, nowIso, null);
       results.push({ character_id: char.id, character_name: char.name, ...r });
       if (r.event === 'alarm_fired') firedCount++;
     }
@@ -92,7 +93,7 @@ Deno.serve(async (req) => {
 });
 
 // ── PER-CHARACTER PROCESSING ─────────────────────────────────────────────
-async function processOneCharacter(base44, characterId, nowMs, nowIso) {
+async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenceTime) {
   // Load THIS character only.
   let char = null;
   try {
@@ -109,6 +110,26 @@ async function processOneCharacter(base44, characterId, nowMs, nowIso) {
 
   const alarmTime = char.pending_alarm_time;
   if (!alarmTime) return { event: 'no_alarm' };
+
+  // ── OCCURRENCE VALIDATION ────────────────────────────────────────────
+  // When invoked by a one-time scheduled automation, occurrence_time is
+  // supplied. Validate that the current pending_alarm_time still matches
+  // the occurrence that triggered this execution. If the alarm was changed
+  // or cancelled after this occurrence was registered, the times will not
+  // match and we exit without waking.
+  if (occurrenceTime) {
+    const currentMs = new Date(alarmTime).getTime();
+    const occurrenceMs = new Date(occurrenceTime).getTime();
+    if (currentMs !== occurrenceMs) {
+      return {
+        event: 'occurrence_mismatch',
+        current_pending_alarm_time: alarmTime,
+        occurrence_time: occurrenceTime,
+        reason: 'Alarm was changed or cancelled after this occurrence was registered.',
+      };
+    }
+  }
+
   if (new Date(alarmTime).getTime() > nowMs) return { event: 'alarm_not_yet_due', pending_alarm_time: alarmTime };
 
   const presenceStatus = char.resolved_presence_status || '';
