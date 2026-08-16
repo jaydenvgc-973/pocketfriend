@@ -45,7 +45,6 @@ Deno.serve(async (req) => {
     let body = {};
     try { body = await req.json(); } catch { /* no body */ }
     const singleCharacterId = body.character_id || null;
-    const occurrenceTime = body.occurrence_time || null;
     const testCharacterIds = Array.isArray(body.test_character_ids) ? body.test_character_ids : null;
 
     const nowMs = Date.now();
@@ -53,7 +52,7 @@ Deno.serve(async (req) => {
 
     // ── PER-CHARACTER MODE: process one character ───────────────────────
     if (singleCharacterId) {
-      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso, occurrenceTime);
+      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso);
       return Response.json({ success: true, ...result });
     }
 
@@ -93,7 +92,7 @@ Deno.serve(async (req) => {
 });
 
 // ── PER-CHARACTER PROCESSING ─────────────────────────────────────────────
-async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenceTime) {
+async function processOneCharacter(base44, characterId, nowMs, nowIso) {
   // Load THIS character only.
   let char = null;
   try {
@@ -111,17 +110,6 @@ async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenc
   const alarmTime = char.pending_alarm_time;
   if (!alarmTime) return { event: 'no_alarm' };
   if (new Date(alarmTime).getTime() > nowMs) return { event: 'alarm_not_yet_due', pending_alarm_time: alarmTime };
-
-  // Validate that this scheduled execution corresponds to the character's current alarm occurrence.
-  // If the alarm was changed or cancelled after this occurrence was registered, the current
-  // pending_alarm_time will not match the occurrence_time that triggered this execution.
-  if (occurrenceTime) {
-    const occurrenceMs = new Date(occurrenceTime).getTime();
-    const alarmMs = new Date(alarmTime).getTime();
-    if (Math.abs(occurrenceMs - alarmMs) > 1000) {
-      return { event: 'obsolete_occurrence', occurrence_time: occurrenceTime, current_alarm_time: alarmTime };
-    }
-  }
 
   const presenceStatus = char.resolved_presence_status || '';
   const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
