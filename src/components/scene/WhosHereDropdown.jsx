@@ -1,30 +1,25 @@
-import React, { useMemo } from "react";
+import React from "react";
 import { Users, ChevronDown, UserPlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { getPresenceAtLocation } from "@/lib/travelPresenceResolver";
-import { resolveSceneRole, PATIENT_STATUSES, INMATE_STATUSES } from "@/lib/sceneRoleResolver";
 
 /**
- * WHO'S HERE DROPDOWN — UNIFIED PRESENCE SOURCE
- * 
- * Resolves real characters present at location from shared presence layer
- * (same source as Travel page map + popup, so always in sync).
- * 
+ * WHO'S HERE DROPDOWN — UNIFIED PARTICIPANT SOURCE
+ *
+ * Groups participants by sceneRole — resolved ONCE at the Scene level and attached
+ * to each participant. No independent reclassification here. Each participant has
+ * exactly ONE role, so they appear in exactly ONE section. No deduplication needed.
+ *
  * Props:
- *   allPossibleNpcs: all NPCs available at this location (workers, ambient)
- *   unifiedPresenceEntities: normalized presence from shared resolver
- *   location: current location object
- *   selectedNpcs: user-selected NPCs from allPossibleNpcs
- *   onToggleNpc: handler to select/deselect NPC
+ *   allPossibleNpcs: all participants available at this location, each carrying sceneRole
+ *   selectedNpcs: user-selected participants
+ *   onToggleNpc: handler to select/deselect
  *   showDropdown: dropdown visibility
- *   onToggleDropdown: handler to show/hide dropdown
+ *   onToggleDropdown: handler to show/hide
  *   onInviteClick: handler for "Invite someone here" button
- *   renderNpc: function to render individual NPC button
+ *   renderNpc: function to render individual participant button
  */
 export default function WhosHereDropdown({
   allPossibleNpcs = [],
-  unifiedPresenceEntities = [],
-  location = null,
   selectedNpcs = [],
   onToggleNpc = () => {},
   showDropdown = false,
@@ -32,82 +27,20 @@ export default function WhosHereDropdown({
   onInviteClick = () => {},
   renderNpc = null,
 }) {
-  // Real characters currently present at this location — from the unified
-  // presence resolver ONLY. This is the same authoritative source the Travel
-  // page map + popup consume. No frontend fallback or second presence truth.
-  // An invited character who has actually arrives propagates here through:
-  //   inviteCharacterToLocation → resolved_current_location_id →
-  //   resolveCharacterLocation (invited_to_scene guard) →
-  //   resolveTravelPresenceEntities → getPresenceAtLocation.
-  //
-  // Role classification uses the existing authoritative resolved_presence_status
-  // from the presence resolver — NOT a new role resolver. On-shift employees
-  // (already in allPossibleNpcs as npcType 'staff') are excluded from Here Now
-  // so they appear only under their employee section, not as ordinary visitors.
-  const presentRealCharacters = useMemo(() => {
-    if (!location) return [];
-    const presenceHere = getPresenceAtLocation(location, unifiedPresenceEntities);
-    // Exclude on-shift employees (already classified as staff in allPossibleNpcs)
-    // so they appear under the employee section, not the visitor/Here Now section.
-    const staffIds = new Set(
-      allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff').map(n => n.id)
-    );
-    return presenceHere
-      .filter(entity => !staffIds.has(entity.id))
-      .map(entity => ({
-        id: entity.id,
-        name: entity.display_name,
-        avatar_url: entity.avatar_url,
-        role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
-        isNpc: false,
-        npcType: 'present',
-        resolved_presence_status: entity.resolved_presence_status,
-        personality_summary: entity.personality_summary,
-        emotional_state: entity.emotional_state,
-      }));
-  }, [location, unifiedPresenceEntities, allPossibleNpcs]);
-
-  // DEDUPLICATION: one authoritative present person gets one role.
-  // Build ID sets for each classified role from the authoritative resolver output,
-  // then exclude those IDs from allPossibleNpcs sections to prevent duplicates.
-  const patientIds = new Set(presentRealCharacters
-    .filter(c => PATIENT_STATUSES.includes(c.resolved_presence_status)).map(c => c.id));
-  const inmateIds = new Set(presentRealCharacters
-    .filter(c => INMATE_STATUSES.includes(c.resolved_presence_status)).map(c => c.id));
-  const staffIds = new Set(
-    allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff').map(n => n.id)
-  );
-
-  // Classify present real characters by authoritative resolved_presence_status
-  // using the SHARED classifier (same function as image generation).
-  // Priority: hospitalized → patient, incarcerated → inmate, on-shift → employee,
-  // home resident → resident, otherwise → visitor.
-  const patientChars = presentRealCharacters.filter(c => patientIds.has(c.id));
-  const inmateChars = presentRealCharacters.filter(c => inmateIds.has(c.id));
-  const visitorChars = presentRealCharacters.filter(
-    c => !patientIds.has(c.id) && !inmateIds.has(c.id) && !staffIds.has(c.id)
-  );
-
-  // Separate allPossibleNpcs into categories, EXCLUDING IDs already classified
-  // as patient or inmate by the authoritative resolver. This prevents a
-  // hospitalized or incarcerated character from also appearing in the
-  // employee or resident sections.
-  const realCharacters = allPossibleNpcs.filter(n =>
-    n.isNpc === false && n.npcType !== 'present' && n.npcType !== 'staff' && n.npcType !== 'resident' && !patientIds.has(n.id) && !inmateIds.has(n.id)
-  );
-  const staffChars = allPossibleNpcs.filter(n =>
-    n.isNpc === false && n.npcType === 'staff' && !patientIds.has(n.id) && !inmateIds.has(n.id)
-  );
-  const residentChars = allPossibleNpcs.filter(n =>
-    n.isNpc === false && n.npcType === 'resident' && !patientIds.has(n.id) && !inmateIds.has(n.id)
-  );
-  const residentNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "resident");
-  const staffNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "staff");
-  const customerNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "customer");
+  // Group by sceneRole — consumed directly from the completed participant.
+  // No independent classification, no presence resolver call, no PATIENT_STATUSES
+  // or INMATE_STATUSES check. The participant already carries its role.
+  const patients = allPossibleNpcs.filter((n) => n.sceneRole === 'patient');
+  const inmates = allPossibleNpcs.filter((n) => n.sceneRole === 'inmate');
+  const realEmployees = allPossibleNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
+  const npcEmployees = allPossibleNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
+  const realResidents = allPossibleNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
+  const npcResidents = allPossibleNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
+  const realVisitors = allPossibleNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
+  const npcVisitors = allPossibleNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
 
   const renderNpcWrapper = (npc) => {
     if (renderNpc) return renderNpc(npc);
-    // Fallback minimal render
     return (
       <button
         key={npc.id}
@@ -149,93 +82,83 @@ export default function WhosHereDropdown({
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
-              {/* SECTION 1a: Patients — hospitalized characters present (authoritative resolved_presence_status) */}
-              {patientChars.length > 0 && (
+              {/* Patients — hospitalized characters (sceneRole: patient) */}
+              {patients.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
                     <p className="text-[9px] font-semibold text-rose-400/80 uppercase tracking-wider">Patients</p>
                   </div>
-                  {patientChars.map(renderNpcWrapper)}
+                  {patients.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 1b: Inmates — incarcerated/confined characters present (authoritative resolved_presence_status) */}
-              {inmateChars.length > 0 && (
+              {/* Inmates — incarcerated/confined characters (sceneRole: inmate) */}
+              {inmates.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-amber-400/80 uppercase tracking-wider">Inmates</p>
                   </div>
-                  {inmateChars.map(renderNpcWrapper)}
+                  {inmates.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 1c: Ordinary visitors present (from unified resolver, excluding staff/patients/inmates) */}
-              {visitorChars.length > 0 && (
+              {/* Here Now — real character visitors (sceneRole: visitor, not NPC) */}
+              {realVisitors.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
                     <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Here Now</p>
                   </div>
-                  {visitorChars.map(renderNpcWrapper)}
+                  {realVisitors.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 2: Other real characters (workers, residents, etc.) */}
-              {realCharacters.length > 0 && (
-                <>
-                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                    <p className="text-[9px] font-semibold text-purple-400/80 uppercase tracking-wider">Characters</p>
-                  </div>
-                  {realCharacters.map(renderNpcWrapper)}
-                </>
-              )}
-
-              {/* SECTION 3: Workers */}
-              {staffChars.length > 0 && (
+              {/* Working Here — real character employees (sceneRole: on-shift employee, not NPC) */}
+              {realEmployees.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Working Here</p>
                   </div>
-                  {staffChars.map(renderNpcWrapper)}
+                  {realEmployees.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 4: Residents */}
-              {residentChars.length > 0 && (
+              {/* Residents — real character residents (sceneRole: home resident, not NPC) */}
+              {realResidents.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-green-400/80 uppercase tracking-wider">Residents</p>
                   </div>
-                  {residentChars.map(renderNpcWrapper)}
+                  {realResidents.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 5: NPC Residents */}
-              {residentNpcs.length > 0 && (
+              {/* NPC Residents (sceneRole: home resident, NPC) */}
+              {npcResidents.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-green-400/80 uppercase tracking-wider">NPC Residents</p>
                   </div>
-                  {residentNpcs.map(renderNpcWrapper)}
+                  {npcResidents.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 6: NPC Staff */}
-              {staffNpcs.length > 0 && (
+              {/* NPC Employees (sceneRole: on-shift employee, NPC) */}
+              {npcEmployees.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Employees</p>
                   </div>
-                  {staffNpcs.map(renderNpcWrapper)}
+                  {npcEmployees.map(renderNpcWrapper)}
                 </>
               )}
 
-              {/* SECTION 7: Ambient People */}
-              {customerNpcs.length > 0 && (
+              {/* Ambient People — NPC visitors (sceneRole: visitor, NPC) */}
+              {npcVisitors.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">People here</p>
                   </div>
-                  {customerNpcs.map(renderNpcWrapper)}
+                  {npcVisitors.map(renderNpcWrapper)}
                 </>
               )}
             </div>

@@ -432,6 +432,12 @@ export default function Scene() {
     return onShift;
   })();
 
+  // Role resolution sets — built ONCE, consumed by all Scene surfaces (Who's Here + image generation).
+  // No downstream consumer reclassifies participants. These sets feed resolveSceneRole at the
+  // participant level, and the result (sceneRole) is attached to each participant permanently.
+  const onShiftIds = new Set(workerCharacters.map((w) => w.id));
+  const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
+
   // VGC Towers NPC characters distributed to this location (authoritative presence)
   // These are Character entity records with resolved_current_location_id === locationId
   const vgcDistributedNpcs = characters.filter((c) => {
@@ -743,7 +749,14 @@ export default function Scene() {
 
     // Dedupe by id
     return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
-  })();
+  })().map((n) => ({
+    ...n,
+    // Attach sceneRole ONCE — consumed by Who's Here grouping AND image generation.
+    // No downstream consumer reclassifies this participant.
+    sceneRole: n.isNpc === true
+      ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : 'visitor')
+      : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }),
+  }));
 
   // Selected NPCs — default: none selected until user picks
   const selectedNpcs = selectedNpcIds !== null ?
@@ -757,20 +770,16 @@ export default function Scene() {
   // traveled-with = only URL-param companions + invite-joined extras
   const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
 
-  // BUILD FUNCTION: resolvedWhosHereList — the authoritative people data
-  // This is used by Who's Here dropdown AND passed to generateSceneImage()
-  const buildResolvedWhosHereList = () => {
+  // BUILD FUNCTION: sceneParticipants — the authoritative completed people.
+  // Each participant carries: stable ID → authoritative person record → current scene role.
+  // Role is resolved ONCE here and consumed by Who's Here grouping, conversation selection,
+  // and image generation. No downstream consumer reclassifies this participant.
+  const buildSceneParticipants = () => {
     const list = [
-    // Section 1: Traveled-with companions (explicit selection only)
     ...traveledWithChars,
-    // Section 2: Home residents physically present (home scenes only) — NOT traveled-with
     ...(isHomeLocation ? homeResidentsPresent.filter((r) => !traveledWithChars.find((t) => t.id === r.id)) : []),
-    // Section 3: Family NPCs physically present (home scenes only) — enriched with avatar_url
     ...familyNpcSceneObjects.filter((fn) => !traveledWithChars.find((b) => b.name === fn.name)),
-    // Section 4: Workers on-shift with confirmed live presence — NOT traveled-with
     ...workerCharacters.filter((w) => !traveledWithChars.find((t) => t.id === w.id)),
-    // Section 5: VGC Towers / traveling NPCs — excluded from auto-scene, require explicit pick
-    // Restricted environments suppress ambient distributed / traveling NPCs.
     ...((isVGCTowers || isRestrictedEnv) ? [] : vgcDistributedNpcs.filter((n) =>
     !traveledWithChars.find((b) => b.id === n.id) &&
     !workerCharacters.find((w) => w.id === n.id)
@@ -779,26 +788,23 @@ export default function Scene() {
     !traveledWithChars.find((b) => b.id === n.id) &&
     !familyNpcSceneObjects.find((fn) => fn.name === n.name)
     )),
-    // Section 6: Explicitly selected NPCs from "Who's here" picker
     ...selectedNpcs,
-    // Section 7: Invite-joined extras (these ARE valid traveled-with equivalents)
     ...extraNpcs.filter((e) => !traveledWithChars.find((t) => t.id === e.id))].
-    filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); // dedupe
+    filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
 
-    // VALIDATION: Block if avatars are missing from selected residents
-    const missingAvatars = list.filter((c) => !c.avatar_url && !c.image_avatar_url && c.name);
-    if (missingAvatars.length > 0) {
-      console.warn(
-        `[Scene] ⚠️ MISSING AVATARS in Who's Here list:`,
-        missingAvatars.map((c) => `${c.name} (${c.id})`).join(', ')
-      );
-    }
-
-    return list;
+    // Attach sceneRole to each participant — resolved ONCE, consumed by all.
+    // Entries from allPossibleNpcs (selectedNpcs) already carry sceneRole; preserve it.
+    // Other entries get sceneRole from the shared resolveSceneRole classifier.
+    return list.map((p) => ({
+      ...p,
+      sceneRole: p.sceneRole || (p.isNpc === true
+        ? (p.npcType === 'staff' ? 'on-shift employee' : p.npcType === 'resident' ? 'home resident' : 'visitor')
+        : resolveSceneRole(p, { onShiftAtLocationIds: onShiftIds, homeResidentIds })),
+    }));
   };
 
-  const resolvedWhosHereList = buildResolvedWhosHereList();
-  const allSceneChars = resolvedWhosHereList;
+  const sceneParticipants = buildSceneParticipants();
+  const allSceneChars = sceneParticipants;
 
   // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
   const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
@@ -1047,30 +1053,37 @@ export default function Scene() {
     const dedupe = (arr) => arr.filter((c, i, arr) =>
       c && c.id && arr.findIndex((x) => x.id === c.id) === i
     );
+    // User always enters as a visitor — never reclassified downstream.
+    const userWithRole = userParticipant ? { ...userParticipant, sceneRole: 'visitor' } : null;
+    // Look up from sceneParticipants to inherit the already-attached sceneRole.
+    const participantById = new Map(sceneParticipants.map((p) => [p.id, p]));
 
     if (isHomeLocation) {
-      const selectedNpcsFull = (selectedNpcIds || [])
-        .map((npcId) => allPossibleNpcs.find((n) => n.id === npcId))
-        .filter(Boolean);
+      const selectedIds = new Set([
+        ...broughtCharacters.map((c) => c.id),
+        ...(selectedNpcIds || [])
+      ]);
       return dedupe([
-        ...broughtCharacters,
-        ...selectedNpcsFull,
-        ...(userParticipant ? [userParticipant] : [])
+        ...sceneParticipants.filter((p) => selectedIds.has(p.id)),
+        ...(userWithRole ? [userWithRole] : [])
       ]);
     }
 
     if (!isRestrictedEnv && location?.location_type === "global") {
       return dedupe([
-        ...sceneCharacters.slice(0, 3),
-        ...(userParticipant ? [userParticipant] : [])
+        ...sceneParticipants.slice(0, 3),
+        ...(userWithRole ? [userWithRole] : [])
       ]);
     }
 
+    const selectedIds = new Set([
+      ...broughtCharacters.map((c) => c.id),
+      ...workerCharacters.map((w) => w.id),
+      ...(selectedNpcIds || [])
+    ]);
     return dedupe([
-      ...broughtCharacters,
-      ...workerCharacters.filter((w) => !broughtCharacters.find((b) => b.id === w.id)),
-      ...(selectedNpcIds ? selectedNpcs : []),
-      ...(userParticipant ? [userParticipant] : [])
+      ...sceneParticipants.filter((p) => selectedIds.has(p.id)),
+      ...(userWithRole ? [userWithRole] : [])
     ]).slice(0, 4);
   };
 
@@ -1125,42 +1138,36 @@ export default function Scene() {
     const hour = nowET.getHours();
     const lightingDesc = getLightingDescriptor(hour);
 
-    // ── PER-PERSON OUTFIT RESOLUTION (existing backend authorities) ───────────
-    // Resolve outfit per person via the EXISTING resolveCharacterOutfitContext /
-    // resolveUserOutfitContext backend functions. Bound by ID (not name) so outfit
-    // stays associated with the correct person throughout the prompt assembly.
-    const onShiftIds = new Set(workerCharacters.map((w) => w.id));
-    const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
-
-    // ── FINAL PARTICIPANTS — built once, used for everything ──────────────────
-    const finalParticipants = buildFinalSceneParticipants();
-
-    const outfitMap = {};
-    await Promise.all(
-      finalParticipants
-        .filter((p) => p && p.id && !p.isNpc)
-        .map(async (p) => {
-          try {
-            if (p.isUser) {
-              const res = await base44.functions.invoke('resolveUserOutfitContext', {
-                ownerEmail: currentUser?.email,
-                locationCategory: location?.category,
-                locationId: location?.id,
-              });
-              outfitMap[p.id] = res?.data?.text || res?.text || null;
-            } else {
-              const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
-                characterId: p.id,
-                locationCategory: location?.category,
-                locationId: location?.id,
-                ownerEmail: currentUser?.email,
-              });
-              outfitMap[p.id] = res?.data?.text || res?.text || null;
-            }
-          } catch {
-            outfitMap[p.id] = null;
+    // ── FINAL PARTICIPANTS — built once, enriched with outfit, used for everything ──
+    // Each participant already carries: stable ID → person record → sceneRole (resolved
+    // at the participant level, not reclassified here). Outfit is resolved per participant
+    // via the EXISTING backend authorities and attached directly to the participant.
+    // After this point, the participant's resolvedOutfit is the sole clothing authority
+    // for that participant — reference-photo clothing cannot override it.
+    const finalParticipants = await Promise.all(
+      buildFinalSceneParticipants().map(async (p) => {
+        if (!p || !p.id || p.isNpc === true) return { ...p, resolvedOutfit: null };
+        try {
+          if (p.isUser) {
+            const res = await base44.functions.invoke('resolveUserOutfitContext', {
+              ownerEmail: currentUser?.email,
+              locationCategory: location?.category,
+              locationId: location?.id,
+            });
+            return { ...p, resolvedOutfit: res?.data?.text || res?.text || null };
+          } else {
+            const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
+              characterId: p.id,
+              locationCategory: location?.category,
+              locationId: location?.id,
+              ownerEmail: currentUser?.email,
+            });
+            return { ...p, resolvedOutfit: res?.data?.text || res?.text || null };
           }
-        })
+        } catch {
+          return { ...p, resolvedOutfit: null };
+        }
+      })
     );
 
     // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
@@ -1188,7 +1195,7 @@ export default function Scene() {
     // and record start/end indexes. Environment refs appended AFTER all participant
     // refs. The same refKey feeds the sealed bundles and the image request.
     const refKey = buildParticipantReferenceKey(finalParticipants, envRefs);
-    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, outfitMap, onShiftIds, homeResidentIds, location);
+    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
 
     // Prioritize avatars (identity lock) before environment images (for env note)
     const authoratativeEnvRefs = prioritizeAvatarReferences(finalParticipants, envRefs);

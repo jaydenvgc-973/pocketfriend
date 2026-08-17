@@ -18,8 +18,6 @@
  * participant → own reference range → own stored appearance → own role → own outfit.
  * One participant's identity/refs/appearance/outfit must never be applied to another.
  */
-import { resolveSceneRole } from './sceneRoleResolver.js';
-
 function formatRefRange(start, end) {
   if (start === null || start === undefined) return null;
   return start === end ? `Image ${start}` : `Images ${start}–${end}`;
@@ -126,11 +124,9 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
  * @param {Object} location         - Current location record (unused directly, passed for parity)
  * @returns {string} Prompt text block with sealed bundles + global prohibition + subject count
  */
-export function buildSealedSubjectBundles(people, refKey, outfitMap, onShiftIds, homeResidentIds, location) {
+export function buildSealedSubjectBundles(people, refKey, location) {
   if (!people || people.length === 0) return '';
 
-  const onShiftSet = onShiftIds || new Set();
-  const homeResidentSet = homeResidentIds || new Set();
   const ranges = refKey?.ranges || [];
 
   const bundles = people
@@ -138,8 +134,11 @@ export function buildSealedSubjectBundles(people, refKey, outfitMap, onShiftIds,
     .map((p) => {
       const range = ranges.find(r => r.id === p.id);
       const refRange = range && range.start !== null ? formatRefRange(range.start, range.end) : null;
-      const role = p.isUser ? 'visitor' : resolveSceneRole(p, { onShiftAtLocationIds: onShiftSet, homeResidentIds: homeResidentSet });
-      const outfit = outfitMap[p.id] || null;
+      // Role and outfit are read from the completed participant — not reclassified here.
+      // The participant was enriched at the Scene level: sceneRole + resolvedOutfit attached
+      // directly to the person. This function is a serialization boundary, not a person resolver.
+      const role = p.sceneRole || null;
+      const outfit = p.resolvedOutfit || null;
       return buildSealedSubjectBundle(p, refRange, outfit, role);
     })
     .filter(Boolean);
