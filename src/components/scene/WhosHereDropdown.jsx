@@ -93,7 +93,7 @@ export default function WhosHereDropdown({
   // hospitalized or incarcerated character from also appearing in the
   // employee or resident sections.
   const realCharacters = allPossibleNpcs.filter(n =>
-    n.isNpc === false && n.npcType !== 'present' && !patientIds.has(n.id) && !inmateIds.has(n.id)
+    n.isNpc === false && n.npcType !== 'present' && n.npcType !== 'staff' && n.npcType !== 'resident' && !patientIds.has(n.id) && !inmateIds.has(n.id)
   );
   const staffChars = allPossibleNpcs.filter(n =>
     n.isNpc === false && n.npcType === 'staff' && !patientIds.has(n.id) && !inmateIds.has(n.id)

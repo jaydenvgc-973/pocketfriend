@@ -391,6 +391,15 @@ export default function Scene() {
   // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
   const workerCharacters = (() => {
     if (!location) return [];
+    // CANONICAL PRESENCE MAP: same resolution as Who's Here / Travel map.
+    // The raw DB resolved_current_location_id may be stale (e.g. an on-shift
+    // employee whose DB still shows their home). unifiedPresenceEntities holds
+    // the canonical resolution from resolveCharacterLocation — use it so the
+    // worker classification and Who's Here consume the same location truth.
+    const canonicalLocById = {};
+    unifiedPresenceEntities.forEach((e) => {
+      if (e.id) canonicalLocById[e.id] = e.resolved_current_location_id;
+    });
     const onShift = characters.filter((c) => {
       if (characterIds.includes(c.id)) return false;
       if (isCharacterAsleep(c)) return false;
@@ -405,7 +414,10 @@ export default function Scene() {
       // occupation_location_id / additional_occupation_locations links here).
       if (!isEmployedAtLocation(c, location)) return false;
       if (!isCharacterAtWork(c, location)) return false;
-      if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
+      // CANONICAL PRESENCE: use the canonical resolver's location (same as
+      // Who's Here / Travel map), not the potentially stale raw DB field.
+      const canonicalLocId = canonicalLocById[c.id] || c.resolved_current_location_id;
+      if (canonicalLocId && canonicalLocId !== locationId) return false;
       return true;
     });
     // JAIL SCENE CAP: max 4 real scheduled staff loaded into a jail/prison scene at once.
@@ -598,6 +610,11 @@ export default function Scene() {
     // They must have live presence confirmed (resolved_current_location_id === locationId).
     // Only add to the selectable "Who's here" list if live presence is confirmed.
     const locationWorkerIds = location?.worker_character_ids || [];
+    // Reuse the canonical presence map built above (same resolution as Who's Here)
+    const canonicalLocByIdWorkerLoop = {};
+    unifiedPresenceEntities.forEach((e) => {
+      if (e.id) canonicalLocByIdWorkerLoop[e.id] = e.resolved_current_location_id;
+    });
     locationWorkerIds.forEach((wid) => {
       // Skip characters already auto-shown as "on shift" workers
       if (workerCharacters.find((w) => w.id === wid)) return;
@@ -605,8 +622,10 @@ export default function Scene() {
       if (characterIds.includes(wid)) return;
       const workerChar = characters.find((c) => c.id === wid);
       if (!workerChar) return;
-      // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if live presence confirmed at this location
-      if (workerChar.resolved_current_location_id !== locationId) return;
+      // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if canonical presence confirmed at this location.
+      // Use the canonical resolver's location (same as Who's Here), not the stale raw DB field.
+      const canonicalLocId = canonicalLocByIdWorkerLoop[wid] || workerChar.resolved_current_location_id;
+      if (canonicalLocId !== locationId) return;
       const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
       npcs.push({
         id: workerChar.id,
