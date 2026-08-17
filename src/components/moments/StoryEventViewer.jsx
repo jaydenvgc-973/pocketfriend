@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle, Pencil, Trash2, Globe } from 'lucide-react';
+import { Star, MapPin, Users, Heart, Image, ChevronDown, Loader2, Send, RefreshCw, X, Check, Shield, CheckCircle2, AlertCircle, XCircle, Pencil, Trash2, Globe, Eye } from 'lucide-react';
 import { format } from 'date-fns';
 import StoryEventEditor from './StoryEventEditor';
 import PublicImpactModal from './PublicImpactModal';
+import GenerationProgressModal from './GenerationProgressModal';
 
 const REGEN_REASONS = [
   { id: 'flawed', label: 'Image is flawed', icon: '⚠️' },
@@ -38,6 +39,10 @@ export default function StoryEventViewer({ eventId }) {
   // Stuck generation cancel/reset state
   const [isCancellingGeneration, setIsCancellingGeneration] = useState(false);
   const [cancelError, setCancelError] = useState(null);
+
+  // Generation progress inspection + non-destructive retry
+  const [showProgressModal, setShowProgressModal] = useState(false);
+  const [eventRetryingRemaining, setEventRetryingRemaining] = useState(false);
 
   // Missing-image generation state (per moment type)
   const [generatingMissing, setGeneratingMissing] = useState({}); // { [moment_type]: true }
@@ -213,19 +218,62 @@ export default function StoryEventViewer({ eventId }) {
     return ageMs > 10 * 60 * 1000; // 10 minutes
   })();
 
+  // NON-DESTRUCTIVE STOP: does not set status='failed', does not delete
+  // generated images, does not clear narrative, does not remove effects.
+  // The event stays in its current status (typically 'generating') with
+  // all successfully produced work preserved. The backend function, if
+  // still running, will complete on its own. The user can click Review
+  // Progress to see what was completed, or Retry Remaining to continue.
   const handleCancelGeneration = async () => {
     setIsCancellingGeneration(true);
     setCancelError(null);
     try {
-      await base44.entities.StoryEvent.update(eventId, {
-        status: 'failed',
-        generation_error: 'Generation cancelled by user.',
-      });
-      setEvent(prev => ({ ...prev, status: 'failed', generation_error: 'Generation cancelled by user.' }));
+      // Just reload the event to show the current persisted state.
+      // Do NOT write status='failed' — that would prevent idempotent
+      // re-entry and force the user to regenerate from scratch.
+      const records = await base44.entities.StoryEvent.filter({ id: eventId }, null, 1);
+      if (records[0]) {
+        setEvent(records[0]);
+        if (records[0].status === 'complete' || records[0].status === 'failed') {
+          const [mems, imgs] = await Promise.all([
+            base44.entities.StoryEventMemory.filter({ story_event_id: eventId }, null, 50).catch(() => []),
+            base44.entities.StoryEventImage.filter({ story_event_id: eventId }, null, 10).catch(() => []),
+          ]);
+          setMemories(mems);
+          setImages(imgs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+        }
+      }
     } catch (err) {
-      setCancelError(err?.message || 'Failed to cancel. Try again.');
+      setCancelError(err?.message || 'Failed to reload. Try again.');
     } finally {
       setIsCancellingGeneration(false);
+    }
+  };
+
+  // NON-DESTRUCTIVE RETRY: calls generateStoryEvent directly without
+  // calling regenerateStoryEvent (which deletes old content). The
+  // backend's idempotent re-entry logic skips completed work (narrative,
+  // memories, images that already exist) and only retries genuinely
+  // missing pieces. If the event was previously marked 'failed' (from
+  // the old destructive Stop), reset to 'generating' so the backend
+  // function can re-enter.
+  const handleRetryRemaining = async () => {
+    setEventRetryingRemaining(true);
+    setActionError(null);
+    try {
+      if (event?.status === 'failed') {
+        await base44.entities.StoryEvent.update(eventId, {
+          status: 'generating',
+          generation_error: null,
+        });
+      }
+      await base44.functions.invoke('generateStoryEvent', { event_id: eventId });
+      setEvent(prev => ({ ...prev, status: 'generating' }));
+      setShowProgressModal(false);
+    } catch (err) {
+      setActionError(err?.message || 'Retry failed');
+    } finally {
+      setEventRetryingRemaining(false);
     }
   };
 
@@ -641,6 +689,24 @@ export default function StoryEventViewer({ eventId }) {
               {/* Action controls — always available during generating */}
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
+                  onClick={() => { setShowProgressModal(true); setActionError(null); }}
+                  disabled={eventRegenerating || isCancellingGeneration || isReloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 border border-border text-foreground text-xs font-medium hover:bg-secondary transition-colors disabled:opacity-50"
+                  title="See what has been generated so far — non-destructive"
+                >
+                  <Eye className="w-3 h-3" />
+                  Review Progress
+                </button>
+                <button
+                  onClick={handleRetryRemaining}
+                  disabled={eventRetryingRemaining || eventRegenerating || isCancellingGeneration || isReloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+                  title="Continue only the unfinished portion — completed work is preserved"
+                >
+                  {eventRetryingRemaining ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {eventRetryingRemaining ? 'Retrying…' : 'Retry Remaining'}
+                </button>
+                <button
                   onClick={handleReloadEvent}
                   disabled={isReloading || eventRegenerating || isCancellingGeneration}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 border border-border text-foreground text-xs font-medium hover:bg-secondary transition-colors disabled:opacity-50"
@@ -650,22 +716,22 @@ export default function StoryEventViewer({ eventId }) {
                   Reload
                 </button>
                 <button
-                  onClick={handleEventRegenerate}
-                  disabled={eventRegenerating || isCancellingGeneration || isReloading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
-                  title="Stop current generation and regenerate from scratch"
-                >
-                  {eventRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {eventRegenerating ? 'Retrying…' : 'Retry'}
-                </button>
-                <button
                   onClick={handleCancelGeneration}
                   disabled={isCancellingGeneration || eventRegenerating || isReloading}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
-                  title="Stop generation and mark as failed"
+                  title="Stop waiting — your work is preserved. Use Review Progress to see what completed."
                 >
                   {isCancellingGeneration ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
                   {isCancellingGeneration ? 'Stopping…' : 'Stop'}
+                </button>
+                <button
+                  onClick={handleEventRegenerate}
+                  disabled={eventRegenerating || isCancellingGeneration || isReloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                  title="Delete all generated content and regenerate from scratch"
+                >
+                  {eventRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {eventRegenerating ? 'Regenerating…' : 'Regenerate from Scratch'}
                 </button>
                 <button
                   onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
@@ -689,13 +755,31 @@ export default function StoryEventViewer({ eventId }) {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
+                  onClick={() => { setShowProgressModal(true); setActionError(null); }}
+                  disabled={eventRegenerating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-secondary/60 border border-border text-foreground text-xs font-medium hover:bg-secondary transition-colors disabled:opacity-50"
+                  title="See what has been generated so far — non-destructive"
+                >
+                  <Eye className="w-3 h-3" />
+                  Review Progress
+                </button>
+                <button
+                  onClick={handleRetryRemaining}
+                  disabled={eventRetryingRemaining || eventRegenerating}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+                  title="Continue only the unfinished portion — completed work is preserved"
+                >
+                  {eventRetryingRemaining ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {eventRetryingRemaining ? 'Retrying…' : 'Retry Remaining'}
+                </button>
+                <button
                   onClick={handleEventRegenerate}
                   disabled={eventRegenerating}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/10 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
-                  title="Regenerate from scratch"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium hover:bg-orange-500/20 transition-colors disabled:opacity-50"
+                  title="Delete all generated content and regenerate from scratch"
                 >
                   {eventRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {eventRegenerating ? 'Retrying…' : 'Regenerate'}
+                  {eventRegenerating ? 'Regenerating…' : 'Regenerate from Scratch'}
                 </button>
                 <button
                   onClick={() => { setShowDeleteConfirm(true); setActionError(null); }}
@@ -1200,6 +1284,19 @@ export default function StoryEventViewer({ eventId }) {
       {/* ── PUBLIC IMPACT MODAL ──────────────────────────────────────────────── */}
       {showPublicImpact && event && (
         <PublicImpactModal event={event} onClose={() => setShowPublicImpact(false)} />
+      )}
+
+      {/* ── GENERATION PROGRESS MODAL ─────────────────────────────────────────── */}
+      {showProgressModal && event && (
+        <GenerationProgressModal
+          eventId={eventId}
+          event={event}
+          memories={memories}
+          images={images}
+          onRetryRemaining={handleRetryRemaining}
+          retryingRemaining={eventRetryingRemaining}
+          onClose={() => setShowProgressModal(false)}
+        />
       )}
     </div>
   );
