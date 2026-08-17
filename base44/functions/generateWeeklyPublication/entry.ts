@@ -540,11 +540,17 @@ If no story is strong enough to be a headliner, set headliner to null.`;
         // If charKey is a name in the map, use the mapped ID
         if (nameToIdMap[charKey]) resolvedId = nameToIdMap[charKey];
 
-        let chars = await base44.asServiceRole.entities.Character.filter({ id: resolvedId }, null, 1);
-        let char = chars?.[0];
-        // Fallback: try by name if ID lookup failed
+        let char = null;
+        // Primary: look up by ID using get() — filter({ id }) does not work for
+        // the built-in id field, which caused charRefMap to never populate and
+        // every image to fall back to the generic (no-reference) path.
+        try {
+          char = await base44.asServiceRole.entities.Character.get(resolvedId);
+        } catch (_) { /* get() throws if not found */ }
+        // Fallback: try by name using the ORIGINAL charKey (which may be a name),
+        // not resolvedId (which is an ID at this point).
         if (!char) {
-          chars = await base44.asServiceRole.entities.Character.filter({ name: resolvedId }, null, 1);
+          const chars = await base44.asServiceRole.entities.Character.filter({ name: charKey }, null, 1);
           char = chars?.[0];
         }
         if (char) {
