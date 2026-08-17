@@ -50,6 +50,32 @@ function resolveUniformText(character: any, location: any): string | null {
   const presence = character.resolved_presence_status || character.location_status || '';
   const uText = (u: any) => u?.description || u?.name || null;
 
+  const locCat = (location.category || '').toLowerCase();
+  const isConfinement = location.is_confinement_facility === true || locCat === 'jail_prison';
+  const isMedical = locCat === 'medical';
+
+  // 0. Facility role attire — incarcerated → inmate/prisoner, hospitalized → patient
+  // Official character status (not just location presence) determines the role.
+  if (isConfinement && (character.is_jailed === true || presence === 'incarcerated' || presence === 'confined' || presence === 'house_arrest')) {
+    for (const u of Object.values(uniforms) as any[]) {
+      if (u?.applicability === 'role_status' && (u.role_status?.toLowerCase() === 'inmate' || u.role_status?.toLowerCase() === 'prisoner')) {
+        return uText(u);
+      }
+    }
+    const ca = location.correctional_attire;
+    if (ca) {
+      const caText = ca.description || ca.text || ca.name || (typeof ca === 'string' ? ca : null);
+      if (caText) return caText;
+    }
+  }
+  if (isMedical && presence === 'hospitalized') {
+    for (const u of Object.values(uniforms) as any[]) {
+      if (u?.applicability === 'role_status' && (u.role_status?.toLowerCase() === 'patient' || u.role_status?.toLowerCase() === 'hospitalized')) {
+        return uText(u);
+      }
+    }
+  }
+
   // 1. Manual assignment
   const manualKey = location.worker_manual_uniforms?.[charId];
   if (manualKey && uniforms[manualKey]) return uText(uniforms[manualKey]);
@@ -81,6 +107,8 @@ function resolveUniformText(character: any, location: any): string | null {
   const inArr = (arr: any) => Array.isArray(arr) && arr.some((i: any) => typeof i === 'string' ? i === charId : i?.character_id === charId);
   if (inArr(location.enrolled_students)) statusStrings.push('enrolled_students');
   if (inArr(location.inmates)) statusStrings.push('inmates');
+  if (character.is_jailed === true || presence === 'incarcerated') statusStrings.push('inmate');
+  if (presence === 'hospitalized') statusStrings.push('patient');
   if (location.gym_members?.includes(charId)) statusStrings.push('gym_members');
   if (inArr(location.religious_members)) statusStrings.push('religious_members');
   if (inArr(location.residents)) statusStrings.push('residents');
@@ -112,9 +140,29 @@ function resolveUniformText(character: any, location: any): string | null {
     }
   }
 
-  // 6. Location-wide — no gate
-  for (const u of Object.values(uniforms) as any[]) {
-    if (u?.applicability === 'location_wide') return uText(u);
+  // 6. Location-wide — gated at medical/jail_prison facilities to established roles only
+  // Visitors and non-established roles at facilities do NOT wear the facility uniform.
+  {
+    const isEstablishedRole = isStaff ||
+      inArr(location.inmates) ||
+      inArr(location.enrolled_students) ||
+      inArr(location.residents) ||
+      inArr(location.religious_members) ||
+      location.gym_members?.includes(charId) ||
+      presence === 'hospitalized' ||
+      character.is_jailed === true ||
+      presence === 'incarcerated';
+    if (isConfinement || isMedical) {
+      if (isEstablishedRole) {
+        for (const u of Object.values(uniforms) as any[]) {
+          if (u?.applicability === 'location_wide') return uText(u);
+        }
+      }
+    } else {
+      for (const u of Object.values(uniforms) as any[]) {
+        if (u?.applicability === 'location_wide') return uText(u);
+      }
+    }
   }
 
   return null;

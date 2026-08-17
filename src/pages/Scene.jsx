@@ -241,7 +241,7 @@ export default function Scene() {
     });
 
     return withBroughtCharacters;
-  }, [currentUser?.id, activeChars.length, backendNpcFictitious.length, rlsNpcFictitious.length, familyByCreatedBy.length, familyByOwner.length, locationsData.length, broughtCharacters, locationId, location?.name]);
+  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, locationsData, broughtCharacters, locationId, location?.name]);
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
   // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
@@ -601,6 +601,11 @@ export default function Scene() {
     // These MUST be in allPossibleNpcs so selectedNpcIds can find them
     hereNowFromPresence.forEach((n) => {
       if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
+    });
+
+    // Add invite-arrived extras (onCharacterArrived) so they appear in Who's Here immediately
+    extraNpcs.forEach((n) => {
+      if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' });
     });
 
     // Dedupe by id
@@ -2219,6 +2224,7 @@ Return JSON:
             content: `${char.name} arrives at ${location.name}.`,
             timestamp: new Date().toISOString()
           }]);
+          queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] });
           queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
         }} />
       

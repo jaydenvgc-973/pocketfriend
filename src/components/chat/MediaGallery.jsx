@@ -184,7 +184,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
         // User entity is the authoritative source for reference images and avatar.
         // UserSettings is used only for world name and as a legacy fallback for images.
-        const userEntity = userEntityList?.[0] || null;
+        const userEntity = userEntityList?.[0] || user || null;
 
         // Filter to live characters only — never show deleted/merged
         const liveChars = chars.filter(c =>

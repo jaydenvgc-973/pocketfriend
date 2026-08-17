@@ -51,7 +51,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
 
   // Organize characters by category
   const userWorldName = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
-  const userAvatar = userSettings?.generated_avatar_urls?.[0] || currentUser?.avatar_url;
+  const userAvatar = currentUser?.reference_image_urls?.[0] || currentUser?.generated_avatar_urls?.[0] || userSettings?.generated_avatar_urls?.[0] || null;
   const userItem = currentUser ? { type: 'user', data: { ...currentUser, worldName: userWorldName, avatar_url: userAvatar } } : null;
   
   const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
