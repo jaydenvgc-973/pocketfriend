@@ -64,7 +64,7 @@ function resolveUniformText(character: any, location: any): string | null {
     }
     const ca = location.correctional_attire;
     if (ca) {
-      const caText = ca.description || ca.text || ca.name || (typeof ca === 'string' ? ca : null);
+      const caText = ca.uniform_description || ca.description || ca.text || ca.name || (typeof ca === 'string' ? ca : null);
       if (caText) return caText;
     }
   }
