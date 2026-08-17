@@ -839,33 +839,51 @@ export default function Scene() {
     return participants;
   })();
 
-  // ── OUTFIT RESOLUTION — resolved ONCE, attached to the same participant ─────────
-  // The current outfit is part of the completed Scene participant state. It is
-  // resolved here (async, via the existing backend authorities) — NOT in image
-  // generation. The resolved outfit is stored per participant ID and attached to
-  // the completed participant object. Image generation reads resolvedOutfit from
-  // the participant; it never calls the outfit resolver.
+  // ── COMPLETED PARTICIPANTS — state collection with role + outfit attached ─────
+  // The completed participant collection is STATE — not a derived merge of a person
+  // list and a separate outfit map. The enrichment effect resolves the current outfit
+  // for each participant and produces completed participant objects with resolvedOutfit
+  // attached directly to the participant. No detached outfit map exists.
+  //
+  // Flow: authoritative presence → baseSceneParticipants (role + identity) →
+  //   async outfit enrichment → sceneParticipants (completed, with resolvedOutfit)
+  //
+  // outfitVersion is an existing clothing-change signal (set by Change Clothes modal)
+  // that triggers re-enrichment of the completed participant collection.
   const [outfitVersion, setOutfitVersion] = useState(0);
-  const [resolvedOutfits, setResolvedOutfits] = useState({});
+  const [sceneParticipants, setSceneParticipants] = useState(
+    () => baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null }))
+  );
+  const [participantsReady, setParticipantsReady] = useState(false);
   const participantIdsKey = baseSceneParticipants.map((p) => p.id).sort().join(',');
 
   useEffect(() => {
     if (!location || baseSceneParticipants.length === 0) {
-      setResolvedOutfits({});
+      setSceneParticipants([]);
+      setParticipantsReady(false);
       return;
     }
-    let cancelled = false;
 
+    // Step 1: Immediately set participants with role + identity (outfit pending).
+    // The completed participant collection owns the person — outfit is attached
+    // directly to each participant object, not stored in a separate map.
+    setSceneParticipants(baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null })));
+    setParticipantsReady(false);
+
+    // Step 2: Async resolve current outfit for each participant and produce
+    //         completed participant objects with resolvedOutfit attached directly.
+    let cancelled = false;
     Promise.all(baseSceneParticipants.map(async (p) => {
-      if (!p || !p.id || p.isNpc === true) return null;
+      if (!p || !p.id || p.isNpc === true) return p;
       try {
+        let outfitText = null;
         if (p.isUser) {
           const res = await base44.functions.invoke('resolveUserOutfitContext', {
             ownerEmail: currentUser?.email,
             locationCategory: location?.category,
             locationId: location?.id,
           });
-          return [p.id, res?.data?.text || res?.text || null];
+          outfitText = res?.data?.text || res?.text || null;
         } else {
           const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
             characterId: p.id,
@@ -873,45 +891,26 @@ export default function Scene() {
             locationId: location?.id,
             ownerEmail: currentUser?.email,
           });
-          return [p.id, res?.data?.text || res?.text || null];
+          outfitText = res?.data?.text || res?.text || null;
         }
+        return { ...p, resolvedOutfit: outfitText };
       } catch {
-        return [p.id, null];
+        return { ...p, resolvedOutfit: null };
       }
-    })).then(results => {
+    })).then((enriched) => {
       if (cancelled) return;
-      const outfits = {};
-      for (const r of results) {
-        if (r) outfits[r[0]] = r[1];
-      }
-      setResolvedOutfits(outfits);
+      setSceneParticipants(enriched);
+      setParticipantsReady(true);
     });
 
     return () => { cancelled = true; };
   }, [participantIdsKey, location?.id, location?.category, currentUser?.email, outfitVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── COMPLETED PARTICIPANTS — ONE collection with role AND outfit attached ─────────
-  // This is the single source of truth consumed by every Scene surface:
-  //   Who's Here → reads identity + sceneRole
-  //   Conversation selection → uses stable ID
-  //   Presence strip → uses name/avatar
-  //   Image generation → serializes identity, references, appearance, sceneRole, resolvedOutfit
-  // No consumer reconstructs the person.
-  const sceneParticipants = baseSceneParticipants.map((p) => ({
-    ...p,
-    resolvedOutfit: resolvedOutfits[p.id] ?? null,
-  }));
   const allSceneChars = sceneParticipants;
 
   // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
   const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
   const sceneCharacters = allSceneChars; // Keep full roster available for NPC spawning logic
-
-  // Outfits are resolved when every non-NPC participant has an entry in resolvedOutfits.
-  // Image generation waits for this before serializing — it never resolves outfits itself.
-  const outfitsReady = baseSceneParticipants.every((p) =>
-    p.isNpc === true || p.id in resolvedOutfits
-  );
 
   const firstImage = location?.zones?.find((z) => z.image_urls?.length > 0)?.image_urls?.[0] ||
   location?.image_urls?.[0] ||
@@ -1129,11 +1128,11 @@ export default function Scene() {
   // RABBIT HOLE MODE: Skip scene generation for real-world locations
   useEffect(() => {
     if (!hasUserRequestedImage) return;
-    if (!outfitsReady) return; // Wait for outfits to be resolved before serializing
+    if (!participantsReady) return; // Wait for completed participants before serializing
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
       generateSceneImage();
     }
-  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, outfitsReady]);
+  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady]);
 
   // ── AUTO-LOAD ON NAVIGATION ──────────────────────────────────────────────
   // Trigger the first scene image generation once the page data is ready.
@@ -1901,7 +1900,8 @@ Return JSON:
         {/* NPC Dropdown — uses unified presence resolver (same as Map + Travel popup) */}
         <div ref={npcDropdownRef}>
           <WhosHereDropdown
-            allPossibleNpcs={allPossibleNpcs}
+            presentParticipants={sceneParticipants}
+            candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))}
             selectedNpcs={selectedNpcs}
             onToggleNpc={toggleNpc}
             showDropdown={showNpcDropdown}

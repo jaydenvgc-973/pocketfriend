@@ -5,12 +5,14 @@ import { motion, AnimatePresence } from "framer-motion";
 /**
  * WHO'S HERE DROPDOWN — UNIFIED PARTICIPANT SOURCE
  *
- * Groups participants by sceneRole — resolved ONCE at the Scene level and attached
- * to each participant. No independent reclassification here. Each participant has
- * exactly ONE role, so they appear in exactly ONE section. No deduplication needed.
+ * Present sections consume the authoritative completed sceneParticipants collection.
+ * Candidate sections consume allPossibleNpcs filtered to exclude those already present.
+ * sceneRole is already attached to each participant at the Scene level — no independent
+ * classification happens here. Each participant appears in exactly ONE section.
  *
  * Props:
- *   allPossibleNpcs: all participants available at this location, each carrying sceneRole
+ *   presentParticipants: completed sceneParticipants (authoritative current presence + role + outfit)
+ *   candidateNpcs: allPossibleNpcs not already in sceneParticipants (selection candidates)
  *   selectedNpcs: user-selected participants
  *   onToggleNpc: handler to select/deselect
  *   showDropdown: dropdown visibility
@@ -19,7 +21,8 @@ import { motion, AnimatePresence } from "framer-motion";
  *   renderNpc: function to render individual participant button
  */
 export default function WhosHereDropdown({
-  allPossibleNpcs = [],
+  presentParticipants = [],
+  candidateNpcs = [],
   selectedNpcs = [],
   onToggleNpc = () => {},
   showDropdown = false,
@@ -27,17 +30,24 @@ export default function WhosHereDropdown({
   onInviteClick = () => {},
   renderNpc = null,
 }) {
-  // Group by sceneRole — consumed directly from the completed participant.
-  // No independent classification, no presence resolver call, no PATIENT_STATUSES
-  // or INMATE_STATUSES check. The participant already carries its role.
-  const patients = allPossibleNpcs.filter((n) => n.sceneRole === 'patient');
-  const inmates = allPossibleNpcs.filter((n) => n.sceneRole === 'inmate');
-  const realEmployees = allPossibleNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
-  const npcEmployees = allPossibleNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
-  const realResidents = allPossibleNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
-  const npcResidents = allPossibleNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
-  const realVisitors = allPossibleNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
-  const npcVisitors = allPossibleNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
+  // Present people from authoritative sceneParticipants (excluding the user)
+  const present = presentParticipants.filter((n) => !n.isUser);
+  const patients = present.filter((n) => n.sceneRole === 'patient');
+  const inmates = present.filter((n) => n.sceneRole === 'inmate');
+  const realEmployees = present.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
+  const npcEmployees = present.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
+  const realResidents = present.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
+  const npcResidents = present.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
+  const realVisitors = present.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
+  const npcVisitors = present.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
+
+  // Candidates from allPossibleNpcs (not already present)
+  const candRealEmployees = candidateNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
+  const candNpcEmployees = candidateNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
+  const candRealResidents = candidateNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
+  const candNpcResidents = candidateNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
+  const candRealVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
+  const candNpcVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
 
   const renderNpcWrapper = (npc) => {
     if (renderNpc) return renderNpc(npc);
@@ -82,7 +92,7 @@ export default function WhosHereDropdown({
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
-              {/* Patients — hospitalized characters (sceneRole: patient) */}
+              {/* PRESENT — from authoritative sceneParticipants */}
               {patients.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
@@ -91,8 +101,6 @@ export default function WhosHereDropdown({
                   {patients.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* Inmates — incarcerated/confined characters (sceneRole: inmate) */}
               {inmates.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
@@ -101,8 +109,6 @@ export default function WhosHereDropdown({
                   {inmates.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* Here Now — real character visitors (sceneRole: visitor, not NPC) */}
               {realVisitors.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
@@ -111,8 +117,6 @@ export default function WhosHereDropdown({
                   {realVisitors.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* Working Here — real character employees (sceneRole: on-shift employee, not NPC) */}
               {realEmployees.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
@@ -121,8 +125,6 @@ export default function WhosHereDropdown({
                   {realEmployees.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* Residents — real character residents (sceneRole: home resident, not NPC) */}
               {realResidents.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
@@ -131,8 +133,6 @@ export default function WhosHereDropdown({
                   {realResidents.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* NPC Residents (sceneRole: home resident, NPC) */}
               {npcResidents.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
@@ -141,8 +141,6 @@ export default function WhosHereDropdown({
                   {npcResidents.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* NPC Employees (sceneRole: on-shift employee, NPC) */}
               {npcEmployees.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
@@ -151,14 +149,41 @@ export default function WhosHereDropdown({
                   {npcEmployees.map(renderNpcWrapper)}
                 </>
               )}
-
-              {/* Ambient People — NPC visitors (sceneRole: visitor, NPC) */}
               {npcVisitors.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">People here</p>
                   </div>
                   {npcVisitors.map(renderNpcWrapper)}
+                </>
+              )}
+
+              {/* CANDIDATES — from allPossibleNpcs (not already present) */}
+              {(candRealEmployees.length > 0 || candNpcEmployees.length > 0) && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                    <p className="text-[9px] font-semibold text-blue-400/60 uppercase tracking-wider">Available Staff</p>
+                  </div>
+                  {candRealEmployees.map(renderNpcWrapper)}
+                  {candNpcEmployees.map(renderNpcWrapper)}
+                </>
+              )}
+              {(candRealResidents.length > 0 || candNpcResidents.length > 0) && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                    <p className="text-[9px] font-semibold text-green-400/60 uppercase tracking-wider">Available Residents</p>
+                  </div>
+                  {candRealResidents.map(renderNpcWrapper)}
+                  {candNpcResidents.map(renderNpcWrapper)}
+                </>
+              )}
+              {(candRealVisitors.length > 0 || candNpcVisitors.length > 0) && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                    <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Available People</p>
+                  </div>
+                  {candRealVisitors.map(renderNpcWrapper)}
+                  {candNpcVisitors.map(renderNpcWrapper)}
                 </>
               )}
             </div>
