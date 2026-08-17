@@ -47,6 +47,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
+import { useAuth } from "@/lib/AuthContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
@@ -96,9 +97,9 @@ function buildParticipantReferenceKey(participants, envRefs) {
       const start = visualRefs.length + 1;
       for (const url of personRefs) visualRefs.push(url);
       const end = visualRefs.length;
-      ranges.push({ name: p.name, start, end });
+      ranges.push({ id: p.id, name: p.name, start, end });
     } else {
-      ranges.push({ name: p.name, start: null, end: null });
+      ranges.push({ id: p.id, name: p.name, start: null, end: null });
     }
   }
   const envStart = visualRefs.length + 1;
@@ -185,7 +186,12 @@ export default function Scene() {
   const sendMessageRef = useRef(null);
   const sendNarrationRef = useRef(null);
 
-  const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
+  // AUTHENTICATED USER: useAuth() is the single source of truth for the logged-in
+  // user's identity. The userParticipant for Scene images is built exclusively from
+  // this authenticated user — never from an unscoped User list, admin fallback, or
+  // cached data from another account. The stable ID/email in the dependency arrays
+  // below ensures switching accounts cannot reuse another account's user/avatar data.
+  const { user: currentUser } = useAuth();
   // Use the shared useUserSettings hook (same as Home, Travel, MyProfile) so the
   // ["userSettings", email] cache always holds a single object — never an array.
   // Scene previously used an inline array-returning query that clashed with the
@@ -1031,6 +1037,43 @@ export default function Scene() {
 
   // Duplicate ensureChildCaregiverPresence removed — see comment above.
 
+  // ── FINAL SCENE PARTICIPANTS — SINGLE SOURCE OF TRUTH ──────────────────────
+  // Builds the final named-participant array ONCE. Deduplicated by stable identity:
+  // user → authenticated user ID, character → Character entity ID. A participant
+  // occurs exactly once. The same array feeds identity → references → appearance
+  // lock → role → outfit → subject bundle → final image request. No surface
+  // rebuilds the participant population independently.
+  const buildFinalSceneParticipants = () => {
+    const dedupe = (arr) => arr.filter((c, i, arr) =>
+      c && c.id && arr.findIndex((x) => x.id === c.id) === i
+    );
+
+    if (isHomeLocation) {
+      const selectedNpcsFull = (selectedNpcIds || [])
+        .map((npcId) => allPossibleNpcs.find((n) => n.id === npcId))
+        .filter(Boolean);
+      return dedupe([
+        ...broughtCharacters,
+        ...selectedNpcsFull,
+        ...(userParticipant ? [userParticipant] : [])
+      ]);
+    }
+
+    if (!isRestrictedEnv && location?.location_type === "global") {
+      return dedupe([
+        ...sceneCharacters.slice(0, 3),
+        ...(userParticipant ? [userParticipant] : [])
+      ]);
+    }
+
+    return dedupe([
+      ...broughtCharacters,
+      ...workerCharacters.filter((w) => !broughtCharacters.find((b) => b.id === w.id)),
+      ...(selectedNpcIds ? selectedNpcs : []),
+      ...(userParticipant ? [userParticipant] : [])
+    ]).slice(0, 4);
+  };
+
   // ── SLEEP/REST STATE DESCRIPTOR ──────────────────────────────────────────────
   // Scene rendering is OBSERVATIONAL: it reflects each character's authoritative
   // resolved_presence_status (sleeping / napping / passed_out) so the image depicts
@@ -1089,13 +1132,12 @@ export default function Scene() {
     const onShiftIds = new Set(workerCharacters.map((w) => w.id));
     const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
 
-    const allPresentPeople = userParticipant
-      ? [...resolvedWhosHereList, userParticipant]
-      : resolvedWhosHereList;
+    // ── FINAL PARTICIPANTS — built once, used for everything ──────────────────
+    const finalParticipants = buildFinalSceneParticipants();
 
     const outfitMap = {};
     await Promise.all(
-      allPresentPeople
+      finalParticipants
         .filter((p) => p && p.id && !p.isNpc)
         .map(async (p) => {
           try {
@@ -1140,62 +1182,45 @@ export default function Scene() {
     allZoneImagesFlat.slice(0, 4) :
     firstImage ? [firstImage] : [];
 
-    // Use resolvedWhosHereList directly — no re-query, no re-matching by name.
-    // Include the user participant so their avatar is in the visual reference stack
-    // and their name is in the identity enforcement block.
-    const visiblePeopleForScene = userParticipant
-      ? [...resolvedWhosHereList, userParticipant]
-      : resolvedWhosHereList;
+    // ── REFERENCE KEY + SEALED BUNDLES — built from finalParticipants ──────────
+    // Iterate through the final participant array in order. For each participant,
+    // collect only that person's own identity references, append contiguously,
+    // and record start/end indexes. Environment refs appended AFTER all participant
+    // refs. The same refKey feeds the sealed bundles and the image request.
+    const refKey = buildParticipantReferenceKey(finalParticipants, envRefs);
+    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, outfitMap, onShiftIds, homeResidentIds, location);
 
-    // Prioritize avatars (identity lock) before environment images
-    const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
+    // Prioritize avatars (identity lock) before environment images (for env note)
+    const authoratativeEnvRefs = prioritizeAvatarReferences(finalParticipants, envRefs);
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
-    let finalPrompt = actionOverridePrompt;
-    // isGlobal must NEVER be true for residential/home locations, or restricted environments
-    const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
+      let finalPrompt = actionOverridePrompt;
+      const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
 
-    let actionPhysicallyPresent = [];
       if (!isGlobal) {
-        // Use resolvedWhosHereList directly — already properly resolved with avatars.
-        // Include the user participant so the user appears alongside their companions.
-        const basePresent = isHomeLocation ?
-        resolveSceneImagePeople(location, resolvedWhosHereList, currentUser, true) :
-        resolvedWhosHereList;
-        actionPhysicallyPresent = [
-        ...basePresent,
-        ...(userParticipant ? [userParticipant] : [])].
-        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
-
-        if (actionPhysicallyPresent.length === 0) {
+        if (finalParticipants.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
         } else {
-          finalPrompt += ` CRITICAL: Only these people may appear: ${actionPhysicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
+          finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
-            finalPrompt += buildResidentialImageConstraint(location, actionPhysicallyPresent);
+            finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
           }
         }
       }
-      if (authoratativeEnvRefs.length > 0) {
+      if (envRefs.length > 0) {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
-      // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
-      finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
-      // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
-      const actionRefKey = buildParticipantReferenceKey(actionPhysicallyPresent, envRefs);
-      if (actionPhysicallyPresent.length > 0) {
-        finalPrompt += buildSealedSubjectBundles(actionPhysicallyPresent, actionRefKey, outfitMap, onShiftIds, homeResidentIds, location);
-      }
+      finalPrompt += buildSleepDescriptor(finalParticipants);
+      finalPrompt += sealedBundles;
       try {
-        console.log('[Scene action] Passing visual references:', actionRefKey.visualRefs.length, 'for participants:', actionPhysicallyPresent.map((c) => c.name).join(', ') || 'none');
+        console.log('[Scene action] Passing visual references:', refKey.visualRefs.length, 'for participants:', finalParticipants.map((c) => c.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
-          existing_image_urls: actionRefKey.visualRefs.length > 0 ? actionRefKey.visualRefs : undefined
+          existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
         setSceneImage(result.url);
-      } catch {setSceneImage(firstImage);} finally
-      {setIsGeneratingImage(false);}
+      } catch { setSceneImage(firstImage); } finally { setIsGeneratingImage(false); }
       return;
     }
 
@@ -1209,69 +1234,22 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // ── RESIDENTIAL SCENE — SINGLE SOURCE OF TRUTH ────────────────────────────
-      // Use allPossibleNpcs (WHO'S HERE SOURCE) + selectedNpcIds to resolve final render list
-      // This ensures IDENTICAL people objects and avatars as Who's Here dropdown
-
-      // Build residential people using SAME pipeline as Who's Here:
-      // - Resolve selected IDs → full objects from allPossibleNpcs
-      // - Add brought characters (user travel companions)
-      // - No limit, no silent filtering
-      const selectedNpcsFull = (selectedNpcIds || []).
-      map((npcId) => allPossibleNpcs.find((n) => n.id === npcId)).
-      filter(Boolean);
-
-      const residentialPeople = [
-      ...broughtCharacters,
-      ...selectedNpcsFull,
-      ...(userParticipant ? [userParticipant] : [])].
-      filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
-
-      // DIAGNOSTIC LOG: Show WHO'S HERE count vs scene count
-      console.log(
-        `[Scene] RESIDENTIAL GENERATION:`,
-        `allPossibleNpcs: ${allPossibleNpcs.length} total |`,
-        `selectedNpcIds: ${(selectedNpcIds || []).length} selected |`,
-        `broughtCharacters: ${broughtCharacters.length} |`,
-        `residentialPeople for render: ${residentialPeople.length} |`,
-        `people: ${residentialPeople.map((p) => `${p.name}(id:${p.id},avatar:${!!(p.avatar_url || p.image_avatar_url)})`).join(', ')}`
-      );
-
-      // VALIDATION: Verify all selected people have avatars
-      const missingAvatars = residentialPeople.filter((p) => !p.avatar_url && !p.image_avatar_url);
-      if (missingAvatars.length > 0) {
-        console.error(
-          `[Scene] MISSING AVATARS — Generation will fail:`,
-          missingAvatars.map((p) => `${p.name} (id: ${p.id})`).join(', ')
-        );
-      }
-
-      const visibleNames = residentialPeople.map((c) => c.name);
-
+      // finalParticipants, refKey, sealedBundles already built above from the
+      // single participant array. Only prompt text is assembled here.
+      const visibleNames = finalParticipants.map((c) => c.name);
       const strictPeopleRule = visibleNames.length > 0 ?
-      `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
-      `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
-
-      const atmosphereSuffix = residentialPeople.length > 0 ?
-      " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
-      "";
-
-      // Build the residential constraint using the correct people list
-      const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
-
-      // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
-      const residentialRefKey = buildParticipantReferenceKey(residentialPeople, envRefs);
-      const residentialSealedBundles = buildSealedSubjectBundles(residentialPeople, residentialRefKey, outfitMap, onShiftIds, homeResidentIds, location);
-
-      console.log('[Scene residential] Avatar refs:', residentialRefKey.visualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
-
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialSealedBundles}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
-
-      // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
+        `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
+        `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
+      const atmosphereSuffix = finalParticipants.length > 0 ?
+        " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
+        "";
+      const residentialConstraint = buildResidentialImageConstraint(location, finalParticipants);
+      console.log('[Scene residential] Avatar refs:', refKey.visualRefs.length, '| people:', finalParticipants.map((p) => p.name).join(', ') || 'none');
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
-          existing_image_urls: residentialRefKey.visualRefs.length > 0 ? residentialRefKey.visualRefs : undefined
+          existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
         setSceneImage(result.url);
       } catch {
@@ -1279,59 +1257,32 @@ export default function Scene() {
       } finally {
         setIsGeneratingImage(false);
       }
-      return; // ← exit early, do NOT fall through to the generic path below
+      return;
     }
 
     // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
-    // Participants named in the prompt's strict people rule. ALSO used for the
-    // visual reference stack below so avatars of unnamed people never enter the
-    // request as competing face references (which contaminate the user's identity).
-    // Mirrors the working residential branch (residentialPeople → residentialVisualRefs).
-    let nonResidentialParticipants = visiblePeopleForScene;
-    let nonResVisualRefs = [];
+    // finalParticipants, refKey, and sealedBundles are already built above from
+    // the same single participant array. Only the prompt text differs by branch.
     {
       if (isGlobal) {
-        const globalPeople = [...sceneCharacters.slice(0, 3), ...(userParticipant ? [userParticipant] : [])];
-        nonResidentialParticipants = globalPeople;
-        const charNames = globalPeople.map((c) => c.name).join(", ");
+        const charNames = finalParticipants.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
-        const globalRefKey = buildParticipantReferenceKey(globalPeople, envRefs);
-        nonResVisualRefs = globalRefKey.visualRefs;
-        const globalSealedBundles = buildSealedSubjectBundles(globalPeople, globalRefKey, outfitMap, onShiftIds, homeResidentIds, location);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${globalSealedBundles}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else {
-        // Include on-shift workerCharacters in the scene image so facility
-        // employees appear with their resolved uniforms. The per-person binding
-        // carries each worker's role + outfit so the model knows they are
-        // employees wearing the configured uniform — not generic patrons.
-        const physicallyPresent = [
-        ...broughtCharacters,
-        ...workerCharacters.filter((w) => !broughtCharacters.find((b) => b.id === w.id)),
-        ...(selectedNpcIds ? selectedNpcs : []),
-        ...(userParticipant ? [userParticipant] : [])].
-        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 4); // cap at 4 (includes user)
-        nonResidentialParticipants = physicallyPresent;
-
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
-        const peopleDesc = (physicallyPresent.length > 0 ?
-        `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
-        `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
-
-        // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
-        const nonResRefKey = buildParticipantReferenceKey(physicallyPresent, envRefs);
-        nonResVisualRefs = nonResRefKey.visualRefs;
-        const nonResSealedBundles = buildSealedSubjectBundles(physicallyPresent, nonResRefKey, outfitMap, onShiftIds, homeResidentIds, location);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${userAppearanceBlock}${nonResSealedBundles}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        const peopleDesc = (finalParticipants.length > 0 ?
+          `Only these specific people are present: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
+          `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${userAppearanceBlock}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       }
     }
 
     try {
-      console.log('[Scene main] Passing visual references:', nonResVisualRefs.length, 'for participants:', nonResidentialParticipants.map((c) => c.name).join(', ') || 'none');
+      console.log('[Scene main] Passing visual references:', refKey.visualRefs.length, 'for participants:', finalParticipants.map((c) => c.name).join(', ') || 'none');
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: nonResVisualRefs.length > 0 ? nonResVisualRefs : undefined
+        existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
       });
       setSceneImage(result.url);
     } catch {

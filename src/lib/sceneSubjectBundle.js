@@ -78,6 +78,8 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
     lines.push(`REFERENCE IMAGES: ${refRange}`);
     lines.push(`  Use ONLY for: face structure, skin tone, hair, body type of "${name}".`);
     lines.push(`  ⛔ IGNORE background, pose, clothing in these reference photos.`);
+    lines.push(`  ⛔ Reference photos establish IDENTITY ONLY (face, skin, hair, body).`);
+    lines.push(`  ⛔ Clothing visible in reference photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
     lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject.`);
   } else {
     lines.push(`REFERENCE IMAGES: None — generate "${name}" from appearance lock below only.`);
@@ -134,7 +136,7 @@ export function buildSealedSubjectBundles(people, refKey, outfitMap, onShiftIds,
   const bundles = people
     .filter(p => p && p.name)
     .map((p) => {
-      const range = ranges.find(r => r.name === p.name);
+      const range = ranges.find(r => r.id === p.id);
       const refRange = range && range.start !== null ? formatRefRange(range.start, range.end) : null;
       const role = p.isUser ? 'visitor' : resolveSceneRole(p, { onShiftAtLocationIds: onShiftSet, homeResidentIds: homeResidentSet });
       const outfit = outfitMap[p.id] || null;
