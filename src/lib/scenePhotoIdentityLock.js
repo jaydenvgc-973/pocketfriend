@@ -6,7 +6,7 @@
  */
 
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
-import { buildAppearanceLockBlock, enforceValidation } from './appearanceLockValidator.js';
+import { buildAppearanceLockBlock } from './appearanceLockValidator.js';
 import { resolveHousingLocationForCharacter } from './resolveHousingLocationForCharacter.js';
 
 /**
@@ -121,19 +121,6 @@ People in the photo: ${allNames}
 ${identityLock}${outfitBlock}
 
 Additional context: Photorealistic, candid, authentic moment. Include ALL listed people in the photo.`;
-
-  // CRITICAL: Validate each character's appearance_lock and outfit before returning prompt
-  // Only validate characters that have appearance_lock defined
-  for (const char of selectedChars) {
-    if (char?.appearance_lock && Object.keys(char.appearance_lock).length > 0) {
-      try {
-        enforceValidation(char, fullPrompt);
-      } catch (err) {
-        console.error(`[Photo] Validation failed for ${char.name}:`, err.message);
-        throw err;
-      }
-    }
-  }
 
   return fullPrompt;
 }
