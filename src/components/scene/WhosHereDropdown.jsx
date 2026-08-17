@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { Users, ChevronDown, UserPlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getPresenceAtLocation } from "@/lib/travelPresenceResolver";
+import { resolveSceneRole, PATIENT_STATUSES, INMATE_STATUSES } from "@/lib/sceneRoleResolver";
 
 /**
  * WHO'S HERE DROPDOWN — UNIFIED PRESENCE SOURCE
@@ -66,23 +67,40 @@ export default function WhosHereDropdown({
       }));
   }, [location, unifiedPresenceEntities, allPossibleNpcs]);
 
-  // Classify present real characters by authoritative resolved_presence_status:
-  // hospitalized → patients, incarcerated/confined/house_arrest → inmates,
-  // everyone else → ordinary visitors (Here Now).
-  const patientChars = presentRealCharacters.filter(
-    c => c.resolved_presence_status === 'hospitalized'
-  );
-  const inmateChars = presentRealCharacters.filter(
-    c => ['incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)
-  );
-  const visitorChars = presentRealCharacters.filter(
-    c => !['hospitalized', 'incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)
+  // DEDUPLICATION: one authoritative present person gets one role.
+  // Build ID sets for each classified role from the authoritative resolver output,
+  // then exclude those IDs from allPossibleNpcs sections to prevent duplicates.
+  const patientIds = new Set(presentRealCharacters
+    .filter(c => PATIENT_STATUSES.includes(c.resolved_presence_status)).map(c => c.id));
+  const inmateIds = new Set(presentRealCharacters
+    .filter(c => INMATE_STATUSES.includes(c.resolved_presence_status)).map(c => c.id));
+  const staffIds = new Set(
+    allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff').map(n => n.id)
   );
 
-  // Separate allPossibleNpcs into categories
-  const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType !== 'present');
-  const staffChars = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff');
-  const residentChars = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'resident');
+  // Classify present real characters by authoritative resolved_presence_status
+  // using the SHARED classifier (same function as image generation).
+  // Priority: hospitalized → patient, incarcerated → inmate, on-shift → employee,
+  // home resident → resident, otherwise → visitor.
+  const patientChars = presentRealCharacters.filter(c => patientIds.has(c.id));
+  const inmateChars = presentRealCharacters.filter(c => inmateIds.has(c.id));
+  const visitorChars = presentRealCharacters.filter(
+    c => !patientIds.has(c.id) && !inmateIds.has(c.id) && !staffIds.has(c.id)
+  );
+
+  // Separate allPossibleNpcs into categories, EXCLUDING IDs already classified
+  // as patient or inmate by the authoritative resolver. This prevents a
+  // hospitalized or incarcerated character from also appearing in the
+  // employee or resident sections.
+  const realCharacters = allPossibleNpcs.filter(n =>
+    n.isNpc === false && n.npcType !== 'present' && !patientIds.has(n.id) && !inmateIds.has(n.id)
+  );
+  const staffChars = allPossibleNpcs.filter(n =>
+    n.isNpc === false && n.npcType === 'staff' && !patientIds.has(n.id) && !inmateIds.has(n.id)
+  );
+  const residentChars = allPossibleNpcs.filter(n =>
+    n.isNpc === false && n.npcType === 'resident' && !patientIds.has(n.id) && !inmateIds.has(n.id)
+  );
   const residentNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "resident");
   const staffNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "staff");
   const customerNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "customer");

@@ -54,6 +54,7 @@ import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
+import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -125,17 +126,10 @@ function buildOutfitRoleBinding(people, outfitMap, onShiftIds, homeResidentIds, 
   return people
     .filter((p) => p && p.name)
     .map((p) => {
-      const role = onShiftIds.has(p.id)
-        ? 'on-shift employee'
-        : p.resolved_presence_status === 'hospitalized'
-          ? 'patient'
-          : ['incarcerated', 'confined', 'house_arrest'].includes(p.resolved_presence_status)
-            ? 'inmate'
-            : homeResidentIds.has(p.id)
-              ? 'home resident'
-              : p.isUser
-                ? 'visitor'
-                : null;
+      // SHARED CLASSIFIER: same priority as Who's Here dropdown.
+      // Hospitalization/incarceration override employment. Employment requires
+      // being on-shift at THIS location, not merely having a work schedule.
+      const role = p.isUser ? 'visitor' : resolveSceneRole(p, { onShiftAtLocationIds: onShiftIds, homeResidentIds });
       const outfit = outfitMap[p.id];
       const parts = [];
       if (role) parts.push(`role: ${role}`);
@@ -402,6 +396,16 @@ export default function Scene() {
     const onShift = characters.filter((c) => {
       if (characterIds.includes(c.id)) return false;
       if (isCharacterAsleep(c)) return false;
+      // AUTHORITY PRIORITY: hospitalization and incarceration override employment.
+      // A hospitalized or incarcerated character is never classified as an employee,
+      // even if they also have a shift at this location.
+      if (c.resolved_presence_status === 'hospitalized') return false;
+      if (['incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)) return false;
+      // EMPLOYMENT AT THIS LOCATION: a generic work schedule for another
+      // location must NOT count as employment here. The character must be
+      // actually employed at this exact location (shift defined here, or
+      // occupation_location_id / additional_occupation_locations links here).
+      if (!isEmployedAtLocation(c, location)) return false;
       if (!isCharacterAtWork(c, location)) return false;
       if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
       return true;
@@ -487,6 +491,7 @@ export default function Scene() {
       role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
       isNpc: false,
       npcType: 'present',
+      resolved_presence_status: entity.resolved_presence_status,
       personality_summary: entity.personality_summary,
       emotional_state: entity.emotional_state
     }));
