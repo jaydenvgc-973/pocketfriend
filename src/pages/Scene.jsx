@@ -970,11 +970,16 @@ export default function Scene() {
     // brought — admitted patients must render in a hospital gown regardless of how
     // they entered the scene (brought via URL, or present as a hospital occupant).
     const broughtIds = new Set(broughtCharacters.map((c) => c.id));
-    const hospitalizedPresent = (resolvedWhosHereList || []).filter(
-      (p) => p && p.id && !p.isUser && !broughtIds.has(p.id) && p.resolved_presence_status === 'hospitalized'
+    // Resolve outfits for ALL real (non-NPC, non-user) characters present at the scene:
+    // brought companions, hospitalized occupants, AND on-shift workers / other real
+    // characters in the resolved Who's Here list. This ensures facility employees
+    // receive their configured uniforms in the scene image — not just brought
+    // companions and hospitalized patients.
+    const presentRealChars = (resolvedWhosHereList || []).filter(
+      (p) => p && p.id && !p.isUser && !p.isNpc && !broughtIds.has(p.id)
     );
     const charOutfitResults = await Promise.all(
-      [...broughtCharacters, ...hospitalizedPresent].map((c) =>
+      [...broughtCharacters, ...presentRealChars].map((c) =>
         base44.functions.invoke('resolveCharacterOutfitContext', {
           characterId: c.id,
           locationCategory: location?.category,
@@ -1007,6 +1012,20 @@ export default function Scene() {
     const outfitSuffix = outfitLines.length > 0
       ? ` OUTFIT REQUIREMENT — PER-PERSON ASSIGNMENT (NO CROSS-CONTAMINATION): ${outfitLines.join('. ')}. Each outfit is assigned to the named person ONLY. The user wears the user's outfit; each character wears their own outfit. Do NOT swap, blend, or transfer clothing between identities. Do NOT use avatar/reference photo clothing. Reproduce each exact outfit on its assigned person.`
       : '';
+
+    // ── USER ROLE CONTEXT ──────────────────────────────────────────────────
+    // Explicitly state the user's role at medical/jail facilities to prevent the
+    // image model from inferring patient/inmate status from the location alone.
+    // The user is a VISITOR unless they've explicitly checked in (Check In action).
+    // Location or zone alone must never convert the user into a patient or inmate.
+    const userRoleSuffix = (() => {
+      if (!location || !userParticipant) return '';
+      const locCat = (location.category || '').toLowerCase();
+      const isFacility = locCat === 'medical' || locCat === 'jail_prison' || location.is_confinement_facility === true;
+      if (!isFacility) return '';
+      const facilityLabel = locCat === 'medical' ? 'hospital' : 'correctional facility';
+      return ` ROLE: ${displayName} is a VISITOR at this ${facilityLabel}, NOT a patient, NOT an inmate. ${displayName} wears normal visitor clothing — NOT a hospital gown, NOT patient clothing, NOT inmate clothing, NOT a facility uniform.`;
+    })();
 
     // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
     // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
@@ -1074,6 +1093,10 @@ export default function Scene() {
       // USER IDENTITY: full appearance lock (face/body) — keeps the user's identity intact
       if (userAppearanceBlock) {
         finalPrompt += userAppearanceBlock;
+      }
+      // USER ROLE: explicit visitor role at medical/jail facilities
+      if (userRoleSuffix) {
+        finalPrompt += userRoleSuffix;
       }
       // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
       finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
@@ -1169,7 +1192,7 @@ export default function Scene() {
       ...envRefs.filter((u) => !residentAvatarUrls.includes(u))];
 
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
@@ -1202,7 +1225,7 @@ export default function Scene() {
         const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser, settings?.user_gender);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         const physicallyPresent = [
         ...broughtCharacters,
@@ -1218,7 +1241,7 @@ export default function Scene() {
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 

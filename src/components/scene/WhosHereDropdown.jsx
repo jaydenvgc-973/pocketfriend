@@ -32,19 +32,16 @@ export default function WhosHereDropdown({
   renderNpc = null,
 }) {
   // Get real characters currently present at this location from unified resolver
+  // PLUS any allPossibleNpcs entries with npcType 'present' (e.g., invite-arrived
+  // characters from extraNpcs) that haven't synced into the unified resolver yet.
+  // This closes the gap where an invited character arrives (narrative + presence
+  // strip recognize them) but the Who's Here "Here Now" section doesn't list them
+  // because it only read from unifiedPresenceEntities.
   const presentRealCharacters = useMemo(() => {
     if (!location) return [];
     const presenceHere = getPresenceAtLocation(location, unifiedPresenceEntities);
-    
-    console.log(
-      `[WhosHereDropdown] "${location.name}": `,
-      `unifiedTotal=${unifiedPresenceEntities.length} |`,
-      `present=${presenceHere.length} |`,
-      `present chars: ${presenceHere.map(e => `${e.display_name}(type:${e.character_type})`).join(', ')}`
-    );
-    
-    // Convert presence entities to NPC-picker format for consistent rendering
-    return presenceHere.map(entity => ({
+
+    const fromResolver = presenceHere.map(entity => ({
       id: entity.id,
       name: entity.display_name,
       avatar_url: entity.avatar_url,
@@ -54,7 +51,17 @@ export default function WhosHereDropdown({
       personality_summary: entity.personality_summary,
       emotional_state: entity.emotional_state,
     }));
-  }, [location, unifiedPresenceEntities]);
+
+    // Merge in allPossibleNpcs entries with npcType 'present' that aren't already
+    // in the unified resolver result. These are characters who arrived via
+    // invitation (extraNpcs) and appear in allPossibleNpcs but not yet in
+    // unifiedPresenceEntities (which refreshes on query invalidation).
+    const fromAllPossible = allPossibleNpcs.filter(
+      n => n.npcType === 'present' && !fromResolver.find(r => r.id === n.id)
+    );
+
+    return [...fromResolver, ...fromAllPossible];
+  }, [location, unifiedPresenceEntities, allPossibleNpcs]);
 
   // Separate allPossibleNpcs into categories
   const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType !== 'present');
