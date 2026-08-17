@@ -64,6 +64,56 @@ const CATEGORY_EMOJIS = {
 // Categories that serve food/drinks
 const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
 
+// ── PARTICIPANT REFERENCE KEY ──────────────────────────────────────────────
+// Reuses the existing image-index-to-participant convention from generateImageAsync
+// and _buildSubjectBundle. Orders participant avatars first (contiguous per person),
+// then environment refs. Returns the ordered visual ref array AND a prompt-text block
+// that explicitly maps each image index range to a named participant, so the model
+// knows exactly which reference image belongs to which person — no implicit ordering
+// inference. This is the same pattern generateImageAsync uses via charRefStart/userRefStart.
+function buildParticipantReferenceKey(participants, envRefs) {
+  const visualRefs = [];
+  const ranges = [];
+  for (const p of (participants || [])) {
+    if (!p || !p.name) continue;
+    const avatar = p.avatar_url || p.image_avatar_url;
+    if (avatar && avatar.trim().length > 0 && !visualRefs.includes(avatar)) {
+      const start = visualRefs.length + 1;
+      visualRefs.push(avatar);
+      ranges.push({ name: p.name, start, end: start });
+    } else {
+      ranges.push({ name: p.name, start: null, end: null });
+    }
+  }
+  const envStart = visualRefs.length + 1;
+  for (const url of (envRefs || [])) {
+    if (url && url.trim().length > 0 && !visualRefs.includes(url)) {
+      visualRefs.push(url);
+    }
+  }
+  const envEnd = visualRefs.length;
+  const lines = [
+    '[PARTICIPANT REFERENCE KEY — IMAGE INDEX TO IDENTITY]',
+    'Each named participant maps to exactly one image index range below.',
+    "Use ONLY that participant's reference image for their face identity.",
+    "Do NOT apply one participant's reference image to any other participant.",
+    ''
+  ];
+  for (const r of ranges) {
+    if (r.start !== null) {
+      lines.push(`Image ${r.start} → "${r.name}" — face identity reference. Use ONLY for this person's face, skin, hair, body.`);
+    } else {
+      lines.push(`(no image) → "${r.name}" — no reference image. Render from appearance description only.`);
+    }
+  }
+  if (envEnd >= envStart) {
+    const envRange = envStart === envEnd ? `Image ${envStart}` : `Images ${envStart}–${envEnd}`;
+    lines.push(`${envRange} → ENVIRONMENT spatial data only. NOT face identity. Use for room/layout/furniture only.`);
+  }
+  lines.push('[END PARTICIPANT REFERENCE KEY]');
+  return { visualRefs, referenceKeyBlock: `\n${lines.join('\n')}\n` };
+}
+
 // ── INLINE PER-PERSON BINDING ──────────────────────────────────────────────
 // Binds existing identity + existing authoritative role + existing resolved outfit
 // for each person at the point they are assembled into the image prompt. This is
@@ -1115,18 +1165,14 @@ export default function Scene() {
       }
       // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
       finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
+      // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+      const actionRefKey = buildParticipantReferenceKey(actionPhysicallyPresent, envRefs);
+      finalPrompt += actionRefKey.referenceKeyBlock;
       try {
-        // REFERENCE IMAGES: avatars of the SAME people named in the prompt, then env.
-        // buildAvatarIdentityEnforcementBlock already associates each avatar with a
-        // named participant — sending only those avatars preserves that association.
-        const actionAvatarUrls = actionPhysicallyPresent
-          .map((c) => c.avatar_url || c.image_avatar_url)
-          .filter((u) => u && u.trim().length > 0);
-        const actionVisualRefs = [...actionAvatarUrls, ...envRefs.filter((u) => !actionAvatarUrls.includes(u))];
-        console.log('[Scene action] Passing visual references:', actionVisualRefs.length, 'for participants:', actionPhysicallyPresent.map((c) => c.name).join(', ') || 'none');
+        console.log('[Scene action] Passing visual references:', actionRefKey.visualRefs.length, 'for participants:', actionPhysicallyPresent.map((c) => c.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
-          existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined
+          existing_image_urls: actionRefKey.visualRefs.length > 0 ? actionRefKey.visualRefs : undefined
         });
         setSceneImage(result.url);
       } catch {setSceneImage(firstImage);} finally
@@ -1200,23 +1246,18 @@ export default function Scene() {
       const residentialOutfitRole = buildOutfitRoleBinding(residentialPeople, outfitMap, onShiftIds, homeResidentIds, location);
       const residentialBoundBlock = `${residentialIdentityLock}${residentialAvatarEnforcement}${residentialOutfitRole ? ` ${residentialOutfitRole}.` : ''}`;
 
-      // REFERENCE IMAGES: avatars of the SAME people named in the prompt, then env.
-      // buildAvatarIdentityEnforcementBlock already associates each avatar with a
-      // named participant — sending only those avatars preserves that association.
-      const residentialAvatarUrls = residentialPeople
-        .map((c) => c.avatar_url || c.image_avatar_url)
-        .filter((u) => u && u.trim().length > 0);
-      const residentialVisualRefs = [...residentialAvatarUrls, ...envRefs.filter((u) => !residentialAvatarUrls.includes(u))];
+      // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+      const residentialRefKey = buildParticipantReferenceKey(residentialPeople, envRefs);
 
-      console.log('[Scene residential] Avatar refs:', residentialVisualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
+      console.log('[Scene residential] Avatar refs:', residentialRefKey.visualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialBoundBlock}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialBoundBlock}${residentialRefKey.referenceKeyBlock}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
-          existing_image_urls: residentialVisualRefs.length > 0 ? residentialVisualRefs : undefined
+          existing_image_urls: residentialRefKey.visualRefs.length > 0 ? residentialRefKey.visualRefs : undefined
         });
         setSceneImage(result.url);
       } catch {
@@ -1233,6 +1274,7 @@ export default function Scene() {
     // request as competing face references (which contaminate the user's identity).
     // Mirrors the working residential branch (residentialPeople → residentialVisualRefs).
     let nonResidentialParticipants = visiblePeopleForScene;
+    let nonResVisualRefs = [];
     {
       if (isGlobal) {
         const globalPeople = [...sceneCharacters.slice(0, 3), ...(userParticipant ? [userParticipant] : [])];
@@ -1245,7 +1287,10 @@ export default function Scene() {
         const globalOutfitRole = buildOutfitRoleBinding(globalPeople, outfitMap, onShiftIds, homeResidentIds, location);
         const globalBoundBlock = `${globalIdentityLock}${globalAvatarEnforcement}${userAppearanceBlock}${globalOutfitRole ? ` ${globalOutfitRole}.` : ''}`;
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${globalBoundBlock}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+        const globalRefKey = buildParticipantReferenceKey(globalPeople, envRefs);
+        nonResVisualRefs = globalRefKey.visualRefs;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${globalBoundBlock}${globalRefKey.referenceKeyBlock}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         // Include on-shift workerCharacters in the scene image so facility
         // employees appear with their resolved uniforms. The per-person binding
@@ -1269,22 +1314,18 @@ export default function Scene() {
         const nonResAvatarEnforcement = buildAvatarIdentityEnforcementBlock(physicallyPresent);
         const nonResOutfitRole = buildOutfitRoleBinding(physicallyPresent, outfitMap, onShiftIds, homeResidentIds, location);
         const nonResBoundBlock = `${nonResIdentityLock}${nonResAvatarEnforcement}${userAppearanceBlock}${nonResOutfitRole ? ` ${nonResOutfitRole}.` : ''}`;
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${nonResBoundBlock}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+        const nonResRefKey = buildParticipantReferenceKey(physicallyPresent, envRefs);
+        nonResVisualRefs = nonResRefKey.visualRefs;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${nonResBoundBlock}${nonResRefKey.referenceKeyBlock}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 
     try {
-      // REFERENCE IMAGES: avatars of the SAME people named in the prompt, then env.
-      // buildAvatarIdentityEnforcementBlock already associates each avatar with a
-      // named participant — sending only those avatars preserves that association.
-      const nonResAvatarUrls = nonResidentialParticipants
-        .map((c) => c.avatar_url || c.image_avatar_url)
-        .filter((u) => u && u.trim().length > 0);
-      const finalVisualRefs = [...nonResAvatarUrls, ...envRefs.filter((u) => !nonResAvatarUrls.includes(u))];
-      console.log('[Scene main] Passing visual references:', finalVisualRefs.length, 'for participants:', nonResidentialParticipants.map((c) => c.name).join(', ') || 'none');
+      console.log('[Scene main] Passing visual references:', nonResVisualRefs.length, 'for participants:', nonResidentialParticipants.map((c) => c.name).join(', ') || 'none');
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined
+        existing_image_urls: nonResVisualRefs.length > 0 ? nonResVisualRefs : undefined
       });
       setSceneImage(result.url);
     } catch {
