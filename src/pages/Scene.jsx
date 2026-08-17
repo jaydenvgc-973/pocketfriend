@@ -54,6 +54,7 @@ import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
+import { buildParticipantRecord, buildParticipantBoundBlock, buildOrderedReferenceImages, resolveParticipantRole } from "@/lib/sceneParticipantRecord";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -484,6 +485,33 @@ export default function Scene() {
     if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) {
       npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
     }
+
+    // On-shift real character employees — MUST be in allPossibleNpcs as npcType 'staff'
+    // so they appear under the EMPLOYEES section of Who's Here (not "Here Now") and
+    // remain selectable to talk to. Without this, workerCharacters are absent from
+    // allPossibleNpcs and fall through to the "Here Now" visitor section.
+    // The Travel Page already knows which named characters are working; Scenes
+    // must consume the same authoritative employment/on-shift result.
+    // so they appear under the EMPLOYEES section of Who's Here (not "Here Now") and
+    // remain selectable to talk to. Without this, workerCharacters are absent from
+    // allPossibleNpcs and fall through to the "Here Now" visitor section.
+    workerCharacters.forEach((w) => {
+      if (npcs.find((x) => x.id === w.id)) return;
+      if (characterIds.includes(w.id)) return;
+      const jobTitle = location.worker_job_titles?.[w.id] || w.work_details?.job_title || "Employee";
+      npcs.push({
+        id: w.id,
+        name: w.name,
+        role: jobTitle,
+        isNpc: false,
+        npcType: "staff",
+        avatar_url: w.avatar_url || null,
+        personality_summary: w.personality_summary,
+        archetype: w.archetype,
+        emotional_state: w.emotional_state,
+        resolved_presence_status: w.resolved_presence_status,
+      });
+    });
 
     // Real named workers from the location record (worker_character_ids + worker_job_titles)
     // RULE: A worker assigned to a location is NOT automatically present.
@@ -955,101 +983,81 @@ export default function Scene() {
     const hour = nowET.getHours();
     const lightingDesc = getLightingDescriptor(hour);
 
-    // ── OUTFIT AUTHORITY (user + characters, single backend path) ─────────────
-    // BOTH the user and each brought character resolve their outfit through the
-    // single backend authority (resolveUserOutfitContext / resolveCharacterOutfitContext).
-    // Stale frontend reads of current_outfit / character_closet are forbidden — they
-    // bypass rotation, daily overrides, manual category selections, and uniforms.
-    // Null (empty closet / no selection) is a valid preference, not an error.
-    // Temporary in-scene changes (take off coat, change shirt) are handled by the
-    // action prompt override and do NOT mutate the stored outfit rotation.
-    const outfitLines = [];
-
-    // Characters: resolve each through resolveCharacterOutfitContext
-    // Include hospitalized characters present at the scene who were NOT explicitly
-    // brought — admitted patients must render in a hospital gown regardless of how
-    // they entered the scene (brought via URL, or present as a hospital occupant).
+    // ── PARTICIPANT RECORD: identity + role + outfit BOUND PER PERSON ────────
+    // ONE authoritative record per present person. Identity, role, and outfit
+    // are resolved together and remain bound so they cannot drift between
+    // participants in the image prompt or reference images.
+    //
+    // Role comes from existing authoritative state (resolved_presence_status,
+    // isCharacterAtWork), NOT from location type. Outfit comes from existing
+    // backend authorities (resolveCharacterOutfitContext / resolveUserOutfitContext).
+    // This is NOT a new role resolver or presence system — it assembles existing
+    // authoritative data into a single bound record per person.
     const broughtIds = new Set(broughtCharacters.map((c) => c.id));
-    // Resolve outfits for ALL real (non-NPC, non-user) characters present at the scene:
-    // brought companions, hospitalized occupants, AND on-shift workers / other real
-    // characters in the resolved Who's Here list. This ensures facility employees
-    // receive their configured uniforms in the scene image — not just brought
-    // companions and hospitalized patients.
-    const presentRealChars = (resolvedWhosHereList || []).filter(
-      (p) => p && p.id && !p.isUser && !p.isNpc && !broughtIds.has(p.id)
-    );
-    const charOutfitResults = await Promise.all(
-      [...broughtCharacters, ...presentRealChars].map((c) =>
-        base44.functions.invoke('resolveCharacterOutfitContext', {
-          characterId: c.id,
-          locationCategory: location?.category,
-          locationId: location?.id,
-          ownerEmail: currentUser?.email,
+    const onShiftIds = new Set(workerCharacters.map((w) => w.id));
+    const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
+
+    // Build the full participant list from resolvedWhosHereList + user
+    const allPresentPeople = userParticipant
+      ? [...resolvedWhosHereList, userParticipant]
+      : resolvedWhosHereList;
+
+    // Resolve outfits per person (bound by ID, not name — prevents name-collision drift)
+    const outfitMap = {};
+    await Promise.all(
+      allPresentPeople
+        .filter((p) => p && p.id && !p.isNpc)
+        .map(async (p) => {
+          try {
+            if (p.isUser) {
+              const res = await base44.functions.invoke('resolveUserOutfitContext', {
+                ownerEmail: currentUser?.email,
+                locationCategory: location?.category,
+                locationId: location?.id,
+              });
+              outfitMap[p.id] = res?.data?.text || res?.text || null;
+            } else {
+              const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
+                characterId: p.id,
+                locationCategory: location?.category,
+                locationId: location?.id,
+                ownerEmail: currentUser?.email,
+              });
+              outfitMap[p.id] = res?.data?.text || res?.text || null;
+            }
+          } catch {
+            outfitMap[p.id] = null;
+          }
         })
-          .then((res) => ({ name: c.name, text: res?.data?.text || res?.text || null }))
-          .catch(() => ({ name: c.name, text: null }))
-      )
     );
-    charOutfitResults.forEach((r) => {
-      if (r.text) outfitLines.push(`${r.name} is wearing: ${r.text}`);
-    });
 
-    // User: resolve through resolveUserOutfitContext
-    try {
-      const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
-        ownerEmail: currentUser?.email,
-        locationCategory: location?.category,
-        locationId: location?.id,
+    // Build participant records with identity + role + outfit bound together
+    const participants = allPresentPeople
+      .filter((p) => p && p.id)
+      .map((p) => {
+        const isOnShift = onShiftIds.has(p.id);
+        const isHomeResident = homeResidentIds.has(p.id);
+        const isCheckedInPatient = p.isUser && (
+          settings?.user_medical_status === 'patient' ||
+          settings?.user_checked_in_at === location?.id
+        );
+        return buildParticipantRecord(p, {
+          isOnShift,
+          isHomeResident,
+          isCheckedInPatient,
+          outfitText: outfitMap[p.id] || null,
+          location,
+        });
       });
-      const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
-      if (userOutfitText) {
-        outfitLines.push(`${displayName} is wearing: ${userOutfitText}`);
-      }
-    } catch (e) {
-      // non-blocking — null outfit is a valid preference
-    }
 
-    const outfitSuffix = outfitLines.length > 0
-      ? ` OUTFIT REQUIREMENT — PER-PERSON ASSIGNMENT (NO CROSS-CONTAMINATION): ${outfitLines.join('. ')}. Each outfit is assigned to the named person ONLY. The user wears the user's outfit; each character wears their own outfit. Do NOT swap, blend, or transfer clothing between identities. Do NOT use avatar/reference photo clothing. Reproduce each exact outfit on its assigned person.`
-      : '';
+    // Per-person bound block: identity → role → outfit (replaces separate suffixes)
+    const participantBoundBlock = buildParticipantBoundBlock(participants);
 
-    // ── USER ROLE CONTEXT ──────────────────────────────────────────────────
-    // Resolve the user's authoritative role at this facility from existing state,
-    // NOT from the location alone. The user's clothing is already resolved by
-    // resolveUserOutfitContext (in outfitLines above) — this suffix only prevents
-    // the image model from inferring patient/inmate status from the facility type.
-    //
-    // Role resolution:
-    //   medical + user checked in as patient  → patient (patient clothing via outfit resolver)
-    //   medical + not checked in              → visitor (normal clothing via outfit resolver)
-    //   jail/prison                           → visitor (user is never an inmate)
-    //   non-facility                          → no role suffix needed
-    //
-    // No dedicated user patient-status field exists on UserSettings yet. The
-    // resolver below checks the user's existing authoritative state and defaults
-    // to visitor. When a patient-status field is added to UserSettings, this
-    // resolver will respect it automatically — no changes needed here.
-    const userRoleSuffix = (() => {
-      if (!location || !userParticipant) return '';
-      const locCat = (location.category || '').toLowerCase();
-      const isMedical = locCat === 'medical';
-      const isConfinement = locCat === 'jail_prison' || location.is_confinement_facility === true;
-      if (!isMedical && !isConfinement) return '';
-
-      // Resolve patient state from existing authoritative UserSettings fields.
-      // Currently no dedicated check-in/patient field exists → always false.
-      const isCheckedInPatient = isMedical && (
-        settings?.user_medical_status === 'patient' ||
-        settings?.user_checked_in_at === location.id
-      );
-
-      if (isCheckedInPatient) {
-        return ` ROLE: ${displayName} is a PATIENT at this hospital (checked in). ${displayName} wears patient clothing as specified in the outfit above.`;
-      }
-
-      const facilityLabel = isMedical ? 'hospital' : 'correctional facility';
-      return ` ROLE: ${displayName} is a VISITOR at this ${facilityLabel}, NOT a patient, NOT an inmate. ${displayName} wears only the outfit specified above — do NOT infer a hospital gown, patient clothing, inmate clothing, or facility uniform from the location.`;
-    })();
+    // Legacy compat: outfitSuffix and userRoleSuffix are now empty — the participant
+    // bound block carries all per-person info. Kept as empty strings so downstream
+    // prompt branches that reference them don't break.
+    const outfitSuffix = '';
+    const userRoleSuffix = '';
 
     // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
     // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
@@ -1103,31 +1111,27 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
-            finalPrompt += buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
           }
+          // PARTICIPANT BINDING: identity → role → outfit bound per person for the
+          // people actually in this image (filtered from the authoritative participants)
+          const actionParticipants = participants.filter((p) =>
+            physicallyPresent.some((pp) => pp.id === p.id)
+          );
+          finalPrompt += buildParticipantBoundBlock(actionParticipants);
         }
       }
       if (authoratativeEnvRefs.length > 0) {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
-      // AVATAR IDENTITY LOCK: enforce full identity matching for all visible people
-      if (visiblePeopleForScene.length > 0) {
-        finalPrompt += buildAvatarIdentityEnforcementBlock(visiblePeopleForScene);
-      }
-      // USER IDENTITY: full appearance lock (face/body) — keeps the user's identity intact
-      if (userAppearanceBlock) {
-        finalPrompt += userAppearanceBlock;
-      }
-      // USER ROLE: explicit visitor role at medical/jail facilities
-      if (userRoleSuffix) {
-        finalPrompt += userRoleSuffix;
-      }
       // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
       finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
       try {
-        // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-        const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-        console.log('[Scene action] Passing visual references:', actionVisualRefs);
+        // ORDERED REFERENCE IMAGES: avatars in participant order, then environment
+        const actionParticipants = participants.filter((p) =>
+          visiblePeopleForScene.some((v) => v.id === p.id)
+        );
+        const actionVisualRefs = buildOrderedReferenceImages(actionParticipants, envRefs);
+        console.log('[Scene action] Passing visual references:', actionVisualRefs.length, 'for participants:', actionParticipants.map((c) => c.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
           existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined
@@ -1187,8 +1191,6 @@ export default function Scene() {
 
       const visibleNames = residentialPeople.map((c) => c.name);
 
-      const identityLockBlock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser, settings?.user_gender);
-
       const strictPeopleRule = visibleNames.length > 0 ?
       `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
       `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
@@ -1197,30 +1199,24 @@ export default function Scene() {
       " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
       "";
 
-      // IDENTITY LOCK ENFORCEMENT: Each character's avatar is the sole visual source of truth
-      const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(residentialPeople);
-
       // Build the residential constraint using the correct people list
       const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
 
-      // Extract avatar URLs DIRECTLY from resolved people (allPossibleNpcs matched)
-      const residentAvatarUrls = residentialPeople.
-      map((c) => c.avatar_url || c.image_avatar_url).
-      filter((url) => url && url.trim().length > 0);
+      // PARTICIPANT BINDING: identity → role → outfit bound per person for residential people
+      const residentialParticipants = participants.filter((p) =>
+        residentialPeople.some((rp) => rp.id === p.id)
+      );
+      const residentialBoundBlock = buildParticipantBoundBlock(residentialParticipants);
 
-      console.log('[Scene] Avatar URLs from allPossibleNpcs source:', residentAvatarUrls);
+      // ORDERED REFERENCE IMAGES: avatars in participant order, then environment
+      const residentialVisualRefs = buildOrderedReferenceImages(residentialParticipants, envRefs);
 
-      // Build final visual refs: avatar images FIRST (identity authority), then environment
-      const residentialVisualRefs = [
-      ...residentAvatarUrls,
-      ...envRefs.filter((u) => !residentAvatarUrls.includes(u))];
+      console.log('[Scene residential] Avatar refs:', residentialVisualRefs.length, '| people:', residentialParticipants.map((p) => p.name).join(', ') || 'none');
 
-
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialBoundBlock}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
-        console.log('[Scene residential] Avatar refs:', residentialVisualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
           existing_image_urls: residentialVisualRefs.length > 0 ? residentialVisualRefs : undefined
@@ -1246,16 +1242,18 @@ export default function Scene() {
         nonResidentialParticipants = globalPeople;
         const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        const charIdentityLocks = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser, settings?.user_gender);
-        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(globalPeople);
+        // PARTICIPANT BINDING: identity → role → outfit bound per person
+        const globalParticipants = participants.filter((p) =>
+          globalPeople.some((gp) => gp.id === p.id)
+        );
+        const globalBoundBlock = buildParticipantBoundBlock(globalParticipants);
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${globalBoundBlock}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         // Include on-shift workerCharacters in the scene image so facility
-        // employees appear with their resolved uniforms (from the outfit
-        // resolution above). Without this, the prompt names only brought
-        // companions and selected NPCs — the model generates generic unnamed
-        // facility personnel without the configured employee uniform.
+        // employees appear with their resolved uniforms. The participant bound
+        // block carries each worker's role + outfit so the model knows they are
+        // employees wearing the configured uniform — not generic patrons.
         const physicallyPresent = [
         ...broughtCharacters,
         ...workerCharacters.filter((w) => !broughtCharacters.find((b) => b.id === w.id)),
@@ -1269,24 +1267,25 @@ export default function Scene() {
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
         `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
 
-        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
-        const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        // PARTICIPANT BINDING: identity → role → outfit bound per person
+        const nonResParticipants = participants.filter((p) =>
+          physicallyPresent.some((pp) => pp.id === p.id)
+        );
+        const nonResBoundBlock = buildParticipantBoundBlock(nonResParticipants);
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${nonResBoundBlock}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 
     try {
-      // AVATAR IDENTITY LOCK: Build the reference stack from the SAME participants
-      // the prompt names (nonResidentialParticipants), NOT the broader
-      // visiblePeopleForScene. Sending avatars of unnamed people as face references
-      // lets the model blend extra faces into the named participants — the user
-      // becomes a generic substitute wearing the correct outfit. Env images stay
-      // environment-only (excluded if they match a participant avatar URL).
-      const participantAvatarUrls = nonResidentialParticipants
-        .map((c) => c.avatar_url || c.image_avatar_url)
-        .filter((u) => u && u.trim().length > 0);
-      const finalVisualRefs = [...participantAvatarUrls, ...envRefs.filter((u) => !participantAvatarUrls.includes(u))];
-      console.log('[Scene main] Passing visual references:', finalVisualRefs.length, 'for participants:', nonResidentialParticipants.map((c) => c.name).join(', ') || 'none');
+      // ORDERED REFERENCE IMAGES: Build the reference stack from the SAME participants
+      // the prompt names (nonResidentialParticipants). Avatars are ordered to match
+      // participant position in the bound block, so the model can associate each
+      // reference image with the correct person. Env images stay environment-only.
+      const nonResParticipantsForRefs = participants.filter((p) =>
+        nonResidentialParticipants.some((np) => np.id === p.id)
+      );
+      const finalVisualRefs = buildOrderedReferenceImages(nonResParticipantsForRefs, envRefs);
+      console.log('[Scene main] Passing visual references:', finalVisualRefs.length, 'for participants:', nonResParticipantsForRefs.map((c) => c.name).join(', ') || 'none');
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
         existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined
