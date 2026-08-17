@@ -55,6 +55,7 @@ import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
+import { buildSealedSubjectBundles } from "@/lib/sceneSubjectBundle";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -77,11 +78,25 @@ function buildParticipantReferenceKey(participants, envRefs) {
   const ranges = [];
   for (const p of (participants || [])) {
     if (!p || !p.name) continue;
+    const personRefs = [];
     const avatar = p.avatar_url || p.image_avatar_url;
     if (avatar && avatar.trim().length > 0 && !visualRefs.includes(avatar)) {
+      personRefs.push(avatar);
+    }
+    // Include up to 1 extra reference_image_url per participant for a stronger
+    // identity lock — the same established manner generateImageAsync uses
+    // (multiple reference photos per subject, not just a single avatar).
+    const refUrls = (p.reference_image_urls || []).filter(u =>
+      u && u.trim().length > 0 && !u.includes('generated_image') && !visualRefs.includes(u) && !personRefs.includes(u)
+    );
+    for (const url of refUrls.slice(0, 1)) {
+      personRefs.push(url);
+    }
+    if (personRefs.length > 0) {
       const start = visualRefs.length + 1;
-      visualRefs.push(avatar);
-      ranges.push({ name: p.name, start, end: start });
+      for (const url of personRefs) visualRefs.push(url);
+      const end = visualRefs.length;
+      ranges.push({ name: p.name, start, end });
     } else {
       ranges.push({ name: p.name, start: null, end: null });
     }
@@ -93,26 +108,7 @@ function buildParticipantReferenceKey(participants, envRefs) {
     }
   }
   const envEnd = visualRefs.length;
-  const lines = [
-    '[PARTICIPANT REFERENCE KEY — IMAGE INDEX TO IDENTITY]',
-    'Each named participant maps to exactly one image index range below.',
-    "Use ONLY that participant's reference image for their face identity.",
-    "Do NOT apply one participant's reference image to any other participant.",
-    ''
-  ];
-  for (const r of ranges) {
-    if (r.start !== null) {
-      lines.push(`Image ${r.start} → "${r.name}" — face identity reference. Use ONLY for this person's face, skin, hair, body.`);
-    } else {
-      lines.push(`(no image) → "${r.name}" — no reference image. Render from appearance description only.`);
-    }
-  }
-  if (envEnd >= envStart) {
-    const envRange = envStart === envEnd ? `Image ${envStart}` : `Images ${envStart}–${envEnd}`;
-    lines.push(`${envRange} → ENVIRONMENT spatial data only. NOT face identity. Use for room/layout/furniture only.`);
-  }
-  lines.push('[END PARTICIPANT REFERENCE KEY]');
-  return { visualRefs, referenceKeyBlock: `\n${lines.join('\n')}\n` };
+  return { visualRefs, ranges, envStart, envEnd };
 }
 
 // ── INLINE PER-PERSON BINDING ──────────────────────────────────────────────
@@ -216,7 +212,9 @@ export default function Scene() {
       name: displayName,
       avatar_url: userAvatar,
       image_avatar_url: userAvatar,
+      reference_image_urls: currentUser?.reference_image_urls || [],
       appearance_lock: settings?.appearance_lock || null,
+      user_race: settings?.user_race || null,
       gender: settings?.user_gender || currentUser?.gender || null,
       isUser: true,
     };
@@ -1158,11 +1156,6 @@ export default function Scene() {
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, actionPhysicallyPresent);
           }
-          // BIND: existing identity lock + existing avatar enforcement + per-person outfit/role
-          finalPrompt += buildIdentityLockBlock(actionPhysicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
-          finalPrompt += buildAvatarIdentityEnforcementBlock(actionPhysicallyPresent);
-          const outfitRoleBinding = buildOutfitRoleBinding(actionPhysicallyPresent, outfitMap, onShiftIds, homeResidentIds, location);
-          if (outfitRoleBinding) finalPrompt += ` ${outfitRoleBinding}.`;
         }
       }
       if (authoratativeEnvRefs.length > 0) {
@@ -1170,9 +1163,11 @@ export default function Scene() {
       }
       // SLEEP STATE: depict sleeping characters as asleep (observational rendering)
       finalPrompt += buildSleepDescriptor(visiblePeopleForScene);
-      // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+      // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
       const actionRefKey = buildParticipantReferenceKey(actionPhysicallyPresent, envRefs);
-      finalPrompt += actionRefKey.referenceKeyBlock;
+      if (actionPhysicallyPresent.length > 0) {
+        finalPrompt += buildSealedSubjectBundles(actionPhysicallyPresent, actionRefKey, outfitMap, onShiftIds, homeResidentIds, location);
+      }
       try {
         console.log('[Scene action] Passing visual references:', actionRefKey.visualRefs.length, 'for participants:', actionPhysicallyPresent.map((c) => c.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
@@ -1245,18 +1240,13 @@ export default function Scene() {
       // Build the residential constraint using the correct people list
       const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
 
-      // BIND: existing identity lock + existing avatar enforcement + per-person outfit/role
-      const residentialIdentityLock = buildIdentityLockBlock(residentialPeople, userParticipant ? null : currentUser, settings?.user_gender);
-      const residentialAvatarEnforcement = buildAvatarIdentityEnforcementBlock(residentialPeople);
-      const residentialOutfitRole = buildOutfitRoleBinding(residentialPeople, outfitMap, onShiftIds, homeResidentIds, location);
-      const residentialBoundBlock = `${residentialIdentityLock}${residentialAvatarEnforcement}${residentialOutfitRole ? ` ${residentialOutfitRole}.` : ''}`;
-
-      // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+      // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
       const residentialRefKey = buildParticipantReferenceKey(residentialPeople, envRefs);
+      const residentialSealedBundles = buildSealedSubjectBundles(residentialPeople, residentialRefKey, outfitMap, onShiftIds, homeResidentIds, location);
 
       console.log('[Scene residential] Avatar refs:', residentialRefKey.visualRefs.length, '| people:', residentialPeople.map((p) => p.name).join(', ') || 'none');
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialBoundBlock}${residentialRefKey.referenceKeyBlock}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${residentialSealedBundles}${buildSleepDescriptor(residentialPeople)} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
@@ -1286,16 +1276,12 @@ export default function Scene() {
         nonResidentialParticipants = globalPeople;
         const charNames = globalPeople.map((c) => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        // BIND: existing identity lock + existing avatar enforcement + per-person outfit/role
-        const globalIdentityLock = buildIdentityLockBlock(globalPeople, userParticipant ? null : currentUser, settings?.user_gender);
-        const globalAvatarEnforcement = buildAvatarIdentityEnforcementBlock(globalPeople);
-        const globalOutfitRole = buildOutfitRoleBinding(globalPeople, outfitMap, onShiftIds, homeResidentIds, location);
-        const globalBoundBlock = `${globalIdentityLock}${globalAvatarEnforcement}${userAppearanceBlock}${globalOutfitRole ? ` ${globalOutfitRole}.` : ''}`;
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+        // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
         const globalRefKey = buildParticipantReferenceKey(globalPeople, envRefs);
         nonResVisualRefs = globalRefKey.visualRefs;
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${globalBoundBlock}${globalRefKey.referenceKeyBlock}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
+        const globalSealedBundles = buildSealedSubjectBundles(globalPeople, globalRefKey, outfitMap, onShiftIds, homeResidentIds, location);
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${globalSealedBundles}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
         // Include on-shift workerCharacters in the scene image so facility
         // employees appear with their resolved uniforms. The per-person binding
@@ -1314,15 +1300,11 @@ export default function Scene() {
         `Only these specific people are present: ${physicallyPresent.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
         `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
 
-        // BIND: existing identity lock + existing avatar enforcement + per-person outfit/role
-        const nonResIdentityLock = buildIdentityLockBlock(physicallyPresent, userParticipant ? null : currentUser, settings?.user_gender);
-        const nonResAvatarEnforcement = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        const nonResOutfitRole = buildOutfitRoleBinding(physicallyPresent, outfitMap, onShiftIds, homeResidentIds, location);
-        const nonResBoundBlock = `${nonResIdentityLock}${nonResAvatarEnforcement}${userAppearanceBlock}${nonResOutfitRole ? ` ${nonResOutfitRole}.` : ''}`;
-        // PARTICIPANT REFERENCE KEY: explicit image-index-to-participant mapping
+        // SEALED SUBJECT BUNDLES: per-subject identity/ref/appearance/outfit + cross-assignment prohibition
         const nonResRefKey = buildParticipantReferenceKey(physicallyPresent, envRefs);
         nonResVisualRefs = nonResRefKey.visualRefs;
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${nonResBoundBlock}${nonResRefKey.referenceKeyBlock}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
+        const nonResSealedBundles = buildSealedSubjectBundles(physicallyPresent, nonResRefKey, outfitMap, onShiftIds, homeResidentIds, location);
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${userAppearanceBlock}${nonResSealedBundles}${buildSleepDescriptor(physicallyPresent)} Photorealistic.`;
       }
     }
 

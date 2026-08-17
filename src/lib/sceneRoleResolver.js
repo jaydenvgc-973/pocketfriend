@@ -72,5 +72,16 @@ export function isEmployedAtLocation(character, location) {
   // Additional occupation locations
   if (character.additional_occupation_locations?.some(a => a.location_id === location.id)) return true;
 
+  // Location record lists this character as a worker here.
+  // This is the same employment signal Who's Here already recognizes via
+  // worker_character_ids. Without this check, a character employed via
+  // worker_character_ids (but without occupation_location_id or worker_shifts
+  // on their own record) is lost to image-generation role classification and
+  // falls through to visitor — even when Who's Here shows them as staff.
+  // worker_character_ids establishes employment at this location; it does NOT
+  // establish that the character is currently on shift. On-shift determination
+  // still requires isCharacterAtWork (the existing authoritative check).
+  if (location.worker_character_ids?.includes(character.id)) return true;
+
   return false;
 }
