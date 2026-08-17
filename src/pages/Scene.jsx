@@ -1014,17 +1014,41 @@ export default function Scene() {
       : '';
 
     // ── USER ROLE CONTEXT ──────────────────────────────────────────────────
-    // Explicitly state the user's role at medical/jail facilities to prevent the
-    // image model from inferring patient/inmate status from the location alone.
-    // The user is a VISITOR unless they've explicitly checked in (Check In action).
-    // Location or zone alone must never convert the user into a patient or inmate.
+    // Resolve the user's authoritative role at this facility from existing state,
+    // NOT from the location alone. The user's clothing is already resolved by
+    // resolveUserOutfitContext (in outfitLines above) — this suffix only prevents
+    // the image model from inferring patient/inmate status from the facility type.
+    //
+    // Role resolution:
+    //   medical + user checked in as patient  → patient (patient clothing via outfit resolver)
+    //   medical + not checked in              → visitor (normal clothing via outfit resolver)
+    //   jail/prison                           → visitor (user is never an inmate)
+    //   non-facility                          → no role suffix needed
+    //
+    // No dedicated user patient-status field exists on UserSettings yet. The
+    // resolver below checks the user's existing authoritative state and defaults
+    // to visitor. When a patient-status field is added to UserSettings, this
+    // resolver will respect it automatically — no changes needed here.
     const userRoleSuffix = (() => {
       if (!location || !userParticipant) return '';
       const locCat = (location.category || '').toLowerCase();
-      const isFacility = locCat === 'medical' || locCat === 'jail_prison' || location.is_confinement_facility === true;
-      if (!isFacility) return '';
-      const facilityLabel = locCat === 'medical' ? 'hospital' : 'correctional facility';
-      return ` ROLE: ${displayName} is a VISITOR at this ${facilityLabel}, NOT a patient, NOT an inmate. ${displayName} wears normal visitor clothing — NOT a hospital gown, NOT patient clothing, NOT inmate clothing, NOT a facility uniform.`;
+      const isMedical = locCat === 'medical';
+      const isConfinement = locCat === 'jail_prison' || location.is_confinement_facility === true;
+      if (!isMedical && !isConfinement) return '';
+
+      // Resolve patient state from existing authoritative UserSettings fields.
+      // Currently no dedicated check-in/patient field exists → always false.
+      const isCheckedInPatient = isMedical && (
+        settings?.user_medical_status === 'patient' ||
+        settings?.user_checked_in_at === location.id
+      );
+
+      if (isCheckedInPatient) {
+        return ` ROLE: ${displayName} is a PATIENT at this hospital (checked in). ${displayName} wears patient clothing as specified in the outfit above.`;
+      }
+
+      const facilityLabel = isMedical ? 'hospital' : 'correctional facility';
+      return ` ROLE: ${displayName} is a VISITOR at this ${facilityLabel}, NOT a patient, NOT an inmate. ${displayName} wears only the outfit specified above — do NOT infer a hospital gown, patient clothing, inmate clothing, or facility uniform from the location.`;
     })();
 
     // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──

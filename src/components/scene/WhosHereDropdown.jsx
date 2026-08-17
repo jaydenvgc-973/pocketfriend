@@ -31,37 +31,53 @@ export default function WhosHereDropdown({
   onInviteClick = () => {},
   renderNpc = null,
 }) {
-  // Get real characters currently present at this location from unified resolver
-  // PLUS any allPossibleNpcs entries with npcType 'present' (e.g., invite-arrived
-  // characters from extraNpcs) that haven't synced into the unified resolver yet.
-  // This closes the gap where an invited character arrives (narrative + presence
-  // strip recognize them) but the Who's Here "Here Now" section doesn't list them
-  // because it only read from unifiedPresenceEntities.
+  // Real characters currently present at this location — from the unified
+  // presence resolver ONLY. This is the same authoritative source the Travel
+  // page map + popup consume. No frontend fallback or second presence truth.
+  // An invited character who has actually arrives propagates here through:
+  //   inviteCharacterToLocation → resolved_current_location_id →
+  //   resolveCharacterLocation (invited_to_scene guard) →
+  //   resolveTravelPresenceEntities → getPresenceAtLocation.
+  //
+  // Role classification uses the existing authoritative resolved_presence_status
+  // from the presence resolver — NOT a new role resolver. On-shift employees
+  // (already in allPossibleNpcs as npcType 'staff') are excluded from Here Now
+  // so they appear only under their employee section, not as ordinary visitors.
   const presentRealCharacters = useMemo(() => {
     if (!location) return [];
     const presenceHere = getPresenceAtLocation(location, unifiedPresenceEntities);
-
-    const fromResolver = presenceHere.map(entity => ({
-      id: entity.id,
-      name: entity.display_name,
-      avatar_url: entity.avatar_url,
-      role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
-      isNpc: false,
-      npcType: 'present',
-      personality_summary: entity.personality_summary,
-      emotional_state: entity.emotional_state,
-    }));
-
-    // Merge in allPossibleNpcs entries with npcType 'present' that aren't already
-    // in the unified resolver result. These are characters who arrived via
-    // invitation (extraNpcs) and appear in allPossibleNpcs but not yet in
-    // unifiedPresenceEntities (which refreshes on query invalidation).
-    const fromAllPossible = allPossibleNpcs.filter(
-      n => n.npcType === 'present' && !fromResolver.find(r => r.id === n.id)
+    // Exclude on-shift employees (already classified as staff in allPossibleNpcs)
+    // so they appear under the employee section, not the visitor/Here Now section.
+    const staffIds = new Set(
+      allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff').map(n => n.id)
     );
-
-    return [...fromResolver, ...fromAllPossible];
+    return presenceHere
+      .filter(entity => !staffIds.has(entity.id))
+      .map(entity => ({
+        id: entity.id,
+        name: entity.display_name,
+        avatar_url: entity.avatar_url,
+        role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
+        isNpc: false,
+        npcType: 'present',
+        resolved_presence_status: entity.resolved_presence_status,
+        personality_summary: entity.personality_summary,
+        emotional_state: entity.emotional_state,
+      }));
   }, [location, unifiedPresenceEntities, allPossibleNpcs]);
+
+  // Classify present real characters by authoritative resolved_presence_status:
+  // hospitalized → patients, incarcerated/confined/house_arrest → inmates,
+  // everyone else → ordinary visitors (Here Now).
+  const patientChars = presentRealCharacters.filter(
+    c => c.resolved_presence_status === 'hospitalized'
+  );
+  const inmateChars = presentRealCharacters.filter(
+    c => ['incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)
+  );
+  const visitorChars = presentRealCharacters.filter(
+    c => !['hospitalized', 'incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)
+  );
 
   // Separate allPossibleNpcs into categories
   const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType !== 'present');
@@ -115,13 +131,33 @@ export default function WhosHereDropdown({
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
-              {/* SECTION 1: Real characters PRESENT at this location (from unified resolver) */}
-              {presentRealCharacters.length > 0 && (
+              {/* SECTION 1a: Patients — hospitalized characters present (authoritative resolved_presence_status) */}
+              {patientChars.length > 0 && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50">
+                    <p className="text-[9px] font-semibold text-rose-400/80 uppercase tracking-wider">Patients</p>
+                  </div>
+                  {patientChars.map(renderNpcWrapper)}
+                </>
+              )}
+
+              {/* SECTION 1b: Inmates — incarcerated/confined characters present (authoritative resolved_presence_status) */}
+              {inmateChars.length > 0 && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                    <p className="text-[9px] font-semibold text-amber-400/80 uppercase tracking-wider">Inmates</p>
+                  </div>
+                  {inmateChars.map(renderNpcWrapper)}
+                </>
+              )}
+
+              {/* SECTION 1c: Ordinary visitors present (from unified resolver, excluding staff/patients/inmates) */}
+              {visitorChars.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
                     <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Here Now</p>
                   </div>
-                  {presentRealCharacters.map(renderNpcWrapper)}
+                  {visitorChars.map(renderNpcWrapper)}
                 </>
               )}
 
