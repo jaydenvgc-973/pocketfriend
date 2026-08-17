@@ -112,32 +112,6 @@ function buildParticipantReferenceKey(participants, envRefs) {
   return { visualRefs, ranges, envStart, envEnd };
 }
 
-// ── INLINE PER-PERSON BINDING ──────────────────────────────────────────────
-// Binds existing identity + existing authoritative role + existing resolved outfit
-// for each person at the point they are assembled into the image prompt. This is
-// NOT a new participant authority — it assembles already-resolved values (from
-// buildIdentityLockBlock, resolveCharacterOutfitContext/resolveUserOutfitContext,
-// and authoritative resolved_presence_status / isCharacterAtWork) into a single
-// per-person block so they cannot drift apart during generation.
-function buildOutfitRoleBinding(people, outfitMap, onShiftIds, homeResidentIds, location) {
-  return people
-    .filter((p) => p && p.name)
-    .map((p) => {
-      // SHARED CLASSIFIER: same priority as Who's Here dropdown.
-      // Hospitalization/incarceration override employment. Employment requires
-      // being on-shift at THIS location, not merely having a work schedule.
-      const role = p.isUser ? 'visitor' : resolveSceneRole(p, { onShiftAtLocationIds: onShiftIds, homeResidentIds });
-      const outfit = outfitMap[p.id];
-      const parts = [];
-      if (role) parts.push(`role: ${role}`);
-      if (outfit) parts.push(`wearing: ${outfit}`);
-      if (parts.length === 0) return null;
-      return `${p.name} — ${parts.join(', ')}`;
-    })
-    .filter(Boolean)
-    .join('. ');
-}
-
 export default function Scene() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1118,9 +1092,8 @@ export default function Scene() {
     if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
 
-    // CRITICAL: Use resolvedWhosHereList directly — no re-resolution, no duplication
-    // Log validation before proceeding
-    const avatarCheckList = resolvedWhosHereList.map((p) => ({
+    // Log validation — sceneParticipants is the single completed participant collection
+    const avatarCheckList = sceneParticipants.map((p) => ({
       name: p.name,
       id: p.id,
       avatar_url: p.avatar_url,
@@ -1129,8 +1102,8 @@ export default function Scene() {
     }));
     console.log(
       `[Scene generateSceneImage] VALIDATION:`,
-      `who's here count: ${resolvedWhosHereList.length} |`,
-      `avatars present: ${resolvedWhosHereList.filter((p) => p.avatar_url || p.image_avatar_url).length} |`,
+      `participants count: ${sceneParticipants.length} |`,
+      `avatars present: ${sceneParticipants.filter((p) => p.avatar_url || p.image_avatar_url).length} |`,
       'avatars:', avatarCheckList
     );
 
@@ -1835,8 +1808,6 @@ Return JSON:
         <div ref={npcDropdownRef}>
           <WhosHereDropdown
             allPossibleNpcs={allPossibleNpcs}
-            unifiedPresenceEntities={unifiedPresenceEntities}
-            location={location}
             selectedNpcs={selectedNpcs}
             onToggleNpc={toggleNpc}
             showDropdown={showNpcDropdown}
