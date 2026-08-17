@@ -892,11 +892,11 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     }
     // ONE TRUTH SAFEGUARD: Hospitalization requires an actual medical facility.
     // A character cannot be "hospitalized" at their home — that is an invalid
-    // state (resolved_presence_status='hospitalized' but resolved_current_location_id
-    // is home, resolved_location_type is not 'medical'). If no medical-category
-    // location exists in the owner's location map, REJECT the transition rather
-    // than committing an invalid hospitalized-at-home state. The caller must
-    // create a medical-category location before hospitalization can proceed.
+    // state. The hospital is resolved from the location map, which includes the
+    // account's own medical-category locations PLUS admin-shared medical
+    // locations (scope: 'shared') as a fallback when the account owns none. If
+    // no medical-category location exists in either set, REJECT the transition
+    // rather than committing an invalid hospitalized-at-home state.
     if (!hospitalLocId) {
       return {
         disposition: 'rejected',
@@ -1451,6 +1451,38 @@ Deno.serve(async (req) => {
     } catch (_) { /* proceed with empty map — resolver handles gracefully */ }
     const locationMap = {};
     for (const loc of locations) locationMap[loc.id] = loc;
+
+    // ── ADMIN-SHARED MEDICAL LOCATIONS (hospitalization fallback) ──────────────
+    // Admin-shared medical-category locations (scope: 'shared', created_by_role:
+    // 'admin') are eligible hospitalization destinations — same shared-location
+    // access pattern as fetchAllLocationsForUser Query 2. When the account has no
+    // own medical-category location, load admin-shared medical locations so the
+    // hospitalization handler can fall back to an admin-shared hospital. Own
+    // locations take priority (loaded first; the hospitalization category scan
+    // finds them first by insertion order).
+    //
+    // ACCOUNT ISOLATION PRESERVED: Shared locations are NOT Gathering Rooms. A
+    // character hospitalized at a shared hospital gets permission to USE the
+    // place — not access to characters from other accounts. Co-presence
+    // resolution (buildCanonicalCharacterContext) remains owner-scoped
+    // (Character.filter({ owner_email })), so a character at a shared hospital
+    // never discovers characters from other accounts. Shared location =
+    // permission to use the place, not permission to share characters.
+    const hasOwnMedical = Object.values(locationMap).some(l => (l.category || '').toLowerCase() === 'medical');
+    if (!hasOwnMedical) {
+      try {
+        const sharedLocs = await base44.asServiceRole.entities.LocationReference.filter(
+          { scope: 'shared', created_by_role: 'admin' },
+          '-created_date',
+          100
+        );
+        for (const loc of sharedLocs) {
+          if ((loc.category || '').toLowerCase() === 'medical' && !locationMap[loc.id]) {
+            locationMap[loc.id] = loc;
+          }
+        }
+      } catch (_) { /* non-blocking — hospitalization will reject if no medical found */ }
+    }
 
     // ── EASTERN TIME ───────────────────────────────────────────────────────────
     const etTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
