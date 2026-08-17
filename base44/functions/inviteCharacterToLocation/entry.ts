@@ -129,24 +129,47 @@ Rules:
     const delayMinutes = result?.delay_minutes || 0;
     const responseText = result?.response_text || `${name} doesn't respond.`;
 
-    // If they're coming, update their location
+    // If they're coming, update their AUTHORITATIVE resolved location fields.
+    // The presence resolver (resolveTravelPresenceEntities → resolveCharacterLocation)
+    // reads resolved_current_location_id — NOT current_location_id. Updating only
+    // current_location_id left arrived characters invisible to the shared presence
+    // pathway (Who's Here, Travel map, Home page). This fixes the systemic break:
+    // arrived character → authoritative presence → Who's Here roster.
+    const nowISO = new Date().toISOString();
     if ((decision === 'coming_now' || decision === 'coming_later') && invitee?.id) {
       if (decision === 'coming_now') {
         await base44.asServiceRole.entities.Character.update(invitee.id, {
           current_location_id: locationId,
           current_activity: `at ${locationName}`,
+          // AUTHORITATIVE resolved fields — the same fields Scene.jsx sets on travel
+          resolved_current_location_id: locationId,
+          resolved_current_location_name: locationName,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'invited_to_scene',
+          resolved_last_updated_at: nowISO,
+          travel_status: 'not_traveling',
+          travel_destination_location_id: null,
         }).catch(() => {});
       }
-      // For coming_later: location update happens after delay — simplified: update now but note they're on their way
+      // For coming_later: location update happens after delay
       if (decision === 'coming_later') {
         await base44.asServiceRole.entities.Character.update(invitee.id, {
           current_activity: `heading to ${locationName}`,
         }).catch(() => {});
-        // Schedule location update after delay
+        // Schedule authoritative location update after delay
         setTimeout(async () => {
           await base44.asServiceRole.entities.Character.update(invitee.id, {
             current_location_id: locationId,
             current_activity: `at ${locationName}`,
+            resolved_current_location_id: locationId,
+            resolved_current_location_name: locationName,
+            resolved_location_type: 'visit',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'invited_to_scene',
+            resolved_last_updated_at: new Date().toISOString(),
+            travel_status: 'not_traveling',
+            travel_destination_location_id: null,
           }).catch(() => {});
         }, delayMinutes * 60 * 1000);
       }

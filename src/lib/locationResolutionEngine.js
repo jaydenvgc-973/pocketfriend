@@ -137,6 +137,30 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // INVITED-TO-SCENE GUARD: When a character accepts an invitation and arrives
+  // at a scene (inviteCharacterToLocation sets resolved_source_reason =
+  // 'invited_to_scene'), the work/school/home layers below must NOT override
+  // that committed location. The LLM in inviteCharacterToLocation already
+  // evaluated the character's work/sleep state before deciding "coming_now" —
+  // the decision to leave work or come from home was made there. This guard
+  // ensures the arrived character propagates through the shared presence
+  // pathway (resolveTravelPresenceEntities → getPresenceAtLocation →
+  // Who's Here roster) on ALL accounts, identically. The guard is naturally
+  // cleared when another system (user travel, sleep, work schedule) updates
+  // the character's resolved_source_reason to something else.
+  if (character.resolved_source_reason === 'invited_to_scene' &&
+      character.resolved_presence_status === 'visiting' &&
+      character.resolved_current_location_id) {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: character.resolved_current_location_name || 'Scene',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: 'visiting',
+      resolved_source_reason: 'invited_to_scene',
+      resolved_zone: null,
+    };
+  }
+
   // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
   // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
   // This is the ONLY gate between Presence Truth and Schedule Truth.

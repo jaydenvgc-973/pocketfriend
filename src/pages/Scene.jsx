@@ -1227,8 +1227,14 @@ export default function Scene() {
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${userAppearanceBlock}${outfitSuffix}${userRoleSuffix}${_diversityDirective}${buildSleepDescriptor(globalPeople)} Photorealistic.`;
       } else {
+        // Include on-shift workerCharacters in the scene image so facility
+        // employees appear with their resolved uniforms (from the outfit
+        // resolution above). Without this, the prompt names only brought
+        // companions and selected NPCs — the model generates generic unnamed
+        // facility personnel without the configured employee uniform.
         const physicallyPresent = [
         ...broughtCharacters,
+        ...workerCharacters.filter((w) => !broughtCharacters.find((b) => b.id === w.id)),
         ...(selectedNpcIds ? selectedNpcs : []),
         ...(userParticipant ? [userParticipant] : [])].
         filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).slice(0, 4); // cap at 4 (includes user)
