@@ -8,11 +8,11 @@
  * count + exactly-once constraint are appended.
  *
  * Pure prompt-text builder — no DB queries, no persistence, no side effects.
- * Reads already-resolved values from the caller:
+ * Reads already-resolved values from the completed participant:
  *   - person records (appearance_lock, ethnicities, gender, resolved_presence_status)
  *   - ref ranges (from buildParticipantReferenceKey in Scene.jsx)
- *   - outfit text (from outfitMap, resolved by existing backend authorities)
- *   - role (from resolveSceneRole in sceneRoleResolver.js)
+ *   - outfit text (from p.resolvedOutfit, resolved by existing backend authorities)
+ *   - role (from p.sceneRole, resolved once at the Scene participant level)
  *
  * The intended result: one isolated identity bundle per named participant.
  * participant → own reference range → own stored appearance → own role → own outfit.
@@ -116,11 +116,8 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
 /**
  * Build the full sealed-subject-bundles block for a Scene image prompt.
  *
- * @param {Array} people            - Named participants (Character records + userParticipant)
+ * @param {Array} people            - Completed participants (each carries sceneRole + resolvedOutfit)
  * @param {Object} refKey           - { ranges, envStart, envEnd } from buildParticipantReferenceKey
- * @param {Object} outfitMap        - { [personId]: outfitText } resolved by existing backend
- * @param {Set}   onShiftIds        - IDs of characters employed + on-shift at THIS location
- * @param {Set}   homeResidentIds   - IDs of characters who are home residents here
  * @param {Object} location         - Current location record (unused directly, passed for parity)
  * @returns {string} Prompt text block with sealed bundles + global prohibition + subject count
  */
