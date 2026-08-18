@@ -1448,93 +1448,86 @@ Deno.serve(async (req) => {
       count: recentMessages.length,
     });
 
-    // ── CHARACTER-INITIATED RESEARCH — shared character execution path ──────────
-    // Research initiation belongs to the CHARACTER, not to any UI surface.
-    // This runs inside buildCanonicalCharacterContext — the ONE shared character
-    // execution path used by ALL surfaces (Chat, Text, World Phone, Gathering Room,
-    // Scene, Proactive, Group Chat, Narrative). No surface decides whether
-    // research should happen; the character's own reasoning (detected here from
-    // recent messages) drives it.
-    //
-    // Flow: character with research-dependent traits expressed research intent
-    // in their most recent response ("let me look into that", "I'll search for
-    // venues") → shared character execution path detects it → existing
-    // performWebLookup executes → genuine result persists in WebLookup →
-    // buildResearchFindingsBlock injects it into THIS canonical prompt →
-    // the same character reasons from it wherever subsequently invoked.
-    //
-    // DEDUP: If a WebLookup record already exists that was created AFTER the
-    // character's research-intent message, the research already happened —
-    // skip. This prevents re-researching the same intent on every turn.
-    if (character && recentMessages.length > 0) {
-      const hasResearchTrait = character.trait_venue_event_scout ||
-        character.trait_music_culture_scout ||
-        character.trait_trend_market_researcher ||
-        character.trait_deal_finder ||
-        character.trait_opportunity_hunter ||
-        character.trait_publicity_strategist ||
-        character.trait_marketing_strategist ||
-        character.trait_campaign_architect;
-
-      if (hasResearchTrait) {
-        // Find the character's most recent actual response (sender_type: 'character')
-        const charResponses = recentMessages
-          .filter(m => m.sender_type === 'character')
-          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
-
-        if (charResponses.length > 0) {
-          const lastCharResponse = charResponses[0];
-          const lastCharText = lastCharResponse.content || '';
-          const researchIntentMatch = lastCharText.match(
-            /(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|let me look up|let me dig into|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research)/i
+    // ── USER-INITIATED LOOKUP REQUEST — restores existing character capability ───
+    // When the user EXPLICITLY asks the character to look something up ("look
+    // it up", "Google X", "search for X", "look again on Google", "Jayden
+    // Jackson, look it up"), the existing real-world lookup capability must
+    // actually execute and supply real results BEFORE the character responds.
+    // NOT gated on Marketing/Promotion traits — any character can be asked to
+    // look something up. This restores a pre-existing capability that was
+    // regressed when research initiation moved to the shared path (which only
+    // detected CHARACTER-initiated intent like "let me look into that").
+    if (character && recentUserMessages.length > 0) {
+      const lastUserMsg = recentUserMessages[0];
+      const lastUserText = (lastUserMsg.content || '').trim();
+      const lastUserTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date).getTime();
+      const hasLookupCommand = /(?:look\s+(?:it|that|this|them)\s+up|look\s+up\s+\w|google\s+\w|search\s+for\s+\w|look\s+again|search\s+again|google\s+it|look\s+it\s+up\s+on\s+google|try\s+searching|try\s+looking)/i.test(lastUserText);
+      if (hasLookupCommand) {
+        let searchSubject = '';
+        // "X, look it up" — subject before comma
+        const beforeComma = lastUserText.match(/^(.+?),\s*(?:look|google|search)/i);
+        if (beforeComma && beforeComma[1]) searchSubject = beforeComma[1].trim();
+        // "look up X" / "google X" / "search for X" — subject after command
+        if (!searchSubject) {
+          const afterCmd = lastUserText.match(/(?:look\s+up|google|search\s+for)\s+(.+?)(?:[.,!?]|$)/i);
+          if (afterCmd && afterCmd[1]) searchSubject = afterCmd[1].trim();
+        }
+        // "look again" / "search again" — use previous user message as subject
+        if (!searchSubject && recentUserMessages.length > 1) {
+          const isReSearch = /(?:look\s+again|search\s+again|try\s+again|look\s+again\s+on\s+google)/i.test(lastUserText);
+          if (isReSearch) searchSubject = (recentUserMessages[1].content || '').substring(0, 200);
+        }
+        // "look it up" / "google it" (no subject) — use previous user message
+        if (!searchSubject && recentUserMessages.length > 1) {
+          searchSubject = (recentUserMessages[1].content || '').substring(0, 200);
+        }
+        if (searchSubject && searchSubject.trim().length > 3) {
+          const alreadyResearched = webLookups.some(wl =>
+            new Date(wl.lookup_date || wl.created_date).getTime() > lastUserTime
           );
-
-          if (researchIntentMatch) {
-            const lastCharTime = new Date(lastCharResponse.timestamp || lastCharResponse.created_date).getTime();
-            // Check if research was already done since this response
-            const alreadyResearched = webLookups.some(wl =>
-              new Date(wl.lookup_date || wl.created_date).getTime() > lastCharTime
-            );
-
-            if (!alreadyResearched) {
-              // Derive search query from the most recent user message (provides research context)
-              const searchQuery = recentUserMessages.length > 0
-                ? (recentUserMessages[0].content || '').substring(0, 200)
-                : lastCharText.substring(0, 200);
-
-              if (searchQuery && searchQuery.trim().length > 5) {
-                try {
-                  const lookupRes = await base44.functions.invoke('performWebLookup', {
-                    characterId,
-                    searchQuery,
-                  });
-                  if (lookupRes?.data?.lookup) {
-                    webLookups = [...webLookups, lookupRes.data.lookup];
-                  }
-                  contextLog.push({
-                    step: 'character_research_initiated',
-                    query: searchQuery.substring(0, 60),
-                    success: true,
-                    surface: interactionContext,
-                  });
-                } catch (researchErr) {
-                  // Non-blocking — research may fail when called from automations
-                  // without a user session (performWebLookup requires auth.me()).
-                  // The research will execute when the character is next invoked
-                  // through a user-session surface (Chat, Text, Scene, etc.).
-                  contextLog.push({
-                    step: 'character_research_initiated',
-                    status: 'error',
-                    error: researchErr.message,
-                    surface: interactionContext,
-                  });
-                }
-              }
-            } else {
-              contextLog.push({ step: 'character_research_initiated', skipped: 'already_researched' });
+          if (!alreadyResearched) {
+            try {
+              const lookupRes = await base44.functions.invoke('performWebLookup', {
+                characterId, searchQuery: searchSubject.substring(0, 200),
+              });
+              if (lookupRes?.data?.lookup) webLookups = [...webLookups, lookupRes.data.lookup];
+              contextLog.push({ step: 'user_lookup_request', query: searchSubject.substring(0, 60), success: true, surface: interactionContext });
+            } catch (researchErr) {
+              contextLog.push({ step: 'user_lookup_request', status: 'error', error: researchErr.message, surface: interactionContext });
             }
+          } else {
+            contextLog.push({ step: 'user_lookup_request', skipped: 'already_researched' });
           }
         }
+      }
+    }
+
+    // ── CHARACTER-INITIATED RESEARCH (Marketing/Promotion traits only) ──────────
+    // Detects research intent in the character's most recent response and fires
+    // performWebLookup. Dedup: skips if a WebLookup exists after the intent msg.
+    if (character && recentMessages.length > 0) {
+      const hasResearchTrait = character.trait_venue_event_scout || character.trait_music_culture_scout ||
+        character.trait_trend_market_researcher || character.trait_deal_finder || character.trait_opportunity_hunter ||
+        character.trait_publicity_strategist || character.trait_marketing_strategist || character.trait_campaign_architect;
+      if (!hasResearchTrait) return;
+      const charResp = recentMessages.filter(m => m.sender_type === 'character')
+        .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
+      if (charResp.length === 0) return;
+      const lastCharText = charResp[0].content || '';
+      if (!/(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|let me look up|let me dig into|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research)/i.test(lastCharText)) return;
+      const lastCharTime = new Date(charResp[0].timestamp || charResp[0].created_date).getTime();
+      if (webLookups.some(wl => new Date(wl.lookup_date || wl.created_date).getTime() > lastCharTime)) {
+        contextLog.push({ step: 'character_research_initiated', skipped: 'already_researched' });
+        return;
+      }
+      const searchQuery = recentUserMessages.length > 0 ? (recentUserMessages[0].content || '').substring(0, 200) : lastCharText.substring(0, 200);
+      if (!searchQuery || searchQuery.trim().length <= 5) return;
+      try {
+        const lookupRes = await base44.functions.invoke('performWebLookup', { characterId, searchQuery });
+        if (lookupRes?.data?.lookup) webLookups = [...webLookups, lookupRes.data.lookup];
+        contextLog.push({ step: 'character_research_initiated', query: searchQuery.substring(0, 60), success: true, surface: interactionContext });
+      } catch (researchErr) {
+        contextLog.push({ step: 'character_research_initiated', status: 'error', error: researchErr.message, surface: interactionContext });
       }
     }
 
