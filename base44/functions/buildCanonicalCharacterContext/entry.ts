@@ -998,66 +998,74 @@ function buildMarketingPromotionBlock(character, worldContextCache = null, weath
     lines.push('TRAIT COOPERATION: Your selected traits work together naturally. For example, if you have Trend & Market Researcher + Strategic Connector + Audience Instinct + Campaign Architect, you can research current circumstances, recognize a strategic connection, identify an audience, and develop a campaign. Your combined expertise emerges from your actual selected capabilities — not from a hidden master "marketing genius" behavior that grants everything. You only possess the specific traits selected above.');
   }
 
-  // ── EXISTING REAL-WORLD INFORMATION ────────────────────────────────────────
-  // Inject world_context_cache (daily-fetched by fetchDailyWorldContext) and
-  // daily_weather_cache (daily-fetched by fetchDailyWeather) when the character
-  // has traits that can make meaningful use of them. This connects existing
-  // real-world intelligence to character reasoning — it does NOT duplicate it.
-  const needsWorldInfo = traits.trend_market_researcher || traits.music_culture_scout ||
-    traits.venue_event_scout || traits.deal_finder || traits.opportunity_hunter ||
-    traits.publicity_strategist || traits.marketing_strategist || traits.campaign_architect ||
-    traits.audience_instinct || traits.strategic_connector;
-
-  if (needsWorldInfo && worldContextCache) {
-    const wc = worldContextCache;
+  // ── EXISTING REAL-WORLD INFORMATION — TRAIT-SPECIFIC RELEVANCE FILTERING ──────
+  // Inject ONLY the world_context_cache portions relevant to the character's
+  // SPECIFIC active traits — not a raw data dump. A Marketing Strategist does
+  // not need crime statistics. A Music Scout does not need political affairs.
+  // This prevents prompt stuffing while connecting existing daily-fetched
+  // real-world intelligence to the traits that can meaningfully use it.
+  const wc = worldContextCache;
+  if (wc) {
     const wcLines = [];
     const fetchedDate = wc.dateStr || (wc.fetchedAt ? new Date(wc.fetchedAt).toLocaleDateString('en-US') : 'recently');
 
-    // News headlines — relevant to opportunity hunting, publicity, campaign timing, market awareness
-    if (wc.news?.headlines?.length > 0) {
+    // News headlines — relevant to: trend/market researcher, publicity strategist,
+    // opportunity hunter, marketing strategist (broad market awareness), strategic connector
+    const needsHeadlines = traits.trend_market_researcher || traits.publicity_strategist ||
+      traits.opportunity_hunter || traits.marketing_strategist || traits.strategic_connector ||
+      traits.deal_finder;
+    if (needsHeadlines && wc.news?.headlines?.length > 0) {
       const headlines = wc.news.headlines.slice(0, 5).map(h => `  - ${h.title}${h.category ? ` [${h.category}]` : ''}${h.source ? ` (${h.source})` : ''}: ${h.description || ''}`).join('\n');
       wcLines.push(`CURRENT NEWS HEADLINES (as of ${fetchedDate}):`);
       wcLines.push(headlines);
     }
-    // Politics — relevant to publicity, audience positioning, campaign timing
-    if (wc.news?.politics?.length > 0) {
+
+    // Politics — relevant to: publicity strategist (public narratives), campaign architect (timing)
+    const needsPolitics = traits.publicity_strategist || traits.campaign_architect;
+    if (needsPolitics && wc.news?.politics?.length > 0) {
       wcLines.push(`CURRENT POLITICAL/PUBLIC AFFAIRS: ${wc.news.politics.slice(0, 3).join('; ')}`);
     }
-    // Economics — relevant to deal finding, market conditions, pricing strategy
-    if (wc.news?.economics?.length > 0) {
+
+    // Economics — relevant to: deal finder, trend/market researcher, marketing strategist
+    const needsEconomics = traits.deal_finder || traits.trend_market_researcher || traits.marketing_strategist;
+    if (needsEconomics && wc.news?.economics?.length > 0) {
       wcLines.push(`CURRENT ECONOMIC CONDITIONS: ${wc.news.economics.slice(0, 3).join('; ')}`);
     }
-    // Entertainment/culture — relevant to music/culture scout, trend researcher, publicity
-    if (wc.entertainment?.trending?.length > 0) {
+
+    // Entertainment trends — relevant to: music/culture scout, trend/market researcher,
+    // campaign architect, opportunity hunter, audience instinct, strategic connector
+    const needsEntertainment = traits.music_culture_scout || traits.trend_market_researcher ||
+      traits.campaign_architect || traits.opportunity_hunter || traits.audience_instinct ||
+      traits.strategic_connector;
+    if (needsEntertainment && wc.entertainment?.trending?.length > 0) {
       wcLines.push(`CURRENT ENTERTAINMENT TRENDS: ${wc.entertainment.trending.slice(0, 5).join('; ')}`);
     }
-    if (wc.entertainment?.cultural?.length > 0) {
+
+    // Cultural moments — relevant to: music/culture scout, audience instinct
+    const needsCultural = traits.music_culture_scout || traits.audience_instinct;
+    if (needsCultural && wc.entertainment?.cultural?.length > 0) {
       wcLines.push(`CURRENT CULTURAL MOMENTS: ${wc.entertainment.cultural.slice(0, 3).join('; ')}`);
     }
-    // Society conditions — relevant to audience understanding, campaign appropriateness, community outreach
-    if (wc.society) {
-      if (wc.society.crimeStats && Object.keys(wc.society.crimeStats).length > 0) {
-        wcLines.push(`COMMUNITY CONDITIONS (crime/safety context): ${JSON.stringify(wc.society.crimeStats).substring(0, 200)}`);
-      }
-      if (wc.society.healthAlerts && Object.keys(wc.society.healthAlerts).length > 0) {
-        wcLines.push(`PUBLIC HEALTH CONTEXT: ${JSON.stringify(wc.society.healthAlerts).substring(0, 200)}`);
-      }
-    }
+
+    // NOTE: society.crimeStats and society.healthAlerts are intentionally NOT injected
+    // for marketing traits. No marketing/promotion trait requires crime statistics or
+    // health alerts to reason about marketing, promotion, venues, music, trends, deals,
+    // campaigns, audiences, or publicity. Injecting them would be prompt stuffing.
 
     if (wcLines.length > 0) {
       lines.push('');
       lines.push('════════════════════════════════════');
       lines.push('EXISTING REAL-WORLD AWARENESS — CURRENT CONTEXT YOU CAN DRAW ON');
       lines.push('This information was already collected by the application\'s daily world-context system.');
-      lines.push('You can use it when your traits, circumstances, or conversation make it meaningful.');
-      lines.push('Do NOT dump all of this into every conversation — draw on the relevant parts when they matter.');
+      lines.push('Use the relevant parts when your traits, circumstances, or conversation make them meaningful.');
       lines.push('════════════════════════════════════');
       lines.push(...wcLines);
     }
   }
 
-  // Weather — relevant to venue/event scout, campaign architect (outdoor events)
-  if (needsWorldInfo && weatherCache) {
+  // Weather — relevant to: venue/event scout (outdoor events), campaign architect (outdoor campaigns)
+  const needsWeather = traits.venue_event_scout || traits.campaign_architect || traits.opportunity_hunter;
+  if (needsWeather && weatherCache) {
     const w = weatherCache;
     if (w.conditions || w.high != null || w.low != null) {
       lines.push('');
@@ -1079,6 +1087,29 @@ function buildMarketingPromotionBlock(character, worldContextCache = null, weath
   lines.push('• Use the existing real-world awareness provided above when it is relevant and sufficiently current. When you need more specific, newer, or different information, that is when fresh research is appropriate.');
   lines.push('• This information belongs to YOU as a character — not to any one conversation surface. What you legitimately learn through research or awareness is yours wherever you are invoked.');
 
+  return '\n\n' + lines.join('\n') + '\n════════════════════════════════════';
+}
+
+// ── RESEARCH FINDINGS BLOCK ──────────────────────────────────────────────────
+// Injects genuine web research results (WebLookup entity records) into the
+// canonical character context. This makes research findings CHARACTER knowledge
+// (available on all surfaces that use buildCanonicalCharacterContext) rather
+// than Chat-local knowledge. A character who genuinely looked something up
+// knows it whether the next interaction is Chat, World Phone, Proactive,
+// Gathering Room, or Narrative.
+function buildResearchFindingsBlock(webLookups) {
+  if (!webLookups || webLookups.length === 0) return '';
+  const lines = [];
+  lines.push('');
+  lines.push('════════════════════════════════════');
+  lines.push('RESEARCH FINDINGS — THINGS YOU HAVE ACTUALLY LOOKED UP');
+  lines.push('These are genuine web research results obtained through the application\'s research capability.');
+  lines.push('You may reference these as things you have actually found. They are real findings, not guesses.');
+  lines.push('If you reference these, cite the actual source or summary — do not embellish beyond what was found.');
+  lines.push('════════════════════════════════════');
+  for (const l of webLookups.slice(0, 10)) {
+    lines.push(`• "${l.search_query}" — Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}${l.url ? ` (Source: ${l.url})` : ''}`);
+  }
   return '\n\n' + lines.join('\n') + '\n════════════════════════════════════';
 }
 
@@ -1267,6 +1298,23 @@ Deno.serve(async (req) => {
     // with Marketing/Promotion traits via buildMarketingPromotionBlock below.
     const worldContextCache = settings?.world_context_cache || null;
     const dailyWeatherCache = settings?.daily_weather_cache || null;
+
+    // ── WEB LOOKUP FETCH — character-global research knowledge ──────────────
+    // Fetch recent WebLookup records for this character. These are genuine web
+    // research results obtained through performWebLookup. Injecting them into
+    // the canonical prompt makes research findings character knowledge —
+    // available on ALL surfaces that use buildCanonicalCharacterContext (Chat,
+    // World Phone, Proactive, Gathering Room, Narrative, Group Chat), not just
+    // Chat. This is the existing character knowledge architecture, not a new
+    // research-memory system.
+    let webLookups = [];
+    try {
+      webLookups = await base44.asServiceRole.entities.WebLookup.filter(
+        { character_id: characterId }, "-lookup_date", 10
+      ).catch(() => []);
+    } catch (wlErr) {
+      contextLog.push({ step: 'web_lookup_fetch', status: 'error', error: wlErr.message });
+    }
 
     // User presence — source of truth fields
     const userCurrentLocationId   = settings?.user_current_location_id   || null;
@@ -2027,6 +2075,23 @@ Deno.serve(async (req) => {
     } catch (mpErr) {
       contextLog.push({ step: 'marketing_promotion_block', status: 'error', error: mpErr.message });
       console.warn(`[buildCanonicalCharacterContext] marketing_promotion_block error (non-blocking): ${mpErr.message}`);
+    }
+
+    // ── RESEARCH FINDINGS INJECTION — character-global knowledge ────────────
+    // Inject genuine WebLookup results into the canonical prompt so research
+    // findings are character knowledge (available on all surfaces), not
+    // Chat-local knowledge. This is available to ALL characters who have
+    // performed research, not just marketing characters.
+    try {
+      const researchBlock = buildResearchFindingsBlock(webLookups);
+      if (researchBlock) {
+        finalSystemPrompt = finalSystemPrompt + researchBlock;
+        contextLog.push({ step: 'research_findings_block', injected: true, lookupCount: webLookups.length });
+      } else {
+        contextLog.push({ step: 'research_findings_block', injected: false, lookupCount: 0 });
+      }
+    } catch (rfErr) {
+      contextLog.push({ step: 'research_findings_block', status: 'error', error: rfErr.message });
     }
 
     if (isVickServicio) {

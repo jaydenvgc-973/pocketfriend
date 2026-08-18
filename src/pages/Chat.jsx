@@ -827,6 +827,9 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
 
       // performWebLookup — deferred 5s so it does not compete with the main LLM response.
       // Rate-limit gated. Failure is logged visibly, not swallowed.
+      // Cache invalidation: when a lookup completes, invalidate the canonical
+      // prompt cache so the next message re-fetches the canonical prompt WITH
+      // the fresh research findings (now injected by buildCanonicalCharacterContext).
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
         setTimeout(() => {
@@ -834,7 +837,15 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
             console.log('[Chat] SKIP performWebLookup — rate limit active');
             return;
           }
-          base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(err => {
+          base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).then(() => {
+            // Invalidate canonical cache — research findings are now in the canonical prompt
+            delete systemPromptCacheRef.current[`canonical::${characterId}`];
+            if (currentUser?.email) {
+              import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
+                invalidateCharacterCache(currentUser.email, characterId);
+              }).catch(() => {});
+            }
+          }).catch(err => {
             const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit') || err?.message?.includes('Rate limit');
             if (is429) reportRateLimit(60000);
             console.warn('[Chat] performWebLookup failed:', err?.message);
@@ -870,8 +881,8 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         }).catch(() => ({ data: { memories: [], total: 0, _fallback: true } })),
         progression: base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text })
           .catch(() => null),
-        pastLookups: base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10)
-          .catch(() => []),
+        // NOTE: pastLookups removed — research findings now injected by buildCanonicalCharacterContext
+        // (character-global knowledge via WebLookup entity, not Chat-local)
         spatial: getLocationsForContext()
           .catch(() => null),
         // ── WORLD PHONE AUTHORITATIVE RETRIEVAL ──────────────────────────────
@@ -902,7 +913,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       // These promises are already running in parallel — we do NOT await them
       // before calling the LLM. Instead, use timeouts to grab them if ready,
       // otherwise proceed with empty context.
-      let memoryResult = null, progressionResult = null, pastLookupsResult = [], spatialResult = null, liveFamilyGraphBlock = '';
+      let memoryResult = null, progressionResult = null, spatialResult = null, liveFamilyGraphBlock = '';
       // Try to grab optional context if it resolves within 2s, otherwise use fallback
       try {
         memoryResult = await Promise.race([
@@ -922,16 +933,6 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       } catch {
         console.log('[Chat] Progression context timeout — using fallback');
         progressionResult = null;
-      }
-
-      try {
-        pastLookupsResult = await Promise.race([
-          optionalContextPromises.pastLookups,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-        ]);
-      } catch {
-        console.log('[Chat] Past lookups timeout — using fallback');
-        pastLookupsResult = [];
       }
 
       try {
@@ -981,10 +982,6 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         : '';
       const progressionData = progressionResult?.data;
       const lifeEventContext = progressionData?.progressionContext ? `\n\n${progressionData.progressionContext}` : '';
-      const pastLookups = Array.isArray(pastLookupsResult) ? pastLookupsResult : [];
-      const researchContext = pastLookups.length > 0
-        ? `\n\nTHINGS YOU'VE LOOKED UP:\n${pastLookups.map(l => `"${l.search_query}" - Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}`).join("\n")}`
-        : '';
       const spatialContext = spatialResult ? `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.` : '';
 
       // LIVE family graph — fetched every send, never cached. Evicts canonical cache on resolve.
@@ -1375,7 +1372,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         ? `\n\n════════════════════════════════════\nFAMILY IDENTITY — AUTHORITATIVE STATE (READ BEFORE CONVERSATION LOG)\nThis is verified live data from the database. It supersedes any claim in this prompt or conversation that contradicts it.\n${liveFamilyGraphBlock}\nCRITICAL: You are NOT an only child. You DO have family. Any prior message where you claimed otherwise was wrong. Your active state now reflects the truth above.\n════════════════════════════════════`
         : '';
 
-      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${lifeEventContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
   "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
@@ -1545,6 +1542,62 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         } catch (guardErr) {
           // Non-blocking — never interrupt chat flow on guard failure
           console.warn('[Chat] worldPhoneStateGuard error (non-blocking):', guardErr.message);
+        }
+      }
+
+      // ── CHARACTER-INITIATED RESEARCH INTENT ─────────────────────────────────
+      // When a character with Marketing/Promotion traits expresses a genuine
+      // research intent in their response ("let me look into that", "I'll search
+      // for venues", etc.), trigger the EXISTING performWebLookup capability so
+      // actual research executes — rather than the character merely narrating
+      // research that never happened. The result is stored in WebLookup and
+      // injected into the canonical prompt on the next turn (and on all surfaces).
+      //
+      // This uses the SAME deferred pattern as the user-keyword trigger above.
+      // It does NOT create a new research mechanism — it connects character
+      // reasoning to the existing performWebLookup capability.
+      //
+      // TRAIT GATE: Only characters with research-dependent Marketing/Promotion
+      // traits can trigger character-initiated research. A character without
+      // these traits saying "let me look into that" is conversational filler,
+      // not a research trigger.
+      if (responseText && characterId) {
+        const hasResearchTrait = character.trait_venue_event_scout ||
+          character.trait_music_culture_scout ||
+          character.trait_trend_market_researcher ||
+          character.trait_deal_finder ||
+          character.trait_opportunity_hunter ||
+          character.trait_publicity_strategist ||
+          character.trait_marketing_strategist ||
+          character.trait_campaign_architect;
+        if (hasResearchTrait) {
+          const researchIntentMatch = responseText.match(
+            /(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research|let me look up|let me dig into)/i
+          );
+          if (researchIntentMatch) {
+            // Derive search query from the user's original message (provides research context)
+            const charQuery = text.length > 120 ? text.substring(0, 120) : text;
+            setTimeout(() => {
+              if (isGloballyRateLimited()) {
+                console.log('[Chat] SKIP character research intent — rate limit active');
+                return;
+              }
+              base44.functions.invoke('performWebLookup', { characterId, searchQuery: charQuery }).then(() => {
+                console.log(`[Chat] CHARACTER_RESEARCH_TRIGGERED | char=${character?.name} | trait=research-dependent | query="${charQuery.substring(0, 60)}..."`);
+                // Invalidate canonical cache — fresh research findings will be in the next canonical prompt
+                delete systemPromptCacheRef.current[`canonical::${characterId}`];
+                if (currentUser?.email) {
+                  import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
+                    invalidateCharacterCache(currentUser.email, characterId);
+                  }).catch(() => {});
+                }
+              }).catch(err => {
+                const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit');
+                if (is429) reportRateLimit(60000);
+                console.warn('[Chat] character research intent performWebLookup failed:', err?.message);
+              });
+            }, 5000);
+          }
         }
       }
 
