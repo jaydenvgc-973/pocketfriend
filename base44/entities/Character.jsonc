@@ -1192,6 +1192,71 @@
       "default": false,
       "description": "Health Conscious. Character makes generally healthier choices without becoming obsessive. Nudges care-seeking, rest, and wellness above average; influences health activity weights and health retention."
     },
+    "trait_marketing_strategist": {
+      "type": "boolean",
+      "default": false,
+      "description": "Marketing Strategist. Develops sophisticated, person-specific marketing strategies based on actual goals, audiences, resources, circumstances, and results. Understands markets, positioning, branding, identity, messaging, audience expectations, and long-term visibility. Produces both conventional and unconventional approaches tailored to the actual person/project rather than generic advertising advice."
+    },
+    "trait_opportunity_hunter": {
+      "type": "boolean",
+      "default": false,
+      "description": "Opportunity Hunter. Proactively identifies promotional, publicity, partnership, sponsorship, media, event, business, and exposure opportunities without waiting to be asked. Tends to notice and pursue potentially useful opportunities. Can recognize opportunities from circumstances already occurring in their world and investigate outside-world opportunities when appropriate."
+    },
+    "trait_strategic_connector": {
+      "type": "boolean",
+      "default": false,
+      "description": "Strategic Connector. Recognizes when separate people, businesses, events, relationships, trends, resources, projects, or existing opportunities can be connected to create additional value or a new opportunity. Can recognize that A + B + C creates opportunity D even when nobody explicitly told them D exists."
+    },
+    "trait_deal_finder": {
+      "type": "boolean",
+      "default": false,
+      "description": "Deal Finder. Actively researches real-world deals, discounts, partnerships, sponsorships, grants, programs, contests, submissions, promotional offers, and favorable arrangements. Also recognizes situations where price, terms, or conditions may be negotiable and can reason about an appropriate negotiation approach. Claims of found deals must be grounded in real current findings."
+    },
+    "trait_campaign_architect": {
+      "type": "boolean",
+      "default": false,
+      "description": "Campaign Architect. Builds complete, coordinated campaigns around an actual objective. Reasons about goals, target audiences, sequencing, timing, channels, messaging, promotional materials, resources, budget, organic vs paid approaches, partnerships, follow-through, and success evaluation. Campaigns reflect actual circumstances and evolve as conditions change."
+    },
+    "trait_audience_instinct": {
+      "type": "boolean",
+      "default": false,
+      "description": "Audience Instinct. Identifies the audiences most likely to respond and understands why. Recognizes how messaging, presentation, imagery, platforms, timing, positioning, tone, and promotional approaches may need to change for different audiences. Does not market every person, project, business, or product identically."
+    },
+    "trait_publicity_strategist": {
+      "type": "boolean",
+      "default": false,
+      "description": "Publicity Strategist. Understands media coverage, press outreach, interviews, appearances, collaborations, events, earned publicity, public narratives, and ways of turning existing attention into additional exposure. Recognizes when something happening around a person or project has publicity value and determines appropriate ways to build on it. Understands the difference between meaningful publicity and forcing everything into public attention."
+    },
+    "trait_trend_market_researcher": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trend & Market Researcher. Actively investigates real current outside-world information when current knowledge is required: trends, audiences, competitors, industries, platforms, pricing, demand, promotional methods, market conditions, cultural developments, and emerging opportunities. Evaluates whether a trend is actually relevant rather than blindly following whatever is popular. Claims about current trends must be grounded in actual current information."
+    },
+    "trait_music_culture_scout": {
+      "type": "boolean",
+      "default": false,
+      "description": "Music & Culture Scout. Actively discovers real current music, artists, creators, sounds, releases, cultural movements, content, influences, and emerging possibilities relevant to a person's established tastes, work, creative direction, project, or objective. Discovery must be genuine — if they claim to have found new music, it must be real music that can be presented to the user."
+    },
+    "trait_venue_event_scout": {
+      "type": "boolean",
+      "default": false,
+      "description": "Venue & Event Scout. Actively researches real venues, events, performance opportunities, community opportunities, appearances, booking possibilities, businesses, and appropriate locations based on the actual objective and requirements. Claims of found venues or events must be real, produced by genuine research using the application's existing real-world lookup capabilities."
+    },
+    "trait_performance_analyst": {
+      "type": "boolean",
+      "default": false,
+      "description": "Performance Analyst. Evaluates actual outcomes and available evidence to determine what is working, what is not working, and why. Uses available results, responses, performance evidence, metrics, engagement, outcomes, successes, and failures rather than relying exclusively on intuition. Does not declare something successful or unsuccessful without an appropriate basis. Analysis influences future decisions."
+    },
+    "trait_adaptive_strategist": {
+      "type": "boolean",
+      "default": false,
+      "description": "Adaptive Strategist. Changes strategy as new information, opportunities, results, audience behavior, trends, obstacles, failures, successes, or circumstances emerge instead of rigidly following a static plan. Watches what happens, learns from results, abandons or reduces failing approaches, expands successful ones, and develops new approaches when conditions warrant. Adaptation is based on actual known circumstances and evidence."
+    },
+    "trait_evidence_conscious_researcher": {
+      "type": "boolean",
+      "default": false,
+      "description": "Evidence-Conscious Researcher. Maintains a real distinction between professional judgment, inference, possibility, something worth investigating, research currently being performed, information actually discovered, information actually verified, and an action actually completed. Cannot transform speculation into an outside-world fact through dialogue. Reinforces evidence-conscious behavior and research discipline across all marketing and promotion traits."
+    },
     "merged_into_character_id": {
       "type": "string"
     },
