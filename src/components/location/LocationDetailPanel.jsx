@@ -213,8 +213,9 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
               <SectionHeader icon={Briefcase} label="Workers" />
               <div className="space-y-1.5">
                 {workerIds.map(id => {
-                    const char = characters.find(c => c.id === id);
-                    const displayName = char?.name || (id.length > 20 ? 'Unknown Employee' : id);
+                    const isUser = id === currentUserId;
+                    const char = isUser ? null : characters.find(c => c.id === id);
+                    const displayName = isUser ? (currentUserEmail || 'You') : (char?.name || (id.length > 20 ? 'Unknown Employee' : id));
                     const jobTitle = location.worker_job_titles?.[id];
                     const payRate = location.worker_pay_rates?.[id];
                     const payType = location.worker_pay_type?.[id] || 'hourly';
@@ -270,7 +271,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                             Uniform: <span className="text-muted-foreground">{resolvedUniform.name}</span>
                           </div>
                         )}
-                        {char && (
+                        {char && !isUser && (
                           <WorkerEmploymentControls
                             characterId={id}
                             characterName={char.name}

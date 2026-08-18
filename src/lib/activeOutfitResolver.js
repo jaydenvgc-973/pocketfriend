@@ -171,6 +171,11 @@ export function resolveCharacterActiveOutfit(character, options = {}) {
 }
 
 // ── USER ACTIVE OUTFIT (display authority) ───────────────────────────────────
+// Mirrors resolveCharacterActiveOutfit — builds a pseudo-character from user settings
+// so the SAME resolveTargetCategory + resolveGroupTodaySelection + resolveCurrentOutfit
+// pathway is used. This gives the user closet the SAME contextual outfit transitions
+// as the character closet (gym→gym, workplace→work, religion→church, home→lounge, etc.)
+// rather than the old simplified "home→lounge, everything else→daily_casual" check.
 export function resolveUserActiveOutfit(settings, user, options = {}) {
   const { specialOccasionCategory = null, locationCategory = null } = options;
   if (!settings) return { outfit: null, category: null, reason: 'no_settings', description: null, source: 'none' };
@@ -179,11 +184,30 @@ export function resolveUserActiveOutfit(settings, user, options = {}) {
   const outfits = closet.filter(o => o.outfit_id);
   const rotationEnabled = settings.user_outfit_rotation_enabled === true;
 
-  const presence = settings.user_presence_status || 'away';
-  let targetCat = specialOccasionCategory;
-  if (!targetCat) {
-    targetCat = (presence === 'present' && locationCategory === 'home') ? 'lounge' : 'daily_casual';
-  }
+  // ── PSEUDO-CHARACTER ──────────────────────────────────────────────────────
+  // Maps user settings to the fields that resolveTargetCategory, resolveGroupTodaySelection,
+  // and resolveCurrentOutfit expect. This is the SAME pathway as the character closet —
+  // no separate user-only outfit-resolution system.
+  const pseudoChar = {
+    id: settings.owner_email || 'user',
+    character_closet: closet,
+    outfit_rotation_enabled: rotationEnabled,
+    today_category_outfit_overrides: settings.user_today_category_outfit_overrides,
+    manual_category_selections: settings.user_manual_category_selections,
+    current_outfit: settings.user_current_outfit,
+    // User presence: 'present' at a home location maps to 'home'; everything else
+    // is empty so resolveTargetCategory falls through to location-category resolution.
+    resolved_presence_status: settings.user_presence_status === 'present' ? 'home' : '',
+    resolved_current_location_id: settings.user_current_location_id || null,
+    current_activity: '',
+    sleep_start_time: null,
+  };
+
+  // P2: SPECIAL OCCASION (StoryEvent) overrides the context-derived category — same as character
+  const forcedCategory = specialOccasionCategory || null;
+
+  // P3: TARGET CATEGORY — same resolveTargetCategory as characters
+  const targetCat = forcedCategory || resolveTargetCategory(pseudoChar, '', locationCategory);
 
   if (!outfits.length) {
     const co = settings.user_current_outfit;
@@ -196,54 +220,40 @@ export function resolveUserActiveOutfit(settings, user, options = {}) {
     };
   }
 
-  const seed = settings.owner_email || 'user';
-
+  // P4: CLOSET via rotation engine — SAME group-level today selection as characters
   if (rotationEnabled) {
-    const overrideState = settings.user_today_category_outfit_overrides;
-    if (overrideState?.date && overrideState?.overrides) {
-      if (overrideState.date === getETTodayStr()) {
-        // Only honour overrides for the primary slot (first 2 of chain) — same rule as
-        // character closet. Prevents a lounge "Wear Today" from bleeding into daily_casual.
-        const chain = buildUserFallbackChain(targetCat);
-        const primaryCategories = chain.slice(0, 2);
-        for (const cat of primaryCategories) {
-          const overrideId = overrideState.overrides[cat];
-          if (overrideId) {
-            const o = outfits.find(x => x.outfit_id === overrideId);
-            if (o) return { outfit: o, category: cat, reason: 'today_override', description: buildOutfitTextFromOutfit(o), source: 'today_override' };
-          }
-        }
+    const group = getGroupForCategory(targetCat);
+    if (group) {
+      const todayPreview = resolveGroupTodaySelection(pseudoChar, group);
+      if (todayPreview?.state === 'scheduled' && todayPreview.outfit) {
+        const o = todayPreview.outfit;
+        return {
+          outfit: o,
+          category: todayPreview.isOverride ? targetCat : (forcedCategory || o.category || targetCat),
+          reason: forcedCategory ? 'special_occasion' : (todayPreview.isOverride ? 'today_override' : 'rotation'),
+          description: buildOutfitTextFromOutfit(o),
+          source: todayPreview.isOverride ? 'today_override' : 'rotation',
+        };
       }
     }
-    // Rotation engine: mirrors character closet pickFromPool with rotation_number ordering.
-    // Outfits with rotation_number are sorted and cycled by day-index.
-    // Outfits without rotation_number fall back to day-index over the full pool.
-    const chain = buildUserFallbackChain(targetCat);
-    for (const cat of chain) {
-      const pool = outfits.filter(o => o.category === cat);
-      if (!pool.length) continue;
-      const numbered = pool
-        .filter(o => o.rotation_number != null && o.rotation_number !== "")
-        .sort((a, b) => Number(a.rotation_number) - Number(b.rotation_number));
-      const picked = numbered.length > 0
-        ? numbered[getETDayIndex(seed) % numbered.length]
-        : pool[getETDayIndex(seed) % pool.length];
-      return { outfit: picked, category: cat, reason: specialOccasionCategory ? 'special_occasion' : (cat === 'lounge' ? 'home' : 'rotation'), description: buildOutfitTextFromOutfit(picked), source: 'rotation' };
+    // Fall back to resolveCurrentOutfit with the pseudo-character — same fallback as character
+    const outfit = resolveCurrentOutfit(pseudoChar, '', locationCategory, forcedCategory);
+    if (outfit) {
+      return {
+        outfit,
+        category: forcedCategory || outfit.category || targetCat,
+        reason: forcedCategory ? 'special_occasion' : 'rotation',
+        description: buildOutfitTextFromOutfit(outfit),
+        source: 'rotation',
+      };
     }
-    const picked = outfits[getETDayIndex(seed) % outfits.length];
-    return { outfit: picked, category: targetCat, reason: 'rotation_fallback', description: buildOutfitTextFromOutfit(picked), source: 'rotation' };
+    return { outfit: null, category: targetCat, reason: 'rotation_no_match', description: null, source: 'none' };
   }
 
-  const manualSelections = settings.user_manual_category_selections;
-  if (manualSelections) {
-    const chain = buildUserFallbackChain(targetCat);
-    for (const cat of chain) {
-      const selectedId = manualSelections[cat];
-      if (selectedId) {
-        const o = outfits.find(x => x.outfit_id === selectedId);
-        if (o) return { outfit: o, category: cat, reason: 'manual', description: buildOutfitTextFromOutfit(o), source: 'manual' };
-      }
-    }
+  // Rotation OFF: SAME manual_category_selections → current_outfit path as characters
+  const outfit = resolveCurrentOutfit(pseudoChar, '', locationCategory, forcedCategory);
+  if (outfit) {
+    return { outfit, category: forcedCategory || outfit.category || targetCat, reason: 'manual', description: buildOutfitTextFromOutfit(outfit), source: 'manual' };
   }
   const co = settings.user_current_outfit;
   if (co) return { outfit: co, category: co.category || targetCat, reason: 'current_outfit', description: buildOutfitTextFromOutfit(co), source: 'manual' };

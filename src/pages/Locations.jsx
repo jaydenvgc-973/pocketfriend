@@ -1115,16 +1115,26 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           {form.worker_character_ids?.length > 0 && (
             <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
               {form.worker_character_ids.map((workerId, idx) => {
-                const worker = allCharacters.find(c => c.id === workerId);
-                const workerName = worker?.name || workerId;
+                const isUserWorker = workerId === currentUser?.id;
+                const worker = isUserWorker ? null : allCharacters.find(c => c.id === workerId);
+                const workerName = isUserWorker ? worldName : (worker?.name || workerId);
                 return (
                   <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
                     <div className="flex items-center gap-2 justify-between">
                       <div className="flex items-center gap-2">
-                        {worker ? <CharacterAvatar character={worker} size="sm" /> : (
+                        {isUserWorker ? (
+                          userAvatarUrl ? (
+                            <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                          ) : (
+                            <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center text-xs font-semibold text-primary flex-shrink-0">{worldName[0]?.toUpperCase()}</div>
+                          )
+                        ) : worker ? (
+                          <CharacterAvatar character={worker} size="sm" />
+                        ) : (
                           <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">{workerName[0]?.toUpperCase()}</div>
                         )}
                         <span className="text-sm font-medium text-foreground">{workerName}</span>
+                        {isUserWorker && <span className="text-[10px] text-primary/60 font-medium">Player</span>}
                       </div>
                       <button onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
                         <X className="w-3.5 h-3.5" />
@@ -1183,11 +1193,25 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             </div>
           )}
 
-          {/* Add workers selector — shows availability, existing jobs and schedule */}
+          {/* Add workers selector — shows availability, existing jobs and schedule.
+              The user (The Player) is included as a selectable option alongside
+              eligible characters, using the same worker_character_ids field. */}
           <div>
             <label className="text-xs text-muted-foreground mb-2 block">Add Workers</label>
             <GroupedCharacterSelector
-              allCharacters={allAssignableCharacters.filter(c => !form.worker_character_ids?.includes(c.id))}
+              allCharacters={[
+                // Include the user as a selectable worker option (same pathway as characters)
+                ...(currentUser?.id && !form.worker_character_ids?.includes(currentUser.id)
+                  ? [{
+                      id: currentUser.id,
+                      name: worldName,
+                      avatar_url: userAvatarUrl,
+                      isUser: true,
+                      status: 'active',
+                    }]
+                  : []),
+                ...allAssignableCharacters.filter(c => !form.worker_character_ids?.includes(c.id)),
+              ]}
               selectedIds={[]}
               onSelect={(charId, isSelected) => {
                 if (isSelected) {
@@ -1195,7 +1219,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 }
               }}
               placeholder="Search to add workers..."
-              getCharacterAvailability={(char) => getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
+              getCharacterAvailability={(char) => char.isUser ? null : getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
             />
           </div>
         </div>
@@ -1655,9 +1679,11 @@ export default function Locations() {
     const isEducation = saveData.category === 'school' || saveData.category === 'education';
     // AWAIT all sync calls — job assignment must be fully written to Character entity
     // before the form closes and queries invalidate. Fire-and-forget is not acceptable here.
+    // Skip NPC placeholder IDs and the user's own ID — the user is not a Character entity
+    // and syncLocationJobToCharacter would fail for their user ID.
     await Promise.all(
       workerIds
-        .filter(charId => !charId.startsWith('npc__'))
+        .filter(charId => !charId.startsWith('npc__') && charId !== currentUser?.id)
         .map(charId =>
           base44.functions.invoke('syncLocationJobToCharacter', {
             locationId,

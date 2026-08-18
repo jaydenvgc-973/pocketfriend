@@ -18,7 +18,8 @@ export default function GroupedCharacterSelector({
   // Group and sort characters using the canonical ManageCharacterList hierarchy:
   // active_created → npc_fictitious → npc_family → untyped/test → moved_away.
   // Legacy chars with no character_type fall into "Untyped / Test" (still visible & selectable).
-  const { activeCreated, npcFictitious, npcFamily, untyped, movedAway } = useMemo(() => {
+  const { playerEntry, activeCreated, npcFictitious, npcFamily, untyped, movedAway } = useMemo(() => {
+    const player = [];
     const active = [];
     const fictitious = [];
     const family = [];
@@ -26,6 +27,7 @@ export default function GroupedCharacterSelector({
     const moved = [];
     allCharacters.forEach(c => {
       if (c.status === 'moved_away') { moved.push(c); return; }
+      if (c.isUser) { player.push(c); return; }
       const type = c.character_type;
       if (type === 'active_created_character') active.push(c);
       else if (type === 'npc_fictitious') fictitious.push(c);
@@ -38,7 +40,7 @@ export default function GroupedCharacterSelector({
     family.sort(byName);
     other.sort(byName);
     moved.sort(byName);
-    return { activeCreated: active, npcFictitious: fictitious, npcFamily: family, untyped: other, movedAway: moved };
+    return { playerEntry: player, activeCreated: active, npcFictitious: fictitious, npcFamily: family, untyped: other, movedAway: moved };
   }, [allCharacters]);
 
   // Filter by search across all groups
@@ -46,6 +48,7 @@ export default function GroupedCharacterSelector({
   const filterChars = (chars) =>
     chars.filter(c => (c.name || "").toLowerCase().includes(q));
 
+  const filteredPlayer = filterChars(playerEntry);
   const filteredActive = filterChars(activeCreated);
   const filteredFictitious = filterChars(npcFictitious);
   const filteredFamily = filterChars(npcFamily);
@@ -55,7 +58,9 @@ export default function GroupedCharacterSelector({
   const renderCharRow = (char) => {
     const isSelected = selectedIds.includes(char.id);
     const charTypeName =
-      char.status === "moved_away"
+      char.isUser
+        ? "Player"
+        : char.status === "moved_away"
         ? "Moved Away"
         : char.character_type === "active_created_character"
         ? "Active Created"
@@ -128,6 +133,16 @@ export default function GroupedCharacterSelector({
       </div>
 
       <div className="space-y-4 max-h-80 overflow-y-auto">
+        {/* The Player (user) — shown first when present */}
+        {filteredPlayer.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-[10px] font-semibold text-primary uppercase tracking-wider px-1">
+              The Player
+            </p>
+            <div className="space-y-2">{filteredPlayer.map(renderCharRow)}</div>
+          </div>
+        )}
+
         {/* Active Created Characters */}
         {filteredActive.length > 0 && (
           <div className="space-y-2">
@@ -179,7 +194,8 @@ export default function GroupedCharacterSelector({
         )}
 
         {/* Empty state */}
-        {filteredActive.length === 0 &&
+        {filteredPlayer.length === 0 &&
+          filteredActive.length === 0 &&
           filteredFictitious.length === 0 &&
           filteredFamily.length === 0 &&
           filteredUntyped.length === 0 &&

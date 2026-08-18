@@ -43,6 +43,45 @@ const OCCASION_KEYWORDS: Array<[RegExp, string]> = [
   [/\b(church|worship|mass|baptism|communion|service|bible study)\b/i, 'church'],
 ];
 
+// ── CATEGORY RESOLVER ─────────────────────────────────────────────────────────
+// Copied from resolveCharacterOutfitContext — gives the user closet the SAME
+// contextual category resolution as the character closet (gym→gym, workplace→work,
+// religion→church, home→lounge, etc.).
+function resolveTargetCategory(character: any, locationCategory: string | null): string {
+  const presence = character?.resolved_presence_status || character?.location_status || '';
+  const activity = (character?.current_activity || '').toLowerCase();
+
+  if (/bath|shower|grooming/.test(activity)) return 'bath';
+  if (presence === 'sleeping' || presence === 'napping' || presence === 'passed_out') return 'sleepwear';
+  if (/\b(sleep|nap|asleep|bedtime|going to sleep)\b/.test(activity)) return 'sleepwear';
+
+  if (/\b(swim|pool|beach|ocean|water park|sunbath)\b/.test(activity)) return 'swimwear';
+  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
+  if (locationCategory === 'gym') return 'gym';
+
+  if (presence === 'at_work') return 'work';
+  if (/\b(working|at work|work shift|on the clock)\b/.test(activity)) return 'work';
+  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
+
+  if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
+  if (locationCategory === 'religion') return 'church';
+
+  if (/\b(wedding|funeral|gala|graduation|ceremony|formal event|black tie)\b/.test(activity)) return 'formal';
+  if (/\b(club|nightclub|party|going out|night out|bar hopping)\b/.test(activity)) return 'nightlife';
+  if (locationCategory === 'social') return 'nightlife';
+  if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
+
+  if (/\b(school|class|campus|lecture|study|college|university)\b/.test(activity)) return 'school';
+  if (locationCategory === 'school' || locationCategory === 'education') return 'school';
+
+  // Home loungewear applies ONLY when the user is actually at a home location.
+  if (locationCategory === 'home') return 'lounge';
+  if (!locationCategory && presence === 'home') return 'lounge';
+  if (/\b(relaxing|chilling|lounging|watching tv|at home)\b/.test(activity)) return 'lounge';
+
+  return 'daily_casual';
+}
+
 function buildOutfitText(outfit: any): string | null {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
@@ -137,12 +176,22 @@ Deno.serve(async (req) => {
       } catch (e) { /* non-blocking */ }
     }
 
-    // ── TARGET CATEGORY: special occasion > home (present at home) > daily ──
-    const presence = settings.user_presence_status || 'away';
-    let targetCategory = specialOccasionCategory;
-    if (!targetCategory) {
-      targetCategory = (presence === 'present' && resolvedLocCategory === 'home') ? 'lounge' : 'daily_casual';
-    }
+    // ── PSEUDO-CHARACTER ──────────────────────────────────────────────────────
+    // Maps user settings to the fields that resolveTargetCategory expects.
+    // This gives the user closet the SAME contextual category resolution as the
+    // character closet — location category drives the outfit category (gym→gym,
+    // workplace→work, religion→church, home→lounge, etc.) instead of the old
+    // simplified "home→lounge, everything else→daily_casual" check.
+    const pseudoChar: any = {
+      id: requestingEmail || 'user',
+      resolved_presence_status: settings.user_presence_status === 'present' ? 'home' : '',
+      resolved_current_location_id: settings.user_current_location_id || null,
+      current_activity: '',
+      sleep_start_time: null,
+    };
+
+    // ── TARGET CATEGORY: special occasion > resolveTargetCategory (same as character) ──
+    const targetCategory = specialOccasionCategory || resolveTargetCategory(pseudoChar, resolvedLocCategory);
 
     const chain = FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
     const rotationEnabled = settings.user_outfit_rotation_enabled === true;
@@ -166,14 +215,26 @@ Deno.serve(async (req) => {
           }
         }
       }
-      // P2: Day-stable closet rotation by category chain
+      // P2: Day-stable closet rotation by category chain — SAME rotation_number-aware
+      // selection as resolveCharacterOutfitContext. Outfits with rotation_number are
+      // sorted ascending and cycled by day-index. Favorites are prioritized among
+      // unnumbered outfits. This keeps the user closet parity with the character closet.
       for (const cat of chain) {
         const pool = outfits.filter((o: any) => o.category === cat);
         if (!pool.length) continue;
-        const picked = pool[stableIndex % pool.length];
+        const numbered = pool
+          .filter((o: any) => o.rotation_number != null && o.rotation_number !== "")
+          .sort((a: any, b: any) => Number(a.rotation_number) - Number(b.rotation_number));
+        const unnumbered = pool.filter((o: any) => o.rotation_number == null || o.rotation_number === "");
+        const favorites = unnumbered.filter((o: any) => o.is_favorite);
+        const candidates = numbered.length > 0
+          ? numbered
+          : (favorites.length > 0 ? favorites : unnumbered);
+        if (!candidates.length) continue;
+        const picked = candidates[stableIndex % candidates.length];
         const t = buildOutfitText(picked) || picked.label?.trim() || null;
         if (t) {
-          console.log(`[resolveUserOutfitContext] ✅ ROTATION_ON cat="${cat}" idx=${stableIndex % pool.length}/${pool.length} → "${t.substring(0, 80)}"`);
+          console.log(`[resolveUserOutfitContext] ✅ ROTATION_ON cat="${cat}" idx=${stableIndex % candidates.length}/${candidates.length} rot_num=${picked.rotation_number ?? 'none'} → "${t.substring(0, 80)}"`);
           return Response.json({ text: t, source: 'closet_rotation', category: cat });
         }
       }
