@@ -1545,61 +1545,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         }
       }
 
-      // ── CHARACTER-INITIATED RESEARCH INTENT ─────────────────────────────────
-      // When a character with Marketing/Promotion traits expresses a genuine
-      // research intent in their response ("let me look into that", "I'll search
-      // for venues", etc.), trigger the EXISTING performWebLookup capability so
-      // actual research executes — rather than the character merely narrating
-      // research that never happened. The result is stored in WebLookup and
-      // injected into the canonical prompt on the next turn (and on all surfaces).
-      //
-      // This uses the SAME deferred pattern as the user-keyword trigger above.
-      // It does NOT create a new research mechanism — it connects character
-      // reasoning to the existing performWebLookup capability.
-      //
-      // TRAIT GATE: Only characters with research-dependent Marketing/Promotion
-      // traits can trigger character-initiated research. A character without
-      // these traits saying "let me look into that" is conversational filler,
-      // not a research trigger.
-      if (responseText && characterId) {
-        const hasResearchTrait = character.trait_venue_event_scout ||
-          character.trait_music_culture_scout ||
-          character.trait_trend_market_researcher ||
-          character.trait_deal_finder ||
-          character.trait_opportunity_hunter ||
-          character.trait_publicity_strategist ||
-          character.trait_marketing_strategist ||
-          character.trait_campaign_architect;
-        if (hasResearchTrait) {
-          const researchIntentMatch = responseText.match(
-            /(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research|let me look up|let me dig into)/i
-          );
-          if (researchIntentMatch) {
-            // Derive search query from the user's original message (provides research context)
-            const charQuery = text.length > 120 ? text.substring(0, 120) : text;
-            setTimeout(() => {
-              if (isGloballyRateLimited()) {
-                console.log('[Chat] SKIP character research intent — rate limit active');
-                return;
-              }
-              base44.functions.invoke('performWebLookup', { characterId, searchQuery: charQuery }).then(() => {
-                console.log(`[Chat] CHARACTER_RESEARCH_TRIGGERED | char=${character?.name} | trait=research-dependent | query="${charQuery.substring(0, 60)}..."`);
-                // Invalidate canonical cache — fresh research findings will be in the next canonical prompt
-                delete systemPromptCacheRef.current[`canonical::${characterId}`];
-                if (currentUser?.email) {
-                  import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
-                    invalidateCharacterCache(currentUser.email, characterId);
-                  }).catch(() => {});
-                }
-              }).catch(err => {
-                const is429 = err?.message?.includes('429') || err?.message?.includes('rate limit');
-                if (is429) reportRateLimit(60000);
-                console.warn('[Chat] character research intent performWebLookup failed:', err?.message);
-              });
-            }, 5000);
-          }
-        }
-      }
+      // NOTE: Character-initiated research intent detection was moved from
+      // Chat.jsx (surface-local) into buildCanonicalCharacterContext (the shared
+      // character execution path). Research initiation now belongs to the
+      // character, not to any UI surface. When a character with research-dependent
+      // Marketing/Promotion traits expressed research intent in a previous
+      // response, buildCanonicalCharacterContext detects it from recent messages
+      // and fires performWebLookup — so the same character can initiate genuine
+      // research through ANY surface (Chat, Text, World Phone, Gathering Room,
+      // Scene, Proactive, Group Chat, Narrative), not just Chat.
 
       if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
         imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];

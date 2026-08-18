@@ -1388,6 +1388,7 @@ Deno.serve(async (req) => {
     // This captures context from Chat, Text, Scene, Group Chat, and World Contacts
     // that may not yet have been extracted into Memory records.
     let recentMessages = [];
+    let recentUserMessages = [];
     try {
       // Find conversations this character participated in
       const convos = await base44.asServiceRole.entities.Conversation.filter(
@@ -1407,6 +1408,23 @@ Deno.serve(async (req) => {
           )
         );
         recentMessages = recentMsgResults.flat();
+
+        // ── USER MESSAGES — for character research query derivation ──────────
+        // Fetched here (inside the same try block that has `convos`) so the
+        // shared research initiation logic below can derive a search query
+        // from the user's most recent message to this character.
+        const userMsgResults = await Promise.all(
+          convos.slice(0, 2).map(c =>
+            base44.asServiceRole.entities.Message.filter(
+              { conversation_id: c.id, sender_type: 'user' },
+              '-timestamp',
+              5
+            ).catch(() => [])
+          )
+        );
+        recentUserMessages = userMsgResults.flat()
+          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date))
+          .slice(0, 5);
       }
 
       // ── PLAYED-AS MESSAGES — messages the character "sent" while the user played as them ──
@@ -1429,6 +1447,96 @@ Deno.serve(async (req) => {
       step: 'recent_messages_load',
       count: recentMessages.length,
     });
+
+    // ── CHARACTER-INITIATED RESEARCH — shared character execution path ──────────
+    // Research initiation belongs to the CHARACTER, not to any UI surface.
+    // This runs inside buildCanonicalCharacterContext — the ONE shared character
+    // execution path used by ALL surfaces (Chat, Text, World Phone, Gathering Room,
+    // Scene, Proactive, Group Chat, Narrative). No surface decides whether
+    // research should happen; the character's own reasoning (detected here from
+    // recent messages) drives it.
+    //
+    // Flow: character with research-dependent traits expressed research intent
+    // in their most recent response ("let me look into that", "I'll search for
+    // venues") → shared character execution path detects it → existing
+    // performWebLookup executes → genuine result persists in WebLookup →
+    // buildResearchFindingsBlock injects it into THIS canonical prompt →
+    // the same character reasons from it wherever subsequently invoked.
+    //
+    // DEDUP: If a WebLookup record already exists that was created AFTER the
+    // character's research-intent message, the research already happened —
+    // skip. This prevents re-researching the same intent on every turn.
+    if (character && recentMessages.length > 0) {
+      const hasResearchTrait = character.trait_venue_event_scout ||
+        character.trait_music_culture_scout ||
+        character.trait_trend_market_researcher ||
+        character.trait_deal_finder ||
+        character.trait_opportunity_hunter ||
+        character.trait_publicity_strategist ||
+        character.trait_marketing_strategist ||
+        character.trait_campaign_architect;
+
+      if (hasResearchTrait) {
+        // Find the character's most recent actual response (sender_type: 'character')
+        const charResponses = recentMessages
+          .filter(m => m.sender_type === 'character')
+          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
+
+        if (charResponses.length > 0) {
+          const lastCharResponse = charResponses[0];
+          const lastCharText = lastCharResponse.content || '';
+          const researchIntentMatch = lastCharText.match(
+            /(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|let me look up|let me dig into|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research)/i
+          );
+
+          if (researchIntentMatch) {
+            const lastCharTime = new Date(lastCharResponse.timestamp || lastCharResponse.created_date).getTime();
+            // Check if research was already done since this response
+            const alreadyResearched = webLookups.some(wl =>
+              new Date(wl.lookup_date || wl.created_date).getTime() > lastCharTime
+            );
+
+            if (!alreadyResearched) {
+              // Derive search query from the most recent user message (provides research context)
+              const searchQuery = recentUserMessages.length > 0
+                ? (recentUserMessages[0].content || '').substring(0, 200)
+                : lastCharText.substring(0, 200);
+
+              if (searchQuery && searchQuery.trim().length > 5) {
+                try {
+                  const lookupRes = await base44.functions.invoke('performWebLookup', {
+                    characterId,
+                    searchQuery,
+                  });
+                  if (lookupRes?.data?.lookup) {
+                    webLookups = [...webLookups, lookupRes.data.lookup];
+                  }
+                  contextLog.push({
+                    step: 'character_research_initiated',
+                    query: searchQuery.substring(0, 60),
+                    success: true,
+                    surface: interactionContext,
+                  });
+                } catch (researchErr) {
+                  // Non-blocking — research may fail when called from automations
+                  // without a user session (performWebLookup requires auth.me()).
+                  // The research will execute when the character is next invoked
+                  // through a user-session surface (Chat, Text, Scene, etc.).
+                  contextLog.push({
+                    step: 'character_research_initiated',
+                    status: 'error',
+                    error: researchErr.message,
+                    surface: interactionContext,
+                  });
+                }
+              }
+            } else {
+              contextLog.push({ step: 'character_research_initiated', skipped: 'already_researched' });
+            }
+          }
+        }
+      }
+    }
 
     // ── Step 5b: World Phone awareness — delegated to buildWorldPhoneAwarenessBlock ──
     // READ-ONLY. Returns awarenessBlock string + latestWpMsgTs for freshness metadata.
