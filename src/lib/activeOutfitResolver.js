@@ -69,27 +69,6 @@ export function resolveSpecialOccasionCategory(events, participantId, isUser = f
   return null;
 }
 
-// ── USER-SIDE FALLBACK CHAINS ─────────────────────────────────────────────────
-function buildUserFallbackChain(targetCategory) {
-  const chains = {
-    sleepwear: ['sleepwear', 'lounge', 'daily_casual'],
-    bath: ['bath', 'sleepwear', 'lounge'],
-    swimwear: ['swimwear', 'gym', 'daily_casual'],
-    gym: ['gym', 'outdoor', 'daily_casual'],
-    work: ['work', 'formal', 'daily_casual'],
-    formal: ['formal', 'work', 'daily_casual'],
-    church: ['church', 'formal', 'daily_casual'],
-    nightlife: ['nightlife', 'date_night', 'daily_casual'],
-    date_night: ['date_night', 'nightlife', 'formal', 'daily_casual'],
-    school: ['school', 'daily_casual'],
-    lounge: ['lounge', 'daily_casual'],
-    outdoor: ['outdoor', 'daily_casual'],
-    special: ['special', 'formal', 'daily_casual'],
-    daily_casual: ['daily_casual', 'outdoor', 'lounge'],
-  };
-  return chains[targetCategory] || ['daily_casual', 'lounge', 'outdoor'];
-}
-
 function buildOutfitTextFromOutfit(outfit) {
   if (!outfit) return null;
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories]
