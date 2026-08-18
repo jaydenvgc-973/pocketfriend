@@ -1509,25 +1509,29 @@ Deno.serve(async (req) => {
       const hasResearchTrait = character.trait_venue_event_scout || character.trait_music_culture_scout ||
         character.trait_trend_market_researcher || character.trait_deal_finder || character.trait_opportunity_hunter ||
         character.trait_publicity_strategist || character.trait_marketing_strategist || character.trait_campaign_architect;
-      if (!hasResearchTrait) return;
-      const charResp = recentMessages.filter(m => m.sender_type === 'character')
-        .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
-      if (charResp.length === 0) return;
-      const lastCharText = charResp[0].content || '';
-      if (!/(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|let me look up|let me dig into|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research)/i.test(lastCharText)) return;
-      const lastCharTime = new Date(charResp[0].timestamp || charResp[0].created_date).getTime();
-      if (webLookups.some(wl => new Date(wl.lookup_date || wl.created_date).getTime() > lastCharTime)) {
-        contextLog.push({ step: 'character_research_initiated', skipped: 'already_researched' });
-        return;
-      }
-      const searchQuery = recentUserMessages.length > 0 ? (recentUserMessages[0].content || '').substring(0, 200) : lastCharText.substring(0, 200);
-      if (!searchQuery || searchQuery.trim().length <= 5) return;
-      try {
-        const lookupRes = await base44.functions.invoke('performWebLookup', { characterId, searchQuery });
-        if (lookupRes?.data?.lookup) webLookups = [...webLookups, lookupRes.data.lookup];
-        contextLog.push({ step: 'character_research_initiated', query: searchQuery.substring(0, 60), success: true, surface: interactionContext });
-      } catch (researchErr) {
-        contextLog.push({ step: 'character_research_initiated', status: 'error', error: researchErr.message, surface: interactionContext });
+      if (hasResearchTrait) {
+        const charResp = recentMessages.filter(m => m.sender_type === 'character')
+          .sort((a, b) => new Date(b.timestamp || b.created_date) - new Date(a.timestamp || a.created_date));
+        if (charResp.length > 0) {
+          const lastCharText = charResp[0].content || '';
+          if (/(?:let me look into|let me research|let me find out|let me search|let me see what i can find|let me check|let me look up|let me dig into|i'll look into|i'll search for|i'm going to look up|i'm going to search|i can look into|i can research that|i'll do some research)/i.test(lastCharText)) {
+            const lastCharTime = new Date(charResp[0].timestamp || charResp[0].created_date).getTime();
+            if (!webLookups.some(wl => new Date(wl.lookup_date || wl.created_date).getTime() > lastCharTime)) {
+              const searchQuery = recentUserMessages.length > 0 ? (recentUserMessages[0].content || '').substring(0, 200) : lastCharText.substring(0, 200);
+              if (searchQuery && searchQuery.trim().length > 5) {
+                try {
+                  const lookupRes = await base44.functions.invoke('performWebLookup', { characterId, searchQuery });
+                  if (lookupRes?.data?.lookup) webLookups = [...webLookups, lookupRes.data.lookup];
+                  contextLog.push({ step: 'character_research_initiated', query: searchQuery.substring(0, 60), success: true, surface: interactionContext });
+                } catch (researchErr) {
+                  contextLog.push({ step: 'character_research_initiated', status: 'error', error: researchErr.message, surface: interactionContext });
+                }
+              }
+            } else {
+              contextLog.push({ step: 'character_research_initiated', skipped: 'already_researched' });
+            }
+          }
+        }
       }
     }
 
