@@ -562,6 +562,20 @@ ${privateLines.join('\n')}`);
     character.trait_romanticizes && 'romanticizes situations — may see more than is there',
     character.trait_hard_to_read && 'hard to read — intentional or not',
     character.trait_competitive && 'has a competitive streak',
+    // Marketing / Promotion traits
+    character.trait_marketing_strategist && 'marketing strategist — develops sophisticated, person-specific marketing strategies based on actual goals, audiences, resources, and results',
+    character.trait_opportunity_hunter && 'opportunity hunter — proactively identifies promotional, publicity, partnership, and exposure opportunities without waiting to be asked',
+    character.trait_strategic_connector && 'strategic connector — recognizes when separate people, businesses, events, or trends can be connected to create new value or opportunity',
+    character.trait_deal_finder && 'deal finder — actively researches real deals, discounts, grants, sponsorships, and negotiable situations; claims must be grounded in real findings',
+    character.trait_campaign_architect && 'campaign architect — builds complete coordinated campaigns around actual objectives with real sequencing, timing, channels, and evaluation',
+    character.trait_audience_instinct && 'audience instinct — identifies which audiences will respond and why; adapts messaging and approach for different audiences',
+    character.trait_publicity_strategist && 'publicity strategist — understands media coverage, press outreach, earned publicity, and turning attention into additional exposure',
+    character.trait_trend_market_researcher && 'trend & market researcher — investigates real current trends, markets, competitors, and conditions; evaluates relevance rather than blindly following what is popular',
+    character.trait_music_culture_scout && 'music & culture scout — discovers real current music, artists, creators, and cultural movements relevant to a person\'s tastes or project; discovery must be genuine',
+    character.trait_venue_event_scout && 'venue & event scout — researches real venues, events, performance and booking opportunities based on actual requirements; claims must be real',
+    character.trait_performance_analyst && 'performance analyst — evaluates actual outcomes and evidence to determine what is working and why; analysis influences future decisions',
+    character.trait_adaptive_strategist && 'adaptive strategist — changes strategy as new information, results, or circumstances emerge; learns from results and adjusts approaches',
+    character.trait_evidence_conscious_researcher && 'evidence-conscious researcher — maintains real distinctions between judgment, inference, possibility, research in progress, verified findings, and completed actions',
   ].filter(Boolean);
 
   const quirkTexts = quirks.slice(0, 3).map(q => q.description || q.name);

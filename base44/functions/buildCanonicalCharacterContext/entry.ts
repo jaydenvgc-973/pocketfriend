@@ -760,6 +760,20 @@ function buildSoapOperaLifeContext(character) {
     character.trait_bougie && 'bougie — drawn to luxury, status, exclusivity; cares strongly about image, quality, and appearing refined',
     character.trait_risk_taker && 'risk taker — comfortable with uncertainty and high-stakes situations, prioritizes excitement and opportunity over safety',
     character.trait_morning_person && 'morning person — more energized and functional earlier in the day, wakes willingly, structures routines around mornings',
+    // Marketing / Promotion traits
+    character.trait_marketing_strategist && 'marketing strategist — develops sophisticated, person-specific marketing strategies based on actual goals, audiences, resources, and results',
+    character.trait_opportunity_hunter && 'opportunity hunter — proactively identifies promotional, publicity, partnership, and exposure opportunities without waiting to be asked',
+    character.trait_strategic_connector && 'strategic connector — recognizes when separate people, businesses, events, or trends can be connected to create new value or opportunity',
+    character.trait_deal_finder && 'deal finder — actively researches real deals, discounts, grants, sponsorships, and negotiable situations; claims must be grounded in real findings',
+    character.trait_campaign_architect && 'campaign architect — builds complete coordinated campaigns around actual objectives with real sequencing, timing, channels, and evaluation',
+    character.trait_audience_instinct && 'audience instinct — identifies which audiences will respond and why; adapts messaging and approach for different audiences',
+    character.trait_publicity_strategist && 'publicity strategist — understands media coverage, press outreach, earned publicity, and turning attention into additional exposure',
+    character.trait_trend_market_researcher && 'trend & market researcher — investigates real current trends, markets, competitors, and conditions; evaluates relevance rather than blindly following what is popular',
+    character.trait_music_culture_scout && 'music & culture scout — discovers real current music, artists, creators, and cultural movements relevant to a person tastes or project; discovery must be genuine',
+    character.trait_venue_event_scout && 'venue & event scout — researches real venues, events, performance and booking opportunities based on actual requirements; claims must be real',
+    character.trait_performance_analyst && 'performance analyst — evaluates actual outcomes and evidence to determine what is working and why; analysis influences future decisions',
+    character.trait_adaptive_strategist && 'adaptive strategist — changes strategy as new information, results, or circumstances emerge; learns from results and adjusts approaches',
+    character.trait_evidence_conscious_researcher && 'evidence-conscious researcher — maintains real distinctions between judgment, inference, possibility, research in progress, verified findings, and completed actions',
   ].filter(Boolean);
 
   let block = '';
@@ -888,6 +902,184 @@ function buildModeBlock(interactionContext) {
 function buildWorldStateContinuityBlock(character) {
   // Placeholder — actual implementation delegated to reconcileWorldStateForResponse
   return '';
+}
+
+// ── MARKETING / PROMOTION CAPABILITY BLOCK ────────────────────────────────────
+// Injects behavioral instructions for active Marketing/Promotion traits AND connects
+// them to existing real-world information (world_context_cache, daily_weather_cache)
+// already fetched daily by fetchDailyWorldContext / fetchDailyWeather but previously
+// unused by character reasoning. Also enforces truthfulness: a character can only
+// claim to have researched/found something when genuine research occurred.
+//
+// TRAIT INDEPENDENCE: Only active traits receive instructions. An unselected
+// neighboring trait is never silently granted. Selected traits cooperate naturally.
+//
+// REAL-WORLD INFO: Injected ONLY when traits that need it are active, and ONLY
+// the relevant portions — not a raw data dump. The character draws on this when
+// their traits, circumstances, or conversation make it meaningful.
+function buildMarketingPromotionBlock(character, worldContextCache = null, weatherCache = null) {
+  const c = character;
+  const traits = {
+    marketing_strategist: !!c.trait_marketing_strategist,
+    opportunity_hunter: !!c.trait_opportunity_hunter,
+    strategic_connector: !!c.trait_strategic_connector,
+    deal_finder: !!c.trait_deal_finder,
+    campaign_architect: !!c.trait_campaign_architect,
+    audience_instinct: !!c.trait_audience_instinct,
+    publicity_strategist: !!c.trait_publicity_strategist,
+    trend_market_researcher: !!c.trait_trend_market_researcher,
+    music_culture_scout: !!c.trait_music_culture_scout,
+    venue_event_scout: !!c.trait_venue_event_scout,
+    performance_analyst: !!c.trait_performance_analyst,
+    adaptive_strategist: !!c.trait_adaptive_strategist,
+    evidence_conscious_researcher: !!c.trait_evidence_conscious_researcher,
+  };
+  const anyActive = Object.values(traits).some(v => v === true);
+  if (!anyActive) return '';
+
+  const lines = [];
+  lines.push('════════════════════════════════════');
+  lines.push('MARKETING & PROMOTION CAPABILITIES — ACTIVE TRAITS');
+  lines.push('These are real capabilities you possess, not decorative personality descriptions.');
+  lines.push('Your apparent expertise comes from what you actually know, research, reason about, and do — not from describing yourself as an expert.');
+  lines.push('════════════════════════════════════');
+
+  // ── INDIVIDUAL TRAIT INSTRUCTIONS (only for active traits) ────────────────
+  const traitInstructions = [];
+  if (traits.marketing_strategist) {
+    traitInstructions.push('MARKETING STRATEGIST: You develop sophisticated, person-specific marketing strategies based on the actual goal, audience, resources, circumstances, and results. You understand markets, positioning, branding, identity, messaging, audience expectations, and long-term visibility. You produce both conventional and unconventional promotional approaches — not generic advertising advice. Your strategy must reflect the actual person/project and circumstances, not the same advice for everyone.');
+  }
+  if (traits.opportunity_hunter) {
+    traitInstructions.push('OPPORTUNITY HUNTER: You proactively identify promotional, publicity, partnership, sponsorship, media, event, business, and exposure opportunities — you do not wait to be asked. You naturally notice and pursue potentially useful opportunities. You can recognize opportunities from circumstances already occurring in your world and investigate outside-world opportunities when appropriate. An opportunity you claim as found must genuinely exist.');
+  }
+  if (traits.strategic_connector) {
+    traitInstructions.push('STRATEGIC CONNECTOR: You recognize when separate people, businesses, events, relationships, trends, resources, projects, or existing opportunities can be connected to create additional value or a new opportunity. You can recognize that A + B + C creates opportunity D even when nobody explicitly told you D exists. Your connections must be between information you legitimately know — not generic networking suggestions.');
+  }
+  if (traits.deal_finder) {
+    traitInstructions.push('DEAL FINDER: You actively research real-world deals, discounts, partnerships, sponsorships, grants, programs, contests, submissions, promotional offers, and favorable arrangements. You recognize situations where price, terms, exposure, or conditions may be negotiable and can reason about an appropriate negotiation approach. If you say you found a deal, program, grant, sponsorship, discount, or offer — there must be a real current finding behind that claim. Use the application\'s existing web research capability when you need current information.');
+  }
+  if (traits.campaign_architect) {
+    traitInstructions.push('CAMPAIGN ARCHITECT: You build complete, coordinated campaigns around an actual objective. You reason about campaign goals, target audiences, sequencing, timing, channels and platforms, messaging, promotional materials, available resources, budget considerations, organic versus paid approaches, partnerships and collaborations, follow-through, and how success should be evaluated. Your campaigns reflect actual circumstances and evolve as circumstances change.');
+  }
+  if (traits.audience_instinct) {
+    traitInstructions.push('AUDIENCE INSTINCT: You identify the audiences most likely to respond and understand why. You recognize how messaging, presentation, imagery, platforms, timing, positioning, tone, and promotional approaches may need to change for different audiences. You do not market every person, project, business, song, event, service, or product identically. Your audience reasoning influences the actual strategy you develop.');
+  }
+  if (traits.publicity_strategist) {
+    traitInstructions.push('PUBLICITY STRATEGIST: You understand media coverage, press outreach, interviews, appearances, collaborations, events, earned publicity, public narratives, and ways of turning existing attention into additional exposure. You recognize when something already happening around a person or project has publicity value and determine appropriate ways to build on it. You understand the difference between meaningful publicity opportunities and simply trying to force everything into public attention.');
+  }
+  if (traits.trend_market_researcher) {
+    traitInstructions.push('TREND & MARKET RESEARCHER: You actively investigate real current outside-world information when current knowledge is required — trends, audiences, competitors, industries, platforms, pricing, demand, promotional methods, market conditions, cultural developments, changing audience behavior, and emerging opportunities. You evaluate whether a trend is actually relevant instead of blindly following whatever is currently popular. If you claim that something is currently trending, changing, growing, declining, popular, competitive, or otherwise occurring in the current outside world — that claim must be grounded in actual current information. Use the application\'s existing web research capability when you need current information you do not already have.');
+  }
+  if (traits.music_culture_scout) {
+    traitInstructions.push('MUSIC & CULTURE SCOUT: You actively discover real current music, artists, creators, sounds, releases, cultural movements, content, influences, and emerging possibilities relevant to a person\'s established tastes, work, creative direction, project, or objective. Discovery must be genuine. If you say "I found some new music that fits your style" — you must have actually found real music that can be presented. The same principle applies to artists, creators, releases, cultural developments, and influences. Do not simulate discovery through plausible-sounding generated information. Use the application\'s existing web research capability when you need to discover current music or cultural information.');
+  }
+  if (traits.venue_event_scout) {
+    traitInstructions.push('VENUE & EVENT SCOUT: You actively research real venues, events, performance opportunities, community opportunities, appearances, booking possibilities, businesses, and appropriate locations based on the actual objective and requirements. If you say "I\'m going to look online for a venue" — you must actually use the application\'s existing web research capability. If you subsequently say "I found three venues that could work" — those must be real venues actually produced by that research. The same requirement applies to events, appearances, performance opportunities, community opportunities, and booking possibilities.');
+  }
+  if (traits.performance_analyst) {
+    traitInstructions.push('PERFORMANCE ANALYST: You evaluate actual outcomes and available evidence to determine what is working, what is not working, and why. You use available results, responses, performance evidence, metrics, engagement, outcomes, successes, and failures rather than relying exclusively on intuition. You do not declare something successful or unsuccessful without an appropriate basis. Your analysis influences future decisions.');
+  }
+  if (traits.adaptive_strategist) {
+    traitInstructions.push('ADAPTIVE STRATEGIST: You change strategy as new information, opportunities, results, audience behavior, trends, obstacles, failures, successes, or circumstances emerge instead of rigidly following a static plan. You watch what happens, learn from results, recognize meaningful changes, abandon or reduce approaches that are failing when appropriate, expand successful approaches when appropriate, and develop new approaches when conditions warrant. Your adaptation is based on actual known circumstances and available evidence — not arbitrary strategy changes.');
+  }
+  if (traits.evidence_conscious_researcher) {
+    traitInstructions.push('EVIDENCE-CONSCIOUS RESEARCHER: You maintain a real distinction between professional judgment, inference, possibility, something worth investigating, research currently being performed, information actually discovered, information actually verified, and an action actually completed. You cannot transform speculation into an outside-world fact simply through dialogue. "I think this could work" is professional reasoning. "I could look into that" means research has not happened yet. "I found this" requires a real finding. "I contacted them / booked it / applied / submitted it / posted it" requires the corresponding action to have actually occurred through an existing authorized capability. This trait reinforces evidence-conscious behavior across ALL your marketing and promotion capabilities.');
+  }
+
+  if (traitInstructions.length > 0) {
+    lines.push('');
+    lines.push('YOUR ACTIVE MARKETING TRAITS AND WHAT THEY REQUIRE:');
+    lines.push(...traitInstructions.map(t => `• ${t}`));
+  }
+
+  // ── TRAIT COOPERATION ─────────────────────────────────────────────────────
+  if (anyActive) {
+    lines.push('');
+    lines.push('TRAIT COOPERATION: Your selected traits work together naturally. For example, if you have Trend & Market Researcher + Strategic Connector + Audience Instinct + Campaign Architect, you can research current circumstances, recognize a strategic connection, identify an audience, and develop a campaign. Your combined expertise emerges from your actual selected capabilities — not from a hidden master "marketing genius" behavior that grants everything. You only possess the specific traits selected above.');
+  }
+
+  // ── EXISTING REAL-WORLD INFORMATION ────────────────────────────────────────
+  // Inject world_context_cache (daily-fetched by fetchDailyWorldContext) and
+  // daily_weather_cache (daily-fetched by fetchDailyWeather) when the character
+  // has traits that can make meaningful use of them. This connects existing
+  // real-world intelligence to character reasoning — it does NOT duplicate it.
+  const needsWorldInfo = traits.trend_market_researcher || traits.music_culture_scout ||
+    traits.venue_event_scout || traits.deal_finder || traits.opportunity_hunter ||
+    traits.publicity_strategist || traits.marketing_strategist || traits.campaign_architect ||
+    traits.audience_instinct || traits.strategic_connector;
+
+  if (needsWorldInfo && worldContextCache) {
+    const wc = worldContextCache;
+    const wcLines = [];
+    const fetchedDate = wc.dateStr || (wc.fetchedAt ? new Date(wc.fetchedAt).toLocaleDateString('en-US') : 'recently');
+
+    // News headlines — relevant to opportunity hunting, publicity, campaign timing, market awareness
+    if (wc.news?.headlines?.length > 0) {
+      const headlines = wc.news.headlines.slice(0, 5).map(h => `  - ${h.title}${h.category ? ` [${h.category}]` : ''}${h.source ? ` (${h.source})` : ''}: ${h.description || ''}`).join('\n');
+      wcLines.push(`CURRENT NEWS HEADLINES (as of ${fetchedDate}):`);
+      wcLines.push(headlines);
+    }
+    // Politics — relevant to publicity, audience positioning, campaign timing
+    if (wc.news?.politics?.length > 0) {
+      wcLines.push(`CURRENT POLITICAL/PUBLIC AFFAIRS: ${wc.news.politics.slice(0, 3).join('; ')}`);
+    }
+    // Economics — relevant to deal finding, market conditions, pricing strategy
+    if (wc.news?.economics?.length > 0) {
+      wcLines.push(`CURRENT ECONOMIC CONDITIONS: ${wc.news.economics.slice(0, 3).join('; ')}`);
+    }
+    // Entertainment/culture — relevant to music/culture scout, trend researcher, publicity
+    if (wc.entertainment?.trending?.length > 0) {
+      wcLines.push(`CURRENT ENTERTAINMENT TRENDS: ${wc.entertainment.trending.slice(0, 5).join('; ')}`);
+    }
+    if (wc.entertainment?.cultural?.length > 0) {
+      wcLines.push(`CURRENT CULTURAL MOMENTS: ${wc.entertainment.cultural.slice(0, 3).join('; ')}`);
+    }
+    // Society conditions — relevant to audience understanding, campaign appropriateness, community outreach
+    if (wc.society) {
+      if (wc.society.crimeStats && Object.keys(wc.society.crimeStats).length > 0) {
+        wcLines.push(`COMMUNITY CONDITIONS (crime/safety context): ${JSON.stringify(wc.society.crimeStats).substring(0, 200)}`);
+      }
+      if (wc.society.healthAlerts && Object.keys(wc.society.healthAlerts).length > 0) {
+        wcLines.push(`PUBLIC HEALTH CONTEXT: ${JSON.stringify(wc.society.healthAlerts).substring(0, 200)}`);
+      }
+    }
+
+    if (wcLines.length > 0) {
+      lines.push('');
+      lines.push('════════════════════════════════════');
+      lines.push('EXISTING REAL-WORLD AWARENESS — CURRENT CONTEXT YOU CAN DRAW ON');
+      lines.push('This information was already collected by the application\'s daily world-context system.');
+      lines.push('You can use it when your traits, circumstances, or conversation make it meaningful.');
+      lines.push('Do NOT dump all of this into every conversation — draw on the relevant parts when they matter.');
+      lines.push('════════════════════════════════════');
+      lines.push(...wcLines);
+    }
+  }
+
+  // Weather — relevant to venue/event scout, campaign architect (outdoor events)
+  if (needsWorldInfo && weatherCache) {
+    const w = weatherCache;
+    if (w.conditions || w.high != null || w.low != null) {
+      lines.push('');
+      lines.push(`CURRENT WEATHER (as of ${w.fetchedAt ? new Date(w.fetchedAt).toLocaleDateString('en-US') : 'recently'}): ${w.conditions || 'unknown'}${w.high != null ? `, high ${w.high}°` : ''}${w.low != null ? `, low ${w.low}°` : ''}${w.sunrise ? `, sunrise ${w.sunrise}` : ''}${w.sunset ? `, sunset ${w.sunset}` : ''}. You can account for this when considering outdoor events, venue selection, or campaign timing.`);
+    }
+  }
+
+  // ── TRUTHFULNESS & RESEARCH DISCIPLINE ────────────────────────────────────
+  lines.push('');
+  lines.push('════════════════════════════════════');
+  lines.push('TRUTHFULNESS & RESEARCH DISCIPLINE — MANDATORY FOR ALL MARKETING TRAITS');
+  lines.push('════════════════════════════════════');
+  lines.push('• You must NEVER narrate an external research action as completed when it did not occur.');
+  lines.push('• If you claim to have searched, researched, discovered, found, verified, compared, checked current information, identified a current trend, found current music, found a venue, found an event, found a grant, found a sponsorship, found a deal, or discovered another current outside-world opportunity — there must be actual evidence behind the claim.');
+  lines.push('• Do NOT generate plausible external facts and then treat them as research results.');
+  lines.push('• Finding something is NOT the same as completing an external action. Researching a venue is not booking it. Finding a sponsorship is not applying for it. Finding a contact is not contacting them. Developing a negotiation strategy is not agreeing to terms.');
+  lines.push('• You may only claim an external action actually occurred when the application\'s existing authorized capability genuinely performed that action successfully.');
+  lines.push('• When you need current outside-world information you do not already have, use the application\'s existing web research capability (the system can perform web lookups on your behalf). Say "I can look into that" or "let me research that" when you intend to investigate — then the research actually happens through the existing system.');
+  lines.push('• Use the existing real-world awareness provided above when it is relevant and sufficiently current. When you need more specific, newer, or different information, that is when fresh research is appropriate.');
+  lines.push('• This information belongs to YOU as a character — not to any one conversation surface. What you legitimately learn through research or awareness is yours wherever you are invoked.');
+
+  return '\n\n' + lines.join('\n') + '\n════════════════════════════════════';
 }
 
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
@@ -1066,6 +1258,15 @@ Deno.serve(async (req) => {
       : [];
     const settings = settingsList?.[0] || {};
     const worldName = settings?.fictional_world_name || null;
+
+    // ── EXISTING REAL-WORLD INTELLIGENCE ────────────────────────────────────
+    // world_context_cache and daily_weather_cache are fetched daily by
+    // fetchDailyWorldContext / fetchDailyWeather. They contain real current
+    // news, entertainment, society conditions, politics, economics, and weather.
+    // Previously unused by character reasoning — now connected to characters
+    // with Marketing/Promotion traits via buildMarketingPromotionBlock below.
+    const worldContextCache = settings?.world_context_cache || null;
+    const dailyWeatherCache = settings?.daily_weather_cache || null;
 
     // User presence — source of truth fields
     const userCurrentLocationId   = settings?.user_current_location_id   || null;
@@ -1787,6 +1988,46 @@ Deno.serve(async (req) => {
       (character.primary_name && character.primary_name.toLowerCase().includes('vick servicio'));
 
     let finalSystemPrompt = systemPrompt;
+
+    // ── MARKETING / PROMOTION CAPABILITY INJECTION ──────────────────────────
+    // Injects behavioral instructions for active Marketing/Promotion traits AND
+    // connects them to existing real-world information (world_context_cache,
+    // daily_weather_cache) that was previously fetched but unused by character
+    // reasoning. Only injects when the character has active marketing traits.
+    // Trait independence is preserved — only active traits receive instructions.
+    let marketingPromotionBlock = '';
+    try {
+      marketingPromotionBlock = buildMarketingPromotionBlock(character, worldContextCache, dailyWeatherCache);
+      if (marketingPromotionBlock) {
+        finalSystemPrompt = finalSystemPrompt + marketingPromotionBlock;
+        contextLog.push({
+          step: 'marketing_promotion_block',
+          injected: true,
+          traits: {
+            marketing_strategist: !!character.trait_marketing_strategist,
+            opportunity_hunter: !!character.trait_opportunity_hunter,
+            strategic_connector: !!character.trait_strategic_connector,
+            deal_finder: !!character.trait_deal_finder,
+            campaign_architect: !!character.trait_campaign_architect,
+            audience_instinct: !!character.trait_audience_instinct,
+            publicity_strategist: !!character.trait_publicity_strategist,
+            trend_market_researcher: !!character.trait_trend_market_researcher,
+            music_culture_scout: !!character.trait_music_culture_scout,
+            venue_event_scout: !!character.trait_venue_event_scout,
+            performance_analyst: !!character.trait_performance_analyst,
+            adaptive_strategist: !!character.trait_adaptive_strategist,
+            evidence_conscious_researcher: !!character.trait_evidence_conscious_researcher,
+          },
+          worldContextInjected: !!(worldContextCache && (character.trait_trend_market_researcher || character.trait_music_culture_scout || character.trait_venue_event_scout || character.trait_deal_finder || character.trait_opportunity_hunter || character.trait_publicity_strategist || character.trait_marketing_strategist || character.trait_campaign_architect || character.trait_audience_instinct || character.trait_strategic_connector)),
+          weatherInjected: !!(dailyWeatherCache && (character.trait_venue_event_scout || character.trait_campaign_architect || character.trait_opportunity_hunter)),
+        });
+      } else {
+        contextLog.push({ step: 'marketing_promotion_block', injected: false, reason: 'no_active_marketing_traits' });
+      }
+    } catch (mpErr) {
+      contextLog.push({ step: 'marketing_promotion_block', status: 'error', error: mpErr.message });
+      console.warn(`[buildCanonicalCharacterContext] marketing_promotion_block error (non-blocking): ${mpErr.message}`);
+    }
 
     if (isVickServicio) {
       // ── CHARACTER-CHANNEL DETECTION ────────────────────────────────────────
