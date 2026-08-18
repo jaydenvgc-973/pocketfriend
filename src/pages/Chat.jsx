@@ -1399,7 +1399,14 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // validateLocationInResponse is imported from lib/promptContextBuilders.js
 
       const t_llm_start = Date.now();
-      response = await callLLMWithRetry(fullPrompt);
+      // needsInternet: true restores the character's existing external-information
+      // capability. The LLM itself recognizes the information need from conversation
+      // context and searches Google as part of generating the response — no phrase
+      // detection, no deferred lookup, no stripped search subjects. The LLM preserves
+      // the full conversational context (including disambiguating identifiers like
+      // "Jaydenvgc Jayden Jackson") because it decides what to search for based on
+      // the conversation, not a regex. This is the pre-regression execution path.
+      response = await callLLMWithRetry(fullPrompt, 'gemini_3_flash', 3, true);
       const t_llm_end = Date.now();
       console.log(`[SEND_TIMING_PROOF] llm_call_ms=${t_llm_end - t_llm_start} | llm_start_ms=${t_llm_start - t_send_start}`);
       // Step 7 — Vick final response (only logged when diagnostic was used)
