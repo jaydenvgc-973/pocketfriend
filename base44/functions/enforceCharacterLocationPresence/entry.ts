@@ -1057,6 +1057,30 @@ function computeResolvedLocation(character, locationMap, etTime) {
     };
   }
 
+  // Sleep state lock — preserve committed sleep state BEFORE work/school
+  // evaluation. Recompute reflects already-committed reality; it does not
+  // independently manufacture a work/school transition from schedule evaluation.
+  // If the character is committed as sleeping or napping, that reality is
+  // preserved and work/school schedules are NOT evaluated here. A genuine work
+  // or school obligation remains an authorized wake condition through the
+  // existing obligation pathway (enforceCharacterWorkSchedule), which sends an
+  // explicit at_work/at_school request through evaluateRequestedTransition —
+  // NOT through this recompute. Sleep caps (6-8h), alarms, and wake boundaries
+  // are handled by the dedicated automations (simulateActiveCharacterNeeds,
+  // enforceWakeTimeBoundary, processScheduledCharacterAlarms) — NOT by this recompute.
+  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
+  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
+  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+  if (dbSleeping && sleepHomeId) {
+    return {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: character.resolved_presence_status,
+      resolved_source_reason: 'energy_driven_sleep_preserved',
+    };
+  }
+
   // Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
   // Build ONE ordered employment sequence: primary first, then additional in
   // stored order. Each entry is linked or rabbit-hole. Evaluation proceeds in
@@ -1141,24 +1165,6 @@ function computeResolvedLocation(character, locationMap, etTime) {
       resolved_location_type: 'school',
       resolved_presence_status: 'at_school',
       resolved_source_reason: 'school_schedule',
-    };
-  }
-
-  // Sleep state lock — preserve committed sleep state (AFTER work/school obligations).
-  // Work and school are checked above first; only when no obligation is active does
-  // the committed sleep state get preserved. Sleep caps (6-8h), alarms, and wake
-  // boundaries are handled by the dedicated automations (simulateActiveCharacterNeeds,
-  // enforceWakeTimeBoundary, processScheduledCharacterAlarms) — NOT by this recompute.
-  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
-  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
-  const dbSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
-  if (dbSleeping && sleepHomeId) {
-    return {
-      resolved_current_location_id: sleepHomeId,
-      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: character.resolved_presence_status,
-      resolved_source_reason: 'energy_driven_sleep_preserved',
     };
   }
 
@@ -1282,6 +1288,39 @@ function hasChanged(resolved, stored) {
     resolved.resolved_presence_status !== stored.resolved_presence_status ||
     resolved.resolved_source_reason !== stored.resolved_source_reason
   );
+}
+
+// ── CURRENT SITUATION REFLECTION ─────────────────────────────────────────────
+// Derives a human-readable current_situation string from the committed result.
+// This is a REFLECTION of the committed reality (state/action + location), not
+// a new authority. The committed result already holds the authoritative state
+// and location; this function merely combines them for human readability.
+//   state/action = resolved_presence_status (sleeping, at_work, home, etc.)
+//   location     = resolved_current_location_name (Home, Agency, etc.)
+// The distinction between location and state/action is preserved: "Sleeping at
+// home" means sleeping=state/action and home=location — not that sleeping is a
+// location or home is a state.
+function buildCurrentSituation(committed) {
+  const status = committed.resolved_presence_status || 'home';
+  const locName = committed.resolved_current_location_name || '';
+  const stateMap = {
+    sleeping: 'Sleeping',
+    napping: 'Napping',
+    passed_out: 'Passed out',
+    at_work: 'Working',
+    at_school: 'At school',
+    hospitalized: 'Hospitalized',
+    incarcerated: 'Incarcerated',
+    house_arrest: 'Under house arrest',
+    visiting: 'Visiting',
+    home: 'Home',
+    traveling: 'Traveling',
+    confined: 'Confined',
+    rabbit_hole: 'Off-screen',
+  };
+  const state = stateMap[status] || status;
+  if (!locName) return state;
+  return `${state} at ${locName}`;
 }
 
 // ── COMPATIBILITY/INTEGRITY VALIDATION ───────────────────────────────────────
@@ -1484,8 +1523,30 @@ Deno.serve(async (req) => {
       } catch (_) { /* non-blocking — hospitalization will reject if no medical found */ }
     }
 
-    // ── EASTERN TIME ───────────────────────────────────────────────────────────
-    const etTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    // ── EASTERN TIME (authoritative — America/New_York) ───────────────────────
+    // Intl.DateTimeFormat with timeZone: 'America/New_York' extracts the actual
+    // Eastern date/time components. The toLocaleString trick is unreliable in this
+    // runtime (it returns UTC-formatted strings without converting); formatToParts
+    // is the robust path. The resulting Date is constructed via Date.UTC so its
+    // UTC components equal the Eastern components — getHours()/getDay() in this
+    // runtime then return the Eastern hour/day for schedule evaluation.
+    // Do NOT manually subtract a UTC offset — Eastern Time shifts between EST/EDT.
+    const _etParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const _etMap = {};
+    for (const p of _etParts) _etMap[p.type] = p.value;
+    const etTime = new Date(Date.UTC(
+      parseInt(_etMap.year, 10),
+      parseInt(_etMap.month, 10) - 1,
+      parseInt(_etMap.day, 10),
+      parseInt(_etMap.hour, 10) % 24,
+      parseInt(_etMap.minute, 10),
+      parseInt(_etMap.second, 10),
+    ));
 
     // ── EVALUATE REQUESTED TRANSITION ──────────────────────────────────────────
     const evaluation = evaluateRequestedTransition(character, locationMap, payload, etTime);
@@ -1517,7 +1578,12 @@ Deno.serve(async (req) => {
     // ── COMMIT ONE COHERENT CANONICAL UPDATE ──────────────────────────────────
     // Only canonical fields that must change for this resolved transition.
     // Callers may continue writing noncanonical fields they already own.
+    // current_situation is updated from the same committed result — it receives
+    // the established truth as a readable reflection, not as a new authority.
     const updatePayload = { ...canonicalFields };
+    if (committed_result) {
+      updatePayload.current_situation = buildCurrentSituation(committed_result);
+    }
     await base44.asServiceRole.entities.Character.update(character_id, updatePayload);
 
     // ── OBLIGATED TRANSITION NARRATIVE EMISSION ────────────────────────────────
