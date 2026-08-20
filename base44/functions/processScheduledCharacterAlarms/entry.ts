@@ -3,11 +3,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * processScheduledCharacterAlarms — USER-SET ALARM EXECUTION
  *
- * RESTORED regression behavior. pending_alarm_time is a USER-SET ALARM for
- * a specific character at a specific Eastern time — NOT a recurring daily
- * schedule. When the alarm time arrives, this function invokes the existing
- * authorized wake pipeline (enforceCharacterLocationPresence) for that
- * character, then CLEARS pending_alarm_time (one-time alarm, not recurring).
+ * 24-HOUR RECURRING ALARM. pending_alarm_time is a USER-SET ALARM for a
+ * specific character at a specific Eastern time. When the alarm time arrives,
+ * this function invokes the existing authorized wake pipeline
+ * (enforceCharacterLocationPresence) for that character, then ADVANCES
+ * pending_alarm_time to the same time 24 hours later (the established 24-hour
+ * recurrence). If the user changes the alarm time, the existing alarm-setting
+ * pathway resets pending_alarm_time to the new occurrence and the 24-hour
+ * recurrence continues from there.
  *
  * Three distinct wake mechanisms (all converging on the existing authority):
  *   1. NORMAL sleep/wake — independent of pending_alarm_time (6-8h, handled
@@ -44,16 +47,19 @@ Deno.serve(async (req) => {
 
     let body = {};
     try { body = await req.json(); } catch { /* no body */ }
-    const singleCharacterId = body.character_id || null;
+    // Entity-triggered invocation passes { event: { entity_id }, data, ... }.
+    // HTTP/manual invocation passes { character_id, occurrence_time, ... }.
+    const singleCharacterId = body.character_id || body.event?.entity_id || null;
     const occurrenceTime = body.occurrence_time || null;
     const testCharacterIds = Array.isArray(body.test_character_ids) ? body.test_character_ids : null;
+    const entityData = body.data || null; // pre-loaded character from entity trigger
 
     const nowMs = Date.now();
     const nowIso = new Date(nowMs).toISOString();
 
     // ── PER-CHARACTER MODE: process one character ───────────────────────
     if (singleCharacterId) {
-      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso, occurrenceTime);
+      const result = await processOneCharacter(base44, singleCharacterId, nowMs, nowIso, occurrenceTime, entityData);
       return Response.json({ success: true, ...result });
     }
 
@@ -93,18 +99,21 @@ Deno.serve(async (req) => {
 });
 
 // ── PER-CHARACTER PROCESSING ─────────────────────────────────────────────
-async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenceTime) {
-  // Load THIS character only.
-  let char = null;
-  try {
-    const list = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
-    char = list?.[0] || null;
-  } catch { /* fall through */ }
+async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenceTime, preloadedChar = null) {
+  // Use the pre-loaded character from the entity trigger when available;
+  // otherwise load THIS character only.
+  let char = preloadedChar;
   if (!char) {
     try {
-      const list2 = await base44.entities.Character.filter({ id: characterId }, null, 1);
-      char = list2?.[0] || null;
-    } catch { /* not found */ }
+      const list = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+      char = list?.[0] || null;
+    } catch { /* fall through */ }
+    if (!char) {
+      try {
+        const list2 = await base44.entities.Character.filter({ id: characterId }, null, 1);
+        char = list2?.[0] || null;
+      } catch { /* not found */ }
+    }
   }
   if (!char) return { event: 'character_not_found' };
 
@@ -135,41 +144,31 @@ async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenc
   const presenceStatus = char.resolved_presence_status || '';
   const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
 
-  // Already awake → clear the alarm (one-time alarm, no recurrence).
+  // Already awake → advance the 24h recurring alarm to the next occurrence
+  // (same time tomorrow). The alarm is NOT cleared — it recurs every 24 hours.
   if (!isAsleep) {
+    const nextOccurrence = new Date(new Date(alarmTime).getTime() + 24 * 3600000).toISOString();
     try {
       await base44.asServiceRole.entities.Character.update(characterId, {
-        pending_alarm_time: null,
+        pending_alarm_time: nextOccurrence,
         alarm_woke_at: nowIso,
       });
-    } catch (e) { console.warn(`[processScheduledCharacterAlarms] awake clear failed: ${e.message}`); }
-    return { event: 'already_awake_cleared' };
+    } catch (e) { console.warn(`[processScheduledCharacterAlarms] awake reschedule failed: ${e.message}`); }
+    return { event: 'already_awake_rescheduled', next_alarm_time: nextOccurrence };
   }
 
   // ── 6-HOUR MINIMUM-SLEEP GUARD ──────────────────────────────────────
+  // Block the alarm without firing or rescheduling. pending_alarm_time stays
+  // at the user's configured time; the alarm fires on the next Character update
+  // once the 6-hour minimum has been met. This preserves the 24-hour recurrence
+  // from the original configured time (no drift from 6h-boundary rescheduling).
+  // No SleepTransition record is created — blocking is not a transition.
   const sleepStart = char.last_sleep_start ? new Date(char.last_sleep_start).getTime() : null;
   const isMedicalEmergency = (char.health_value ?? 80) <= 15;
   if (sleepStart && !isMedicalEmergency) {
     const elapsedSleepHours = (nowMs - sleepStart) / 3600000;
     if (elapsedSleepHours < 6) {
-      const sixHourBoundaryIso = new Date(sleepStart + 6 * 3600000).toISOString();
-      try {
-        await base44.asServiceRole.entities.Character.update(characterId, {
-          pending_alarm_time: sixHourBoundaryIso,
-        });
-      } catch (e) { console.warn(`[processScheduledCharacterAlarms] 6h guard reschedule failed: ${e.message}`); }
-      try {
-        await base44.asServiceRole.entities.SleepTransition.create({
-          character_id: characterId, character_name: char.name, owner_email: char.owner_email,
-          transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'sleeping',
-          authority: 'alarm_reschedule_6h_guard',
-          reason: `Alarm fired after ${Math.round(elapsedSleepHours * 100) / 100}h sleep — rescheduled to 6h boundary. No verified higher-priority interrupt.`,
-          timestamp: nowIso, state_start_ref: char.last_sleep_start,
-          elapsed_hours: Math.round(elapsedSleepHours * 100) / 100,
-          verified_higher_priority_interrupt: false,
-        });
-      } catch (e) { console.warn(`[processScheduledCharacterAlarms] 6h guard transition failed: ${e.message}`); }
-      return { event: 'alarm_rescheduled_6h_guard', elapsed_sleep_hours: Math.round(elapsedSleepHours * 100) / 100, next_alarm_time: sixHourBoundaryIso };
+      return { event: 'alarm_blocked_6h_guard', elapsed_sleep_hours: Math.round(elapsedSleepHours * 100) / 100 };
     }
   }
 
@@ -196,13 +195,14 @@ async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenc
   const committed = authRes.committed_result;
   const committedPresence = committed.resolved_presence_status || 'home';
 
-  // CLEAR the alarm (one-time user alarm, NOT recurring). Only alarm state + activity —
-  // canonical wake state was committed by the authority above.
+  // Advance the 24h recurring alarm to the next occurrence (same time tomorrow).
+  // Only alarm state + activity — canonical wake state was committed by the authority above.
+  const nextOccurrence = new Date(new Date(alarmTime).getTime() + 24 * 3600000).toISOString();
   await base44.asServiceRole.entities.Character.update(characterId, {
-    pending_alarm_time: null,
+    pending_alarm_time: nextOccurrence,
     alarm_woke_at: nowIso,
     current_activity: 'just woke up (scheduled alarm)',
-  }).catch((e) => console.warn(`[processScheduledCharacterAlarms] clear failed: ${e.message}`));
+  }).catch((e) => console.warn(`[processScheduledCharacterAlarms] reschedule failed: ${e.message}`));
 
   // Authoritative transition record.
   const stateStartRef = presenceStatus === 'napping' ? char.last_nap_time : char.last_sleep_start;
@@ -254,5 +254,5 @@ async function processOneCharacter(base44, characterId, nowMs, nowIso, occurrenc
     });
   } catch (e) { console.warn(`[processScheduledCharacterAlarms] memory failed: ${e.message}`); }
 
-  return { event: 'alarm_fired', from_status: presenceStatus, to_status: committedPresence, reason };
+  return { event: 'alarm_fired', from_status: presenceStatus, to_status: committedPresence, reason, next_alarm_time: nextOccurrence };
 }
