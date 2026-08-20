@@ -80,8 +80,8 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json().catch(() => ({}));
-    const { characterId, character_id, expected_occurrence_time } = body;
-    const targetCharId = characterId || character_id;
+    const { characterId, character_id, expected_occurrence_time, event } = body;
+    const targetCharId = characterId || character_id || event?.entity_id;
 
     // Eastern Time
     const now = new Date();

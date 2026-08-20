@@ -140,7 +140,8 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json().catch(() => ({}));
-    const { characterId, expected_occurrence_time } = body;
+    const { characterId: rawCharId, expected_occurrence_time, event } = body;
+    const characterId = rawCharId || event?.entity_id;
 
     // Use ET time for all schedule decisions — never UTC.
     // These vars are unused in global mode (each char loop re-derives nowET), kept for single-char path only.

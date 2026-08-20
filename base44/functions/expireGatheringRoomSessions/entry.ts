@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     // Parse optional body for per-session invocation (Workflow durable-wait path).
     let body = {};
     try { body = await req.json(); } catch (_) { /* no body — scan-all mode */ }
-    const targetSessionId = body.session_id || null;
+    const targetSessionId = body.session_id || body.event?.entity_id || null;
 
     // ── PER-SESSION MODE: expire one specific due session ───────────────────
     // Used by the Gathering Room expiration Workflow (durable wait until the
