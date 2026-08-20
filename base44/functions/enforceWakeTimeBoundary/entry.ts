@@ -23,6 +23,45 @@ const VALID_SLEEP_EXCEPTIONS = [
   'house_arrest',
 ];
 
+// ── NEXT SLEEP/WAKE EXECUTION TIME ──────────────────────────────────────────
+// Computes the next datetime at which the wake authority should be invoked,
+// based on the character's current sleeping state and established rules.
+// Returns an ISO string, or null if the character is not sleeping.
+// Rules are unchanged — this only EXPOSES the existing deadline.
+function computeNextSleepWakeExecutionTime(char, ctx) {
+  const { currentMinutes, nowETIso } = ctx;
+
+  const isSleeping = char.resolved_presence_status === 'sleeping';
+  if (!isSleeping || !char.last_sleep_start) return null;
+
+  const sleepStart = new Date(char.last_sleep_start);
+  const T_cap = new Date(sleepStart.getTime() + 8 * 3600 * 1000);
+
+  const isMedicalEmergency = (char.health_value ?? 80) <= 15;
+  const guardHours = isMedicalEmergency ? 0 : 6;
+  const T_guard = new Date(sleepStart.getTime() + guardHours * 3600 * 1000);
+
+  const wakeTime = char.wake_up_time || '07:00';
+  const [wakeH, wakeM] = wakeTime.split(':').map(Number);
+  if (isNaN(wakeH) || isNaN(wakeM)) return null;
+  const wakeMin = wakeH * 60 + wakeM;
+  const wakeThreshold = wakeMin + 15;
+
+  let minsToWakeThreshold;
+  if (currentMinutes < wakeThreshold) {
+    minsToWakeThreshold = wakeThreshold - currentMinutes;
+  } else {
+    minsToWakeThreshold = (1440 - currentMinutes) + wakeThreshold;
+  }
+  const now = new Date(nowETIso);
+  const T_wakeThreshold = new Date(now.getTime() + minsToWakeThreshold * 60 * 1000);
+
+  const T_wake = T_wakeThreshold > T_guard ? T_wakeThreshold : T_guard;
+  const nextExecution = T_wake < T_cap ? T_wake : T_cap;
+
+  return nextExecution.toISOString();
+}
+
 // ── PER-CHARACTER WAKE EVALUATION ──────────────────────────────────────────
 // Extracted from the former batch loop. Returns a result describing what
 // happened. Performs the SAME writes (Character.update + SleepTransition +
@@ -215,7 +254,9 @@ Deno.serve(async (req) => {
       }
       if (!char) return Response.json({ success: true, event: 'character_not_found' });
       const result = await processWakeForCharacter(base44, char, ctx);
-      return Response.json({ success: true, character_id: char.id, character_name: char.name, et_time: etTimeStr, ...result });
+      const _wokeEvents = ['woke_cap8', 'woke_boundary'];
+      const _nextExec = _wokeEvents.includes(result.event) ? null : computeNextSleepWakeExecutionTime(char, ctx);
+      return Response.json({ success: true, character_id: char.id, character_name: char.name, et_time: etTimeStr, next_execution_time: _nextExec, ...result });
     }
 
     // ── BATCH MODE (manual/diagnostic use) ──
@@ -235,7 +276,9 @@ Deno.serve(async (req) => {
     for (const char of eligibleChars) {
       const r = await processWakeForCharacter(base44, char, ctx);
       if (r.event === 'woke_cap8' || r.event === 'woke_boundary') wokenCount++;
-      results.push({ character_id: char.id, character_name: char.name, ...r });
+      const _wokeEvtsBatch = ['woke_cap8', 'woke_boundary'];
+      const _nextExecBatch = _wokeEvtsBatch.includes(r.event) ? null : computeNextSleepWakeExecutionTime(char, ctx);
+      results.push({ character_id: char.id, character_name: char.name, next_execution_time: _nextExecBatch, ...r });
     }
 
     return Response.json({

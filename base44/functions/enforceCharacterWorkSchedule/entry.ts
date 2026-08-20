@@ -57,6 +57,74 @@ function isWithinShiftStartWakeWindow(shift, nowET) {
   return diff >= 0 && diff <= 15;
 }
 
+// ── NEXT WORK EXECUTION TIME HELPERS ─────────────────────────────────────────
+function getMinutesUntilNextShiftStart(shift, clock) {
+  if (!shift?.start) return null;
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const nowMin = clock.getHours() * 60 + clock.getMinutes();
+  const today = clock.getDay();
+  const hasDays = shift.days && shift.days.length > 0;
+
+  for (let offset = 0; offset < 8; offset++) {
+    const checkDay = (today + offset) % 7;
+    if (hasDays && !shift.days.includes(checkDay)) continue;
+
+    if (offset === 0) {
+      if (startMin <= nowMin) continue;
+      return startMin - nowMin;
+    } else {
+      return (1440 - nowMin) + ((offset - 1) * 1440) + startMin;
+    }
+  }
+  return null;
+}
+
+function getMinutesUntilShiftEnd(shift, clock) {
+  if (!shift?.end) return null;
+  const [eh, em] = shift.end.split(':').map(Number);
+  const endMin = eh * 60 + em;
+  const nowMin = clock.getHours() * 60 + clock.getMinutes();
+
+  let diff = endMin - nowMin;
+  if (diff <= 0) diff += 1440;
+  return diff;
+}
+
+function computeNextWorkExecutionTime(character, orderedJobs, locMap, clock, now) {
+  let earliestMinutes = null;
+
+  for (const job of orderedJobs) {
+    let shift = null;
+    if (job.type === 'linked') {
+      const loc = locMap[job.locId];
+      if (!loc) continue;
+      const locationShift = loc.worker_shifts?.[character.id];
+      shift = (locationShift && locationShift.start && locationShift.end) ? locationShift : job.shift;
+    } else {
+      shift = job.shift;
+    }
+    if (!shift || !shift.start) continue;
+
+    const isActive = isLocationShiftActiveNow(shift, clock);
+
+    if (isActive) {
+      const minsToEnd = getMinutesUntilShiftEnd(shift, clock);
+      if (minsToEnd !== null && (earliestMinutes === null || minsToEnd < earliestMinutes)) {
+        earliestMinutes = minsToEnd;
+      }
+    } else {
+      const minsToStart = getMinutesUntilNextShiftStart(shift, clock);
+      if (minsToStart !== null && (earliestMinutes === null || minsToStart < earliestMinutes)) {
+        earliestMinutes = minsToStart;
+      }
+    }
+  }
+
+  if (earliestMinutes === null) return null;
+  return new Date(now.getTime() + earliestMinutes * 60 * 1000).toISOString();
+}
+
 /**
  * OWNERSHIP-ISOLATED SCHEDULER
  * 
@@ -163,6 +231,7 @@ Deno.serve(async (req) => {
           stale_work_lock_present: hasStaleWorkLock,
           stale_work_lock_released: releaseSucceeded,
           stale_work_lock_release_error: releaseError,
+          next_execution_time: null,
         });
       }
 
@@ -188,7 +257,7 @@ Deno.serve(async (req) => {
       };
       const todayET = `${_sEtParsed[4]}-${_sEtParsed[2].padStart(2,'0')}-${_sEtParsed[3].padStart(2,'0')}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
-        return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
+        return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed', next_execution_time: null });
       }
 
       // Load all active employment records for this character. A character may hold
@@ -292,6 +361,9 @@ Deno.serve(async (req) => {
           }
         }
       }
+      // Compute next execution time for Workflow consumption.
+      const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
+
       // Evaluate jobs in order. First active shift wins.
       let singleActiveJob = null;
       for (const job of singleOrderedJobs) {
@@ -330,7 +402,7 @@ Deno.serve(async (req) => {
                 });
               } catch (_e) { /* non-fatal */ }
             }
-            return Response.json({ updated: false, reason: `Sleeping — ${_staleReason}, not woken for rabbit-hole work` });
+            return Response.json({ updated: false, reason: `Sleeping — ${_staleReason}, not woken for rabbit-hole work`, next_execution_time: singleNextExecTime });
           }
         }
         let _rhAuthRes = null;
@@ -362,6 +434,7 @@ Deno.serve(async (req) => {
             updated: true, oldLocation: resolvedLocId, newLocation: null,
             workplaceName: singleActiveJob.workplaceName,
             reason: 'On shift — rabbit-hole workplace (via authority)',
+            next_execution_time: singleNextExecTime,
           });
         }
         return Response.json({ updated: false, reason: 'authority_rejected', disposition: _rhAuthRes?.disposition, authority_reason: _rhAuthRes?.reason });
@@ -417,6 +490,7 @@ Deno.serve(async (req) => {
             stale_work_lock_present: _hasStaleLock,
             stale_work_lock_released: _relOK,
             stale_work_lock_release_error: _relErr,
+            next_execution_time: singleNextExecTime,
           });
         }
         // Bounded schedule AND within shift-start wake window — valid wake. Proceed below.
@@ -538,7 +612,7 @@ Deno.serve(async (req) => {
         if (_wasSleepingBeforeWork) {
           try { await base44.asServiceRole.entities.SleepTransition.create({ character_id: characterId, character_name: character.name, owner_email: character.owner_email, transition_type: 'sleep_end', from_status: 'sleeping', to_status: 'at_work', authority: 'work_schedule_wake', reason: 'Work shift started — woke for work.', timestamp: singleNowET.toISOString(), state_start_ref: character.last_sleep_start || null }); await base44.asServiceRole.entities.LifeEvent.create({ character_id: characterId, character_name: character.name, event_type: 'routine_positive_event', valence: 'positive', severity: 'minor', title: 'Woke up for work', description: `${character.name} woke up for their work shift.`, emotional_impact: 'groggy', triggered_by: 'life_simulation', timestamp: singleNowET.toISOString(), context_tags: ['sleep_end', 'woke_up', 'work_schedule'] }); } catch (proofError) { console.warn(`[enforceCharacterWorkSchedule] ${character.name}: work-wake proof failed (non-reverting): ${proofError.message}`); }
         }
-        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: committedLocId, reason: 'On shift — moved to work (via authority)' });
+        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: committedLocId, reason: 'On shift — moved to work (via authority)', next_execution_time: singleNextExecTime });
       }
 
       // Not on any active shift. If the character carries a stale work_shift lock,
@@ -566,6 +640,7 @@ Deno.serve(async (req) => {
             updated: _singleLockRelRes?.disposition === 'accepted',
             reason: 'Stale work lock released — shift ended, not at workplace',
             disposition: _singleLockRelRes?.disposition,
+            next_execution_time: singleNextExecTime,
           });
         }
         // Before sending home, check whether another active job has a current or
@@ -605,14 +680,14 @@ Deno.serve(async (req) => {
           }
         }
         if (_sImminent) {
-          return Response.json({ updated: false, reason: 'Shift ended at current job — another job shift starts within 30m, holding for next tick', imminentJob: _sImminent });
+          return Response.json({ updated: false, reason: 'Shift ended at current job — another job shift starts within 30m, holding for next tick', imminentJob: _sImminent, next_execution_time: singleNextExecTime });
         }
         if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
             let authRes = null;
             try { const ir = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: characterId, owner_email: character.owner_email, requested_presence_status: 'sleeping', requested_location_id: homeLocId, requested_source_reason: 'sleep_redirect_from_work', requested_authority: 'enforceCharacterWorkSchedule', requested_timestamp: singleNowET.toISOString() }); authRes = ir?.data || ir; } catch (e) { return Response.json({ updated: false, reason: 'authority_invoke_failed', error: e.message }); }
-            return Response.json({ updated: authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id || homeLocId, reason: 'Sleeping at work — authority routed', disposition: authRes?.disposition });
+            return Response.json({ updated: authRes?.disposition === 'accepted' || authRes?.disposition === 'redirected', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id || homeLocId, reason: 'Sleeping at work — authority routed', disposition: authRes?.disposition, next_execution_time: singleNextExecTime });
           }
         } else if (!isSleeping && character.current_home_location_id) {
           let authRes = null;
@@ -635,11 +710,11 @@ Deno.serve(async (req) => {
               }
             } catch (e) { /* non-fatal — movement already committed */ }
           }
-          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false });
+          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false, next_execution_time: singleNextExecTime });
         }
       }
 
-      return Response.json({ updated: false, reason: 'No schedule change needed' });
+      return Response.json({ updated: false, reason: 'No schedule change needed', next_execution_time: singleNextExecTime });
     }
 
     // --- GLOBAL SCHEDULER MODE (no session) ---
