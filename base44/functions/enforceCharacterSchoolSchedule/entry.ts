@@ -146,46 +146,33 @@ Deno.serve(async (req) => {
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
       // still valid under the current authoritative school schedule BEFORE committing
       // any transition. This prevents stale Workflow instances from executing after a
-      // schedule change. The validation simulates the time as 1 minute before the
-      // expected occurrence and checks if the current schedule would still produce
-      // that occurrence as the next execution time.
+      // schedule change. The validation converts the expected occurrence to Eastern
+      // Time and checks whether the current school schedule has a boundary (start or
+      // end) at that exact ET time on that day.
       if (expected_occurrence_time) {
         const _expectedDate = new Date(expected_occurrence_time);
-        const _simulatedNow = new Date(_expectedDate.getTime() - 60 * 1000);
-        const _simEtStr = _simulatedNow.toLocaleString('en-US', {
+        const _expEtStr = _expectedDate.toLocaleString('en-US', {
           timeZone: 'America/New_York',
           year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
         });
-        const _simWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-        const _simParsed = _simEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
-        const _simNowMin = (parseInt(_simParsed[5]) % 24) * 60 + parseInt(_simParsed[6]);
-        const _simDayOfWeek = _simWdMap[_simParsed[1]];
-        const _simSchedule = resolveSchoolSchedule(char, _simDayOfWeek, schoolLoc);
-        if (_simSchedule.startMin === null) {
-          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, current_next_execution_time: null, next_execution_time: null });
+        const _expWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const _expParsed = _expEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
+        const _expMin = (parseInt(_expParsed[5]) % 24) * 60 + parseInt(_expParsed[6]);
+        const _expDay = _expWdMap[_expParsed[1]];
+        const _expSchedule = resolveSchoolSchedule(char, _expDay, schoolLoc);
+        if (_expSchedule.startMin === null) {
+          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, next_execution_time: null });
         }
-        let _simIsValidDay = true;
+        let _expIsValidDay = true;
         if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
           const _daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
           if (_daySpecific.length > 0) {
-            _simIsValidDay = _daySpecific.some(h => h.day_of_week === _simDayOfWeek);
+            _expIsValidDay = _daySpecific.some(h => h.day_of_week === _expDay);
           }
         }
-        const _simIsInSession = _simIsValidDay && _simNowMin >= _simSchedule.startMin && _simNowMin < _simSchedule.endMin;
-        let _simNextExec = null;
-        if (_simIsInSession && _simSchedule.endMin !== null) {
-          let _m = _simSchedule.endMin - _simNowMin;
-          if (_m <= 0) _m += 1440;
-          _simNextExec = new Date(_simulatedNow.getTime() + _m * 60 * 1000).toISOString();
-        } else if (_simSchedule.startMin !== null) {
-          const _minsToStart = getMinutesUntilNextSchoolStart(_simSchedule.startMin, _simNowMin, _simDayOfWeek, schoolLoc);
-          if (_minsToStart !== null) {
-            _simNextExec = new Date(_simulatedNow.getTime() + _minsToStart * 60 * 1000).toISOString();
-          }
-        }
-        if (!_simNextExec || Math.abs(new Date(_simNextExec).getTime() - _expectedDate.getTime()) > 30000) {
-          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, current_next_execution_time: _simNextExec || null, next_execution_time: null });
+        if (!((_expSchedule.startMin === _expMin || _expSchedule.endMin === _expMin) && _expIsValidDay)) {
+          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, next_execution_time: null });
         }
       }
 

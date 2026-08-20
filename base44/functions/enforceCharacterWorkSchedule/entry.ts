@@ -368,33 +368,55 @@ Deno.serve(async (req) => {
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
       // still valid under the current authoritative multi-job schedule BEFORE committing
       // any transition. This prevents stale Workflow instances from executing after a
-      // schedule change. The validation simulates the time as 1 minute before the
-      // expected occurrence and checks if the current schedule would still produce
-      // that occurrence as the next execution time. If the schedule changed while the
-      // Workflow was waiting, the simulated next_execution_time will differ and this
-      // instance returns a superseded result without committing any transition.
+      // schedule change. The validation converts the expected occurrence to Eastern
+      // Time and checks whether any job's current schedule has a shift boundary (start
+      // or end) at that exact ET time on that day. If no job has a matching boundary,
+      // the schedule changed while the Workflow was waiting and this instance returns
+      // a superseded result without committing any transition.
       if (expected_occurrence_time) {
         const _expectedDate = new Date(expected_occurrence_time);
-        const _simulatedNow = new Date(_expectedDate.getTime() - 60 * 1000);
-        const _simEtStr = _simulatedNow.toLocaleString('en-US', {
+        const _expEtStr = _expectedDate.toLocaleString('en-US', {
           timeZone: 'America/New_York',
           year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
         });
-        const _simWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-        const _simParsed = _simEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
-        const _simClock = {
-          getHours: () => parseInt(_simParsed[5]) % 24,
-          getMinutes: () => parseInt(_simParsed[6]),
-          getDay: () => _simWdMap[_simParsed[1]],
-        };
-        const _simulatedNextExec = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, _simClock, _simulatedNow);
-        if (!_simulatedNextExec || Math.abs(new Date(_simulatedNextExec).getTime() - _expectedDate.getTime()) > 30000) {
+        const _expWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const _expParsed = _expEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
+        const _expMin = (parseInt(_expParsed[5]) % 24) * 60 + parseInt(_expParsed[6]);
+        const _expDay = _expWdMap[_expParsed[1]];
+        const _expYesterday = (_expDay + 6) % 7;
+        let _occurrenceValid = false;
+        for (const _job of singleOrderedJobs) {
+          let _shift = null;
+          if (_job.type === 'linked') {
+            const _loc = singleLocMap[_job.locId];
+            if (!_loc) continue;
+            const _locShift = _loc.worker_shifts?.[characterId];
+            _shift = (_locShift && _locShift.start && _locShift.end) ? _locShift : _job.shift;
+          } else {
+            _shift = _job.shift;
+          }
+          if (!_shift || !_shift.start || !_shift.end) continue;
+          const [_sh, _sm] = _shift.start.split(':').map(Number);
+          const [_eh, _em] = _shift.end.split(':').map(Number);
+          const _shiftStartMin = _sh * 60 + _sm;
+          const _shiftEndMin = _eh * 60 + _em;
+          const _isCrossMidnight = _shiftEndMin < _shiftStartMin;
+          const _hasDays = _shift.days && _shift.days.length > 0;
+          if (_shiftStartMin === _expMin && (!_hasDays || _shift.days.includes(_expDay))) { _occurrenceValid = true; break; }
+          if (_shiftEndMin === _expMin) {
+            if (_isCrossMidnight) {
+              if (!_hasDays || _shift.days.includes(_expYesterday)) { _occurrenceValid = true; break; }
+            } else {
+              if (!_hasDays || _shift.days.includes(_expDay)) { _occurrenceValid = true; break; }
+            }
+          }
+        }
+        if (!_occurrenceValid) {
           return Response.json({
             updated: false,
             reason: 'stale_occurrence_superseded',
             expected_occurrence_time,
-            current_next_execution_time: _simulatedNextExec || null,
             next_execution_time: null,
           });
         }
