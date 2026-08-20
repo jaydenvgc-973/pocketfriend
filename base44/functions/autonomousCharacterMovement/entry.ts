@@ -1226,15 +1226,10 @@ Deno.serve(async (req) => {
           if (!onShiftNow && Array.isArray(char.additional_occupation_locations)) {
             for (const entry of char.additional_occupation_locations) {
               if (entry.location_id) {
-                // Linked location — worker_shifts is authority, entry.shift_start is fallback
+                // Linked location — worker_shifts[characterId] is the authoritative schedule.
+                // shift_start/shift_end on the entry are synchronized copies, not a fallback authority.
                 const loc = userLocations.find(l => l.id === entry.location_id);
-                let shift = null;
-                if (loc) shift = loc.worker_shifts?.[char.id];
-                if (!shift || !shift.start || !shift.end) {
-                  if (entry.shift_start && entry.shift_end) {
-                    shift = { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || [] };
-                  }
-                }
+                const shift = loc ? loc.worker_shifts?.[char.id] : null;
                 if (shift?.start && shift?.end) {
                   const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
                   if (shiftDays && !shiftDays.includes(dow)) continue;
@@ -1790,17 +1785,14 @@ Deno.serve(async (req) => {
                 shiftEnd = entry.shift_end || null;
                 shiftDays = entry.work_days || null;
               } else {
+                // Additional linked — worker_shifts[characterId] is the authoritative schedule.
+                // shift_start/shift_end on the entry are synchronized copies, not a fallback authority.
                 const loc = userLocations.find(l => l.id === job.locationId);
-                let locShift = null;
-                if (loc) locShift = loc.worker_shifts?.[char.id];
+                const locShift = loc ? loc.worker_shifts?.[char.id] : null;
                 if (locShift?.start && locShift?.end) {
                   shiftStart = locShift.start;
                   shiftEnd = locShift.end;
                   shiftDays = locShift.days || null;
-                } else {
-                  shiftStart = entry.shift_start || null;
-                  shiftEnd = entry.shift_end || null;
-                  shiftDays = entry.work_days || null;
                 }
               }
             }
