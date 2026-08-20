@@ -17,6 +17,85 @@ Deno.serve(async (req) => {
     const nowIso = now.toISOString();
     const cooldownUntil = new Date(now.getTime() + 5 * 60 * 1000).toISOString();
 
+    // Parse optional body for per-session invocation (Workflow durable-wait path).
+    let body = {};
+    try { body = await req.json(); } catch (_) { /* no body — scan-all mode */ }
+    const targetSessionId = body.session_id || null;
+
+    // ── PER-SESSION MODE: expire one specific due session ───────────────────
+    // Used by the Gathering Room expiration Workflow (durable wait until the
+    // session's existing expires_at). Processes only the named session with the
+    // same expiration consequences as the scan-all path. No session, no
+    // expiration execution — nothing runs if nobody entered the room.
+    if (targetSessionId) {
+      let sessions = [];
+      try {
+        sessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+          { id: targetSessionId }, null, 1
+        );
+      } catch (_) {
+        return Response.json({ success: true, event: 'session_not_found', session_id: targetSessionId });
+      }
+      const sess = sessions[0];
+      if (!sess) {
+        return Response.json({ success: true, event: 'session_not_found', session_id: targetSessionId });
+      }
+      if (sess.status !== 'active') {
+        return Response.json({ success: true, event: 'session_not_active', session_id: targetSessionId, status: sess.status });
+      }
+      if (new Date(sess.expires_at).getTime() >= now.getTime()) {
+        return Response.json({ success: true, event: 'session_not_yet_due', session_id: targetSessionId, expires_at: sess.expires_at });
+      }
+
+      // Same expiration consequences as the scan-all path (preserved exactly).
+      await base44.asServiceRole.entities.GatheringRoomSession.update(sess.id, {
+        status: 'expired',
+        ended_at: nowIso,
+      });
+      await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({ session_id: sess.id });
+      await base44.asServiceRole.entities.GatheringRoomCooldown.create({
+        gathering_room_id: sess.gathering_room_id,
+        gathering_room_name: sess.gathering_room_name,
+        owner_email: sess.owner_email,
+        owner_user_id: sess.owner_user_id,
+        cooldown_until: cooldownUntil,
+        reason: 'expired',
+        character_ids: sess.character_ids || [],
+        created_at: nowIso,
+      });
+      for (const charId of (sess.character_ids || [])) {
+        try {
+          const chars = await base44.asServiceRole.entities.Character.filter({ id: charId }, null, 1);
+          const char = chars[0];
+          if (char && char.resolved_location_type === 'gathering_room') {
+            await base44.asServiceRole.entities.Character.update(charId, {
+              resolved_location_type: null,
+              resolved_presence_status: 'home',
+              resolved_current_location_id: char.current_home_location_id || null,
+              resolved_current_location_name: null,
+              resolved_source_reason: 'gathering_room_exit',
+              resolved_last_updated_at: nowIso,
+              gathering_room_session_id: null,
+            });
+          }
+        } catch (_) {}
+      }
+      try {
+        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', { gathering_room_id: sess.gathering_room_id });
+      } catch (_) {}
+      try {
+        await base44.asServiceRole.functions.invoke('generateGatheringRoomScene', { gathering_room_id: sess.gathering_room_id });
+      } catch (_) {}
+
+      return Response.json({
+        success: true,
+        event: 'session_expired',
+        session_id: targetSessionId,
+        gathering_room_id: sess.gathering_room_id,
+        checked_at: nowIso,
+      });
+    }
+
     // ── 1. FIND ALL EXPIRED ACTIVE SESSIONS ──────────────────────────────────
     const allActiveSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
       { status: 'active' },
