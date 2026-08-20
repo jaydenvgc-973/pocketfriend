@@ -102,8 +102,8 @@ function _findActiveRabbitHoleWorkShift(character, etTime) {
     for (const entry of character.additional_occupation_locations) {
       if (entry.location_id) continue;
       const isRH = entry.is_rabbit_hole === true;
-      if (isRH && entry.work_start_time && entry.work_end_time) {
-        const shift = { start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null };
+      if (isRH && entry.shift_start && entry.shift_end) {
+        const shift = { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null };
         if (isOnShiftNow(shift, etTime)) {
           return entry.location_name || 'Work';
         }
@@ -544,7 +544,8 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     // A missing linked record is an integrity error, NOT a rabbit-hole inference.
     if (!requestedLocId && requested.requested_location_name) {
       // Require scheduler authority — no other caller may commit a null-location work presence
-      if (requested.requested_authority !== 'enforceCharacterWorkSchedule') {
+      if (requested.requested_authority !== 'enforceCharacterWorkSchedule' &&
+          requested.requested_authority !== 'autonomousCharacterMovement') {
         return { disposition: 'rejected', canonicalFields: {}, reason: 'rabbit_hole_requires_scheduler_authority' };
       }
       // Validate against saved rabbit-hole occupation entries — use ONLY the actual saved
@@ -591,6 +592,10 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
         presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
         presence_stay_lock_set_at: etTime.toISOString(),
         presence_stay_lock_created_by: 'system_automation',
+        // Clear stale nap/home lock fields so the committed work reality is coherent
+        presence_stay_lock_expires_at: null,
+        presence_stay_lock_release_condition: null,
+        presence_stay_lock_location_id: null,
       };
       if (wasSleeping) {
         canonicalFields.last_wake_time = etTime.toISOString();
@@ -627,6 +632,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
       presence_stay_lock_set_at: etTime.toISOString(),
       presence_stay_lock_location_id: workLocId,
       presence_stay_lock_created_by: 'system_automation',
+      // Clear stale nap/home lock fields so the committed work reality is coherent
+      presence_stay_lock_expires_at: null,
+      presence_stay_lock_release_condition: null,
     };
     if (wasSleeping) {
       canonicalFields.last_wake_time = etTime.toISOString();
@@ -1119,11 +1127,11 @@ function computeResolvedLocation(character, locationMap, etTime) {
           _orderedJobs.push({ type: 'linked', locId: entry.location_id });
         } else {
           const isRH = entry.is_rabbit_hole === true;
-          if (isRH && entry.work_start_time && entry.work_end_time) {
+          if (isRH && entry.shift_start && entry.shift_end) {
             _orderedJobs.push({
               type: 'rabbit_hole',
               workplaceName: entry.location_name,
-              shift: { start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null },
+              shift: { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null },
             });
           }
         }

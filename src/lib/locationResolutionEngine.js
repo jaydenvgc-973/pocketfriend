@@ -227,11 +227,11 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         _orderedWorkJobs.push({ type: 'linked', locId: entry.location_id });
       } else {
         const isRH = entry.is_rabbit_hole === true;
-        if (isRH && entry.work_start_time && entry.work_end_time) {
+        if (isRH && entry.shift_start && entry.shift_end) {
           _orderedWorkJobs.push({
             type: 'rabbit_hole',
             workplaceName: entry.location_name,
-            shift: { start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null },
+            shift: { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null },
           });
         }
       }
@@ -779,8 +779,8 @@ function _isCharacterCurrentlyOnAnyShift(character, locationMap = {}, currentTim
           const shift = loc.worker_shifts?.[character.id];
           if (shift && isOnShiftNow(shift, etTime)) return true;
         }
-      } else if (entry.is_rabbit_hole === true && entry.work_start_time && entry.work_end_time) {
-        if (isOnShiftNow({ start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days || null }, etTime)) return true;
+      } else if (entry.is_rabbit_hole === true && entry.shift_start && entry.shift_end) {
+        if (isOnShiftNow({ start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null }, etTime)) return true;
       }
     }
   }

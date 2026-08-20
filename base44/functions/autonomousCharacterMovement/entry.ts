@@ -1225,16 +1225,32 @@ Deno.serve(async (req) => {
           }
           if (!onShiftNow && Array.isArray(char.additional_occupation_locations)) {
             for (const entry of char.additional_occupation_locations) {
-              if (!entry.location_id) continue;
-              const loc = userLocations.find(l => l.id === entry.location_id);
-              if (!loc) continue;
-              const shift = loc.worker_shifts?.[char.id];
-              if (shift?.start && shift?.end) {
-                const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
-                if (shiftDays && !shiftDays.includes(dow)) continue;
-                const [sh, sm = 0] = shift.start.split(':').map(Number);
-                const [eh, em = 0] = shift.end.split(':').map(Number);
-                if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
+              if (entry.location_id) {
+                // Linked location — worker_shifts is authority, entry.shift_start is fallback
+                const loc = userLocations.find(l => l.id === entry.location_id);
+                let shift = null;
+                if (loc) shift = loc.worker_shifts?.[char.id];
+                if (!shift || !shift.start || !shift.end) {
+                  if (entry.shift_start && entry.shift_end) {
+                    shift = { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || [] };
+                  }
+                }
+                if (shift?.start && shift?.end) {
+                  const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
+                  if (shiftDays && !shiftDays.includes(dow)) continue;
+                  const [sh, sm = 0] = shift.start.split(':').map(Number);
+                  const [eh, em = 0] = shift.end.split(':').map(Number);
+                  if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
+                }
+              } else if (entry.is_rabbit_hole === true) {
+                // Rabbit hole — entry.shift_start/shift_end are the only source
+                if (entry.shift_start && entry.shift_end) {
+                  const shiftDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
+                  if (shiftDays && !shiftDays.includes(dow)) continue;
+                  const [sh, sm = 0] = entry.shift_start.split(':').map(Number);
+                  const [eh, em = 0] = entry.shift_end.split(':').map(Number);
+                  if (cur >= sh * 60 + sm && cur < eh * 60 + em) { onShiftNow = true; break; }
+                }
               }
             }
           }
@@ -1572,7 +1588,9 @@ Deno.serve(async (req) => {
 
           // WORK: shift must be currently active AND 6h minimum met (or medical emergency)
           const hasActiveWorkObligation = (() => {
-            if (!Array.isArray(char.work_days) || !char.work_start_time || !char.work_end_time || !char.occupation_location_id) return false;
+            if (!Array.isArray(char.work_days) || !char.work_start_time || !char.work_end_time) return false;
+            const _isPrimaryRH = char.work_details?.is_rabbit_hole === true;
+            if (!_isPrimaryRH && !char.occupation_location_id) return false;
             if (!char.work_days.includes(dowNow3)) return false;
             if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET3) return false;
             const s3 = toMin(char.work_start_time), e3 = toMin(char.work_end_time);
@@ -1615,7 +1633,8 @@ Deno.serve(async (req) => {
             let alarmTargetMs = null;
             // Check upcoming work shift today
             if (Array.isArray(char.work_days) && char.work_days.includes(dowNow3) &&
-                char.work_start_time && char.occupation_location_id &&
+                char.work_start_time &&
+                (char.occupation_location_id || char.work_details?.is_rabbit_hole === true) &&
                 !(char.work_exception_status === 'called_out' && char.work_exception_date === todayET3)) {
               const wsMin = toMin(char.work_start_time);
               if (wsMin !== null && wsMin > nowMin3) {
@@ -1716,90 +1735,130 @@ Deno.serve(async (req) => {
           const dowNow  = nowET.getDay(); // 0=Sun, 6=Sat
 
           // ── WORK SCHEDULE CHECK ────────────────────────────────────────────
-          // Use the character's actual stored fields — do not assume any defaults.
+          // Each job is evaluated independently from its own schedule configuration.
+          // A null primary occupation_location_id does NOT gate evaluation — a
+          // rabbit-hole primary job is a valid work obligation, and additional jobs
+          // must be evaluated regardless of the primary job's location representation.
           let workDispatchDone = false;
 
-          if (
-            Array.isArray(char.work_days) && char.work_days.length > 0 &&
-            char.work_start_time && char.work_end_time &&
-            char.occupation_location_id
-          ) {
-            const isWorkDay = char.work_days.includes(dowNow);
+          // ── BUILD ORDERED JOB LIST (primary first, then additional in stored order) ──
+          const orderedJobs = [];
+          {
+            const _isPrimaryRH = char.work_details?.is_rabbit_hole === true;
+            const _hasPrimarySchedule = Array.isArray(char.work_days) && char.work_days.length > 0 &&
+              char.work_start_time && char.work_end_time;
+            if (_hasPrimarySchedule) {
+              if (_isPrimaryRH) {
+                orderedJobs.push({ type: 'primary', isRabbitHole: true, locationName: char.occupation_location_name || 'Work' });
+              } else if (char.occupation_location_id) {
+                orderedJobs.push({ type: 'primary', isRabbitHole: false, locationId: char.occupation_location_id, locationName: char.occupation_location_name || 'Work' });
+              }
+            }
+          }
+          if (Array.isArray(char.additional_occupation_locations)) {
+            for (const entry of char.additional_occupation_locations) {
+              if (entry.location_id) {
+                orderedJobs.push({ type: 'additional', isRabbitHole: false, locationId: entry.location_id, locationName: entry.location_name || 'Work', entry });
+              } else if (entry.is_rabbit_hole === true) {
+                orderedJobs.push({ type: 'additional', isRabbitHole: true, locationName: entry.location_name || 'Work', entry });
+              }
+            }
+          }
 
-            if (isWorkDay) {
-              const shiftStart = toMin(char.work_start_time);
-              const shiftEnd   = toMin(char.work_end_time);
-              // Overnight shift support (e.g. 22:00–06:00)
-              const isOvernightShift = shiftEnd < shiftStart;
-              const shiftActiveNow   = isOvernightShift
-                ? (nowMin >= shiftStart || nowMin < shiftEnd)
-                : (nowMin >= shiftStart && nowMin < shiftEnd);
+          // ── EVALUATE EACH JOB INDEPENDENTLY ──────────────────────────────────
+          for (const job of orderedJobs) {
+            // Callout guard — applies to the primary job only
+            if (job.type === 'primary') {
+              const hasCallout = char.work_exception_status === 'called_out' &&
+                                 char.work_exception_date === todayET;
+              if (hasCallout) {
+                console.log(`[autonomousMovement] ${char.name}: WORK DISPATCH skipped — valid callout for ${todayET}`);
+                continue;
+              }
+            }
 
-              if (shiftActiveNow) {
-                // CALLOUT GUARD: skip if character has a valid callout for today
-                const hasCallout = char.work_exception_status === 'called_out' &&
-                                   char.work_exception_date === todayET;
-                if (hasCallout) {
-                  console.log(`[autonomousMovement] ${char.name}: WORK DISPATCH skipped — valid callout for ${todayET}`);
+            // Resolve shift for this job from its own configuration
+            let shiftStart = null, shiftEnd = null, shiftDays = null;
+            if (job.type === 'primary') {
+              shiftStart = char.work_start_time;
+              shiftEnd = char.work_end_time;
+              shiftDays = char.work_days;
+            } else {
+              const entry = job.entry || {};
+              if (job.isRabbitHole) {
+                shiftStart = entry.shift_start || null;
+                shiftEnd = entry.shift_end || null;
+                shiftDays = entry.work_days || null;
+              } else {
+                const loc = userLocations.find(l => l.id === job.locationId);
+                let locShift = null;
+                if (loc) locShift = loc.worker_shifts?.[char.id];
+                if (locShift?.start && locShift?.end) {
+                  shiftStart = locShift.start;
+                  shiftEnd = locShift.end;
+                  shiftDays = locShift.days || null;
                 } else {
-                  // Resolve work location — check worker_shifts[char.id] on location record
-                  // for per-character shift overrides. If none, use character-level schedule.
-                  // Primary location: occupation_location_id. Additional locations checked
-                  // only if they have an active per-character shift right now.
-                  let activeWorkLocId = char.occupation_location_id;
-
-                  // Check additional_occupation_locations for an alternate active shift
-                  if (Array.isArray(char.additional_occupation_locations)) {
-                    for (const entry of char.additional_occupation_locations) {
-                      if (!entry.location_id) continue;
-                      const altLoc = userLocations.find(l => l.id === entry.location_id);
-                      if (!altLoc) continue;
-                      // If this alternate location has a worker_shifts entry for this character,
-                      // check if it is active right now — if so, it takes priority.
-                      const altShift = altLoc.worker_shifts?.[char.id];
-                      if (altShift && altShift.start && altShift.end) {
-                        const altStart = toMin(altShift.start);
-                        const altEnd   = toMin(altShift.end);
-                        const altOvernight = altEnd < altStart;
-                        const altActive = altOvernight
-                          ? (nowMin >= altStart || nowMin < altEnd)
-                          : (nowMin >= altStart && nowMin < altEnd);
-                        if (altActive) {
-                          // Also check day constraint on shift if present
-                          const altDayOk = !Array.isArray(altShift.days) || altShift.days.length === 0 || altShift.days.includes(dowNow);
-                          if (altDayOk) {
-                            activeWorkLocId = entry.location_id;
-                            break;
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  const workLoc = userLocations.find(l => l.id === activeWorkLocId);
-                  if (!workLoc) {
-                    console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH — shift active but work location id=${activeWorkLocId} not in user scope`);
-                  } else if (char.resolved_current_location_id === workLoc.id) {
-                    // Already at work — ensure source reason is correct via authority
-                    if (char.resolved_source_reason !== 'work_schedule') {
-                      try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_id: workLoc.id, requested_source_reason: 'work_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
-                    }
-                    console.log(`[autonomousMovement] ${char.name}: WORK — already at ${workLoc.name}`);
-                    workDispatchDone = true;
-                  } else {
-                    // Direct location write — NO TravelSession, NO transit phase
-                    await writeCharacterToDestination(base44, char, workLoc.id, workLoc.name, {
-                      resolvedPresenceStatus: 'at_work',
-                      resolvedLocationType: 'work',
-                      resolvedSourceReason: `work_schedule: shift ${char.work_start_time}–${char.work_end_time}`,
-                      nowET,
-                    });
-                    totalMoved++;
-                    moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE]`);
-                    console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
-                    workDispatchDone = true;
-                  }
+                  shiftStart = entry.shift_start || null;
+                  shiftEnd = entry.shift_end || null;
+                  shiftDays = entry.work_days || null;
                 }
+              }
+            }
+
+            if (!shiftStart || !shiftEnd) continue;
+            if (Array.isArray(shiftDays) && shiftDays.length > 0 && !shiftDays.includes(dowNow)) continue;
+            const sMin = toMin(shiftStart);
+            const eMin = toMin(shiftEnd);
+            if (sMin === null || eMin === null) continue;
+            const isOvernight = eMin < sMin;
+            const shiftActive = isOvernight ? (nowMin >= sMin || nowMin < eMin) : (nowMin >= sMin && nowMin < eMin);
+            if (!shiftActive) continue;
+
+            // ── DISPATCH TO THIS JOB ─────────────────────────────────────────
+            if (job.isRabbitHole) {
+              if (char.resolved_current_location_id === 'rabbit_hole' &&
+                  char.resolved_presence_status === 'at_work' &&
+                  char.resolved_current_location_name === job.locationName) {
+                if (char.resolved_source_reason !== 'work_schedule') {
+                  try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_name: job.locationName, requested_source_reason: 'work_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
+                }
+                console.log(`[autonomousMovement] ${char.name}: WORK — already at ${job.locationName} (rabbit hole)`);
+                workDispatchDone = true;
+                break;
+              } else {
+                try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_name: job.locationName, requested_source_reason: `work_schedule: shift ${shiftStart}–${shiftEnd}`, requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
+                try { await base44.asServiceRole.entities.Character.update(char.id, { travel_status: 'not_traveling', travel_destination_location_id: null, traveling_to_location_id: null, traveling_to_location_name: null }); } catch { /* non-fatal */ }
+                totalMoved++;
+                moveLog.push(`${char.name} → ${job.locationName} [WORK_SCHEDULE rabbit_hole]`);
+                console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${job.locationName} (rabbit hole)`);
+                workDispatchDone = true;
+                break;
+              }
+            } else {
+              const workLoc = userLocations.find(l => l.id === job.locationId);
+              if (!workLoc) {
+                console.warn(`[autonomousMovement] ${char.name}: WORK DISPATCH — shift active but work location id=${job.locationId} not in user scope`);
+                continue;
+              }
+              if (char.resolved_current_location_id === workLoc.id) {
+                if (char.resolved_source_reason !== 'work_schedule') {
+                  try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'at_work', requested_location_id: workLoc.id, requested_source_reason: 'work_schedule', requested_authority: 'autonomousCharacterMovement', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
+                }
+                console.log(`[autonomousMovement] ${char.name}: WORK — already at ${workLoc.name}`);
+                workDispatchDone = true;
+                break;
+              } else {
+                await writeCharacterToDestination(base44, char, workLoc.id, workLoc.name, {
+                  resolvedPresenceStatus: 'at_work',
+                  resolvedLocationType: 'work',
+                  resolvedSourceReason: `work_schedule: shift ${shiftStart}–${shiftEnd}`,
+                  nowET,
+                });
+                totalMoved++;
+                moveLog.push(`${char.name} → ${workLoc.name} [WORK_SCHEDULE]`);
+                console.log(`[autonomousMovement] ✓ ${char.name}: WORK DISPATCH → ${workLoc.name}`);
+                workDispatchDone = true;
+                break;
               }
             }
           }
