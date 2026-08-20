@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json().catch(() => ({}));
-    const { characterId } = body;
+    const { characterId, expected_occurrence_time } = body;
 
     // Use ET time for all schedule decisions — never UTC.
     // These vars are unused in global mode (each char loop re-derives nowET), kept for single-char path only.
@@ -363,6 +363,42 @@ Deno.serve(async (req) => {
       }
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
+
+      // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
+      // When a Workflow instance supplies an expected_occurrence_time, verify it is
+      // still valid under the current authoritative multi-job schedule BEFORE committing
+      // any transition. This prevents stale Workflow instances from executing after a
+      // schedule change. The validation simulates the time as 1 minute before the
+      // expected occurrence and checks if the current schedule would still produce
+      // that occurrence as the next execution time. If the schedule changed while the
+      // Workflow was waiting, the simulated next_execution_time will differ and this
+      // instance returns a superseded result without committing any transition.
+      if (expected_occurrence_time) {
+        const _expectedDate = new Date(expected_occurrence_time);
+        const _simulatedNow = new Date(_expectedDate.getTime() - 60 * 1000);
+        const _simEtStr = _simulatedNow.toLocaleString('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+        });
+        const _simWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const _simParsed = _simEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
+        const _simClock = {
+          getHours: () => parseInt(_simParsed[5]) % 24,
+          getMinutes: () => parseInt(_simParsed[6]),
+          getDay: () => _simWdMap[_simParsed[1]],
+        };
+        const _simulatedNextExec = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, _simClock, _simulatedNow);
+        if (!_simulatedNextExec || Math.abs(new Date(_simulatedNextExec).getTime() - _expectedDate.getTime()) > 30000) {
+          return Response.json({
+            updated: false,
+            reason: 'stale_occurrence_superseded',
+            expected_occurrence_time,
+            current_next_execution_time: _simulatedNextExec || null,
+            next_execution_time: null,
+          });
+        }
+      }
 
       // Evaluate jobs in order. First active shift wins.
       let singleActiveJob = null;

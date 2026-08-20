@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const body = await req.json().catch(() => ({}));
-    const { characterId, character_id } = body;
+    const { characterId, character_id, expected_occurrence_time } = body;
     const targetCharId = characterId || character_id;
 
     // Eastern Time
@@ -129,6 +129,66 @@ Deno.serve(async (req) => {
       const isSchoolInSession = isValidDay && nowMin >= schedule.startMin && nowMin < schedule.endMin;
       const isAtSchool = char.resolved_presence_status === 'at_school';
 
+      // Compute next execution time BEFORE transition (for stale-occurrence validation)
+      let nextExecutionTime = null;
+      if (isSchoolInSession && schedule.endMin !== null) {
+        let minsToEnd = schedule.endMin - nowMin;
+        if (minsToEnd <= 0) minsToEnd += 1440;
+        nextExecutionTime = new Date(now.getTime() + minsToEnd * 60 * 1000).toISOString();
+      } else if (schedule.startMin !== null) {
+        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc);
+        if (minsToStart !== null) {
+          nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
+        }
+      }
+
+      // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
+      // When a Workflow instance supplies an expected_occurrence_time, verify it is
+      // still valid under the current authoritative school schedule BEFORE committing
+      // any transition. This prevents stale Workflow instances from executing after a
+      // schedule change. The validation simulates the time as 1 minute before the
+      // expected occurrence and checks if the current schedule would still produce
+      // that occurrence as the next execution time.
+      if (expected_occurrence_time) {
+        const _expectedDate = new Date(expected_occurrence_time);
+        const _simulatedNow = new Date(_expectedDate.getTime() - 60 * 1000);
+        const _simEtStr = _simulatedNow.toLocaleString('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+        });
+        const _simWdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const _simParsed = _simEtStr.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
+        const _simNowMin = (parseInt(_simParsed[5]) % 24) * 60 + parseInt(_simParsed[6]);
+        const _simDayOfWeek = _simWdMap[_simParsed[1]];
+        const _simSchedule = resolveSchoolSchedule(char, _simDayOfWeek, schoolLoc);
+        if (_simSchedule.startMin === null) {
+          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, current_next_execution_time: null, next_execution_time: null });
+        }
+        let _simIsValidDay = true;
+        if (schoolLoc && schoolLoc.operating_hours && Array.isArray(schoolLoc.operating_hours)) {
+          const _daySpecific = schoolLoc.operating_hours.filter(h => h.day_of_week != null);
+          if (_daySpecific.length > 0) {
+            _simIsValidDay = _daySpecific.some(h => h.day_of_week === _simDayOfWeek);
+          }
+        }
+        const _simIsInSession = _simIsValidDay && _simNowMin >= _simSchedule.startMin && _simNowMin < _simSchedule.endMin;
+        let _simNextExec = null;
+        if (_simIsInSession && _simSchedule.endMin !== null) {
+          let _m = _simSchedule.endMin - _simNowMin;
+          if (_m <= 0) _m += 1440;
+          _simNextExec = new Date(_simulatedNow.getTime() + _m * 60 * 1000).toISOString();
+        } else if (_simSchedule.startMin !== null) {
+          const _minsToStart = getMinutesUntilNextSchoolStart(_simSchedule.startMin, _simNowMin, _simDayOfWeek, schoolLoc);
+          if (_minsToStart !== null) {
+            _simNextExec = new Date(_simulatedNow.getTime() + _minsToStart * 60 * 1000).toISOString();
+          }
+        }
+        if (!_simNextExec || Math.abs(new Date(_simNextExec).getTime() - _expectedDate.getTime()) > 30000) {
+          return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, current_next_execution_time: _simNextExec || null, next_execution_time: null });
+        }
+      }
+
       let updated = false;
       let routeResult = null;
 
@@ -168,19 +228,6 @@ Deno.serve(async (req) => {
           } catch (invokeErr) {
             return Response.json({ updated: false, reason: 'authority_invoke_failed', error: invokeErr.message, next_execution_time: null });
           }
-        }
-      }
-
-      // Compute next execution time
-      let nextExecutionTime = null;
-      if (isSchoolInSession && schedule.endMin !== null) {
-        let minsToEnd = schedule.endMin - nowMin;
-        if (minsToEnd <= 0) minsToEnd += 1440;
-        nextExecutionTime = new Date(now.getTime() + minsToEnd * 60 * 1000).toISOString();
-      } else if (schedule.startMin !== null) {
-        const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc);
-        if (minsToStart !== null) {
-          nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
         }
       }
 
