@@ -789,6 +789,7 @@ Deno.serve(async (req) => {
           date: eventDate,
           emotion_state: mem.emotional_tone || 'neutral',
           created_date: new Date().toISOString(),
+          story_event_id: eventId,
         };
         await base44.asServiceRole.entities.Character.update(mem.character_id, {
           memories: [...existingMemories, newMemoryEntry],
@@ -810,7 +811,7 @@ Deno.serve(async (req) => {
           description: `${eventContext} ${m.memory_text}`,
           emotional_impact: m.emotional_tone || 'neutral',
           source_context: `story_event_${eventId}`,
-          timestamp: new Date().toISOString(),
+          timestamp: eventDepartureTime,
         };
       });
     if (memEntityToCreate.length > 0) {
@@ -850,6 +851,7 @@ Deno.serve(async (req) => {
         confidence_score: 0.95,
         permanence: (mem.importance_score || 5) >= 7 ? 'protected' : 'long_term',
         validation_status: 'confirmed',
+        source_story_event_id: eventId,
       });
     }
     if (charMemToCreate.length > 0) {

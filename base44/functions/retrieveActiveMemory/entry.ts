@@ -35,6 +35,20 @@ Deno.serve(async (req) => {
       50
     );
 
+    // ── STORY EVENT TEMPORAL WITHHOLDING ──────────────────────────────────────
+    // Story Event completion memories are created with source_context = `story_event_<id>`
+    // and timestamp = the event's end/departure time. Before that timestamp arrives,
+    // the event has not yet concluded — the character must not have access to the
+    // completed-event memory (they would "remember" something that hasn't finished).
+    // Filter out these records so they do not surface in active conversation until
+    // the event's temporal completion has passed.
+    const nowMs = Date.now();
+    const filteredMemories = allMemories.filter(m => {
+      if (!m.source_context || !m.source_context.startsWith('story_event_')) return true;
+      if (!m.timestamp) return true;
+      return new Date(m.timestamp).getTime() <= nowMs;
+    });
+
     // ── 3. COMBINE: backfilled narratives + explicit memories ──────────────────────
     // Backfilled narratives are AutomaticNarrative records (same structure as memory objects)
     const backfillAsMemories = backfilledNarratives.map(n => ({
@@ -46,7 +60,7 @@ Deno.serve(async (req) => {
       source_context: 'automatic_backfill',
       _score: 10, // Highest priority
     }));
-    const combinedWithBackfill = [...backfillAsMemories, ...allMemories];
+    const combinedWithBackfill = [...backfillAsMemories, ...filteredMemories];
 
     if (combinedWithBackfill.length === 0) {
       return Response.json({ memories: [], total: 0 });

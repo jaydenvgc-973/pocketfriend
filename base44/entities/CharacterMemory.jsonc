@@ -40,6 +40,10 @@
       "type": "string",
       "description": "ID of source message if from chat"
     },
+    "source_story_event_id": {
+      "type": "string",
+      "description": "ID of the StoryEvent this memory was created from. Used for temporal filtering \u2014 completion memories are withheld until the event's end time has passed."
+    },
     "importance_score": {
       "type": "number",
       "minimum": 0,

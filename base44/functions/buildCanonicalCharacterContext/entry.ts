@@ -1113,6 +1113,78 @@ function buildResearchFindingsBlock(webLookups) {
   return '\n\n' + lines.join('\n') + '\n════════════════════════════════════';
 }
 
+// ── ACTIVE STORY EVENT CONTEXT BLOCK ────────────────────────────────────────
+// Builds a current-event awareness block for a character who is a participant
+// in an active (in-progress) Story Event. Uses ONLY the safe fields:
+//   - title, event_date, start_time, end_time, venue_name, plot
+//   - focus_character_names, participant_character_names
+// Does NOT inject the completed narrative, memories, or emotional outcomes —
+// those remain temporally withheld until the event's end time has passed.
+async function buildActiveStoryEventBlock(base44, characterId, ownerEmail) {
+  if (!characterId) return '';
+  const now = new Date();
+  let events = [];
+  try {
+    events = await base44.asServiceRole.entities.StoryEvent.filter(
+      { status: 'complete' },
+      '-created_date',
+      20
+    ).catch(() => []);
+  } catch (_) { return ''; }
+
+  if (!events || events.length === 0) return '';
+
+  // Filter to events where this character is a participant AND the event is
+  // currently in progress (current time is between event start and end).
+  const activeEvents = events.filter(e => {
+    const pIds = Array.isArray(e.participant_character_ids) ? e.participant_character_ids : [];
+    const fIds = Array.isArray(e.focus_character_ids) ? e.focus_character_ids : [];
+    if (!pIds.includes(characterId) && !fIds.includes(characterId)) return false;
+
+    const dateStr = e.event_date;
+    if (!dateStr) return false;
+    const startStr = e.start_time || '00:00';
+    const endStr = e.end_time || null;
+
+    const startMs = new Date(`${dateStr}T${startStr}:00`).getTime();
+    if (isNaN(startMs)) return false;
+    if (now.getTime() < startMs) return false; // event hasn't started yet
+
+    if (endStr) {
+      const endMs = new Date(`${dateStr}T${endStr}:00`).getTime();
+      if (!isNaN(endMs) && now.getTime() > endMs) return false; // event already ended
+    }
+
+    return true;
+  });
+
+  if (activeEvents.length === 0) return '';
+
+  const lines = [];
+  lines.push('');
+  lines.push('════════════════════════════════════');
+  lines.push('ACTIVE STORY EVENT — CURRENT EXPERIENCE AWARENESS');
+  lines.push('You are currently involved in an event that is happening right now.');
+  lines.push('Use this awareness naturally in conversation. Do NOT describe the event as completed or as a memory.');
+  lines.push('════════════════════════════════════');
+  for (const e of activeEvents.slice(0, 2)) {
+    lines.push(`• Event: "${e.title || 'Untitled'}"`);
+    if (e.event_date) lines.push(`  Date: ${e.event_date}`);
+    if (e.start_time) lines.push(`  Time: ${e.start_time}${e.end_time ? ` to ${e.end_time}` : ''}`);
+    if (e.venue_name) lines.push(`  Where: ${e.venue_name}`);
+    if (e.plot) lines.push(`  What's happening: ${e.plot.substring(0, 200)}`);
+    const fNames = Array.isArray(e.focus_character_names) ? e.focus_character_names : [];
+    const pNames = Array.isArray(e.participant_character_names) ? e.participant_character_names : [];
+    const allNames = [...new Set([...fNames, ...pNames])].filter(n => n);
+    if (allNames.length > 0) lines.push(`  Who's there: ${allNames.join(', ')}`);
+  }
+  lines.push('');
+  lines.push('NOTE: This event is in progress. You are experiencing it now — it is not a memory or a past event.');
+  lines.push('════════════════════════════════════');
+
+  return '\n' + lines.join('\n');
+}
+
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
 function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '', userGender = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
@@ -2127,6 +2199,24 @@ Deno.serve(async (req) => {
       }
     } catch (rfErr) {
       contextLog.push({ step: 'research_findings_block', status: 'error', error: rfErr.message });
+    }
+
+    // ── ACTIVE STORY EVENT CONTEXT ───────────────────────────────────────────
+    // Characters who are participants in an active (in-progress) Story Event
+    // receive current-event awareness: they know the event is happening, where
+    // they are, and what the plot is — WITHOUT access to the completed narrative
+    // or memories (those remain temporally withheld until the event ends).
+    try {
+      const activeStoryEventBlock = await buildActiveStoryEventBlock(base44, characterId, resolvedEmail);
+      if (activeStoryEventBlock) {
+        finalSystemPrompt = finalSystemPrompt + activeStoryEventBlock;
+        contextLog.push({ step: 'active_story_event', injected: true });
+      } else {
+        contextLog.push({ step: 'active_story_event', injected: false, reason: 'no_active_events' });
+      }
+    } catch (seErr) {
+      contextLog.push({ step: 'active_story_event', status: 'error', error: seErr.message });
+      console.warn(`[buildCanonicalCharacterContext] active_story_event error (non-blocking): ${seErr.message}`);
     }
 
     if (isVickServicio) {
