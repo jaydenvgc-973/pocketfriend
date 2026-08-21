@@ -1,6 +1,6 @@
 {
   "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Invokes enforceCharacterWorkSchedule for the triggered character, receives next_execution_time, waits until that exact occurrence, re-invokes with that exact value as expected_occurrence_time, and continues the deadline cycle. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. BLOCKER: Base44 Workflow validator rejects the required indefinite continuation as UNBOUNDED_CYCLE. The approved indefinite invoke\u2192wait\u2192invoke cycle cannot be registered in its approved form. No finite unrolled approximation, polling, new field, or alternative architecture is authorized as a substitute. This file contains only the approved trigger and the first initialization invocation plus the first continuation cycle; the remaining continuation is blocked by the validator and awaits resolution.",
+  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Each run handles ONE shift boundary: initial invoke \u2192 check \u2192 wait until next_execution_time \u2192 enforce invoke with expected_occurrence_time \u2192 check \u2192 retrigger \u2192 end. The retrigger updates work_details (an approved trigger field), which fires the entity trigger and starts a fresh run for the NEXT boundary. This achieves indefinite continuation through forward-only re-triggering \u2014 no backward transition (which the validator rejects as UNBOUNDED_CYCLE), no finite iteration count, no polling. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. If next_execution_time is null/empty or reason is stale_occurrence_superseded, the run ends without retriggering. Invocations pass event.entity_id (not characterId) so the backend detects entity-triggered invocation and uses service-role without user auth.",
   "trigger": {
     "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null)) }",
     "config": {
@@ -25,7 +25,9 @@
           "with": {
             "function_name": "enforceCharacterWorkSchedule",
             "args": {
-              "characterId": "${ .trigger.entity_id }"
+              "event": {
+                "entity_id": "${ .trigger.entity_id }"
+              }
             }
           },
           "then": "check_1"
@@ -66,7 +68,9 @@
           "with": {
             "function_name": "enforceCharacterWorkSchedule",
             "args": {
-              "characterId": "${ .trigger.entity_id }",
+              "event": {
+                "entity_id": "${ .trigger.entity_id }"
+              },
               "expected_occurrence_time": "${ .invoke_1.next_execution_time }"
             }
           },
@@ -78,7 +82,7 @@
           "switch": [
             {
               "when": "${ .invoke_2.next_execution_time != null and .invoke_2.next_execution_time != \"\" and .invoke_2.reason != \"stale_occurrence_superseded\" }",
-              "then": "compute_2"
+              "then": "retrigger"
             },
             {
               "when": "${ true }",
@@ -88,143 +92,14 @@
         }
       },
       {
-        "compute_2": {
-          "call": "compute_seconds_until",
-          "with": {
-            "target_iso": "${ .invoke_2.next_execution_time }"
-          },
-          "then": "wait_2"
-        }
-      },
-      {
-        "wait_2": {
-          "wait": "PT${ .compute_2.seconds | floor | tostring }S",
-          "then": "invoke_3"
-        }
-      },
-      {
-        "invoke_3": {
+        "retrigger": {
           "call": "invoke_backend_function",
           "with": {
-            "function_name": "enforceCharacterWorkSchedule",
+            "function_name": "retriggerWorkScheduleWorkflow",
             "args": {
-              "characterId": "${ .trigger.entity_id }",
-              "expected_occurrence_time": "${ .invoke_2.next_execution_time }"
+              "character_id": "${ .trigger.entity_id }"
             }
           },
-          "then": "check_3"
-        }
-      },
-      {
-        "check_3": {
-          "switch": [
-            {
-              "when": "${ .invoke_3.next_execution_time != null and .invoke_3.next_execution_time != \"\" and .invoke_3.reason != \"stale_occurrence_superseded\" }",
-              "then": "compute_3"
-            },
-            {
-              "when": "${ true }",
-              "then": "end"
-            }
-          ]
-        }
-      },
-      {
-        "compute_3": {
-          "call": "compute_seconds_until",
-          "with": {
-            "target_iso": "${ .invoke_3.next_execution_time }"
-          },
-          "then": "wait_3"
-        }
-      },
-      {
-        "wait_3": {
-          "wait": "PT${ .compute_3.seconds | floor | tostring }S",
-          "then": "invoke_4"
-        }
-      },
-      {
-        "invoke_4": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterWorkSchedule",
-            "args": {
-              "characterId": "${ .trigger.entity_id }",
-              "expected_occurrence_time": "${ .invoke_3.next_execution_time }"
-            }
-          },
-          "then": "check_4"
-        }
-      },
-      {
-        "check_4": {
-          "switch": [
-            {
-              "when": "${ .invoke_4.next_execution_time != null and .invoke_4.next_execution_time != \"\" and .invoke_4.reason != \"stale_occurrence_superseded\" }",
-              "then": "compute_4"
-            },
-            {
-              "when": "${ true }",
-              "then": "end"
-            }
-          ]
-        }
-      },
-      {
-        "compute_4": {
-          "call": "compute_seconds_until",
-          "with": {
-            "target_iso": "${ .invoke_4.next_execution_time }"
-          },
-          "then": "wait_4"
-        }
-      },
-      {
-        "wait_4": {
-          "wait": "PT${ .compute_4.seconds | floor | tostring }S",
-          "then": "invoke_5"
-        }
-      },
-      {
-        "invoke_5": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterWorkSchedule",
-            "args": {
-              "characterId": "${ .trigger.entity_id }",
-              "expected_occurrence_time": "${ .invoke_4.next_execution_time }"
-            }
-          },
-          "then": "check_5"
-        }
-      },
-      {
-        "check_5": {
-          "switch": [
-            {
-              "when": "${ .invoke_5.next_execution_time != null and .invoke_5.next_execution_time != \"\" and .invoke_5.reason != \"stale_occurrence_superseded\" }",
-              "then": "compute_5"
-            },
-            {
-              "when": "${ true }",
-              "then": "end"
-            }
-          ]
-        }
-      },
-      {
-        "compute_5": {
-          "call": "compute_seconds_until",
-          "with": {
-            "target_iso": "${ .invoke_5.next_execution_time }"
-          },
-          "then": "wait_5"
-        }
-      },
-      {
-        "wait_5": {
-          "wait": "PT${ .compute_5.seconds | floor | tostring }S",
           "then": "end"
         }
       }

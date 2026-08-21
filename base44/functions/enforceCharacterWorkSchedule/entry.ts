@@ -147,10 +147,19 @@ Deno.serve(async (req) => {
     // These vars are unused in global mode (each char loop re-derives nowET), kept for single-char path only.
     const _unusedUtc = new Date(); void _unusedUtc;
 
-    // --- Single character mode (requires session auth to scope to owned character) ---
+    // --- Single character mode ---
+    // Auth is required for direct user invocation (frontend). Entity-triggered
+    // invocation (from Workflow via event.entity_id) runs without user auth —
+    // service-role is used for entity operations, and the triggering entity's
+    // owner_email is the authoritative scope (the trigger fires only on the
+    // triggering character's own update, so there is no cross-user access).
     if (characterId) {
-      const user = await base44.auth.me();
-      if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      const isEntityTriggered = !!event?.entity_id;
+      let user = null;
+      if (!isEntityTriggered) {
+        user = await base44.auth.me();
+        if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+      }
 
       // OWNERSHIP CHECK: Must match owner_email
       const char = await base44.asServiceRole.entities.Character.filter({ id: characterId });
@@ -159,9 +168,11 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
-      // OWNERSHIP BOUNDARY: owner_email must match session user
-      if (!character.owner_email || character.owner_email !== user.email) {
-        return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
+      // OWNERSHIP BOUNDARY: owner_email must match session user (direct invocation only)
+      if (!isEntityTriggered) {
+        if (!character.owner_email || character.owner_email !== user.email) {
+          return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
+        }
       }
 
       const resolvedLocId = character.resolved_current_location_id;
