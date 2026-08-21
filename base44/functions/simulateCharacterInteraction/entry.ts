@@ -427,7 +427,7 @@ Return a JSON object with:
           }
         }
       },
-      model: 'automatic'
+      model: 'gpt_5_mini'
     });
     trace.ai_response_completed = true;
   } catch (aiErr) {
