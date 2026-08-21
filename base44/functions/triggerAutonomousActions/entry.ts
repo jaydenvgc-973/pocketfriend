@@ -820,6 +820,198 @@ function applyNeedsEffect(character, needsEffect) {
   return hasUpdate ? updates : null;
 }
 
+// ── LIFE EVOLUTION (consolidated from evolveCharacterLife — safe subset only) ──
+// Generates personality/archetype/emotional-informed life context. Writes ONLY
+// descriptive narrative fields: current_life_event, daily_micro_narration,
+// emotional_state, health_status, health_habits. Does NOT write location,
+// presence, fictional_relationships, transient_encounters, or departed_characters.
+// Does NOT bypass enforceCharacterLocationPresence. The character's current
+// committed resolved_presence_status is passed as context so the output is
+// compatible with protected states (sleeping, hospitalized, incarcerated,
+// at_work, at_school, etc.). Returns null on LLM failure so the existing
+// activity update still proceeds.
+async function generateLifeEvolutionUpdate(base44, character, worldConditions, now) {
+  let recentLifeEvents = [];
+  try {
+    recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
+      { character_id: character.id }, '-timestamp', 10
+    );
+  } catch (_) {}
+
+  const name = character.name;
+  const personality = character.personality_summary || '';
+  const traits = (character.personality_traits || []).join(', ');
+  const archetype = character.archetype || 'unknown';
+  const upsetReaction = character.upset_reaction || '';
+  const emotionalTriggers = (character.emotional_triggers_high || []).join(', ');
+  const emotionalState = character.emotional_state || 'calm';
+  const healthStatus = character.health_status || 'healthy';
+  const healthHabits = character.health_habits || '';
+  const work = character.work_details
+    ? `Works as a ${character.work_details.job_title || 'worker'} at a ${character.work_details.workplace_type || 'workplace'}. ${character.work_details.work_environment || ''}`
+    : character.current_situation || 'Has a job and daily life.';
+  const places = (character.frequented_places || []).join(', ') || 'local spots';
+
+  // Structured life context (ground truth — do not contradict)
+  const workScheduleContext = (() => {
+    const start = character.work_start_time || '09:00';
+    const end = character.work_end_time || '17:00';
+    const days = (character.work_days || [1,2,3,4,5]).map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
+    return `Work schedule: ${start}–${end} on ${days}`;
+  })();
+  const sleepScheduleContext = character.sleep_start_time
+    ? `Sleep schedule: ${character.sleep_start_time}–${character.wake_up_time || '07:00'}`
+    : '';
+  const educationContext = (() => {
+    if (!character.current_education_activity || character.current_education_activity === 'none') return '';
+    const d = character.education_details || {};
+    const parts = [`Currently enrolled: ${d.course_name || character.current_education_activity}`];
+    if (d.institution) parts.push(`at ${d.institution}`);
+    return parts.join(' ');
+  })();
+  const jobTrainingContext = (() => {
+    if (!character.current_job_training_activity || character.current_job_training_activity === 'none') return '';
+    const d = character.job_training_details || {};
+    const parts = [`Job training: ${d.training_name || character.current_job_training_activity}`];
+    if (d.company) parts.push(`at ${d.company}`);
+    return parts.join(' ');
+  })();
+  const locationContext = [character.city, character.state].filter(Boolean).join(', ') || '';
+  const structuredLifeContext = [workScheduleContext, sleepScheduleContext, educationContext, jobTrainingContext, locationContext ? `Location: ${locationContext}` : ''].filter(Boolean).join('\n');
+
+  // PROTECTED-STATE GUARDRAIL — output must be compatible with committed presence
+  const presenceStatus = character.resolved_presence_status || 'home';
+  const presenceGuardMap = {
+    sleeping: 'The character is currently SLEEPING. The narration must reflect sleep/rest/dreams — never describe them as awake, out, or active elsewhere.',
+    napping: 'The character is currently NAPPING. The narration must reflect a short rest — never describe them as out or active elsewhere.',
+    passed_out: 'The character is currently PASSED OUT (involuntary collapse). The narration must reflect unconsciousness/recovery — never describe them as active.',
+    hospitalized: 'The character is currently HOSPITALIZED. The narration must reflect hospital recovery — never describe them as out, at work, or at home.',
+    at_work: 'The character is currently AT WORK. The narration must reflect their work context — never describe them as elsewhere during work hours.',
+    at_school: 'The character is currently AT SCHOOL. The narration must reflect school context — never describe them as elsewhere during school hours.',
+    incarcerated: 'The character is currently INCARCERATED. The narration must reflect confinement — never describe them as free or out.',
+    confined: 'The character is currently CONFINED. The narration must reflect confinement.',
+    house_arrest: 'The character is currently under HOUSE ARREST. The narration must reflect being restricted to their residence.',
+  };
+  const presenceGuard = presenceGuardMap[presenceStatus] || `The character is currently ${presenceStatus}. The narration must be compatible with this committed state.`;
+
+  // Event history context
+  let eventHistoryContext = '';
+  if (recentLifeEvents.length > 0) {
+    const lines = recentLifeEvents.map(e => `- [${e.valence}/${e.severity}] ${e.event_type.replace(/_/g,' ')}: ${e.title}`).join('\n');
+    eventHistoryContext = `\nRECENT LIFE EVENTS (most recent first):\n${lines}`;
+  }
+
+  // Relationship context (read-only — not written back)
+  let relationshipContext = '';
+  if (character.fictional_relationships?.length > 0) {
+    relationshipContext = character.fictional_relationships.map(r => {
+      const note = r.related_character_id ? ' [mutual connection]' : '';
+      return `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}${note}`;
+    }).join('\n');
+  }
+
+  // World state
+  let worldStateBlock = '';
+  if (worldConditions) {
+    const parts = [];
+    if (worldConditions.highCrime) parts.push('Elevated crime in the area — character may be more cautious about going out.');
+    if (worldConditions.hasHealthAlert) parts.push('Health alerts active — character may be mindful of health.');
+    if (worldConditions.highEconomicStress) parts.push('Economic stress — character may be more budget-conscious.');
+    if (worldConditions.trending?.length) parts.push(`Trending culture: ${worldConditions.trending.slice(0,3).join(', ')}`);
+    if (parts.length) worldStateBlock = `\nWORLD STATE:\n${parts.join('\n')}`;
+  }
+
+  const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.toLocaleDateString('en-US', { weekday: 'long' });
+  const timeOfDay = nowET.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const fullDate = nowET.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  const gender = character.gender?.toLowerCase();
+  const pronouns = gender === 'female' ? { subject: 'she', object: 'her', possessive: 'her' }
+    : gender === 'male' ? { subject: 'he', object: 'him', possessive: 'his' }
+    : { subject: 'they', object: 'them', possessive: 'their' };
+
+  const prompt = `You are writing realistic life updates for a fictional character named ${name}. This character is fully alive in their world — they have flaws, habits, vulnerabilities, good days, and bad days.
+
+REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)
+
+CHARACTER PROFILE:
+${personality}
+Archetype: ${archetype}
+Core traits: ${traits}
+How they react when upset: ${upsetReaction}
+Emotional triggers: ${emotionalTriggers}
+Work/life context: ${work}
+Places they frequent: ${places}
+Health habits: ${healthHabits || 'not established'}
+Current health status: ${healthStatus}
+Current emotional state: ${emotionalState}
+
+STRUCTURED LIFE CONTEXT (ground truth — do not contradict):
+${structuredLifeContext || 'No structured schedule data available.'}
+
+PROTECTED-STATE GUARDRAIL — MANDATORY:
+${presenceGuard}
+The generated current_life_event and daily_micro_narration MUST be compatible with this committed presence. Do not describe ${name} as being somewhere else or doing something that contradicts this state.
+
+ONGOING RELATIONSHIPS:
+${relationshipContext || 'None established yet.'}
+${eventHistoryContext}
+${worldStateBlock}
+
+TODAY'S TASK:
+Generate realistic life updates grounded in current time, the character's history, personality, and current committed reality.
+
+Rules:
+- Stay fully in character — no assistant language.
+- emotional_state must be from: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated, hopelessness, grief, resentment, shame, longing, apathy, detachment, nostalgia.
+- Do NOT default to negative states without cause. Positive states are the default human baseline.
+- If recent events are negative without recovery, introduce an emotional shift — sustained negativity without recovery is a system failure.
+- health_status and health_habits should evolve naturally from circumstances — do not invent medical crises without evidence.
+- character_evolution_note: 1-2 sentences describing any emerging behavioral/priority shift based on recent experiences, or null if nothing significant. Behavior-based only — no declarations.
+
+MICRO-NARRATION:
+Generate daily_micro_narration: 1-3 short third-person sentences describing what ${name} is doing right now. STRICT third person — use "${name}" or pronouns (${pronouns.subject}/${pronouns.object}/${pronouns.possessive}). NEVER use "I", "me", "my". Must be compatible with the protected-state guardrail above.
+
+Return JSON:
+{
+  "current_life_event": string (ONE sentence about what's active right now — real, specific, shaped by history),
+  "daily_micro_narration": string (1-3 short third-person sentences, compatible with committed presence),
+  "character_evolution_note": string or null,
+  "emotional_state": string (from the list above),
+  "health_status": string,
+  "health_habits": string
+}`;
+
+  try {
+    const update = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt,
+      response_json_schema: {
+        type: 'object',
+        properties: {
+          current_life_event: { type: 'string' },
+          daily_micro_narration: { type: 'string' },
+          character_evolution_note: { type: 'string' },
+          emotional_state: { type: 'string' },
+          health_status: { type: 'string' },
+          health_habits: { type: 'string' },
+        },
+      },
+    });
+
+    const lifeEvent = [update.current_life_event, update.character_evolution_note].filter(Boolean).join(' ');
+    return {
+      current_life_event: lifeEvent || '',
+      daily_micro_narration: update.daily_micro_narration || '',
+      emotional_state: update.emotional_state || emotionalState,
+      health_status: update.health_status || healthStatus,
+      health_habits: update.health_habits || healthHabits,
+    };
+  } catch (_) {
+    return null; // LLM failure — existing activity update still proceeds
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -905,8 +1097,22 @@ Deno.serve(async (req) => {
         if (needUpdates) Object.assign(updates, needUpdates);
       }
 
+      // ── LIFE EVOLUTION (consolidated from evolveCharacterLife — safe subset) ──
+      // Generates current_life_event, daily_micro_narration, emotional_state,
+      // health_status, health_habits. Does NOT touch canonical presence/location.
+      // Compatible with protected states via the guardrail in the prompt. Runs
+      // through the existing shouldTriggerAutonomy gate — no new timing mechanism.
+      const lifeEvolution = await generateLifeEvolutionUpdate(base44, character, worldConditions, now);
+      if (lifeEvolution) {
+        if (lifeEvolution.current_life_event) updates.current_life_event = lifeEvolution.current_life_event;
+        if (lifeEvolution.daily_micro_narration) updates.daily_micro_narration = lifeEvolution.daily_micro_narration;
+        if (lifeEvolution.emotional_state) updates.emotional_state = lifeEvolution.emotional_state;
+        if (lifeEvolution.health_status) updates.health_status = lifeEvolution.health_status;
+        if (lifeEvolution.health_habits) updates.health_habits = lifeEvolution.health_habits;
+      }
+
       await base44.asServiceRole.entities.Character.update(character.id, updates);
-      updated.push({ id: character.id, name: character.name, activity: resolved.activity, type: resolved.type });
+      updated.push({ id: character.id, name: character.name, activity: resolved.activity, type: resolved.type, life_evolution: !!lifeEvolution });
     }
 
     return Response.json({
