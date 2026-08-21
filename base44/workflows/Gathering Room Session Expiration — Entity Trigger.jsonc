@@ -1,32 +1,61 @@
 {
-  "name": "Gathering Room Session Expiration \u2014 Entity Trigger",
-  "description": "Fires when a GatheringRoomSession's expires_at or status changes. Invokes expireGatheringRoomSessions in per-session mode, which expires the specific session at its authoritative expires_at time, removes participants, creates cooldowns, resets character locations, and recalculates occupancy. Event-driven replacement for the old 5-minute polling cron \u2014 the Workflow delays until the session's existing expires_at instead of scanning.",
+  "name": "Gathering Room Session Expiration",
+  "description": "Per-session: when a GatheringRoomSession is created, compute the seconds until that session's authoritative expires_at, wait until that exact deadline, then invoke expireGatheringRoomSessions with session_id set to that same session's ID. No scanning, no polling, no recalculated 30-minute deadline, no additional fields.",
   "trigger": {
-    "condition": "${ ((.trigger.changed_fields | index(\"expires_at\") != null) or (.trigger.changed_fields | index(\"status\") != null)) }",
     "config": {
       "trigger_type": "entity",
       "events": [
-        "update"
+        "create"
       ],
       "entity_name": "GatheringRoomSession"
-    }
+    },
+    "condition": "${ .trigger.data.expires_at != null }"
   },
   "definition": {
     "document": {
       "dsl": "1.0.0",
-      "name": "gathering_room_session_expiration_entity_trigger",
+      "name": "gathering_room_session_expiration",
       "version": "1.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "run_function": {
+        "compute_wait": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .trigger.data.expires_at }"
+          },
+          "then": "wait_until_expiration",
+          "x-base44": {
+            "title": "Compute seconds until expires_at",
+            "description": "Authoritative session deadline"
+          }
+        }
+      },
+      {
+        "wait_until_expiration": {
+          "wait": "PT${ .compute_wait.seconds | floor | tostring }S",
+          "then": "expire_session",
+          "x-base44": {
+            "title": "Wait until expires_at",
+            "description": "Durable delay to exact deadline"
+          }
+        }
+      },
+      {
+        "expire_session": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "expireGatheringRoomSessions",
-            "args": {}
+            "args": {
+              "session_id": "${ .trigger.entity_id }"
+            }
           },
-          "then": "end"
+          "then": "end",
+          "x-base44": {
+            "title": "Expire session",
+            "description": "Per-session expiration via backend"
+          }
         }
       }
     ]
