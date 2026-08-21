@@ -286,11 +286,13 @@ export function useChatLoadConvo({
                 if (c && /^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(c) && /\d{4}/.test(c)) return false;
                 return true;
               });
-              // Filter out future-dated messages (e.g., Story Event narratives timestamped at event end time).
-              // generateStoryEvent creates the narrative Message at generation time with timestamp = event end time.
-              // Without this filter, a 4:00 PM narrative appears in chat before 4:00 PM has arrived.
+              // Filter out future-dated narrative messages (Story Event narratives timestamped at event end time).
+              // generateStoryEvent creates the narrative Message at generation time with timestamp = event end time
+              // and is_narrative=true. Without this filter, a 4:00 PM narrative appears in chat before 4:00 PM.
+              // Narrowly scoped: only narrative messages are filtered, so no other message type is affected.
               const nowMs = Date.now();
               loadedMsgs = loadedMsgs.filter(m => {
+                if (!m.is_narrative) return true;
                 const ts = m.timestamp || m.created_date;
                 if (!ts) return true;
                 return new Date(ts).getTime() <= nowMs;
@@ -313,11 +315,16 @@ export function useChatLoadConvo({
 
           if (loadedMsgs && loadedMsgs.length > 0) {
             // Sort chronologically oldest→newest for correct render order.
-            // Use timestamp as primary key so Story Event narratives (timestamp = event end time)
-            // appear in their correct chronological position, not at their creation time.
-            const sorted = [...loadedMsgs].sort((a, b) =>
-              new Date(a.timestamp || a.created_date || 0) - new Date(b.timestamp || b.created_date || 0)
-            );
+            // Narrative messages (Story Event narratives) use timestamp as primary key so they
+            // appear at their event-end-time position. Regular messages use created_date (existing
+            // behavior) — for regular messages timestamp ≈ created_date so this preserves exact
+            // prior ordering. This narrow approach avoids changing sort behavior for non-narrative
+            // messages and prevents ordering inconsistencies between regular and narrative messages.
+            const sorted = [...loadedMsgs].sort((a, b) => {
+              const aKey = a.is_narrative ? (a.timestamp || a.created_date) : (a.created_date || a.timestamp);
+              const bKey = b.is_narrative ? (b.timestamp || b.created_date) : (b.created_date || b.timestamp);
+              return new Date(aKey || 0) - new Date(bKey || 0);
+            });
 
             // STALE LOAD GUARD: if user switched characters while this load was in flight, discard
             if (loadingForCharacterIdRef.current !== characterId) {
