@@ -406,13 +406,13 @@ Return a JSON object with:
           scene_summary: { type: 'string' },
           dialogue: {
             type: 'array',
-            items: { type: 'object', properties: { speaker: { type: 'string' }, text: { type: 'string' } } }
+            items: { type: 'object', properties: { speaker: { type: 'string' }, text: { type: 'string' } }, required: ['speaker', 'text'] }
           },
           outcome: { type: 'string' },
-          emotional_shifts: { type: 'object' },
-          emotional_milestone: { type: ['string', 'null'] },
-          shared_secret: { type: ['string', 'null'] },
-          relationship_updates: { type: 'object' },
+          emotional_shifts: { type: 'object', properties: {} },
+          emotional_milestone: { type: 'string' },
+          shared_secret: { type: 'string' },
+          relationship_updates: { type: 'object', properties: {} },
           scheduled_events: {
             type: 'array',
             items: {
@@ -421,12 +421,13 @@ Return a JSON object with:
                 description: { type: 'string' },
                 trigger_time: { type: 'string' },
                 character_names: { type: 'array', items: { type: 'string' } }
-              }
+              },
+              required: ['description', 'trigger_time', 'character_names']
             }
           }
         }
       },
-      model: 'gpt_5_mini'
+      model: 'automatic'
     });
     trace.ai_response_completed = true;
   } catch (aiErr) {
