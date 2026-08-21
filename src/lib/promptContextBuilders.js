@@ -998,6 +998,14 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
 
   if (!charHomeId && !charCurrentLocId && familyMembers.length === 0) return '';
 
+  // GUARD: Only report household co-presence if the speaking character is actually at their home
+  // right now. The speaking character's authoritative presence is resolved_current_location_id.
+  // If they are at work, school, or elsewhere, they are NOT co-present with household members at
+  // home — even if they share the same current_home_location_id. Without this guard, the LLM is
+  // told "these people are home with you" while the character is actually at work, causing
+  // conversation to contradict authoritative presence.
+  const charIsActuallyHome = !charCurrentLocId || charCurrentLocId === charHomeId;
+
   const coPresent = [];
 
   // ── Check all known characters sharing the same home or current location ──
@@ -1017,7 +1025,8 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
     }
 
     // Co-present: both resolved to home and same home
-    if (charHomeId && otherHome && charHomeId === otherHome) {
+    // GUARDED by charIsActuallyHome — only report if the speaking character is actually at home.
+    if (charIsActuallyHome && charHomeId && otherHome && charHomeId === otherHome) {
       const otherAtHome = !otherCurrent || otherCurrent === otherHome;
       if (otherAtHome) {
         coPresent.push({ name: otherName, reason: 'same_household_home', status: 'home' });
@@ -1045,7 +1054,7 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
     // Family member currently at the same location
     if (charCurrentLocId && famCurrent && charCurrentLocId === famCurrent) {
       coPresent.push({ name: famName, reason: 'family_same_location', status: famChar.resolved_presence_status || 'here' });
-    } else if (charHomeId && famHome && charHomeId === famHome) {
+    } else if (charIsActuallyHome && charHomeId && famHome && charHomeId === famHome) {
       const famAtHome = !famCurrent || famCurrent === famHome;
       if (famAtHome) {
         coPresent.push({ name: famName, reason: 'family_same_home', status: 'home' });

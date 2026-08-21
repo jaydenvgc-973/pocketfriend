@@ -286,6 +286,15 @@ export function useChatLoadConvo({
                 if (c && /^[-–—,.\s]{0,8}(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(c) && /\d{4}/.test(c)) return false;
                 return true;
               });
+              // Filter out future-dated messages (e.g., Story Event narratives timestamped at event end time).
+              // generateStoryEvent creates the narrative Message at generation time with timestamp = event end time.
+              // Without this filter, a 4:00 PM narrative appears in chat before 4:00 PM has arrived.
+              const nowMs = Date.now();
+              loadedMsgs = loadedMsgs.filter(m => {
+                const ts = m.timestamp || m.created_date;
+                if (!ts) return true;
+                return new Date(ts).getTime() <= nowMs;
+              });
             }
             console.log(`[CHAT_LOAD] Message.filter DONE raw=${rawCountBeforeFilter} filtered=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
@@ -303,9 +312,11 @@ export function useChatLoadConvo({
           convoIdRef.current = convoId;
 
           if (loadedMsgs && loadedMsgs.length > 0) {
-            // Sort chronologically oldest→newest for correct render order
+            // Sort chronologically oldest→newest for correct render order.
+            // Use timestamp as primary key so Story Event narratives (timestamp = event end time)
+            // appear in their correct chronological position, not at their creation time.
             const sorted = [...loadedMsgs].sort((a, b) =>
-              new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+              new Date(a.timestamp || a.created_date || 0) - new Date(b.timestamp || b.created_date || 0)
             );
 
             // STALE LOAD GUARD: if user switched characters while this load was in flight, discard
@@ -314,8 +325,13 @@ export function useChatLoadConvo({
               return;
             }
 
-            // Pagination cursor = oldest timestamp currently in the visible window
-            oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || null;
+            // Pagination cursor = oldest created_date in the filtered set (for server-side $lt cursor).
+            // loadedMsgs is still in server-returned order (created_date descending) after client filtering,
+            // so the last element has the oldest created_date. The client-side timestamp sort does not
+            // affect this cursor — pagination uses created_date for the server query.
+            oldestMsgTimestampRef.current = loadedMsgs.length > 0
+              ? (loadedMsgs[loadedMsgs.length - 1]?.created_date || loadedMsgs[loadedMsgs.length - 1]?.timestamp || null)
+              : null;
 
             // Signal UI to show "Load older messages" button if we hit the window ceiling.
             // Use rawCountBeforeFilter — if the server returned a full window, older messages
