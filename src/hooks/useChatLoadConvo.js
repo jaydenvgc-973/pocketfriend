@@ -315,14 +315,18 @@ export function useChatLoadConvo({
 
           if (loadedMsgs && loadedMsgs.length > 0) {
             // Sort chronologically oldest→newest for correct render order.
-            // Narrative messages (Story Event narratives) use timestamp as primary key so they
-            // appear at their event-end-time position. Regular messages use created_date (existing
-            // behavior) — for regular messages timestamp ≈ created_date so this preserves exact
-            // prior ordering. This narrow approach avoids changing sort behavior for non-narrative
-            // messages and prevents ordering inconsistencies between regular and narrative messages.
+            // ALL messages use timestamp as the primary sort key, falling back to created_date.
+            // This is critical for Story Event narratives: their timestamp is the event-end time
+            // (when the narrative belongs in conversation chronology), while their created_date is
+            // when the DB record was generated (earlier in the day). Using timestamp ensures the
+            // narrative appears at its event-end position, not at its generation-time position.
+            // For regular messages, timestamp ≈ created_date (within sub-seconds), so relative
+            // order is preserved. Additionally, regular messages' timestamp is stored with "Z"
+            // (UTC) while created_date lacks "Z" — using timestamp avoids timezone misinterpretation
+            // that would otherwise shift regular messages and break comparison with narratives.
             const sorted = [...loadedMsgs].sort((a, b) => {
-              const aKey = a.is_narrative ? (a.timestamp || a.created_date) : (a.created_date || a.timestamp);
-              const bKey = b.is_narrative ? (b.timestamp || b.created_date) : (b.created_date || b.timestamp);
+              const aKey = a.timestamp || a.created_date;
+              const bKey = b.timestamp || b.created_date;
               return new Date(aKey || 0) - new Date(bKey || 0);
             });
 
@@ -363,9 +367,10 @@ export function useChatLoadConvo({
                 // Server has everything — use server result (normal fast path)
                 return sorted;
               }
-              // Merge: server result + any local-only messages, sort by creation time
+              // Merge: server result + any local-only messages, sort by timestamp (same
+              // narrative-aware key as the initial sort — see comment above the initial sort).
               const merged = [...sorted, ...localOnly].sort((a, b) =>
-                new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+                new Date(a.timestamp || a.created_date || 0) - new Date(b.timestamp || b.created_date || 0)
               );
               // Deduplicate in case of overlap
               const seen = new Set();
