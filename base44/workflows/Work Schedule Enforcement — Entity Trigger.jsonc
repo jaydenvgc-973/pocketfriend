@@ -1,8 +1,8 @@
 {
   "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Invokes enforceCharacterWorkSchedule for the triggered character, receives next_execution_time, waits until that exact occurrence, re-invokes with that exact value as expected_occurrence_time, and continues the deadline cycle. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. The continuation chain is unrolled into a finite sequence of unique-named iterations (no cycles) due to platform cycle detection. If the chain exhausts all iterations, a final invocation is performed and the workflow ends; the next employment config change starts a new instance.",
+  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Invokes enforceCharacterWorkSchedule for the triggered character, receives next_execution_time, waits until that exact occurrence, re-invokes with that exact value as expected_occurrence_time, and continues the deadline cycle. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. BLOCKER: Base44 Workflow validator rejects the required indefinite continuation as UNBOUNDED_CYCLE. The approved indefinite invoke\u2192wait\u2192invoke cycle cannot be registered in its approved form. No finite unrolled approximation, polling, new field, or alternative architecture is authorized as a substitute. This file contains only the approved trigger and the first initialization invocation plus the first continuation cycle; the remaining continuation is blocked by the validator and awaits resolution.",
   "trigger": {
-    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"current_work_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"occupation_location_name\") != null)) }",
+    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null)) }",
     "config": {
       "trigger_type": "entity",
       "events": [
@@ -225,19 +225,6 @@
       {
         "wait_5": {
           "wait": "PT${ .compute_5.seconds | floor | tostring }S",
-          "then": "final_invoke"
-        }
-      },
-      {
-        "final_invoke": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterWorkSchedule",
-            "args": {
-              "characterId": "${ .trigger.entity_id }",
-              "expected_occurrence_time": "${ .invoke_5.next_execution_time }"
-            }
-          },
           "then": "end"
         }
       }

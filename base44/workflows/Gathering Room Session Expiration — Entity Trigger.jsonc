@@ -1,15 +1,14 @@
 {
   "name": "Gathering Room Session Expiration",
-  "description": "Per-session: when a GatheringRoomSession is created, compute the seconds until that session's authoritative expires_at, wait until that exact deadline, then invoke expireGatheringRoomSessions with session_id set to that same session's ID. No scanning, no polling, no recalculated 30-minute deadline, no additional fields.",
   "trigger": {
+    "condition": null,
     "config": {
       "trigger_type": "entity",
       "events": [
         "create"
       ],
       "entity_name": "GatheringRoomSession"
-    },
-    "condition": "${ .trigger.data.expires_at != null }"
+    }
   },
   "definition": {
     "document": {
@@ -59,5 +58,6 @@
         }
       }
     ]
-  }
+  },
+  "description": "Per-session: when a GatheringRoomSession is created, compute the seconds until that session's authoritative expires_at, wait until that exact deadline, then invoke expireGatheringRoomSessions with session_id set to that same session's ID. No scanning, no polling, no recalculated 30-minute deadline, no additional fields."
 }
