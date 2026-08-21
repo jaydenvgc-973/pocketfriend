@@ -503,7 +503,7 @@ function buildTodayLocationBlock(character) {
   return `\n════════════════════════════════════\nWHERE YOU'VE BEEN TODAY (from app location data — authoritative)\n════════════════════════════════════\n${lines.join('\n')}\nIMPORTANT: You actually went to these places today. Reference them naturally when relevant.\n════════════════════════════════════\n`; 
 }
 
-function buildHardFacts(character) {
+function buildHardFacts(character, hasActiveStoryEvent = false) {
   const lines = [];
 
   // ── HOUSING TRUTH ─────────────────────────────────────────────────────────
@@ -571,10 +571,18 @@ function buildHardFacts(character) {
 
   // Confirm committed at_school / at_work presence — read from canonical state.
   if (rp === 'at_school') {
-    lines.push("AUTHORITATIVE PRESENCE: AT SCHOOL. You are awake, at school, and engaged in your education.");
+    if (hasActiveStoryEvent) {
+      lines.push("PRESENCE STATUS: at_school (persistent profile). An active Story Event is currently governing your lived experience. This status confirms school-related engagement, but the specific activities, circumstances, and experience of this time come from the active Story Event above — not from an ordinary school day. Do not construct an ordinary classroom routine from this status.");
+    } else {
+      lines.push("AUTHORITATIVE PRESENCE: AT SCHOOL. You are awake, at school, and engaged in your education.");
+    }
   }
   if (rp === 'at_work') {
-    lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working. Your experience of this workday is derived from your personality, knowledge, history, and how work is actually going — not from a default assumption that work is stressful. You may be engaged, focused, routine, bored, satisfied, or frustrated — depending on who you are and what is actually happening.");
+    if (hasActiveStoryEvent) {
+      lines.push("PRESENCE STATUS: at_work (persistent profile). An active Story Event is currently governing your lived experience. This status confirms work-related engagement, but the specific activities, circumstances, and experience of this time come from the active Story Event above — not from an ordinary workday. Do not construct an ordinary desk shift, routine workday, or generic work experience from this status.");
+    } else {
+      lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working. Your experience of this workday is derived from your personality, knowledge, history, and how work is actually going — not from a default assumption that work is stressful. You may be engaged, focused, routine, bored, satisfied, or frustrated — depending on who you are and what is actually happening.");
+    }
   }
 
   // Incarceration
@@ -585,9 +593,10 @@ function buildHardFacts(character) {
     lines.push(`HOUSE ARREST: Under house arrest. Cannot leave their assigned residence.`);
   }
 
-  // Work
-  if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}.`);
-  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}.`);
+  // Work — persistent profile facts. During an active Story Event these remain true
+  // (the character still has this job) but do NOT describe the current lived situation.
+  if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}${hasActiveStoryEvent ? ' (persistent profile fact — your ordinary job; your current activities and circumstances come from the active Story Event above).' : '.'}`);
+  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}${hasActiveStoryEvent ? ' (ordinary workplace; your current location and experience come from the active Story Event above).' : '.'}`);
 
   // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived ──────────
   // There is no default attitude toward work. The character's experience of
@@ -614,7 +623,8 @@ function buildHardFacts(character) {
     if (character.trait_adaptable) traitHints.push('adjusts to workplace changes more easily');
     const factorLine = expFactors.length > 0 ? `\nRELEVANT CONTEXT: ${expFactors.join('; ')}.` : '';
     const traitLine = traitHints.length > 0 ? `\nPERSONALITY INFLUENCE: ${traitHints.join('; ')}.` : '';
-    lines.push(`EMPLOYMENT EXPERIENCE — CHARACTER-DERIVED (no default work stress):${factorLine}${traitLine}\nPRINCIPLE: There is no default attitude toward work. Derive their experience from who they are, what they know, why they have this job, and how work is actually going. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a competent character may find problems engaging. A normal workday does not require a crisis or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.`);
+    const seQualifier = hasActiveStoryEvent ? 'NOTE: This describes your general relationship to work as a persistent trait — NOT your current lived experience. During the active Story Event, do not use this to construct an ordinary workday.\n' : '';
+    lines.push(`${seQualifier}EMPLOYMENT EXPERIENCE — CHARACTER-DERIVED (no default work stress):${factorLine}${traitLine}\nPRINCIPLE: There is no default attitude toward work. Derive their experience from who they are, what they know, why they have this job, and how work is actually going. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a competent character may find problems engaging. A normal workday does not require a crisis or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.`);
   }
 
   // School — live presence only (full education block is in buildEducationBlock injected separately)
@@ -1135,7 +1145,7 @@ function buildFullCanonicalPrompt(character, memories, worldName, interactionCon
 
   const ageCommunicationBlock = buildAgeCommunicationBlock(character);
   const modeBlock = buildModeBlock(interactionContext);
-  const hardFacts = buildHardFacts(character);
+  const hardFacts = buildHardFacts(character, !!activeStoryEventBlock);
   // NOTE: worldStateContinuity is now delegated to reconcileWorldStateForResponse
   // which is called at the Chat level before this function is invoked
   const coPresenceBlock = buildCoPresenceBlock(coPresence, character);
