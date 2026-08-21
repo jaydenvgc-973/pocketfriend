@@ -1113,78 +1113,6 @@ function buildResearchFindingsBlock(webLookups) {
   return '\n\n' + lines.join('\n') + '\n════════════════════════════════════';
 }
 
-// ── ACTIVE STORY EVENT CONTEXT BLOCK ────────────────────────────────────────
-// Builds a current-event awareness block for a character who is a participant
-// in an active (in-progress) Story Event. Uses ONLY the safe fields:
-//   - title, event_date, start_time, end_time, venue_name, plot
-//   - focus_character_names, participant_character_names
-// Does NOT inject the completed narrative, memories, or emotional outcomes —
-// those remain temporally withheld until the event's end time has passed.
-async function buildActiveStoryEventBlock(base44, characterId, ownerEmail) {
-  if (!characterId) return '';
-  const now = new Date();
-  let events = [];
-  try {
-    events = await base44.asServiceRole.entities.StoryEvent.filter(
-      { status: 'complete' },
-      '-created_date',
-      20
-    ).catch(() => []);
-  } catch (_) { return ''; }
-
-  if (!events || events.length === 0) return '';
-
-  // Filter to events where this character is a participant AND the event is
-  // currently in progress (current time is between event start and end).
-  const activeEvents = events.filter(e => {
-    const pIds = Array.isArray(e.participant_character_ids) ? e.participant_character_ids : [];
-    const fIds = Array.isArray(e.focus_character_ids) ? e.focus_character_ids : [];
-    if (!pIds.includes(characterId) && !fIds.includes(characterId)) return false;
-
-    const dateStr = e.event_date;
-    if (!dateStr) return false;
-    const startStr = e.start_time || '00:00';
-    const endStr = e.end_time || null;
-
-    const startMs = new Date(`${dateStr}T${startStr}:00`).getTime();
-    if (isNaN(startMs)) return false;
-    if (now.getTime() < startMs) return false; // event hasn't started yet
-
-    if (endStr) {
-      const endMs = new Date(`${dateStr}T${endStr}:00`).getTime();
-      if (!isNaN(endMs) && now.getTime() > endMs) return false; // event already ended
-    }
-
-    return true;
-  });
-
-  if (activeEvents.length === 0) return '';
-
-  const lines = [];
-  lines.push('');
-  lines.push('════════════════════════════════════');
-  lines.push('ACTIVE STORY EVENT — CURRENT EXPERIENCE AWARENESS');
-  lines.push('You are currently involved in an event that is happening right now.');
-  lines.push('Use this awareness naturally in conversation. Do NOT describe the event as completed or as a memory.');
-  lines.push('════════════════════════════════════');
-  for (const e of activeEvents.slice(0, 2)) {
-    lines.push(`• Event: "${e.title || 'Untitled'}"`);
-    if (e.event_date) lines.push(`  Date: ${e.event_date}`);
-    if (e.start_time) lines.push(`  Time: ${e.start_time}${e.end_time ? ` to ${e.end_time}` : ''}`);
-    if (e.venue_name) lines.push(`  Where: ${e.venue_name}`);
-    if (e.plot) lines.push(`  What's happening: ${e.plot.substring(0, 200)}`);
-    const fNames = Array.isArray(e.focus_character_names) ? e.focus_character_names : [];
-    const pNames = Array.isArray(e.participant_character_names) ? e.participant_character_names : [];
-    const allNames = [...new Set([...fNames, ...pNames])].filter(n => n);
-    if (allNames.length > 0) lines.push(`  Who's there: ${allNames.join(', ')}`);
-  }
-  lines.push('');
-  lines.push('NOTE: This event is in progress. You are experiencing it now — it is not a memory or a past event.');
-  lines.push('════════════════════════════════════');
-
-  return '\n' + lines.join('\n');
-}
-
 // ── FULL CANONICAL SYSTEM PROMPT ─────────────────────────────────────────────
 function buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock = '', recentMessageBlock = '', coPresence = null, userBirthdayFact = null, educationBlock = '', todayLocationBlock = '', worshipLocation = null, familyGraphBlock = '', wardrobeBlock = '', selfClothingBlock = '', clothingAwarenessBlock = '', userGender = null) {
   const userNameLabel = character.nickname_for_user || worldName || null;
@@ -1447,6 +1375,36 @@ Deno.serve(async (req) => {
       lifeJournalCount = lifeJournalEntries.length;
     } catch (journalErr) {
       contextLog.push({ step: 'life_journal_load', status: 'error', error: journalErr.message });
+    }
+
+    // ── STORY EVENT TEMPORAL WITHHOLDING — CharacterMemory + Character.memories ──
+    // Withhold Story Event-created completion records until the originating event ends.
+    // Uses stable Story Event IDs (source_story_event_id, story_event_id) — no title matching.
+    {
+      const seIds = [...new Set([
+        ...(lifeJournalEntries||[]).map(e => e.source_story_event_id).filter(Boolean),
+        ...(character.memories||[]).map(m => m.story_event_id).filter(Boolean)
+      ])];
+      if (seIds.length > 0) {
+        try {
+          const seRecs = [];
+          for (const id of seIds) { try { const r = await base44.asServiceRole.entities.StoryEvent.filter({ id }, null, 1).catch(()=>[]); if (r[0]) seRecs.push(r[0]); } catch(_) {} }
+          const nowMs = Date.now();
+          const notEnded = new Set();
+          for (const se of seRecs) {
+            const d = se.event_date; if (!d) continue;
+            if (se.end_time) { const en = new Date(`${d}T${se.end_time}:00`).getTime(); if (!isNaN(en) && nowMs < en) notEnded.add(se.id); }
+            else { const s = new Date(`${d}T${se.start_time||'12:00'}:00`).getTime(); if (!isNaN(s) && nowMs < s + 7.2e6) notEnded.add(se.id); }
+          }
+          if (notEnded.size > 0) {
+            const oc = (character.memories||[]).length;
+            lifeJournalEntries = lifeJournalEntries.filter(e => !e.source_story_event_id || !notEnded.has(e.source_story_event_id));
+            lifeJournalCount = lifeJournalEntries.length;
+            character = { ...character, memories: (character.memories||[]).filter(m => !m.story_event_id || !notEnded.has(m.story_event_id)) };
+            contextLog.push({ step: 'story_event_temporal_withholding', notEnded: notEnded.size, ljRem: lifeJournalEntries.length, cmRem: (character.memories||[]).length, cmHeld: oc - (character.memories||[]).length });
+          }
+        } catch (e) { contextLog.push({ step: 'story_event_temporal_withholding', status: 'error', error: e.message }); }
+      }
     }
 
     contextLog.push({
@@ -2202,21 +2160,38 @@ Deno.serve(async (req) => {
     }
 
     // ── ACTIVE STORY EVENT CONTEXT ───────────────────────────────────────────
-    // Characters who are participants in an active (in-progress) Story Event
-    // receive current-event awareness: they know the event is happening, where
-    // they are, and what the plot is — WITHOUT access to the completed narrative
-    // or memories (those remain temporally withheld until the event ends).
+    // Inlined active Story Event awareness — safe fields only (no plot, no narrative).
     try {
-      const activeStoryEventBlock = await buildActiveStoryEventBlock(base44, characterId, resolvedEmail);
-      if (activeStoryEventBlock) {
-        finalSystemPrompt = finalSystemPrompt + activeStoryEventBlock;
-        contextLog.push({ step: 'active_story_event', injected: true });
+      const nowSE = new Date();
+      const seEvents = await base44.asServiceRole.entities.StoryEvent.filter({ status: 'complete' }, '-created_date', 20).catch(() => []);
+      const activeSE = (seEvents || []).filter(e => {
+        const pIds = Array.isArray(e.participant_character_ids) ? e.participant_character_ids : [];
+        const fIds = Array.isArray(e.focus_character_ids) ? e.focus_character_ids : [];
+        if (!pIds.includes(characterId) && !fIds.includes(characterId)) return false;
+        const d = e.event_date; if (!d) return false;
+        const s = new Date(`${d}T${e.start_time || '00:00'}:00`).getTime();
+        if (isNaN(s) || nowSE < s) return false;
+        if (e.end_time) { const en = new Date(`${d}T${e.end_time}:00`).getTime(); if (!isNaN(en) && nowSE > en) return false; }
+        return true;
+      });
+      if (activeSE.length > 0) {
+        const sl = ['', '════════════════════════════════════', 'ACTIVE STORY EVENT — CURRENT EXPERIENCE AWARENESS', 'You are currently involved in an event that is happening right now.', 'Use this awareness naturally in conversation. Do NOT describe the event as completed or as a memory.', '════════════════════════════════════'];
+        for (const e of activeSE.slice(0, 2)) {
+          sl.push(`• Event: "${e.title || 'Untitled'}"`);
+          if (e.event_date) sl.push(`  Date: ${e.event_date}`);
+          if (e.start_time) sl.push(`  Time: ${e.start_time}${e.end_time ? ` to ${e.end_time}` : ''}`);
+          if (e.venue_name) sl.push(`  Where: ${e.venue_name}`);
+          const ns = [...new Set([...(e.focus_character_names||[]), ...(e.participant_character_names||[])])].filter(Boolean);
+          if (ns.length) sl.push(`  Who's there: ${ns.join(', ')}`);
+        }
+        sl.push('', 'NOTE: This event is in progress. You are experiencing it now — it is not a memory or a past event.', '════════════════════════════════════');
+        finalSystemPrompt += '\n' + sl.join('\n');
+        contextLog.push({ step: 'active_story_event', injected: true, count: activeSE.length });
       } else {
         contextLog.push({ step: 'active_story_event', injected: false, reason: 'no_active_events' });
       }
     } catch (seErr) {
       contextLog.push({ step: 'active_story_event', status: 'error', error: seErr.message });
-      console.warn(`[buildCanonicalCharacterContext] active_story_event error (non-blocking): ${seErr.message}`);
     }
 
     if (isVickServicio) {
