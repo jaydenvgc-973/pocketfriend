@@ -333,7 +333,7 @@ export default function CharacterInteractionSimulator({ characters, currentUser,
           <p className="text-xs text-muted-foreground uppercase tracking-wider font-medium">Simulate Interaction</p>
         </div>
 
-        <p className="text-xs text-muted-foreground">Select 2-4 characters to simulate a dynamic interaction.</p>
+        <p className="text-xs text-muted-foreground">Select 2-4 participants (you and/or characters) to simulate a dynamic interaction.</p>
 
         <Textarea
           placeholder="Optional: Describe what you'd like to happen in this interaction..."
