@@ -2175,7 +2175,7 @@ Deno.serve(async (req) => {
         return true;
       });
       if (activeSE.length > 0) {
-        const sl = ['', '════════════════════════════════════', 'ACTIVE STORY EVENT — CURRENT EXPERIENCE AWARENESS', 'You are currently involved in an event that is happening right now.', 'Use this awareness naturally in conversation. Do NOT describe the event as completed or as a memory.', '════════════════════════════════════'];
+        const sl = ['', '════════════════════════════════════', 'ACTIVE STORY EVENT — CURRENT EXPERIENCE AWARENESS', 'You are currently involved in an event that is happening right now.', 'This is your present lived situation. Treat the event premise, purpose, planned activities, and circumstances below as what you are currently experiencing.', 'The event is still in progress. Do NOT treat later developments, results, outcomes, aftermath, or the completed narrative as events that have already occurred.', '════════════════════════════════════'];
         for (const e of activeSE.slice(0, 2)) {
           sl.push(`• Event: "${e.title || 'Untitled'}"`);
           if (e.event_date) sl.push(`  Date: ${e.event_date}`);
@@ -2183,8 +2183,10 @@ Deno.serve(async (req) => {
           if (e.venue_name) sl.push(`  Where: ${e.venue_name}`);
           const ns = [...new Set([...(e.focus_character_names||[]), ...(e.participant_character_names||[])])].filter(Boolean);
           if (ns.length) sl.push(`  Who's there: ${ns.join(', ')}`);
+          if (e.plot) sl.push(`  What you're there to do (your current event — this is happening now): ${e.plot}`);
+          if (e.additional_notes) sl.push(`  Additional context: ${e.additional_notes}`);
         }
-        sl.push('', 'NOTE: This event is in progress. You are experiencing it now — it is not a memory or a past event.', '════════════════════════════════════');
+        sl.push('', 'TEMPORAL INTERPRETATION: The event information above describes the Story Event you are currently living. It is your present experience — not a memory of something that already happened, and not a prediction of what will happen. You may know the plan, purpose, activities, and circumstances because you are participating in them now. Any outcomes, results, emotional reactions, or later developments that may be implied are NOT yet things that have happened — the event is still in progress.', '════════════════════════════════════');
         finalSystemPrompt += '\n' + sl.join('\n');
         contextLog.push({ step: 'active_story_event', injected: true, count: activeSE.length });
       } else {
