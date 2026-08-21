@@ -147,17 +147,10 @@ Deno.serve(async (req) => {
     // These vars are unused in global mode (each char loop re-derives nowET), kept for single-char path only.
     const _unusedUtc = new Date(); void _unusedUtc;
 
-    // --- Single character mode ---
-    // User-directed invocation (frontend) requires session auth + ownership.
-    // Workflow/scheduled invocation has no user session — base44.auth.me() returns
-    // null — and proceeds via base44.asServiceRole (the trusted backend execution
-    // context), matching the established pattern in enforceWakeTimeBoundary,
-    // enforceCharacterSchoolSchedule, and expireGatheringRoomSessions.
-    // The auth distinction is platform-determined (base44.auth.me), NOT a
-    // caller-supplied field — event.entity_id is an argument, not a trust signal.
+    // --- Single character mode (requires session auth to scope to owned character) ---
     if (characterId) {
-      let user = null;
-      try { user = await base44.auth.me(); } catch { /* workflow/scheduled invocation */ }
+      const user = await base44.auth.me();
+      if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
       // OWNERSHIP CHECK: Must match owner_email
       const char = await base44.asServiceRole.entities.Character.filter({ id: characterId });
@@ -166,11 +159,9 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
-      // OWNERSHIP BOUNDARY: owner_email must match session user (user-directed only)
-      if (user) {
-        if (!character.owner_email || character.owner_email !== user.email) {
-          return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
-        }
+      // OWNERSHIP BOUNDARY: owner_email must match session user
+      if (!character.owner_email || character.owner_email !== user.email) {
+        return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
       }
 
       const resolvedLocId = character.resolved_current_location_id;
