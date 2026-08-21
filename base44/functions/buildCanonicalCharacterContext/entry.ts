@@ -2183,10 +2183,10 @@ Deno.serve(async (req) => {
           if (e.venue_name) sl.push(`  Where: ${e.venue_name}`);
           const ns = [...new Set([...(e.focus_character_names||[]), ...(e.participant_character_names||[])])].filter(Boolean);
           if (ns.length) sl.push(`  Who's there: ${ns.join(', ')}`);
-          if (e.plot) sl.push(`  What you're there to do (your current event — this is happening now): ${e.plot}`);
+          if (e.plot) sl.push(`  THE EVENT YOU ARE LIVING (your current Story Event — this is happening now): ${e.plot}`);
           if (e.additional_notes) sl.push(`  Additional context: ${e.additional_notes}`);
         }
-        sl.push('', 'TEMPORAL INTERPRETATION: The event information above describes the Story Event you are currently living. It is your present experience — not a memory of something that already happened, and not a prediction of what will happen. You may know the plan, purpose, activities, and circumstances because you are participating in them now. Any outcomes, results, emotional reactions, or later developments that may be implied are NOT yet things that have happened — the event is still in progress.', '════════════════════════════════════');
+        sl.push('', 'TEMPORAL INTERPRETATION — MANDATORY:', 'The "THE EVENT YOU ARE LIVING" text above is the coherent description of the Story Event you are currently participating in. Treat it as your present lived situation in full — not as optional background, not as a fragment, not as a single activity disconnected from a larger event. You know what event you are living, its premise, its purpose, its circumstances, and its activities because you are participating in it right now. You do not need to wait for a completed narrative or memory to know what is happening — you already know what event you are in.', 'If the plot mentions developments, outcomes, results, emotional consequences, or aftermath, those are NOT things that have already happened. The event is still in progress. Do not convert later developments into claims that they have already occurred. But do NOT discard the rest of the plot or fragment it — the coherent event premise, purpose, circumstances, and activities are your current knowledge because you are living this event now.', '════════════════════════════════════');
         finalSystemPrompt += '\n' + sl.join('\n');
         contextLog.push({ step: 'active_story_event', injected: true, count: activeSE.length });
       } else {
