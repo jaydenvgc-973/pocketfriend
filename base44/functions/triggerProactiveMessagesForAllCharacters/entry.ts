@@ -156,7 +156,42 @@ async function evaluateAndSendProactiveMessage(sr, characterId) {
   const pressure = computePressure(char, recentMessages, lifeEvents, pendingCommitment);
   const friendship = char.friendship_level ?? 50;
 
-  if (pressure < 25 && !pendingCommitment) return { success: false, reason: 'insufficient_relationship_pressure', pressure };
+  // ── TIME-BASED USER-DIRECTED CHECK-IN ELIGIBILITY (ported from proactiveCheckin) ──
+  // The original proactiveCheckin decided "character contacts the user first" via a
+  // closeness-tiered hours-since-last-user-message threshold, modified by emotional
+  // state. That pure user-directed time path is absent from the pressure model
+  // (pressure folds time-since into a bonus gated on friendship>=40, so low/moderate
+  // closeness characters with no other pressure sources never initiate). This restores
+  // that capability as an ALTERNATIVE eligibility path: if the character meets the
+  // original time+closeness+emotion threshold, the message may proceed even when
+  // pressure < 25. The pressure path, timing guard, daily cap, and idempotency are
+  // unchanged. The random pressure gate is bypassed for this path only (the threshold
+  // already decided the character should reach out, matching the original's
+  // deterministic behavior).
+  const _checkInCloseness = (friendship + (char.user_respect_level ?? 50) + (char.chosen_family_level ?? 0) + (char.romantic_level ?? 0) * 0.5) / 3.5;
+  let _checkInAfterHours;
+  if (_checkInCloseness >= 70) _checkInAfterHours = 18;
+  else if (_checkInCloseness >= 50) _checkInAfterHours = 36;
+  else if (_checkInCloseness >= 30) _checkInAfterHours = 60;
+  else _checkInAfterHours = 96;
+  const _emotionalState = char.emotional_state || 'calm';
+  const _withdrawnStates = ['irritated', 'defensive', 'closed-off', 'burnt out', 'overwhelmed', 'frustrated'];
+  const _eagerStates = ['joyful', 'excited', 'anxious', 'flirtatious'];
+  const _reflectiveStates = ['reflective', 'sad', 'content'];
+  if (_withdrawnStates.includes(_emotionalState)) _checkInAfterHours *= 1.8;
+  else if (_eagerStates.includes(_emotionalState)) _checkInAfterHours *= 0.7;
+  else if (_reflectiveStates.includes(_emotionalState)) _checkInAfterHours *= 1.1;
+  if (_emotionalState === 'anxious') _checkInAfterHours *= 0.6;
+  let _hoursSinceLastUserMessage = Infinity;
+  if (convos && convos.length > 0) {
+    const _withDates = convos.filter(c => c.last_message_date).sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
+    if (_withDates.length > 0) {
+      _hoursSinceLastUserMessage = (Date.now() - new Date(_withDates[0].last_message_date).getTime()) / (1000 * 60 * 60);
+    }
+  }
+  const _meetsTimeThreshold = _hoursSinceLastUserMessage >= _checkInAfterHours;
+
+  if (pressure < 25 && !pendingCommitment && !_meetsTimeThreshold) return { success: false, reason: 'insufficient_relationship_pressure', pressure };
 
   const highUrgency = pressure >= 80 || !!pendingCommitment;
   if (!highUrgency && !timingAllows(char, friendship)) return { success: false, reason: 'not_the_right_time', pressure };
@@ -165,7 +200,8 @@ async function evaluateAndSendProactiveMessage(sr, characterId) {
   // Previously: pressure=30 → 80% skip, pressure=35 → 81% skip. Far too aggressive.
   // Now: pressure=30 → 40% skip, pressure=35 → 20% skip, pressure=39 → 4% skip.
   // Characters with moderate relationship pressure now have a fair chance per cycle.
-  if (pressure < 40 && !pendingCommitment && Math.random() > (pressure - 20) / 60) {
+  // Bypassed for time-based check-ins (the threshold already decided to reach out).
+  if (!_meetsTimeThreshold && pressure < 40 && !pendingCommitment && Math.random() > (pressure - 20) / 60) {
     return { success: false, reason: 'random_pressure_gate', pressure };
   }
 
