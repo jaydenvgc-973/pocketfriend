@@ -148,18 +148,16 @@ Deno.serve(async (req) => {
     const _unusedUtc = new Date(); void _unusedUtc;
 
     // --- Single character mode ---
-    // Auth is required for direct user invocation (frontend). Entity-triggered
-    // invocation (from Workflow via event.entity_id) runs without user auth —
-    // service-role is used for entity operations, and the triggering entity's
-    // owner_email is the authoritative scope (the trigger fires only on the
-    // triggering character's own update, so there is no cross-user access).
+    // User-directed invocation (frontend) requires session auth + ownership.
+    // Workflow/scheduled invocation has no user session — base44.auth.me() returns
+    // null — and proceeds via base44.asServiceRole (the trusted backend execution
+    // context), matching the established pattern in enforceWakeTimeBoundary,
+    // enforceCharacterSchoolSchedule, and expireGatheringRoomSessions.
+    // The auth distinction is platform-determined (base44.auth.me), NOT a
+    // caller-supplied field — event.entity_id is an argument, not a trust signal.
     if (characterId) {
-      const isEntityTriggered = !!event?.entity_id;
       let user = null;
-      if (!isEntityTriggered) {
-        user = await base44.auth.me();
-        if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-      }
+      try { user = await base44.auth.me(); } catch { /* workflow/scheduled invocation */ }
 
       // OWNERSHIP CHECK: Must match owner_email
       const char = await base44.asServiceRole.entities.Character.filter({ id: characterId });
@@ -168,8 +166,8 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
-      // OWNERSHIP BOUNDARY: owner_email must match session user (direct invocation only)
-      if (!isEntityTriggered) {
+      // OWNERSHIP BOUNDARY: owner_email must match session user (user-directed only)
+      if (user) {
         if (!character.owner_email || character.owner_email !== user.email) {
           return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
         }

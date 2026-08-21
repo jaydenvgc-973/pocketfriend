@@ -1,6 +1,6 @@
 {
   "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Each run handles ONE shift boundary: initial invoke \u2192 check \u2192 wait until next_execution_time \u2192 enforce invoke with expected_occurrence_time \u2192 check \u2192 retrigger \u2192 end. The retrigger updates work_details (an approved trigger field), which fires the entity trigger and starts a fresh run for the NEXT boundary. This achieves indefinite continuation through forward-only re-triggering \u2014 no backward transition (which the validator rejects as UNBOUNDED_CYCLE), no finite iteration count, no polling. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. If next_execution_time is null/empty or reason is stale_occurrence_superseded, the run ends without retriggering. Invocations pass event.entity_id (not characterId) so the backend detects entity-triggered invocation and uses service-role without user auth.",
+  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). First cycle: invoke (no expected_occurrence_time) \u2192 receive next_execution_time A \u2192 wait until A \u2192 invoke(expected_occurrence_time=A) \u2192 enforce boundary \u2192 receive next_execution_time B. The backend (enforceCharacterWorkSchedule) remains authoritative for multi-job resolution, shift resolution, rabbit-hole canonical presence, and stale-occurrence validation. Invocations pass event.entity_id so the backend resolves the character via base44.asServiceRole (trusted workflow execution context). If next_execution_time is null/empty or reason is stale_occurrence_superseded, the run ends without committing a stale transition. Indefinite continuation beyond the first cycle requires a mechanism not yet authorized \u2014 see implementation notes.",
   "trigger": {
     "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null)) }",
     "config": {
@@ -30,7 +30,11 @@
               }
             }
           },
-          "then": "check_1"
+          "then": "check_1",
+          "x-base44": {
+            "title": "Invoke enforcement (initial)",
+            "description": "Receive next_execution_time A"
+          }
         }
       },
       {
@@ -44,7 +48,11 @@
               "when": "${ true }",
               "then": "end"
             }
-          ]
+          ],
+          "x-base44": {
+            "title": "Check A validity",
+            "description": "End if null or stale"
+          }
         }
       },
       {
@@ -53,13 +61,21 @@
           "with": {
             "target_iso": "${ .invoke_1.next_execution_time }"
           },
-          "then": "wait_1"
+          "then": "wait_1",
+          "x-base44": {
+            "title": "Compute seconds until A",
+            "description": "Durable delay duration"
+          }
         }
       },
       {
         "wait_1": {
           "wait": "PT${ .compute_1.seconds | floor | tostring }S",
-          "then": "invoke_2"
+          "then": "invoke_2",
+          "x-base44": {
+            "title": "Wait until A",
+            "description": "Durable wait to boundary"
+          }
         }
       },
       {
@@ -74,7 +90,11 @@
               "expected_occurrence_time": "${ .invoke_1.next_execution_time }"
             }
           },
-          "then": "check_2"
+          "then": "check_2",
+          "x-base44": {
+            "title": "Invoke enforcement (expected=A)",
+            "description": "Enforce boundary, receive B"
+          }
         }
       },
       {
@@ -82,25 +102,17 @@
           "switch": [
             {
               "when": "${ .invoke_2.next_execution_time != null and .invoke_2.next_execution_time != \"\" and .invoke_2.reason != \"stale_occurrence_superseded\" }",
-              "then": "retrigger"
+              "then": "end"
             },
             {
               "when": "${ true }",
               "then": "end"
             }
-          ]
-        }
-      },
-      {
-        "retrigger": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "retriggerWorkScheduleWorkflow",
-            "args": {
-              "character_id": "${ .trigger.entity_id }"
-            }
-          },
-          "then": "end"
+          ],
+          "x-base44": {
+            "title": "Check B validity",
+            "description": "First cycle complete"
+          }
         }
       }
     ]
