@@ -1,6 +1,6 @@
 {
-  "name": "Work Schedule Enforcement \u2014 Entity Trigger",
-  "description": "Fires when a character's work schedule fields change (work_start_time, work_end_time, work_days, work_details, occupation_location_id, current_work_location_id, additional_occupation_locations). Invokes enforceCharacterWorkSchedule which evaluates the authoritative schedule, routes the character to/from work via the canonical writer, and returns next_execution_time for the Workflow delay step. Replaces the old polling-based work enforcement with an event-driven Workflow.",
+  "name": "Work Schedule Enforcement",
+  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). Invokes enforceCharacterWorkSchedule for the triggered character, receives next_execution_time, waits until that exact occurrence, re-invokes with that exact value as expected_occurrence_time, and continues the deadline cycle. The backend remains authoritative for multi-job resolution, shift resolution, location resolution, and canonical presence. The continuation chain is unrolled into a finite sequence of unique-named iterations (no cycles) due to platform cycle detection. If the chain exhausts all iterations, a final invocation is performed and the workflow ends; the next employment config change starts a new instance.",
   "trigger": {
     "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"current_work_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"occupation_location_name\") != null)) }",
     "config": {
@@ -14,17 +14,1279 @@
   "definition": {
     "document": {
       "dsl": "1.0.0",
-      "name": "work_schedule_enforcement_entity_trigger",
+      "name": "work_schedule_enforcement",
       "version": "1.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "run_function": {
+        "invoke_1": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterWorkSchedule",
-            "args": {}
+            "args": {
+              "characterId": "${ .trigger.entity_id }"
+            }
+          },
+          "then": "check_1"
+        }
+      },
+      {
+        "check_1": {
+          "switch": [
+            {
+              "when": "${ .invoke_1.next_execution_time != null and .invoke_1.next_execution_time != \"\" and .invoke_1.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_1"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_1": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_1.next_execution_time }"
+          },
+          "then": "wait_1"
+        }
+      },
+      {
+        "wait_1": {
+          "wait": "PT${ .compute_1.seconds | floor | tostring }S",
+          "then": "invoke_2"
+        }
+      },
+      {
+        "invoke_2": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_1.next_execution_time }"
+            }
+          },
+          "then": "check_2"
+        }
+      },
+      {
+        "check_2": {
+          "switch": [
+            {
+              "when": "${ .invoke_2.next_execution_time != null and .invoke_2.next_execution_time != \"\" and .invoke_2.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_2"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_2": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_2.next_execution_time }"
+          },
+          "then": "wait_2"
+        }
+      },
+      {
+        "wait_2": {
+          "wait": "PT${ .compute_2.seconds | floor | tostring }S",
+          "then": "invoke_3"
+        }
+      },
+      {
+        "invoke_3": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_2.next_execution_time }"
+            }
+          },
+          "then": "check_3"
+        }
+      },
+      {
+        "check_3": {
+          "switch": [
+            {
+              "when": "${ .invoke_3.next_execution_time != null and .invoke_3.next_execution_time != \"\" and .invoke_3.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_3"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_3": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_3.next_execution_time }"
+          },
+          "then": "wait_3"
+        }
+      },
+      {
+        "wait_3": {
+          "wait": "PT${ .compute_3.seconds | floor | tostring }S",
+          "then": "invoke_4"
+        }
+      },
+      {
+        "invoke_4": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_3.next_execution_time }"
+            }
+          },
+          "then": "check_4"
+        }
+      },
+      {
+        "check_4": {
+          "switch": [
+            {
+              "when": "${ .invoke_4.next_execution_time != null and .invoke_4.next_execution_time != \"\" and .invoke_4.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_4"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_4": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_4.next_execution_time }"
+          },
+          "then": "wait_4"
+        }
+      },
+      {
+        "wait_4": {
+          "wait": "PT${ .compute_4.seconds | floor | tostring }S",
+          "then": "invoke_5"
+        }
+      },
+      {
+        "invoke_5": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_4.next_execution_time }"
+            }
+          },
+          "then": "check_5"
+        }
+      },
+      {
+        "check_5": {
+          "switch": [
+            {
+              "when": "${ .invoke_5.next_execution_time != null and .invoke_5.next_execution_time != \"\" and .invoke_5.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_5"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_5": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_5.next_execution_time }"
+          },
+          "then": "wait_5"
+        }
+      },
+      {
+        "wait_5": {
+          "wait": "PT${ .compute_5.seconds | floor | tostring }S",
+          "then": "invoke_6"
+        }
+      },
+      {
+        "invoke_6": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_5.next_execution_time }"
+            }
+          },
+          "then": "check_6"
+        }
+      },
+      {
+        "check_6": {
+          "switch": [
+            {
+              "when": "${ .invoke_6.next_execution_time != null and .invoke_6.next_execution_time != \"\" and .invoke_6.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_6"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_6": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_6.next_execution_time }"
+          },
+          "then": "wait_6"
+        }
+      },
+      {
+        "wait_6": {
+          "wait": "PT${ .compute_6.seconds | floor | tostring }S",
+          "then": "invoke_7"
+        }
+      },
+      {
+        "invoke_7": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_6.next_execution_time }"
+            }
+          },
+          "then": "check_7"
+        }
+      },
+      {
+        "check_7": {
+          "switch": [
+            {
+              "when": "${ .invoke_7.next_execution_time != null and .invoke_7.next_execution_time != \"\" and .invoke_7.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_7"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_7": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_7.next_execution_time }"
+          },
+          "then": "wait_7"
+        }
+      },
+      {
+        "wait_7": {
+          "wait": "PT${ .compute_7.seconds | floor | tostring }S",
+          "then": "invoke_8"
+        }
+      },
+      {
+        "invoke_8": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_7.next_execution_time }"
+            }
+          },
+          "then": "check_8"
+        }
+      },
+      {
+        "check_8": {
+          "switch": [
+            {
+              "when": "${ .invoke_8.next_execution_time != null and .invoke_8.next_execution_time != \"\" and .invoke_8.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_8"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_8": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_8.next_execution_time }"
+          },
+          "then": "wait_8"
+        }
+      },
+      {
+        "wait_8": {
+          "wait": "PT${ .compute_8.seconds | floor | tostring }S",
+          "then": "invoke_9"
+        }
+      },
+      {
+        "invoke_9": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_8.next_execution_time }"
+            }
+          },
+          "then": "check_9"
+        }
+      },
+      {
+        "check_9": {
+          "switch": [
+            {
+              "when": "${ .invoke_9.next_execution_time != null and .invoke_9.next_execution_time != \"\" and .invoke_9.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_9"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_9": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_9.next_execution_time }"
+          },
+          "then": "wait_9"
+        }
+      },
+      {
+        "wait_9": {
+          "wait": "PT${ .compute_9.seconds | floor | tostring }S",
+          "then": "invoke_10"
+        }
+      },
+      {
+        "invoke_10": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_9.next_execution_time }"
+            }
+          },
+          "then": "check_10"
+        }
+      },
+      {
+        "check_10": {
+          "switch": [
+            {
+              "when": "${ .invoke_10.next_execution_time != null and .invoke_10.next_execution_time != \"\" and .invoke_10.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_10"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_10": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_10.next_execution_time }"
+          },
+          "then": "wait_10"
+        }
+      },
+      {
+        "wait_10": {
+          "wait": "PT${ .compute_10.seconds | floor | tostring }S",
+          "then": "invoke_11"
+        }
+      },
+      {
+        "invoke_11": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_10.next_execution_time }"
+            }
+          },
+          "then": "check_11"
+        }
+      },
+      {
+        "check_11": {
+          "switch": [
+            {
+              "when": "${ .invoke_11.next_execution_time != null and .invoke_11.next_execution_time != \"\" and .invoke_11.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_11"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_11": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_11.next_execution_time }"
+          },
+          "then": "wait_11"
+        }
+      },
+      {
+        "wait_11": {
+          "wait": "PT${ .compute_11.seconds | floor | tostring }S",
+          "then": "invoke_12"
+        }
+      },
+      {
+        "invoke_12": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_11.next_execution_time }"
+            }
+          },
+          "then": "check_12"
+        }
+      },
+      {
+        "check_12": {
+          "switch": [
+            {
+              "when": "${ .invoke_12.next_execution_time != null and .invoke_12.next_execution_time != \"\" and .invoke_12.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_12"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_12": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_12.next_execution_time }"
+          },
+          "then": "wait_12"
+        }
+      },
+      {
+        "wait_12": {
+          "wait": "PT${ .compute_12.seconds | floor | tostring }S",
+          "then": "invoke_13"
+        }
+      },
+      {
+        "invoke_13": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_12.next_execution_time }"
+            }
+          },
+          "then": "check_13"
+        }
+      },
+      {
+        "check_13": {
+          "switch": [
+            {
+              "when": "${ .invoke_13.next_execution_time != null and .invoke_13.next_execution_time != \"\" and .invoke_13.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_13"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_13": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_13.next_execution_time }"
+          },
+          "then": "wait_13"
+        }
+      },
+      {
+        "wait_13": {
+          "wait": "PT${ .compute_13.seconds | floor | tostring }S",
+          "then": "invoke_14"
+        }
+      },
+      {
+        "invoke_14": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_13.next_execution_time }"
+            }
+          },
+          "then": "check_14"
+        }
+      },
+      {
+        "check_14": {
+          "switch": [
+            {
+              "when": "${ .invoke_14.next_execution_time != null and .invoke_14.next_execution_time != \"\" and .invoke_14.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_14"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_14": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_14.next_execution_time }"
+          },
+          "then": "wait_14"
+        }
+      },
+      {
+        "wait_14": {
+          "wait": "PT${ .compute_14.seconds | floor | tostring }S",
+          "then": "invoke_15"
+        }
+      },
+      {
+        "invoke_15": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_14.next_execution_time }"
+            }
+          },
+          "then": "check_15"
+        }
+      },
+      {
+        "check_15": {
+          "switch": [
+            {
+              "when": "${ .invoke_15.next_execution_time != null and .invoke_15.next_execution_time != \"\" and .invoke_15.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_15"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_15": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_15.next_execution_time }"
+          },
+          "then": "wait_15"
+        }
+      },
+      {
+        "wait_15": {
+          "wait": "PT${ .compute_15.seconds | floor | tostring }S",
+          "then": "invoke_16"
+        }
+      },
+      {
+        "invoke_16": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_15.next_execution_time }"
+            }
+          },
+          "then": "check_16"
+        }
+      },
+      {
+        "check_16": {
+          "switch": [
+            {
+              "when": "${ .invoke_16.next_execution_time != null and .invoke_16.next_execution_time != \"\" and .invoke_16.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_16"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_16": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_16.next_execution_time }"
+          },
+          "then": "wait_16"
+        }
+      },
+      {
+        "wait_16": {
+          "wait": "PT${ .compute_16.seconds | floor | tostring }S",
+          "then": "invoke_17"
+        }
+      },
+      {
+        "invoke_17": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_16.next_execution_time }"
+            }
+          },
+          "then": "check_17"
+        }
+      },
+      {
+        "check_17": {
+          "switch": [
+            {
+              "when": "${ .invoke_17.next_execution_time != null and .invoke_17.next_execution_time != \"\" and .invoke_17.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_17"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_17": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_17.next_execution_time }"
+          },
+          "then": "wait_17"
+        }
+      },
+      {
+        "wait_17": {
+          "wait": "PT${ .compute_17.seconds | floor | tostring }S",
+          "then": "invoke_18"
+        }
+      },
+      {
+        "invoke_18": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_17.next_execution_time }"
+            }
+          },
+          "then": "check_18"
+        }
+      },
+      {
+        "check_18": {
+          "switch": [
+            {
+              "when": "${ .invoke_18.next_execution_time != null and .invoke_18.next_execution_time != \"\" and .invoke_18.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_18"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_18": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_18.next_execution_time }"
+          },
+          "then": "wait_18"
+        }
+      },
+      {
+        "wait_18": {
+          "wait": "PT${ .compute_18.seconds | floor | tostring }S",
+          "then": "invoke_19"
+        }
+      },
+      {
+        "invoke_19": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_18.next_execution_time }"
+            }
+          },
+          "then": "check_19"
+        }
+      },
+      {
+        "check_19": {
+          "switch": [
+            {
+              "when": "${ .invoke_19.next_execution_time != null and .invoke_19.next_execution_time != \"\" and .invoke_19.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_19"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_19": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_19.next_execution_time }"
+          },
+          "then": "wait_19"
+        }
+      },
+      {
+        "wait_19": {
+          "wait": "PT${ .compute_19.seconds | floor | tostring }S",
+          "then": "invoke_20"
+        }
+      },
+      {
+        "invoke_20": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_19.next_execution_time }"
+            }
+          },
+          "then": "check_20"
+        }
+      },
+      {
+        "check_20": {
+          "switch": [
+            {
+              "when": "${ .invoke_20.next_execution_time != null and .invoke_20.next_execution_time != \"\" and .invoke_20.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_20"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_20": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_20.next_execution_time }"
+          },
+          "then": "wait_20"
+        }
+      },
+      {
+        "wait_20": {
+          "wait": "PT${ .compute_20.seconds | floor | tostring }S",
+          "then": "invoke_21"
+        }
+      },
+      {
+        "invoke_21": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_20.next_execution_time }"
+            }
+          },
+          "then": "check_21"
+        }
+      },
+      {
+        "check_21": {
+          "switch": [
+            {
+              "when": "${ .invoke_21.next_execution_time != null and .invoke_21.next_execution_time != \"\" and .invoke_21.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_21"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_21": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_21.next_execution_time }"
+          },
+          "then": "wait_21"
+        }
+      },
+      {
+        "wait_21": {
+          "wait": "PT${ .compute_21.seconds | floor | tostring }S",
+          "then": "invoke_22"
+        }
+      },
+      {
+        "invoke_22": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_21.next_execution_time }"
+            }
+          },
+          "then": "check_22"
+        }
+      },
+      {
+        "check_22": {
+          "switch": [
+            {
+              "when": "${ .invoke_22.next_execution_time != null and .invoke_22.next_execution_time != \"\" and .invoke_22.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_22"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_22": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_22.next_execution_time }"
+          },
+          "then": "wait_22"
+        }
+      },
+      {
+        "wait_22": {
+          "wait": "PT${ .compute_22.seconds | floor | tostring }S",
+          "then": "invoke_23"
+        }
+      },
+      {
+        "invoke_23": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_22.next_execution_time }"
+            }
+          },
+          "then": "check_23"
+        }
+      },
+      {
+        "check_23": {
+          "switch": [
+            {
+              "when": "${ .invoke_23.next_execution_time != null and .invoke_23.next_execution_time != \"\" and .invoke_23.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_23"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_23": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_23.next_execution_time }"
+          },
+          "then": "wait_23"
+        }
+      },
+      {
+        "wait_23": {
+          "wait": "PT${ .compute_23.seconds | floor | tostring }S",
+          "then": "invoke_24"
+        }
+      },
+      {
+        "invoke_24": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_23.next_execution_time }"
+            }
+          },
+          "then": "check_24"
+        }
+      },
+      {
+        "check_24": {
+          "switch": [
+            {
+              "when": "${ .invoke_24.next_execution_time != null and .invoke_24.next_execution_time != \"\" and .invoke_24.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_24"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_24": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_24.next_execution_time }"
+          },
+          "then": "wait_24"
+        }
+      },
+      {
+        "wait_24": {
+          "wait": "PT${ .compute_24.seconds | floor | tostring }S",
+          "then": "invoke_25"
+        }
+      },
+      {
+        "invoke_25": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_24.next_execution_time }"
+            }
+          },
+          "then": "check_25"
+        }
+      },
+      {
+        "check_25": {
+          "switch": [
+            {
+              "when": "${ .invoke_25.next_execution_time != null and .invoke_25.next_execution_time != \"\" and .invoke_25.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_25"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_25": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_25.next_execution_time }"
+          },
+          "then": "wait_25"
+        }
+      },
+      {
+        "wait_25": {
+          "wait": "PT${ .compute_25.seconds | floor | tostring }S",
+          "then": "invoke_26"
+        }
+      },
+      {
+        "invoke_26": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_25.next_execution_time }"
+            }
+          },
+          "then": "check_26"
+        }
+      },
+      {
+        "check_26": {
+          "switch": [
+            {
+              "when": "${ .invoke_26.next_execution_time != null and .invoke_26.next_execution_time != \"\" and .invoke_26.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_26"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_26": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_26.next_execution_time }"
+          },
+          "then": "wait_26"
+        }
+      },
+      {
+        "wait_26": {
+          "wait": "PT${ .compute_26.seconds | floor | tostring }S",
+          "then": "invoke_27"
+        }
+      },
+      {
+        "invoke_27": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_26.next_execution_time }"
+            }
+          },
+          "then": "check_27"
+        }
+      },
+      {
+        "check_27": {
+          "switch": [
+            {
+              "when": "${ .invoke_27.next_execution_time != null and .invoke_27.next_execution_time != \"\" and .invoke_27.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_27"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_27": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_27.next_execution_time }"
+          },
+          "then": "wait_27"
+        }
+      },
+      {
+        "wait_27": {
+          "wait": "PT${ .compute_27.seconds | floor | tostring }S",
+          "then": "invoke_28"
+        }
+      },
+      {
+        "invoke_28": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_27.next_execution_time }"
+            }
+          },
+          "then": "check_28"
+        }
+      },
+      {
+        "check_28": {
+          "switch": [
+            {
+              "when": "${ .invoke_28.next_execution_time != null and .invoke_28.next_execution_time != \"\" and .invoke_28.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_28"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_28": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_28.next_execution_time }"
+          },
+          "then": "wait_28"
+        }
+      },
+      {
+        "wait_28": {
+          "wait": "PT${ .compute_28.seconds | floor | tostring }S",
+          "then": "invoke_29"
+        }
+      },
+      {
+        "invoke_29": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_28.next_execution_time }"
+            }
+          },
+          "then": "check_29"
+        }
+      },
+      {
+        "check_29": {
+          "switch": [
+            {
+              "when": "${ .invoke_29.next_execution_time != null and .invoke_29.next_execution_time != \"\" and .invoke_29.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_29"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_29": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_29.next_execution_time }"
+          },
+          "then": "wait_29"
+        }
+      },
+      {
+        "wait_29": {
+          "wait": "PT${ .compute_29.seconds | floor | tostring }S",
+          "then": "invoke_30"
+        }
+      },
+      {
+        "invoke_30": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_29.next_execution_time }"
+            }
+          },
+          "then": "check_30"
+        }
+      },
+      {
+        "check_30": {
+          "switch": [
+            {
+              "when": "${ .invoke_30.next_execution_time != null and .invoke_30.next_execution_time != \"\" and .invoke_30.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_30"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ]
+        }
+      },
+      {
+        "compute_30": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_30.next_execution_time }"
+          },
+          "then": "wait_30"
+        }
+      },
+      {
+        "wait_30": {
+          "wait": "PT${ .compute_30.seconds | floor | tostring }S",
+          "then": "final_invoke"
+        }
+      },
+      {
+        "final_invoke": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "expected_occurrence_time": "${ .invoke_30.next_execution_time }"
+            }
           },
           "then": "end"
         }
