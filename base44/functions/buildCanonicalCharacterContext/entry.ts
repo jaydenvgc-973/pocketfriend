@@ -2090,6 +2090,15 @@ Deno.serve(async (req) => {
     // didn't mention the event. Unconditional — no phrase/intent/retrieval trigger.
     let activeStoryEventBlock = '';
     try {
+      // Story Event times are stored in Eastern Time (America/New_York).
+      // Serverless runs in UTC, so we must convert ET times to UTC before comparing.
+      // Compute the ET timezone offset dynamically (handles DST: EDT=-04:00, EST=-05:00).
+      const _etOffsetMin = (() => {
+        const now = new Date();
+        const etMs = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime();
+        return Math.round((etMs - now.getTime()) / 60000);
+      })();
+      const _etOffsetStr = `${_etOffsetMin >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(_etOffsetMin)/60)).padStart(2,'0')}:${String(Math.abs(_etOffsetMin)%60).padStart(2,'0')}`;
       const nowSE = new Date();
       const seEvents = await base44.asServiceRole.entities.StoryEvent.filter({ status: 'complete' }, '-created_date', 20).catch(() => []);
       const activeSE = (seEvents || []).filter(e => {
@@ -2097,9 +2106,10 @@ Deno.serve(async (req) => {
         const fIds = Array.isArray(e.focus_character_ids) ? e.focus_character_ids : [];
         if (!pIds.includes(characterId) && !fIds.includes(characterId)) return false;
         const d = e.event_date; if (!d) return false;
-        const s = new Date(`${d}T${e.start_time || '00:00'}:00`).getTime();
+        // Parse times as Eastern Time by appending the ET offset
+        const s = new Date(`${d}T${e.start_time || '00:00'}:00${_etOffsetStr}`).getTime();
         if (isNaN(s) || nowSE < s) return false;
-        if (e.end_time) { const en = new Date(`${d}T${e.end_time}:00`).getTime(); if (!isNaN(en) && nowSE > en) return false; }
+        if (e.end_time) { const en = new Date(`${d}T${e.end_time}:00${_etOffsetStr}`).getTime(); if (!isNaN(en) && nowSE > en) return false; }
         return true;
       });
       if (activeSE.length > 0) {
