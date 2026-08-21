@@ -1,0 +1,41 @@
+{
+  "name": "Communication Commitments Follow-Through (Every 2 Hours)",
+  "description": "Processes pending CommunicationCommitment records: fires follow-up messages for promises, check-ins, will-let-you-know commitments, and third-party relay obligations. Ensures characters honor what they said they would do.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 4,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-06-22T18:22:09.262000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "communication_commitments_follow_through_every_2_hours",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processUnresolvedCommunicationCommitments",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

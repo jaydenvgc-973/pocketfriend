@@ -1,0 +1,41 @@
+{
+  "name": "Organic Character Interactions (Every 3 hours)",
+  "description": "Runs organicCharacterInteractions every 3 hours to generate realistic character-to-character conversations at shared locations. Creates real Message and Conversation records with natural pacing, cooldowns, and conversation limits.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 3,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-05-02T13:31:23.594000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "organic_character_interactions_every_3_hours",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "organicCharacterInteractions",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

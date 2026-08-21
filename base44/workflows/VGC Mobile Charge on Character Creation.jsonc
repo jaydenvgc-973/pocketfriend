@@ -1,0 +1,34 @@
+{
+  "name": "VGC Mobile Charge on Character Creation",
+  "description": "Immediately charge new active created characters $50 for VGC Mobile",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "vgc_mobile_charge_on_character_creation",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "onCharacterCreated",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

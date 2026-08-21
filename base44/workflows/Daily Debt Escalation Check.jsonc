@@ -1,0 +1,41 @@
+{
+  "name": "Daily Debt Escalation Check",
+  "description": "Daily check: collection notices, court/jail at $3000 debt, auto-release after 7 days with balance reset",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "0 10 * * *",
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_debt_escalation_check",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processDebtEscalation",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

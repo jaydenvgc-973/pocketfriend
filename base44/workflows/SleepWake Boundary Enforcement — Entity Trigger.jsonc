@@ -1,0 +1,34 @@
+{
+  "name": "Sleep/Wake Boundary Enforcement \u2014 Entity Trigger",
+  "description": "Fires when a character's sleep-related fields change (resolved_presence_status, last_sleep_start, last_nap_time, wake_up_time, sleep_interrupted_at). Invokes enforceWakeTimeBoundary which evaluates the authoritative 8-hour sleep cap and wake_up_time boundary with the 6-hour minimum-sleep guard, and returns next_execution_time for the Workflow delay step. Event-driven replacement for the old 5-minute polling cron.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"resolved_presence_status\") != null) or (.trigger.changed_fields | index(\"last_sleep_start\") != null) or (.trigger.changed_fields | index(\"last_nap_time\") != null) or (.trigger.changed_fields | index(\"wake_up_time\") != null) or (.trigger.changed_fields | index(\"sleep_interrupted_at\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "sleep_wake_boundary_enforcement_entity_trigger",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceWakeTimeBoundary",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "Child Caregiver \u2014 Trigger on Character Location Change",
+  "description": "When a character's resolved_current_location_id changes (parent leaves/returns), re-evaluate whether a babysitter is needed at the affected home.",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"resolved_current_location_id\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "child_caregiver_trigger_on_character_location_change",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "ensureChildCaregiverPresence",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

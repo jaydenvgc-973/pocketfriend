@@ -1,0 +1,41 @@
+{
+  "name": "Autonomous Character Movement & Sleep (Every 2hrs)",
+  "description": "Evaluates active_created_character needs, dispatches travel, and enforces sleep onset. Runs every 2 hours instead of every 30 minutes \u2014 movement decisions and sleep onset are evaluated less frequently while preserving all behavioral logic, with event-driven triggers from sleep/wake/work/alarm events providing additional coverage.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 3,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-06-05T11:49:38.654000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "autonomous_character_movement_sleep_every_2hrs",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "autonomousCharacterMovement",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

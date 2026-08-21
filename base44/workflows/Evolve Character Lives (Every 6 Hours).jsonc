@@ -1,0 +1,41 @@
+{
+  "name": "Evolve Character Lives (Every 6 Hours)",
+  "description": "Runs every 6 hours to evolve character lives in real-time \u2014 grounded in the actual current day and time of day.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 6,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-03-22T15:42:41.454000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "evolve_character_lives_every_6_hours",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "evolveCharacterLife",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "NPC Promotion \u2014 Strip Travel Eligibility",
+  "description": "When a character's type changes (e.g. NPC promoted to Active), strips VGC travel eligibility and ensures correct home assignment.",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"character_type\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "npc_promotion_strip_travel_eligibility",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "onCharacterTypeChanged",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "Proactive Character Messages (Every 2 Hours)",
+  "description": "Runs every 2 hours. Characters proactively reach out to the user based on relationship level, time of day, and recent conversation context. Max 7 messages per character per day. Staggered random selection (max 3 per run).",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 4,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-05-11T02:25:15.956000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "proactive_character_messages_every_2_hours",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "triggerProactiveMessagesForAllCharacters",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

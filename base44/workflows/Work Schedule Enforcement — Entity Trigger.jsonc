@@ -1,0 +1,34 @@
+{
+  "name": "Work Schedule Enforcement \u2014 Entity Trigger",
+  "description": "Fires when a character's work schedule fields change (work_start_time, work_end_time, work_days, work_details, occupation_location_id, current_work_location_id, additional_occupation_locations). Invokes enforceCharacterWorkSchedule which evaluates the authoritative schedule, routes the character to/from work via the canonical writer, and returns next_execution_time for the Workflow delay step. Replaces the old polling-based work enforcement with an event-driven Workflow.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"current_work_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"occupation_location_name\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "work_schedule_enforcement_entity_trigger",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

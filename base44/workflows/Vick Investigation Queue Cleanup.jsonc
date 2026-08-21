@@ -1,0 +1,41 @@
+{
+  "name": "Vick Investigation Queue Cleanup",
+  "description": "Administrative cleanup ONLY \u2014 archives delivered/findings-consumed investigations and expires genuinely stale awaiting_evidence records. Does NOT trigger, create, or reopen investigations. Vick investigates only when he detects a real issue or the user requests it. Runs once per day.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "30 8 * * *",
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "vick_investigation_queue_cleanup",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "cleanupVickInvestigationQueue",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

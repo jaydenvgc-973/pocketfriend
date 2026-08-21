@@ -1,0 +1,34 @@
+{
+  "name": "Deliver Vick Investigation Findings",
+  "description": "Triggers when a VickInvestigation reaches findings_ready status, delivering the findings to Vick's conversation with the user.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"status\") != null) and (.trigger.data.status == \"findings_ready\") and (.trigger.data.findings_delivered != true)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "VickInvestigation"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "deliver_vick_investigation_findings",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "deliverVickFindings",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "Detect Movement Commitments in Chat",
+  "description": "",
+  "trigger": {
+    "condition": "${ (.trigger.data.sender_type == \"character\") }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create"
+      ],
+      "entity_name": "Message"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "detect_movement_commitments_in_chat",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "detectMovementCommitment",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

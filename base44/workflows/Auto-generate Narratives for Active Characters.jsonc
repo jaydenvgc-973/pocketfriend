@@ -1,0 +1,41 @@
+{
+  "name": "Auto-generate Narratives for Active Characters",
+  "description": "Generates automatic narrative messages for active_created_character types every 2 hours. Narratives are injected into character conversations to add narrative texture to the gameplay.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 2,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-04-22T12:01:44.463000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "auto_generate_narratives_for_active_characters",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "triggerCharacterNarratives",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

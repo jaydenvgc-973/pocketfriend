@@ -1,0 +1,41 @@
+{
+  "name": "World Phone Overdue Response Enforcement",
+  "description": "Finds World Phone messages unanswered for 48+ hours and generates catch-up responses from the receiving character.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 12,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-06-22T11:47:00.206000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "world_phone_overdue_response_enforcement",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processOverdueWorldPhoneMessages",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

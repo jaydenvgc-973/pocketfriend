@@ -1,0 +1,34 @@
+{
+  "name": "Auto-Link Character Home on Location Created",
+  "description": "When a character-specific home location is created, automatically links it back to the character record and sets resolved presence to home.",
+  "trigger": {
+    "condition": "${ (.trigger.data.assigned_character_id != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create"
+      ],
+      "entity_name": "LocationReference"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "auto_link_character_home_on_location_created",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "onLocationCreated",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

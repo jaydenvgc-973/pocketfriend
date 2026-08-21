@@ -1,0 +1,34 @@
+{
+  "name": "Sync Reciprocal Relationships",
+  "description": "",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"fictional_relationships\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "sync_reciprocal_relationships",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "syncReciprocalRelationships",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

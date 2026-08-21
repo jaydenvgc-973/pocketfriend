@@ -1,0 +1,36 @@
+{
+  "name": "Strict Sitter Enforcement on Location Change",
+  "description": "",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"current_location_id\") != null) or (.trigger.changed_fields | index(\"current_home_location_id\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "strict_sitter_enforcement_on_location_change",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "validateSitterPresenceOnLocationChange",
+            "args": {
+              "character_id": "{{entity_id}}"
+            }
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

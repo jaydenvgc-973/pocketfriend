@@ -1,0 +1,41 @@
+{
+  "name": "Autonomous Character Social Beats (Every 3 Hours)",
+  "description": "Runs every 3 hours. Generates lightweight autonomous character-to-character social events \u2014 check-ins, family contact, tension resolution \u2014 without requiring user initiation. Creates real Message, LifeEvent, and CharacterMemory records for both sides. Capped at 2 beats per user per run. 4-hour cooldown per pair. Service role only \u2014 no user session dependency.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 3,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-05-28T16:41:09.376000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "autonomous_character_social_beats_every_3_hours",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "autonomousCharacterSocialBeats",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "Scheduled Relocation \u2014 Trigger on pending_scheduled_relocation_at Set",
+  "description": "Fires when a character's pending_scheduled_relocation_at field is set or changed. The function checks if the relocation time has arrived and executes the teleport if due. Replaces the former recurring 5-minute and 1-hour polling schedules with event-driven execution from the authoritative relocation timestamp.",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "scheduled_relocation_trigger_on_pending_scheduled_relocation_at_set",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processScheduledRelocations",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

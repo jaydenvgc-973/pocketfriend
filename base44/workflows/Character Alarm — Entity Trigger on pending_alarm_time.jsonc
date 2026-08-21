@@ -1,0 +1,34 @@
+{
+  "name": "Character Alarm \u2014 Entity Trigger on pending_alarm_time",
+  "description": "Fires when a character's pending_alarm_time is set or changed. Invokes processScheduledCharacterAlarms which validates the alarm occurrence, enforces the 6-hour minimum-sleep guard, invokes the authorized wake pipeline, and advances pending_alarm_time 24 hours ahead (the established 24-hour recurring alarm cycle). Event-driven replacement for the old alarm polling scanners.",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"pending_alarm_time\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "character_alarm_entity_trigger_on_pending_alarm_time",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processScheduledCharacterAlarms",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "name": "Daily Weather Cache for Narratives",
+  "description": "Fetches sunrise/sunset times and weather conditions daily at 4 AM ET, stores in UserSettings so narratives can reference accurate daypart timing and weather context.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "0 8 * * *",
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_weather_cache_for_narratives",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "fetchDailyWeatherForNarratives",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

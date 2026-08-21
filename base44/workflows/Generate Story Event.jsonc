@@ -1,0 +1,34 @@
+{
+  "name": "Generate Story Event",
+  "description": "",
+  "trigger": {
+    "condition": "${ (.trigger.data.status == \"generating\") }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create"
+      ],
+      "entity_name": "StoryEvent"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "generate_story_event",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "generateStoryEvent",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

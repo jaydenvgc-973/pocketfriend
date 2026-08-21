@@ -1,0 +1,41 @@
+{
+  "name": "Sync Coworker Relationships",
+  "description": "Automatically detect coworkers with overlapping shifts and sync their relationships. Increments respect and friendship levels based on shared work time.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 6,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-04-06T05:14:52.515000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "sync_coworker_relationships",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "detectAndSyncCoworkers",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

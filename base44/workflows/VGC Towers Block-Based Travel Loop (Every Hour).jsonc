@@ -1,0 +1,41 @@
+{
+  "name": "VGC Towers Block-Based Travel Loop (Every Hour)",
+  "description": "Runs hourly to check if current time matches a travel block (10 AM, 1 PM, 4 PM, 7 PM, 10 PM ET) and executes movement/rotation for eligible VGC Towers NPC residents. Enforces lockdown 1 AM - 10 AM. Core driver of the daily VGC travel cycle.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 3,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-04-25T12:07:01.988000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "vgc_towers_block_based_travel_loop_every_hour",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "distributeVGCTowersNPCsBlockBased",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

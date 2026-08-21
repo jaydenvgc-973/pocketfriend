@@ -1,0 +1,41 @@
+{
+  "name": "Monthly Recurring Expenses \u2014 1st of Month",
+  "description": "Runs on the 1st of every month at 6:00 AM ET. Charges all recurring expenses (rent, utilities, personal bills) for each character. Handles off-app rent eviction if balance is insufficient.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "0 11 1 * *",
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "monthly_recurring_expenses_1st_of_month",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processRecurringExpenses",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

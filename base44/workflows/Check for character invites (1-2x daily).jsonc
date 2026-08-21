@@ -1,0 +1,41 @@
+{
+  "name": "Check for character invites (1-2x daily)",
+  "description": "",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 12,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-04-05T13:00:00",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "check_for_character_invites_1_2x_daily",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "checkAndTriggerInvites",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

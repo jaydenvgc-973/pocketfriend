@@ -1,0 +1,34 @@
+{
+  "name": "Gathering Room Session Expiration \u2014 Entity Trigger",
+  "description": "Fires when a GatheringRoomSession's expires_at or status changes. Invokes expireGatheringRoomSessions in per-session mode, which expires the specific session at its authoritative expires_at time, removes participants, creates cooldowns, resets character locations, and recalculates occupancy. Event-driven replacement for the old 5-minute polling cron \u2014 the Workflow delays until the session's existing expires_at instead of scanning.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"expires_at\") != null) or (.trigger.changed_fields | index(\"status\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "GatheringRoomSession"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "gathering_room_session_expiration_entity_trigger",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "expireGatheringRoomSessions",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

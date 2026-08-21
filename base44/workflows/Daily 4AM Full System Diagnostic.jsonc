@@ -1,0 +1,41 @@
+{
+  "name": "Daily 4AM Full System Diagnostic",
+  "description": "Runs a deep full diagnostic on all systems, all pages (Home, Travel, Create, Locations, Moments, Settings), fixes stale location data, orphaned relationships, stale worker refs, and runs 10x character diagnostic passes. Fires every day at 4:00 AM ET.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "0 8 * * *",
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_4am_full_system_diagnostic",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "dailyFullSystemDiagnostic",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}

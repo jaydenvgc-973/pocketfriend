@@ -1,0 +1,41 @@
+{
+  "name": "Organic Character Co-Location Interactions",
+  "description": "Scans characters sharing locations and generates lightweight interaction memory + relationship updates. Runs every 2 hours.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "UTC",
+      "interval_value": 2,
+      "interval_unit": "hours",
+      "interval_anchor": "2026-04-25T00:43:41.372000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "organic_character_co_location_interactions",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_function": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "organicCharacterInteractions",
+            "args": {}
+          },
+          "then": "end"
+        }
+      }
+    ]
+  }
+}
