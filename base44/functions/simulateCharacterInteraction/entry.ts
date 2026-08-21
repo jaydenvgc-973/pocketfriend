@@ -410,8 +410,8 @@ Return a JSON object with:
           },
           outcome: { type: 'string' },
           emotional_shifts: { type: 'object' },
-          emotional_milestone: {},
-          shared_secret: {},
+          emotional_milestone: { type: ['string', 'null'] },
+          shared_secret: { type: ['string', 'null'] },
           relationship_updates: { type: 'object' },
           scheduled_events: {
             type: 'array',
