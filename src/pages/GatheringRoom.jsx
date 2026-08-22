@@ -296,11 +296,36 @@ export default function GatheringRoom() {
   }, [messageText, isInRoom, roomId, directedTo]);
 
   // ── Handle exit ──
+  // After the backend Leave succeeds, fetch the actual post-Leave Character
+  // records from the backend and replace the stale ["characters", email] cache
+  // with them so Travel mounts against the authoritative backend state instead
+  // of the stale Gathering Room presence. The fetch + filter below mirrors the
+  // exact transformation used by useOwnedCharacters' ["characters", email]
+  // queryFn so the cached data shape is identical.
   const handleExit = async () => {
     try {
       await base44.functions.invoke("exitGatheringRoom", { gathering_room_id: roomId });
       queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
       queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
+
+      try {
+        const fresh = await base44.entities.Character.filter(
+          { owner_email: currentUser.email },
+          "created_date",
+          300
+        );
+        const freshFiltered = fresh.filter(
+          c => c.is_test_character !== true && c.diagnostic_only !== true
+        );
+        queryClient.setQueryData(["characters", currentUser.email], freshFiltered);
+      } catch (refreshErr) {
+        // The backend Leave already succeeded — this is a frontend
+        // synchronization failure, not a Leave failure. Do not report it as
+        // "Failed to exit room" and do not navigate into a stale Travel view.
+        setError("You left the Gathering Room, but character locations could not be refreshed.");
+        return;
+      }
+
       navigate("/travel");
     } catch (err) {
       setError(err?.response?.data?.error || "Failed to exit room");
