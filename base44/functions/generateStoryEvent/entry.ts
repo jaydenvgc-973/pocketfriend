@@ -800,6 +800,19 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── EVENT TIME COMPUTATION (computed early — used by STEP 2c onward) ──────
+    // eventArrivalTime and eventDepartureTime must be initialized BEFORE any
+    // step that references them. STEP 2c (Memory entity) uses eventDepartureTime
+    // as its timestamp field. Declaring these later (as STEP 5e once did) creates
+    // a temporal dead zone: the binding is hoisted but uninitialized, so the
+    // first read throws "Cannot access 'eventDepartureTime' before initialization"
+    // and crashes the entire function with a 500 before images or participation
+    // records are created.
+    const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
+    const eventDepartureTime = endTime
+      ? `${eventDate}T${endTime}:00.000`
+      : `${eventDate}T${startTime ? addHoursToTime(startTime, 2) : '14:00'}:00.000`;
+
     // ── STEP 2c: WRITE TO MEMORY ENTITY (idempotent + bulk) ───────────────────
     const memEntityToCreate = _allMemoryEntries
       .filter(m => m.character_id && !memEntityCharIds.has(m.character_id))
@@ -1214,10 +1227,9 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 5e: WRITE LOCATION HISTORY RECORDS (idempotent + bulk, REQUIRED) ─
-    const eventArrivalTime = `${eventDate || ''}T${startTime || '12:00'}:00.000`;
-    const eventDepartureTime = endTime
-      ? `${eventDate}T${endTime}:00.000`
-      : `${eventDate}T${startTime ? addHoursToTime(startTime, 2) : '14:00'}:00.000`;
+    // eventArrivalTime and eventDepartureTime are computed early (before STEP 2c)
+    // to avoid a temporal dead zone crash. Only eventDurationMinutes is computed
+    // here — it is local to the Location History section.
     let eventDurationMinutes = null;
     if (eventArrivalTime && eventDepartureTime) {
       const arrD = new Date(eventArrivalTime);
