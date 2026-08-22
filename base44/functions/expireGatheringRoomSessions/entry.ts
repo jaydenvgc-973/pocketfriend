@@ -67,7 +67,12 @@ Deno.serve(async (req) => {
         try {
           const chars = await base44.asServiceRole.entities.Character.filter({ id: charId }, null, 1);
           const char = chars[0];
-          if (char && char.resolved_location_type === 'gathering_room') {
+          // Guard on resolved_source_reason (the field admitToGatheringRoom
+          // actually sets), NOT resolved_location_type (which is 'visit').
+          // The entry writer sets resolved_source_reason='gathering_room';
+          // checking resolved_location_type==='gathering_room' never matches
+          // and leaves characters stuck at the expired venue permanently.
+          if (char && char.resolved_source_reason === 'gathering_room') {
             await base44.asServiceRole.entities.Character.update(charId, {
               resolved_location_type: null,
               resolved_presence_status: 'home',
@@ -75,7 +80,6 @@ Deno.serve(async (req) => {
               resolved_current_location_name: null,
               resolved_source_reason: 'gathering_room_exit',
               resolved_last_updated_at: nowIso,
-              gathering_room_session_id: null,
             });
           }
         } catch (_) {}
@@ -140,7 +144,9 @@ Deno.serve(async (req) => {
         try {
           const chars = await base44.asServiceRole.entities.Character.filter({ id: charId }, null, 1);
           const char = chars[0];
-          if (char && char.resolved_location_type === 'gathering_room') {
+          // Guard on resolved_source_reason (the field admitToGatheringRoom
+          // actually sets), NOT resolved_location_type (which is 'visit').
+          if (char && char.resolved_source_reason === 'gathering_room') {
             await base44.asServiceRole.entities.Character.update(charId, {
               resolved_location_type: null,
               resolved_presence_status: 'home',
@@ -148,7 +154,6 @@ Deno.serve(async (req) => {
               resolved_current_location_name: null,
               resolved_source_reason: 'gathering_room_exit',
               resolved_last_updated_at: nowIso,
-              gathering_room_session_id: null,
             });
           }
         } catch (_) {}
