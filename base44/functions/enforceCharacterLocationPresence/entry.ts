@@ -1444,7 +1444,21 @@ async function emitObligatedTransitionNarrative(base44, character, committed_res
     character_id: character.id,
     character_name: charName,
     content: narrativeText,
-    timestamp: etTime.toISOString(),
+    // OBLIGATED-LOCATION NARRATIVE TIMESTAMP — actual UTC instant.
+    // etTime is a "fake-UTC" Date whose UTC components equal the Eastern
+    // components (used for schedule evaluation via getHours() in the UTC-local
+    // Deno runtime). etTime.toISOString() produces "07:31:00Z" to represent
+    // 7:31 AM Eastern — but when the frontend interprets that string as an
+    // actual UTC instant and converts to Eastern for display, it subtracts the
+    // UTC→Eastern offset (4h EDT / 5h EST), showing "3:31 AM" instead of
+    // "7:31 AM". new Date().toISOString() stores the actual UTC instant
+    // (e.g. "11:31:00Z" for 7:31 AM EDT), which the frontend correctly converts
+    // to "7:31 AM" Eastern. The temporal withholding filter
+    // (new Date(ts).getTime() <= Date.now()) is a no-op for obligated
+    // narratives because they are created at the occurrence moment — the
+    // actual UTC instant is already <= Date.now(), so the narrative is visible
+    // immediately. This is DST-safe: no hardcoded offset.
+    timestamp: new Date().toISOString(),
     is_narrative: true,
     channel: 'scene',
   });
