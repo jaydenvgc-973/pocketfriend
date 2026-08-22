@@ -217,6 +217,17 @@ export default function Bowling({
   const animRef = useRef(null);
   const throwResolveRef = useRef(null);
 
+  // ── Refs for character-turn execution (avoid re-trigger from parent re-renders) ──
+  // executeThrow and opponent change identity on every parent re-render (because
+  // onGameEnd is not memoized). Keeping them in the character-turn effect deps
+  // causes the timeout to be cleared before it fires. These refs always hold the
+  // latest values without forcing the effect to re-run.
+  const executeThrowRef = useRef(null);
+  const opponentRef = useRef(null);
+  // Idempotency guard: prevents the same character turn from executing twice
+  // (Strict Mode double-invoke, realtime re-renders, etc.)
+  const charTurnLockRef = useRef(false);
+
   const isMyTurn = mode === "character" ? currentPlayer === 0 : currentPlayer === myPlayerIndex;
   const opponentIndex = mode === "character" ? 1 : (myPlayerIndex === 0 ? 1 : 0);
   const totals = totalsFor(frames);
@@ -539,20 +550,36 @@ export default function Bowling({
     });
   }, [applyRoll]);
 
+  // ── Keep refs in sync with latest values (without triggering effect re-runs) ──
+  executeThrowRef.current = executeThrow;
+  opponentRef.current = opponent;
+
   // ── Character opponent turn ─────────────────────────────────────────────────
-  // Triggers when it's the character's turn. After the character's throw, if
-  // the frame is NOT complete (e.g. knocked 7, needs a second roll), the
-  // character rolls again (re-trigger via char_turn). If complete, turn passes
-  // back to the user (currentPlayer becomes 0 → aiming).
+  // Triggers ONLY when the authoritative turn state changes (mode, currentPlayer,
+  // turnState). Uses refs for executeThrow and opponent so that parent re-renders
+  // (which recreate onGameEnd → applyRoll → executeThrow) do NOT clear the
+  // timeout. An idempotency lock prevents duplicate execution from Strict Mode
+  // or rapid re-renders.
   useEffect(() => {
     if (mode !== "character") return;
     if (currentPlayer !== 1 || turnState === "game_over") return;
     if (turnState !== "char_turn") return;
+    // Idempotency: if a character turn is already executing for this turn state,
+    // do not start another one. Released in cleanup so Strict Mode's double-invoke
+    // still works (first run cleared, second run proceeds).
+    if (charTurnLockRef.current) return;
+    charTurnLockRef.current = true;
+
     const t = setTimeout(async () => {
-      const quality = characterThrowQuality(opponent?.character);
+      const fn = executeThrowRef.current;
+      const opp = opponentRef.current;
+      if (!fn) { charTurnLockRef.current = false; return; }
+      const quality = characterThrowQuality(opp?.character);
       const aimError = (1 - quality) * 0.6 + Math.random() * 0.15;
       const power = 0.5 + Math.random() * 0.4;
-      const r = await executeThrow(aimError, power, 1);
+      const r = await fn(aimError, power, 1);
+      // Release the lock so the next character turn (second roll or next frame) can fire
+      charTurnLockRef.current = false;
       if (r.gameComplete) return;
       if (r.frameComplete) {
         // frame done, currentPlayer now 0 → user's turn
@@ -562,8 +589,10 @@ export default function Bowling({
         setTurnState("char_turn");
       }
     }, 1100 + Math.random() * 700);
-    return () => clearTimeout(t);
-  }, [mode, currentPlayer, turnState, opponent, executeThrow]);
+    return () => { clearTimeout(t); charTurnLockRef.current = false; };
+    // Intentionally NOT depending on executeThrow or opponent — those change
+    // identity on every parent re-render and would clear the timeout.
+  }, [mode, currentPlayer, turnState]);
 
   // ── Human mode: after my throw resolves, send roll to backend ───────────────
   const submitHumanRoll = useCallback(async (pinCount) => {
