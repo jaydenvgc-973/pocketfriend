@@ -175,6 +175,11 @@ Deno.serve(async (req) => {
       // resolved_presence_status for committed canonical states, and
       // critical-need thresholds for biological emergencies.
       const isBlockedFromWork = (char) => {
+        // Vacation Mode — temporary exemption from work attendance. Existing
+        // work schedule and employment records remain intact; only enforcement
+        // is skipped. The character remains free to travel and participate
+        // normally. Switching Vacation Mode OFF resumes normal enforcement.
+        if (char.vacation_mode === true) return true;
         // Hospitalized — medical recovery. Existing discharge gate restores
         // presence once all life-needs ≥ 85.
         if (char.resolved_presence_status === 'hospitalized') return true;
@@ -880,6 +885,7 @@ Deno.serve(async (req) => {
         // authority. Sleeping/napping characters are NOT blocked here — they
         // are handled by the continuous-schedule distinction below.
         const _gBlockedFromWork =
+          char.vacation_mode === true ||
           char.resolved_presence_status === 'hospitalized' ||
           char.resolved_presence_status === 'passed_out' ||
           (char.health_value !== undefined && char.health_value < 20) ||

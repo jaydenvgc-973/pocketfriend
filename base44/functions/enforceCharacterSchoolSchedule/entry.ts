@@ -101,6 +101,14 @@ Deno.serve(async (req) => {
       const char = chars?.[0];
       if (!char) return Response.json({ error: 'Character not found' }, { status: 404 });
 
+      // Vacation Mode — temporary exemption from school attendance. Existing
+      // school schedule and enrollment records remain intact; only enforcement
+      // is skipped. The character remains free to travel and participate
+      // normally. Switching Vacation Mode OFF resumes normal enforcement.
+      if (char.vacation_mode === true) {
+        return Response.json({ updated: false, reason: 'vacation_mode_active', next_execution_time: null });
+      }
+
       if (char.student_status !== 'enrolled') {
         return Response.json({ updated: false, reason: 'not_enrolled', next_execution_time: null });
       }
@@ -238,6 +246,9 @@ Deno.serve(async (req) => {
 
     const results = [];
     for (const char of allChars) {
+      // Vacation Mode — skip school enforcement for this character. Existing
+      // enrollment and schedule remain intact; only enforcement is skipped.
+      if (char.vacation_mode === true) continue;
       const schoolLocId = char.education_location_id || char.current_school_location_id;
       let schoolLoc = null;
       if (schoolLocId) {

@@ -50,6 +50,11 @@
       "default": false,
       "description": "Vick Servicio only. When true, energy/sleep simulation is frozen. No decay or recovery. Resumes from current value when turned off."
     },
+    "vacation_mode": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, the character is temporarily exempt from mandatory work and school attendance enforcement. Existing work and school schedules remain intact \u2014 this only exempts the character from enforcement, it does not delete or modify the underlying records. The character remains free to travel and participate normally. When switched back to false, existing obligations resume normally through their existing behavior."
+    },
     "hunger_lock": {
       "type": "boolean",
       "default": false,
@@ -1235,7 +1240,7 @@
     "trait_music_culture_scout": {
       "type": "boolean",
       "default": false,
-      "description": "Music & Culture Scout. Actively discovers real current music, artists, creators, sounds, releases, cultural movements, content, influences, and emerging possibilities relevant to a person's established tastes, work, creative direction, project, or objective. Discovery must be genuine — if they claim to have found new music, it must be real music that can be presented to the user."
+      "description": "Music & Culture Scout. Actively discovers real current music, artists, creators, sounds, releases, cultural movements, content, influences, and emerging possibilities relevant to a person's established tastes, work, creative direction, project, or objective. Discovery must be genuine \u2014 if they claim to have found new music, it must be real music that can be presented to the user."
     },
     "trait_venue_event_scout": {
       "type": "boolean",

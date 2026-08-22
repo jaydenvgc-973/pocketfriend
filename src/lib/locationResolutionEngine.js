@@ -175,9 +175,16 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // (left by an automation that hasn't run work-end yet) must NOT keep showing
   // "at_work" after the shift has ended. Verify against BOTH location-level
   // worker_shifts AND character-level schedule — it is not either/or.
-  const _hasActiveWorkLock = character.presence_stay_lock === true &&
+  // VACATION MODE: When vacation_mode is ON, the character is exempt from work
+  // schedule enforcement. Skip the work-shift lock guard AND LAYER 1 (work
+  // schedule) so the resolver does not place the character at work based on
+  // schedule or lock. The character remains free to be at work through normal
+  // travel (social visit, user travel) — Vacation Mode only exempts schedule
+  // enforcement, it does not restrict where the character can go.
+  const _vacationMode = character.vacation_mode === true;
+  const _hasActiveWorkLock = !_vacationMode && character.presence_stay_lock === true &&
     (character.presence_stay_lock_reason === 'work_shift' ||
-     character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
+      character.presence_stay_lock_authority === 'enforceCharacterWorkSchedule');
   if (_hasActiveWorkLock && _isCharacterCurrentlyOnAnyShift(character, locationMap, currentTime)) {
     const _workLocName = character.resolved_current_location_name ||
       character.occupation_location_name ||
@@ -192,7 +199,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  if (!hasValidCallout && !isCharacterAsleepFromUtils(character, locationMap)) {
+  if (!hasValidCallout && !isCharacterAsleepFromUtils(character, locationMap) && !_vacationMode) {
   // LAYER 1: Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
   // Build ONE ordered employment sequence: primary first, then additional in
   // stored order. Each entry is linked or rabbit-hole. Evaluation proceeds in
@@ -303,7 +310,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // LAYER 2: Check school schedule
   // SLEEP PRE-CHECK: if the character is in their sleep window, school must NOT win.
   // Sleep enforcement (Layer 3.5A) runs after this, but we must not send sleeping characters to school.
-  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character, locationMap)) {
+  // VACATION MODE: skip school schedule enforcement when vacation_mode is ON.
+  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character, locationMap) && !_vacationMode) {
     const schoolLocation = locationMap[character.education_location_id];
     if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {

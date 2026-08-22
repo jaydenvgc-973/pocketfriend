@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -42,6 +42,7 @@ import CharacterReligionSection from "@/components/character/CharacterReligionSe
 import CharacterDashboard from "@/components/character/CharacterDashboard";
 import PublicRelationsSection from "@/components/character/PublicRelationsSection";
 import HybridNeedsLockPanel from "@/components/character/HybridNeedsLockPanel";
+import VacationModeToggle from "@/components/character/VacationModeToggle";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -824,6 +825,10 @@ export default function CharacterProfile() {
           <div className="px-4 py-2 bg-secondary/30">
             <p className="text-[10px] font-bold uppercase tracking-widest text-primary">How Their Life Functions</p>
           </div>
+
+          <CollapsibleProfileSection icon={Plane} title="Vacation Mode">
+            <VacationModeToggle character={character} />
+          </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={Briefcase} title="Income Sources">
             <div className="space-y-2">
