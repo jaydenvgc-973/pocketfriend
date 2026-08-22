@@ -198,6 +198,56 @@ function resolveValidSleepLocationId(character, locationMap) {
 
 
 
+// ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
+// During a Story Event's active time window, the assigned venue is the
+// participating character's authoritative current location. This helper
+// fetches active Story Events for the character and returns the venue info.
+// Returns null when no Story Event is active for this character.
+// Temporal test: start_time <= now <= end_time (Eastern Time). Status is NOT
+// used as the temporal test — a 'complete' status alone does not activate the
+// venue; the configured start/end window does.
+async function findActiveStoryEventVenue(base44, characterId, etTime) {
+  try {
+    // Story Event times are stored in Eastern Time (America/New_York).
+    // Compute the ET timezone offset dynamically (handles DST: EDT=-04:00, EST=-05:00).
+    const now = new Date();
+    const etMs = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime();
+    const etOffsetMin = Math.round((etMs - now.getTime()) / 60000);
+    const etOffsetStr = `${etOffsetMin >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(etOffsetMin)/60)).padStart(2,'0')}:${String(Math.abs(etOffsetMin)%60).padStart(2,'0')}`;
+    const nowMs = now.getTime();
+
+    // Fetch recent StoryEvents and filter for active ones with this character as participant/focus.
+    // Only active_created_character participates in Story Events.
+    const seEvents = await base44.asServiceRole.entities.StoryEvent.filter({}, '-created_date', 30).catch(() => []);
+    for (const e of seEvents || []) {
+      const pIds = Array.isArray(e.participant_character_ids) ? e.participant_character_ids : [];
+      const fIds = Array.isArray(e.focus_character_ids) ? e.focus_character_ids : [];
+      if (!pIds.includes(characterId) && !fIds.includes(characterId)) continue;
+      const d = e.event_date;
+      if (!d) continue;
+      // Parse start/end times as Eastern Time by appending the ET offset
+      const s = new Date(`${d}T${e.start_time || '00:00'}:00${etOffsetStr}`).getTime();
+      if (isNaN(s) || nowMs < s) continue; // Not started yet
+      if (e.end_time) {
+        const en = new Date(`${d}T${e.end_time}:00${etOffsetStr}`).getTime();
+        if (!isNaN(en) && nowMs > en) continue; // Already ended
+      }
+      // Active Story Event with this character — return venue info
+      if (e.is_rabbit_hole && e.rabbit_hole_venue_name) {
+        return { isRabbitHole: true, venueName: e.rabbit_hole_venue_name };
+      } else if (e.venue_id) {
+        return { isRabbitHole: false, venueId: e.venue_id, venueName: e.venue_name };
+      }
+      // No venue assigned — skip this event
+      continue;
+    }
+    return null;
+  } catch (err) {
+    console.warn(`[enforceCharacterLocationPresence] Story Event venue check failed (non-blocking): ${err.message}`);
+    return null;
+  }
+}
+
 /**
  * Evaluate a requested transition against the complete current state.
  * Returns a disposition and the canonical fields to commit.
@@ -206,7 +256,7 @@ function resolveValidSleepLocationId(character, locationMap) {
  * It evaluates the requested transition against the current state and
  * determines: accepted, modified, redirected, deferred, rejected, or no_change.
  */
-function evaluateRequestedTransition(character, locationMap, requested, etTime) {
+function evaluateRequestedTransition(character, locationMap, requested, etTime, activeStoryEventVenue = null) {
   const currentStatus = character.resolved_presence_status || '';
   const currentLocId = character.resolved_current_location_id || '';
   const requestedStatus = requested.requested_presence_status || null;
@@ -223,7 +273,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
     requested.requested_lock_release === true ||
     requested.requested_relocation === true;
   if (!hasAnyRequest) {
-    return evaluateLegacyRecompute(character, locationMap, etTime);
+    return evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEventVenue);
   }
 
   // ── INCARCERATION / HOUSE ARREST — absolute hard lock ──────────────────────
@@ -509,6 +559,63 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
         resolved_source_reason: requested.requested_source_reason || 'wake',
       },
     };
+  }
+
+  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
+  // During a Story Event's active time window, the assigned venue is the
+  // participating character's authoritative current location. This takes
+  // priority over work, school, visiting, and home requests — but NOT over
+  // incarceration, hospitalization, sleep, or pass-out (protected states
+  // handled above, or the character is currently in a protected state).
+  // Hospitalization requests bypass this check so medical emergencies always win.
+  if (activeStoryEventVenue && requestedStatus !== 'hospitalized') {
+    const _seCurrentStatus = character.resolved_presence_status || '';
+    const _seInProtectedState = _seCurrentStatus === 'sleeping' || _seCurrentStatus === 'napping' ||
+      _seCurrentStatus === 'passed_out' || _seCurrentStatus === 'hospitalized' ||
+      character.is_jailed === true || character.house_arrest_active === true;
+    if (!_seInProtectedState) {
+      if (activeStoryEventVenue.isRabbitHole) {
+        return {
+          disposition: 'accepted',
+          canonicalFields: {
+            resolved_current_location_id: 'rabbit_hole',
+            resolved_current_location_name: activeStoryEventVenue.venueName,
+            resolved_location_type: 'rabbit_hole',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'story_event_venue',
+            resolved_last_updated_at: etTime.toISOString(),
+          },
+          committed_result: {
+            resolved_current_location_id: 'rabbit_hole',
+            resolved_current_location_name: activeStoryEventVenue.venueName,
+            resolved_location_type: 'rabbit_hole',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'story_event_venue',
+          },
+        };
+      } else {
+        const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
+        const _seVenueName = _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue';
+        return {
+          disposition: 'accepted',
+          canonicalFields: {
+            resolved_current_location_id: activeStoryEventVenue.venueId,
+            resolved_current_location_name: _seVenueName,
+            resolved_location_type: 'visit',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'story_event_venue',
+            resolved_last_updated_at: etTime.toISOString(),
+          },
+          committed_result: {
+            resolved_current_location_id: activeStoryEventVenue.venueId,
+            resolved_current_location_name: _seVenueName,
+            resolved_location_type: 'visit',
+            resolved_presence_status: 'visiting',
+            resolved_source_reason: 'story_event_venue',
+          },
+        };
+      }
+    }
   }
 
   // ── WORK REQUESTED (at_work) ───────────────────────────────────────────────
@@ -987,7 +1094,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
   }
 
   // ── FALLBACK: legacy recompute (only when no requested transition) ────────
-  return evaluateLegacyRecompute(character, locationMap, etTime);
+  return evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEventVenue);
 }
 
 /**
@@ -995,8 +1102,8 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime) 
  * authority recomputes the resolved location using the inline resolver
  * (aligned with src/lib/locationResolutionEngine.js).
  */
-function evaluateLegacyRecompute(character, locationMap, etTime) {
-  const resolved = computeResolvedLocation(character, locationMap, etTime);
+function evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEventVenue = null) {
+  const resolved = computeResolvedLocation(character, locationMap, etTime, activeStoryEventVenue);
   const stored = buildStoredState(character);
   if (!hasChanged(resolved, stored)) {
     return { disposition: 'no_change', canonicalFields: {} };
@@ -1023,7 +1130,7 @@ function evaluateLegacyRecompute(character, locationMap, etTime) {
 }
 
 // ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
-function computeResolvedLocation(character, locationMap, etTime) {
+function computeResolvedLocation(character, locationMap, etTime, activeStoryEventVenue = null) {
   // ── HOSPITALIZATION GUARD — preserve committed hospital state ──────────────
   // A hospitalized character is physically at the hospital. Schedule/visit/home
   // layers must NOT re-resolve them back to home, work, or school.
@@ -1087,6 +1194,33 @@ function computeResolvedLocation(character, locationMap, etTime) {
       resolved_presence_status: character.resolved_presence_status,
       resolved_source_reason: 'energy_driven_sleep_preserved',
     };
+  }
+
+  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
+  // During a Story Event's active time window, the assigned venue is the
+  // participating character's authoritative current location. This runs AFTER
+  // the sleep layer (biological need wins) and BEFORE work/school/home — so
+  // the venue overrides work/school/home during the active window, but not
+  // incarceration, hospitalization, or sleep.
+  if (activeStoryEventVenue) {
+    if (activeStoryEventVenue.isRabbitHole) {
+      return {
+        resolved_current_location_id: 'rabbit_hole',
+        resolved_current_location_name: activeStoryEventVenue.venueName,
+        resolved_location_type: 'rabbit_hole',
+        resolved_presence_status: 'visiting',
+        resolved_source_reason: 'story_event_venue',
+      };
+    } else {
+      const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
+      return {
+        resolved_current_location_id: activeStoryEventVenue.venueId,
+        resolved_current_location_name: _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue',
+        resolved_location_type: 'visit',
+        resolved_presence_status: 'visiting',
+        resolved_source_reason: 'story_event_venue',
+      };
+    }
   }
 
   // Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
@@ -1570,8 +1704,20 @@ Deno.serve(async (req) => {
       parseInt(_etMap.second, 10),
     ));
 
+    // ── ACTIVE STORY EVENT VENUE ──────────────────────────────────────────────
+    // Fetch the active Story Event venue for this character (if any). During
+    // the active window, the venue is the authoritative current location and
+    // overrides work/school/home in both the request handler and the recompute
+    // path. Only active_created_character participates in Story Events.
+    let activeStoryEventVenue = null;
+    if (character.character_type === 'active_created_character') {
+      try {
+        activeStoryEventVenue = await findActiveStoryEventVenue(base44, character_id, etTime);
+      } catch (_) { /* non-blocking */ }
+    }
+
     // ── EVALUATE REQUESTED TRANSITION ──────────────────────────────────────────
-    const evaluation = evaluateRequestedTransition(character, locationMap, payload, etTime);
+    const evaluation = evaluateRequestedTransition(character, locationMap, payload, etTime, activeStoryEventVenue);
     const { disposition, canonicalFields, committed_result, reason, must_resubmit_sleep } = evaluation;
 
     // ── NO CHANGE — return immediately ─────────────────────────────────────────

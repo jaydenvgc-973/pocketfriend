@@ -120,6 +120,26 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // STORY EVENT VENUE GUARD: If the character's committed location is a Story
+  // Event venue (resolved_source_reason === 'story_event_venue'), preserve it.
+  // During the active Story Event window, the venue is the authoritative
+  // current location — work/school/home layers must NOT override it. This
+  // mirrors the Gathering Room guard: the backend (enforceCharacterLocationPresence)
+  // commits the venue during the active window, and the frontend preserves it.
+  // When the event ends, the backend commits a new state (resolved_source_reason
+  // changes to 'home'/'work'/etc.) and this guard no longer matches, so the
+  // character's location reverts to the app's existing authoritative logic.
+  if (character.resolved_source_reason === 'story_event_venue' && character.resolved_current_location_id) {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: character.resolved_current_location_name || 'Story Event',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: 'story_event_venue',
+      resolved_zone: null,
+    };
+  }
+
   // HOSPITALIZATION GUARD: a hospitalized character is physically at the hospital
   // already committed by the authority (resolved_current_location_id). The
   // schedule/visit/home layers below must NOT re-resolve a hospitalized character
