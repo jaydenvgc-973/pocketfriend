@@ -2078,6 +2078,19 @@ All reference images (if any) are environment/location refs only — do NOT trea
       ? `\n═══════════════════════════════════════════════════════════\n⛔ VISUAL SUBJECT AUTHORITY — PROMPT SUBJECT IS THE ONLY SUBJECT\n═══════════════════════════════════════════════════════════\nTHE VISUAL SUBJECT OF THIS IMAGE IS: "${_subjectAuthName}".\nRelationship terms (father, dad, father figure, parent, mother) may explain emotion but must NOT create or substitute a visual subject.\n⛔ DO NOT invent an unnamed father/parent/father figure based on conversation context.\n⛔ DO NOT substitute a different person for "${_subjectAuthName}".\n✅ The visible foreground subject MUST be "${_subjectAuthName}" and match their reference images.\n═══════════════════════════════════════════════════════════\n`
       : '';
 
+    // ── CUSTODY INDICATOR — incarcerated character temporarily outside facility ──
+    // When an incarcerated character is at a Story Event venue (not the correctional
+    // facility), the image must visibly show continuing custody via an ankle monitor.
+    // Derived from existing data: is_jailed + resolved_source_reason='story_event_venue'.
+    // No permanent field — the condition is computed at generation time and naturally
+    // clears when the Story Event ends (resolved_source_reason changes).
+    const _isIncarceratedAtStoryEvent = charRecord?.is_jailed === true &&
+      charRecord?.resolved_source_reason === 'story_event_venue' &&
+      charRecord?.resolved_current_location_id !== charRecord?.incarceration_facility_id;
+    const _custodyIndicatorBlock = _isIncarceratedAtStoryEvent
+      ? `\n═══════════════════════════════════════════════════════════\n⛔ CUSTODY STATUS — INCARCERATED, TEMPORARILY OUTSIDE FACILITY\n═══════════════════════════════════════════════════════════\nThis character is currently INCARCERATED but temporarily outside the correctional facility for an authorized event.\nThey MUST visibly wear an ELECTRONIC ANKLE MONITOR on their ankle — a small black GPS tracking device with a strap, clearly visible in the image.\nThis is a custody indicator, not a fashion accessory. It must be present and visible.\n═══════════════════════════════════════════════════════════\n`
+      : '';
+
     // Relationship-term risk detection — triggers post-generation subject validation
     const _promptHasRelRisk = /\b(father|dad|daddy|father.?figure|parent|mother|mom|mommy|parent.?figure|son|daughter|brother|sister|husband|wife|spouse)\b/i.test(sanitizedPrompt || prompt || '');
 
