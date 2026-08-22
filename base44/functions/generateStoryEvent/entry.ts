@@ -1483,7 +1483,11 @@ Deno.serve(async (req) => {
           }
         }
 
-        // ── Inject into existing PHONE conversation (Text page) if one exists ──
+        // ── Inject into PHONE conversation (Text page) — create if needed ──
+        // Mirrors the direct conversation path: if no phone conversation exists,
+        // create one so the narrative reaches the Text page. Without this,
+        // characters the user has never texted would never receive the
+        // completed narrative on their Text page.
         const existingPhone = await base44.asServiceRole.entities.Conversation.filter(
           { owner_email: ownerEmail, type: 'phone', character_ids: mem.character_id },
           '-last_message_date', 50
@@ -1494,42 +1498,51 @@ Deno.serve(async (req) => {
           return ids.length === 1 && ids[0] === mem.character_id && !c.shared_conversation_key && c.channel !== 'world_phone';
         });
 
+        let phoneConvoId = null;
         if (phoneConvos.length > 0) {
           const withHistoryP = phoneConvos.filter(c => c.last_message_date);
           const withoutHistoryP = phoneConvos.filter(c => !c.last_message_date);
           const sortByRecencyP = (a, b) => new Date(b.last_message_date || b.created_date).getTime() - new Date(a.last_message_date || a.created_date).getTime();
-          const phoneConvoId = [...withHistoryP.sort(sortByRecencyP), ...withoutHistoryP.sort(sortByRecencyP)][0]?.id || null;
+          phoneConvoId = [...withHistoryP.sort(sortByRecencyP), ...withoutHistoryP.sort(sortByRecencyP)][0]?.id || null;
+        } else {
+          const newPhoneConvo = await base44.asServiceRole.entities.Conversation.create({
+            title: `phone with ${memCharName}`,
+            type: 'phone',
+            character_ids: [mem.character_id],
+            owner_email: ownerEmail,
+          }).catch(() => null);
+          if (newPhoneConvo?.id) phoneConvoId = newPhoneConvo.id;
+        }
 
-          if (phoneConvoId) {
-            // ── Idempotency: check if narrative message already exists ──────────
-            let phoneAlreadyInjected = false;
-            try {
-              const existingPhoneMsgs = await base44.asServiceRole.entities.Message.filter(
-                { conversation_id: phoneConvoId, character_id: mem.character_id, timestamp: narrativeTimestamp },
-                '-created_date', 10
-              );
-              phoneAlreadyInjected = (existingPhoneMsgs || []).some(m => m.is_narrative === true);
-            } catch (_) {}
+        if (phoneConvoId) {
+          // ── Idempotency: check if narrative message already exists ──────────
+          let phoneAlreadyInjected = false;
+          try {
+            const existingPhoneMsgs = await base44.asServiceRole.entities.Message.filter(
+              { conversation_id: phoneConvoId, character_id: mem.character_id, timestamp: narrativeTimestamp },
+              '-created_date', 10
+            );
+            phoneAlreadyInjected = (existingPhoneMsgs || []).some(m => m.is_narrative === true);
+          } catch (_) {}
 
-            if (!phoneAlreadyInjected) {
-              await base44.asServiceRole.entities.Message.create({
-                conversation_id: phoneConvoId,
-                sender_type: 'character',
-                character_id: mem.character_id,
-                character_name: memCharName,
-                content: narrativeContent,
-                is_narrative: true,
-                is_read: false,
-                timestamp: narrativeTimestamp,
-                memory_eligible: false,
-                relationship_eligible: false,
-              }).catch(() => {});
+          if (!phoneAlreadyInjected) {
+            await base44.asServiceRole.entities.Message.create({
+              conversation_id: phoneConvoId,
+              sender_type: 'character',
+              character_id: mem.character_id,
+              character_name: memCharName,
+              content: narrativeContent,
+              is_narrative: true,
+              is_read: false,
+              timestamp: narrativeTimestamp,
+              memory_eligible: false,
+              relationship_eligible: false,
+            }).catch(() => {});
 
-              await base44.asServiceRole.entities.Conversation.update(phoneConvoId, {
-                last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
-                last_message_date: narrativeTimestamp,
-              }).catch(() => {});
-            }
+            await base44.asServiceRole.entities.Conversation.update(phoneConvoId, {
+              last_message_preview: `✦ ${narrativeContent.substring(0, 80)}...`,
+              last_message_date: narrativeTimestamp,
+            }).catch(() => {});
           }
         }
       } catch (e) {
