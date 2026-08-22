@@ -262,6 +262,68 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   const requestedStatus = requested.requested_presence_status || null;
   const requestedLocId = requested.requested_location_id || null;
 
+  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
+  // During a Story Event's active time window, the assigned venue is the
+  // participating character's authoritative current location. This runs FIRST
+  // — before incarceration, hospitalization, sleep, work, school, and home —
+  // so the venue overrides all of them for participants. Non-participants get
+  // null (activeStoryEventVenue is null) and fall through to normal resolution.
+  //
+  // Incarcerated and hospitalized participants can be temporarily at the venue;
+  // their incarceration/hospitalization status fields (is_jailed, etc.) remain
+  // unchanged — only the resolved location is overridden. After the event,
+  // activeStoryEventVenue becomes null and the resolver re-resolves normally
+  // (back to correctional facility, hospital, work, home, etc.).
+  //
+  // Hospitalization REQUESTS (new medical emergency) and lock-release REQUESTS
+  // (obligation state management) bypass this check so those systems still
+  // function during an active Story Event. Sleep is not treated as an absolute
+  // blocker — the venue overrides sleep for participants, consistent with how
+  // work overrides sleep via the existing obligation/wake behavior.
+  if (activeStoryEventVenue && requestedStatus !== 'hospitalized' && !requested.requested_lock_release) {
+    if (activeStoryEventVenue.isRabbitHole) {
+      return {
+        disposition: 'accepted',
+        canonicalFields: {
+          resolved_current_location_id: 'rabbit_hole',
+          resolved_current_location_name: activeStoryEventVenue.venueName,
+          resolved_location_type: 'rabbit_hole',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'story_event_venue',
+          resolved_last_updated_at: etTime.toISOString(),
+        },
+        committed_result: {
+          resolved_current_location_id: 'rabbit_hole',
+          resolved_current_location_name: activeStoryEventVenue.venueName,
+          resolved_location_type: 'rabbit_hole',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'story_event_venue',
+        },
+      };
+    } else {
+      const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
+      const _seVenueName = _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue';
+      return {
+        disposition: 'accepted',
+        canonicalFields: {
+          resolved_current_location_id: activeStoryEventVenue.venueId,
+          resolved_current_location_name: _seVenueName,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'story_event_venue',
+          resolved_last_updated_at: etTime.toISOString(),
+        },
+        committed_result: {
+          resolved_current_location_id: activeStoryEventVenue.venueId,
+          resolved_current_location_name: _seVenueName,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'story_event_venue',
+        },
+      };
+    }
+  }
+
   // ── NO TRANSITION REQUESTED — recompute location truth (legacy path) ────────
   // Only fall through to legacy recompute when NO request field is present at all.
   // Special request flags (requested_work_end, requested_lock_release, requested_relocation)
@@ -559,63 +621,6 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
         resolved_source_reason: requested.requested_source_reason || 'wake',
       },
     };
-  }
-
-  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
-  // During a Story Event's active time window, the assigned venue is the
-  // participating character's authoritative current location. This takes
-  // priority over work, school, visiting, and home requests — but NOT over
-  // incarceration, hospitalization, sleep, or pass-out (protected states
-  // handled above, or the character is currently in a protected state).
-  // Hospitalization requests bypass this check so medical emergencies always win.
-  if (activeStoryEventVenue && requestedStatus !== 'hospitalized') {
-    const _seCurrentStatus = character.resolved_presence_status || '';
-    const _seInProtectedState = _seCurrentStatus === 'sleeping' || _seCurrentStatus === 'napping' ||
-      _seCurrentStatus === 'passed_out' || _seCurrentStatus === 'hospitalized' ||
-      character.is_jailed === true || character.house_arrest_active === true;
-    if (!_seInProtectedState) {
-      if (activeStoryEventVenue.isRabbitHole) {
-        return {
-          disposition: 'accepted',
-          canonicalFields: {
-            resolved_current_location_id: 'rabbit_hole',
-            resolved_current_location_name: activeStoryEventVenue.venueName,
-            resolved_location_type: 'rabbit_hole',
-            resolved_presence_status: 'visiting',
-            resolved_source_reason: 'story_event_venue',
-            resolved_last_updated_at: etTime.toISOString(),
-          },
-          committed_result: {
-            resolved_current_location_id: 'rabbit_hole',
-            resolved_current_location_name: activeStoryEventVenue.venueName,
-            resolved_location_type: 'rabbit_hole',
-            resolved_presence_status: 'visiting',
-            resolved_source_reason: 'story_event_venue',
-          },
-        };
-      } else {
-        const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
-        const _seVenueName = _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue';
-        return {
-          disposition: 'accepted',
-          canonicalFields: {
-            resolved_current_location_id: activeStoryEventVenue.venueId,
-            resolved_current_location_name: _seVenueName,
-            resolved_location_type: 'visit',
-            resolved_presence_status: 'visiting',
-            resolved_source_reason: 'story_event_venue',
-            resolved_last_updated_at: etTime.toISOString(),
-          },
-          committed_result: {
-            resolved_current_location_id: activeStoryEventVenue.venueId,
-            resolved_current_location_name: _seVenueName,
-            resolved_location_type: 'visit',
-            resolved_presence_status: 'visiting',
-            resolved_source_reason: 'story_event_venue',
-          },
-        };
-      }
-    }
   }
 
   // ── WORK REQUESTED (at_work) ───────────────────────────────────────────────
@@ -1131,6 +1136,36 @@ function evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEven
 
 // ── INLINE RESOLVER (aligned with src/lib/locationResolutionEngine.js) ───────
 function computeResolvedLocation(character, locationMap, etTime, activeStoryEventVenue = null) {
+  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
+  // During a Story Event's active time window, the assigned venue is the
+  // participating character's authoritative current location. This runs FIRST
+  // — before hospitalization, incarceration, house arrest, sleep, work, school,
+  // and home — so the venue overrides all of them for participants.
+  // Non-participants get null (activeStoryEventVenue is null) and fall through
+  // to normal resolution. Incarcerated/hospitalized participants are temporarily
+  // at the venue; their status fields remain unchanged. After the event, this
+  // check is skipped (null) and the resolver re-resolves normally.
+  if (activeStoryEventVenue) {
+    if (activeStoryEventVenue.isRabbitHole) {
+      return {
+        resolved_current_location_id: 'rabbit_hole',
+        resolved_current_location_name: activeStoryEventVenue.venueName,
+        resolved_location_type: 'rabbit_hole',
+        resolved_presence_status: 'visiting',
+        resolved_source_reason: 'story_event_venue',
+      };
+    } else {
+      const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
+      return {
+        resolved_current_location_id: activeStoryEventVenue.venueId,
+        resolved_current_location_name: _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue',
+        resolved_location_type: 'visit',
+        resolved_presence_status: 'visiting',
+        resolved_source_reason: 'story_event_venue',
+      };
+    }
+  }
+
   // ── HOSPITALIZATION GUARD — preserve committed hospital state ──────────────
   // A hospitalized character is physically at the hospital. Schedule/visit/home
   // layers must NOT re-resolve them back to home, work, or school.
@@ -1194,33 +1229,6 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
       resolved_presence_status: character.resolved_presence_status,
       resolved_source_reason: 'energy_driven_sleep_preserved',
     };
-  }
-
-  // ── ACTIVE STORY EVENT VENUE AUTHORITY ──────────────────────────────────────
-  // During a Story Event's active time window, the assigned venue is the
-  // participating character's authoritative current location. This runs AFTER
-  // the sleep layer (biological need wins) and BEFORE work/school/home — so
-  // the venue overrides work/school/home during the active window, but not
-  // incarceration, hospitalization, or sleep.
-  if (activeStoryEventVenue) {
-    if (activeStoryEventVenue.isRabbitHole) {
-      return {
-        resolved_current_location_id: 'rabbit_hole',
-        resolved_current_location_name: activeStoryEventVenue.venueName,
-        resolved_location_type: 'rabbit_hole',
-        resolved_presence_status: 'visiting',
-        resolved_source_reason: 'story_event_venue',
-      };
-    } else {
-      const _seVenueLoc = locationMap[activeStoryEventVenue.venueId];
-      return {
-        resolved_current_location_id: activeStoryEventVenue.venueId,
-        resolved_current_location_name: _seVenueLoc?.name || activeStoryEventVenue.venueName || 'Story Event Venue',
-        resolved_location_type: 'visit',
-        resolved_presence_status: 'visiting',
-        resolved_source_reason: 'story_event_venue',
-      };
-    }
   }
 
   // Work schedule — ordered evaluation matching enforceCharacterWorkSchedule.
@@ -1710,11 +1718,9 @@ Deno.serve(async (req) => {
     // overrides work/school/home in both the request handler and the recompute
     // path. Only active_created_character participates in Story Events.
     let activeStoryEventVenue = null;
-    if (character.character_type === 'active_created_character') {
-      try {
-        activeStoryEventVenue = await findActiveStoryEventVenue(base44, character_id, etTime);
-      } catch (_) { /* non-blocking */ }
-    }
+    try {
+      activeStoryEventVenue = await findActiveStoryEventVenue(base44, character_id, etTime);
+    } catch (_) { /* non-blocking */ }
 
     // ── EVALUATE REQUESTED TRANSITION ──────────────────────────────────────────
     const evaluation = evaluateRequestedTransition(character, locationMap, payload, etTime, activeStoryEventVenue);

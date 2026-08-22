@@ -145,6 +145,37 @@ Deno.serve(async (req) => {
       // invitations must not interrupt medical care.
       if (char.resolved_presence_status === 'hospitalized') continue;
 
+      // INCARCERATED CHARACTER INVITE DESTINATION: An incarcerated character
+      // cannot autonomously invite the user to an outside location. The invite
+      // destination must be the correctional facility where they are currently
+      // incarcerated. This does not prevent explicit Story Event participation
+      // from temporarily placing them elsewhere — it only restricts autonomous
+      // homepage invites to the facility.
+      if (char.is_jailed === true) {
+        const facilityId = char.incarceration_facility_id;
+        const facilityName = char.incarceration_facility_name || 'Correctional Facility';
+        if (!facilityId) continue; // No facility — cannot invite
+        const facilityLoc = eligibleLocMap[facilityId] || null;
+        const activityLabel = `at ${facilityName} — has company visiting`;
+        base44.asServiceRole.entities.Character.update(char.id, {
+          current_activity: activityLabel,
+          current_situation: `Incarcerated — ${activityLabel}`,
+          life_last_updated: now.toISOString(),
+        }).catch(() => {});
+        invitations.push({
+          characterId: char.id,
+          characterName: char.name,
+          characterAvatar: char.avatar_url,
+          inviteType: 'goout',
+          locationId: facilityId,
+          locationName: facilityName,
+          locationCategory: facilityLoc?.category || 'jail_prison',
+          inviteIssuedAt: now.toISOString(),
+          locationClosesAt: null,
+        });
+        continue;
+      }
+
       const charHome = char.current_home_location_id ? eligibleLocMap[char.current_home_location_id] : null;
       const charWork = char.occupation_location_id   ? eligibleLocMap[char.occupation_location_id]   : null;
 

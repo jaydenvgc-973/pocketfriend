@@ -318,6 +318,8 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
                           <p className="text-xs font-medium text-foreground truncate">{c.name || c.display_name}</p>
                           <div className="flex gap-1.5 text-[9px] text-muted-foreground mt-0.5">
                             {typeLabel && <span className="px-1 rounded bg-secondary/80">{typeLabel}</span>}
+                            {c.is_jailed === true && <span className="px-1 rounded bg-orange-950/40 text-orange-400">Incarcerated</span>}
+                            {c.resolved_presence_status === 'hospitalized' && <span className="px-1 rounded bg-red-950/30 text-red-400">Hospitalized</span>}
                             {c.occupation && <span className="truncate">{c.occupation}</span>}
                           </div>
                         </div>
