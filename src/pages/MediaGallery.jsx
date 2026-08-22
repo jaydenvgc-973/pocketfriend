@@ -673,6 +673,8 @@ function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
   );
 }
 
+const USER_RECIPIENT_ID = '__user_recipient__';
+
 function SendImageModal({ image, onClose, onSent }) {
   const [characters, setCharacters] = useState([]);
   const [senderMode, setSenderMode] = useState('user');
@@ -893,10 +895,81 @@ function SendImageModal({ image, onClose, onSent }) {
 
       } else {
         if (!selectedSenderCharacterId) { setError('Please select a sender character'); setLoading(false); return; }
-        if (selectedRecipientCharacterIds.size === 0) { setError('Please select at least one recipient character'); setLoading(false); return; }
-        if (selectedRecipientCharacterIds.has(selectedSenderCharacterId)) { setError('Cannot send to the same character'); setLoading(false); return; }
+        const recipientIds = [...selectedRecipientCharacterIds];
+        if (recipientIds.length === 0) { setError('Please select at least one recipient'); setLoading(false); return; }
+        if (recipientIds.includes(selectedSenderCharacterId)) { setError('Cannot send to the same character'); setLoading(false); return; }
 
-        for (const receiverId of selectedRecipientCharacterIds) {
+        const senderChar = characters.find(c => c.id === selectedSenderCharacterId);
+        if (!senderChar) { setError('Sender character not found'); setLoading(false); return; }
+
+        // Separate user recipient from character recipients
+        const sendToUser = recipientIds.includes(USER_RECIPIENT_ID);
+        const characterRecipientIds = recipientIds.filter(id => id !== USER_RECIPIENT_ID);
+
+        // ── CHARACTER → USER: deliver into the user's direct Chat conversation ──
+        if (sendToUser) {
+          log.push(`--- Character → User: sender=${senderChar.name} → user ---`);
+          const destConvoId = await resolveDestinationConversationId(senderChar.id, senderChar.name || senderChar.display_name, log);
+
+          const cuResolvedPrompt = image.displayPrompt || image.imageDescription || null;
+          const cuDescription = cuResolvedPrompt || image.imageDescription || null;
+          const cuNeedsVisualAnalysis = !cuDescription && !!image.url;
+
+          const cuMergedGenerationContext = image.generationContext
+            ? {
+                ...image.generationContext,
+                resolved_description: cuResolvedPrompt || cuDescription || undefined,
+                original_raw_prompt: image.generationContext.original_raw_prompt || image.originalPrompt || cuResolvedPrompt || undefined,
+              }
+            : cuResolvedPrompt
+            ? { resolved_description: cuResolvedPrompt, original_raw_prompt: cuResolvedPrompt }
+            : undefined;
+
+          const cuPayload = {
+            conversation_id: destConvoId,
+            sender_type: 'character',
+            character_id: senderChar.id,
+            character_name: senderChar.name || senderChar.display_name,
+            content: '',
+            image_url: image.url,
+            image_description: cuDescription || undefined,
+            image_analysis_status: cuDescription ? 'complete' : 'pending',
+            image_analysis_is_transport_metadata: false,
+            generation_context: cuMergedGenerationContext,
+            timestamp: new Date().toISOString(),
+            owner_email: user.email,
+          };
+
+          if (image.id) cuPayload.source_media_message_id = image.id;
+          if (image.url) cuPayload.source_media_url = image.url;
+          cuPayload.source_media_had_prompt = !!cuResolvedPrompt;
+          cuPayload.source_media_had_generation_context = !!(image.generationContext?.original_raw_prompt || image.generationContext?.scene_prompt);
+
+          const cuMsg = await base44.entities.Message.create(cuPayload);
+          if (!cuMsg?.id) throw new Error('Character→User message creation returned no ID');
+          log.push(`WRITE: character→user message created id=${cuMsg.id} convo=${destConvoId}`);
+
+          if (cuNeedsVisualAnalysis) {
+            log.push(`Running detailed visual analysis on promptless gallery image (char→user)...`);
+            analyzeImageForCharacterContext({
+              imageUrl: image.url,
+              messageId: cuMsg.id,
+              context: 'media_gallery_send_char_to_user',
+              requireDetailedAnalysis: true,
+            }).then(({ imageDescription, analysisStatus }) => {
+              if (imageDescription && analysisStatus === 'complete') {
+                log.push(`Analysis complete: ${imageDescription.substring(0, 80)}...`);
+              } else if (analysisStatus === 'failed') {
+                log.push(`Analysis failed — character will see "cannot inspect image" notice`);
+              }
+            }).catch(e => {
+              log.push(`Analysis error (non-fatal): ${e.message}`);
+            });
+          }
+        }
+
+        // ── CHARACTER → CHARACTER: existing World Phone path (unchanged) ──
+        for (const receiverId of characterRecipientIds) {
          log.push(`World Phone: sender=${selectedSenderCharacterId} → receiver=${receiverId}`);
          const wpResolvedPrompt = image.displayPrompt || image.imageDescription || null;
          const wpHasContext = !!wpResolvedPrompt;
@@ -933,7 +1006,7 @@ function SendImageModal({ image, onClose, onSent }) {
           }
           log.push(`World Phone OK: msg_id=${res.data.message_id}`);
         }
-        console.log('[SendImageModal] WORLD PHONE SEND:\n' + log.join('\n'));
+        console.log('[SendImageModal] CHARACTER SEND COMPLETE:\n' + log.join('\n'));
         setSendLog(log);
         setSent(true);
         setTimeout(onSent, 1200);
@@ -1033,6 +1106,13 @@ function SendImageModal({ image, onClose, onSent }) {
             <div className="flex-1 flex flex-col min-h-0">
               <p className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex-shrink-0">Send To:</p>
               <div className="flex-1 overflow-y-auto border border-border rounded-lg bg-secondary/20">
+                {/* User recipient — character → user direction */}
+                <div className="px-3 py-2 text-xs font-semibold text-primary uppercase bg-primary/10 border-t border-border">You (User)</div>
+                <label className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50">
+                  <input type="checkbox" checked={selectedRecipientCharacterIds.has(USER_RECIPIENT_ID)} onChange={() => { const s = new Set(selectedRecipientCharacterIds); s.has(USER_RECIPIENT_ID) ? s.delete(USER_RECIPIENT_ID) : s.add(USER_RECIPIENT_ID); setSelectedRecipientCharacterIds(s); }} className="w-4 h-4" />
+                  <span className="text-sm text-foreground font-medium">{user?.full_name || 'You'}</span>
+                  <span className="text-[10px] text-primary bg-primary/20 px-1.5 py-0.5 rounded">User</span>
+                </label>
                 {['active_created', 'npc_regular', 'npc_family', 'npc_fictitious', 'other'].map(typeKey => {
                   const typeLabels = { active_created: 'Active Characters', npc_regular: 'NPC Regular', npc_family: 'NPC Family', npc_fictitious: 'NPC Fictitious', other: 'Other' };
                   return (
