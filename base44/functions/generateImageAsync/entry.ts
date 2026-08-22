@@ -1699,7 +1699,10 @@ Deno.serve(async (req) => {
           }
 
           // ── LAYER 3: INCARCERATION ────────────────────────────────────────────
-          if (!locationId && charRecord.is_jailed && charRecord.incarceration_facility_id) {
+          // Skip when the character is at an active Story Event venue — the venue
+          // is the authoritative location, not the correctional facility.
+          if (!locationId && charRecord.is_jailed && charRecord.incarceration_facility_id &&
+              charRecord.resolved_source_reason !== 'story_event_venue') {
             locationId = charRecord.incarceration_facility_id;
             console.log(`[generateImageAsync] INCARCERATION-AUTHORITY: character is jailed → facility="${charRecord.incarceration_facility_id}"`);
           }
@@ -2244,6 +2247,11 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         existingObjectCue: resolvedExistingObjectCue || null,
         userGender: _resolvedUserBundle?.gender || null,
       });
+    }
+
+    // ── CUSTODY INDICATOR — prepend if incarcerated character is at Story Event venue ──
+    if (_custodyIndicatorBlock && finalPrompt) {
+      finalPrompt = _custodyIndicatorBlock + finalPrompt;
     }
 
     function extractCameraVarsFromPrompt(p) {

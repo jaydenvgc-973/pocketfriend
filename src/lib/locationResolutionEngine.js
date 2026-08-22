@@ -129,7 +129,15 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // When the event ends, the backend commits a new state (resolved_source_reason
   // changes to 'home'/'work'/etc.) and this guard no longer matches, so the
   // character's location reverts to the app's existing authoritative logic.
-  if (character.resolved_source_reason === 'story_event_venue' && character.resolved_current_location_id) {
+  // STORY EVENT VENUE GUARD: preserve the committed Story Event venue only while
+  // the Story Event is temporally active. The backend sets story_event_venue_until
+  // to the event's end time. If the current time is past that, the committed venue
+  // is stale and must NOT override the current authoritative location — fall
+  // through to normal resolution (work/school/home/etc.).
+  if (character.resolved_source_reason === 'story_event_venue' &&
+      character.resolved_current_location_id &&
+      character.story_event_venue_until &&
+      Date.now() < new Date(character.story_event_venue_until).getTime()) {
     return {
       resolved_current_location_id: character.resolved_current_location_id,
       resolved_current_location_name: character.resolved_current_location_name || 'Story Event',

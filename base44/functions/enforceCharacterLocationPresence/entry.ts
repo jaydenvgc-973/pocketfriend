@@ -232,11 +232,24 @@ async function findActiveStoryEventVenue(base44, characterId, etTime) {
         const en = new Date(`${d}T${e.end_time}:00${etOffsetStr}`).getTime();
         if (!isNaN(en) && nowMs > en) continue; // Already ended
       }
+      // Compute activeUntil — the event's end time as an ISO datetime.
+      // The frontend guard uses this to determine if the committed Story Event
+      // venue is still temporally active. Stale venues (past activeUntil) are
+      // not preserved — the resolver falls through to normal resolution.
+      let _activeUntil = null;
+      if (e.end_time) {
+        const _enMs = new Date(`${d}T${e.end_time}:00${etOffsetStr}`).getTime();
+        if (!isNaN(_enMs)) _activeUntil = new Date(_enMs).toISOString();
+      } else {
+        // No end_time — all-day event: active until end of the event day (ET)
+        const _eodMs = new Date(`${d}T23:59:59${etOffsetStr}`).getTime();
+        if (!isNaN(_eodMs)) _activeUntil = new Date(_eodMs).toISOString();
+      }
       // Active Story Event with this character — return venue info
       if (e.is_rabbit_hole && e.rabbit_hole_venue_name) {
-        return { isRabbitHole: true, venueName: e.rabbit_hole_venue_name };
+        return { isRabbitHole: true, venueName: e.rabbit_hole_venue_name, activeUntil: _activeUntil };
       } else if (e.venue_id) {
-        return { isRabbitHole: false, venueId: e.venue_id, venueName: e.venue_name };
+        return { isRabbitHole: false, venueId: e.venue_id, venueName: e.venue_name, activeUntil: _activeUntil };
       }
       // No venue assigned — skip this event
       continue;
@@ -291,6 +304,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
           resolved_presence_status: 'visiting',
           resolved_source_reason: 'story_event_venue',
           resolved_last_updated_at: etTime.toISOString(),
+          story_event_venue_until: activeStoryEventVenue.activeUntil || null,
         },
         committed_result: {
           resolved_current_location_id: 'rabbit_hole',
@@ -312,6 +326,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
           resolved_presence_status: 'visiting',
           resolved_source_reason: 'story_event_venue',
           resolved_last_updated_at: etTime.toISOString(),
+          story_event_venue_until: activeStoryEventVenue.activeUntil || null,
         },
         committed_result: {
           resolved_current_location_id: activeStoryEventVenue.venueId,
@@ -1120,6 +1135,7 @@ function evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEven
     resolved_presence_status: resolved.resolved_presence_status,
     resolved_source_reason: resolved.resolved_source_reason,
     resolved_last_updated_at: etTime.toISOString(),
+    story_event_venue_until: activeStoryEventVenue?.activeUntil || null,
   };
   return {
     disposition: 'accepted',

@@ -533,6 +533,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "story_event_venue_until": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO datetime of the active Story Event's end time. Set when resolved_source_reason='story_event_venue'. The frontend guard checks this to determine if the committed Story Event venue is still temporally active. Null when no Story Event is active. Stale venues are not preserved after this time."
+    },
     "work_exception_status": {
       "type": "string",
       "enum": [
