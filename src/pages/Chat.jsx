@@ -108,6 +108,13 @@ export default function Chat({ chatTypeOverride } = {}) {
   const isPhone = chatType === "phone";
 
   const [messages, setMessages] = useState([]);
+  // messagesRef mirrors messages state for concurrent-generation state chaining.
+  // Synced in render body (general) and in createTextMessage (synchronous R1 commit).
+  const messagesRef = useRef([]);
+  messagesRef.current = messages;
+  // pendingGenerationRef holds the completion promise of the in-flight sendMessage.
+  // Overlapping sends chain onto it via a single await — not polling, not a queue.
+  const pendingGenerationRef = useRef(Promise.resolve());
   const [isTyping, setIsTyping] = useState(false);
   const [conversationId, setConversationId] = useState(null);
   const [userScrolledAway, setUserScrolledAway] = useState(false);
@@ -474,6 +481,17 @@ export default function Chat({ chatTypeOverride } = {}) {
     const locationShareResult = await tryHandleLocationShare(text);
     if (locationShareResult.handled) return;
 
+    // ── CONCURRENT GENERATION STATE CHAINING ───────────────────────────────
+    // Overlapping sendMessage executions must not independently construct
+    // generation context from stale React messages state. Each execution
+    // chains onto the previous one's completion promise so that when it
+    // builds recentMsgs, the previous generation's committed character
+    // response is already in messagesRef. This is a single await on an
+    // existing promise — not polling, not a queue, not a new service.
+    const prevGeneration = pendingGenerationRef.current;
+    let resolveDone;
+    pendingGenerationRef.current = new Promise(r => { resolveDone = r; });
+
     // ── WORLD PHONE EXPLICIT INTENT DETECTION ─────────────────────────────────
     // SINGLE IDENTITY DECISION: relationship roles ("text your dad") are resolved
     // ONCE here against the acting character's authoritative family_members /
@@ -704,7 +722,10 @@ export default function Chat({ chatTypeOverride } = {}) {
         return;
       }
 
-      recentMsgs = [...messages.slice(-50), userMsg];
+      // Await the previous generation's completion so its committed character
+      // response is in messagesRef before this generation builds its context.
+      if (prevGeneration) await prevGeneration.catch(() => {});
+      recentMsgs = [...messagesRef.current.slice(-50), userMsg];
       // ── VICK SERVICE BRIDGE: routes ALL Vick service questions through Account Help & Repair intelligence ──
       // Same source as Settings SupportAssistant. Persistent context per conversation. No one-shot summaries.
       if (shouldUseVickFastPath(character, text, !!userImageUrl)) { const fp = await executeVickDiagnosticFastPath({ character, characterId, text, convoId, userMsg, callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix, base44, setMessages, setIsTyping, releaseFgTask, isMountedRef, ownerEmail: currentUser?.email, isPrivate: !characterSpeechMode, imageUrls: userImageUrl ? [userImageUrl] : [] }); if (fp.handled) return; }
@@ -1980,6 +2001,12 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!txtMsg?.id) return null;
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
+        // Synchronously update messagesRef so a concurrent generation chained
+        // via pendingGenerationRef sees this committed response without waiting
+        // for React's async state update / re-render cycle.
+        if (!messagesRef.current.some(m => m.id === txtMsg.id)) {
+          messagesRef.current = [...messagesRef.current, txtMsg];
+        }
         setTimeout(() => {
           playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
         }, 500);
