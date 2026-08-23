@@ -466,7 +466,7 @@ export default function Chat({ chatTypeOverride } = {}) {
     return () => window.removeEventListener('chat:checkApprovals', handler);
   }, [checkForApprovalEvents]);
 
-  const sendMessage = async (text, userImageUrl) => {
+  const sendMessage = async (text, userImageUrl, _prevGeneration) => {
     if (!character) return;
     if (isGloballyRateLimited()) { setSendError("You're sending too quickly — please wait a moment and try again."); return; }
     setSendError(null);
