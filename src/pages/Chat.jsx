@@ -2191,6 +2191,21 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     }).catch(err => console.warn('[Chat] Conversation.update failed (non-blocking):', err?.message));
   };
 
+  // ── CONCURRENT GENERATION CHAINING WRAPPER ───────────────────────────────
+  // sendMessageChained serializes overlapping sends: each call stores
+  // sendMessage's own return promise in pendingGenerationRef and passes the
+  // previous promise as prevGeneration. sendMessage awaits prevGeneration before
+  // building recentMsgs, so the later generation sees the earlier generation's
+  // committed character response in messagesRef. The async function's natural
+  // return promise IS the completion signal — no deferred promise, no
+  // resolveDone, no try/finally.
+  const sendMessageChained = (text, userImageUrl) => {
+    const prevGeneration = pendingGenerationRef.current;
+    const execution = sendMessage(text, userImageUrl, prevGeneration);
+    pendingGenerationRef.current = execution;
+    return execution;
+  };
+
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
       <ChatHeader
@@ -2331,11 +2346,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           playingAs={activeCharacter}
           targetCharacter={character}
           recentMessages={messages}
-          onSelect={(text) => sendMessage(text, null)}
+          onSelect={(text) => sendMessageChained(text, null)}
         />
       ) : (
         <>
-          <ChatInput onSend={sendMessage} draftKey={`${chatType}:${characterId}`} disabled={isLoadingConvo && !conversationId} />
+          <ChatInput onSend={sendMessageChained} draftKey={`${chatType}:${characterId}`} disabled={isLoadingConvo && !conversationId} />
           {isVickChat && <VickCharacterSpeechToggle enabled={characterSpeechMode} onToggle={toggleCharacterSpeechMode} />}
         </>
       )}
