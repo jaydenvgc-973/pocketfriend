@@ -466,7 +466,7 @@ export default function Chat({ chatTypeOverride } = {}) {
     return () => window.removeEventListener('chat:checkApprovals', handler);
   }, [checkForApprovalEvents]);
 
-  const sendMessage = async (text, userImageUrl, _prevGeneration) => {
+  const sendMessage = async (text, userImageUrl, prevGeneration) => {
     if (!character) return;
     if (isGloballyRateLimited()) { setSendError("You're sending too quickly — please wait a moment and try again."); return; }
     setSendError(null);
@@ -480,17 +480,6 @@ export default function Chat({ chatTypeOverride } = {}) {
     // ── LOCATION SHARE DETECTION ───────────────────────────────────────────
     const locationShareResult = await tryHandleLocationShare(text);
     if (locationShareResult.handled) return;
-
-    // ── CONCURRENT GENERATION STATE CHAINING ───────────────────────────────
-    // Overlapping sendMessage executions must not independently construct
-    // generation context from stale React messages state. Each execution
-    // chains onto the previous one's completion promise so that when it
-    // builds recentMsgs, the previous generation's committed character
-    // response is already in messagesRef. This is a single await on an
-    // existing promise — not polling, not a queue, not a new service.
-    const prevGeneration = pendingGenerationRef.current;
-    let resolveDone;
-    pendingGenerationRef.current = new Promise(r => { resolveDone = r; });
 
     // ── WORLD PHONE EXPLICIT INTENT DETECTION ─────────────────────────────────
     // SINGLE IDENTITY DECISION: relationship roles ("text your dad") are resolved
