@@ -153,6 +153,9 @@ export default function Chat({ chatTypeOverride } = {}) {
     setConvoLoadError(null);
     setUserScrolledAway(false);
     setAwarenessNarrativeText(null);
+    // Reset generation chaining — prevents the new character's first send from
+    // awaiting the previous character's in-flight sendMessage promise.
+    pendingGenerationRef.current = Promise.resolve();
     // Clear canonical context cache — new character needs fresh canonical fetch
     // NOTE: location cache (locationSessionCache.js) is module-level and NOT cleared here —
     // location data is shared across characters and stable for the session.
