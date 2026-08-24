@@ -1735,6 +1735,14 @@ Deno.serve(async (req) => {
           // A null primary occupation_location_id does NOT gate evaluation — a
           // rabbit-hole primary job is a valid work obligation, and additional jobs
           // must be evaluated regardless of the primary job's location representation.
+          //
+          // VACATION MODE: Skip work dispatch entirely. The character remains free
+          // to travel and participate normally — they fall through to the existing
+          // needs/social/visit tiers below. The underlying employment record is
+          // untouched; only enforcement is suppressed. The canonical writer
+          // (enforceCharacterLocationPresence) also guards at_work requests, but
+          // skipping here avoids setting workDispatchDone=true (which would
+          // prevent the character from being considered for normal movement).
           let workDispatchDone = false;
 
           // ── BUILD ORDERED JOB LIST (primary first, then additional in stored order) ──
