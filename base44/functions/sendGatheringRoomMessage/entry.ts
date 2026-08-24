@@ -136,16 +136,23 @@ Deno.serve(async (req) => {
       media_share: mediaShare,
     });
 
-    // Return immediately — the message is committed. Character responses and
-    // memory extraction run without blocking the HTTP response. The sender sees
-    // their message instantly; character responses arrive via realtime when ready.
-    // This prevents "Network Error" when LLM calls take longer than the HTTP timeout.
+    // The message is committed. Character responses and memory extraction are
+    // generated below BEFORE returning the HTTP response. The sender sees their
+    // message instantly via realtime; character responses arrive via realtime
+    // when ready. The frontend fires this invoke without awaiting, so the
+    // response timing does not affect UX.
     const __grResponse = Response.json({ success: true, message });
 
-    // ── 6. GENERATE CHARACTER RESPONSES + MEMORY EXTRACTION (NON-BLOCKING) ─────
-    // Fire LLM work without blocking — do not await. The HTTP response is already
-    // prepared above; these operations commit their results via realtime.
-    (async () => {
+    // ── 6. GENERATE CHARACTER RESPONSES + MEMORY EXTRACTION ────────────────────
+    // Await character response generation and memory extraction BEFORE returning.
+    // The frontend fires this invoke without awaiting (fire-and-forget with a
+    // .catch), so the HTTP response timing does not affect the sender's UX.
+    //
+    // ROOT CAUSE FIX: The previous fire-and-forget pattern returned the HTTP
+    // response immediately, causing the Deno runtime to tear down the execution
+    // context before the background promise could complete. Character responses
+    // were NEVER generated because the IIFE was killed mid-execution.
+    await (async () => {
       try {
         // The response candidate pool is ALL valid active characters currently present
     // in this Gathering Room — NOT just the sender's own characters. This prevents
