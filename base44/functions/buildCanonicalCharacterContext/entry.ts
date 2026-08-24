@@ -689,7 +689,8 @@ function buildMemoryBlock(memories) {
   const lines = memories.slice(0, 14).map(m => {
     const title = m.title || m.memory_text?.substring(0, 60) || 'Memory';
     const desc = m.description || m.memory_text || '';
-    return `- ${title}: ${desc.substring(0, 200)}`;
+    const ts = m.timestamp ? ` [${new Date(m.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}]` : '';
+    return `- ${title}${ts}: ${desc.substring(0, 200)}`;
   });
   return `\nLONG-TERM MEMORY BANK (${memories.length} stored — reference naturally when relevant, do NOT force):\n${lines.join('\n')}\n`;
 }
