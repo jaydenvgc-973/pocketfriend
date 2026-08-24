@@ -642,6 +642,22 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   // enforceCharacterWorkSchedule requests at_work when its rules determine
   // the active work obligation requires that transition.
   if (requestedStatus === 'at_work') {
+    // Vacation Mode — temporary exemption from work attendance. Existing
+    // work schedule and employment records remain intact; only enforcement
+    // is skipped. The character remains free to travel and participate
+    // normally. Switching Vacation Mode OFF resumes normal enforcement.
+    //
+    // This is the SOLE CANONICAL WRITER — the single chokepoint through which
+    // ALL at_work requests pass. Guarding here covers every caller, including
+    // later paths (autonomousCharacterMovement orphaned-traveling repair,
+    // Tier 3.5 active-work dispatch) that recompute at_work from raw schedule
+    // fields without their own vacation_mode check. The initial shift-start
+    // path (enforceCharacterWorkSchedule) already checks vacation_mode before
+    // requesting at_work; this guard is redundant for that caller but
+    // authoritative for all others.
+    if (character.vacation_mode === true) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'vacation_mode_work_exempt' };
+    }
     // Hospitalized characters are in protected recovery — work cannot pull them out.
     if (character.resolved_presence_status === 'hospitalized') {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'hospitalized_work_blocked' };
