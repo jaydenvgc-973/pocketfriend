@@ -1771,6 +1771,14 @@ Deno.serve(async (req) => {
 
           // ── EVALUATE EACH JOB INDEPENDENTLY ──────────────────────────────────
           for (const job of orderedJobs) {
+            // VACATION MODE: Skip work dispatch entirely. The character remains
+            // free to travel and participate normally — they fall through to the
+            // existing needs/social/visit tiers below. The canonical writer
+            // (enforceCharacterLocationPresence) also rejects at_work requests,
+            // but skipping here prevents workDispatchDone=true from blocking the
+            // character's normal movement. The underlying employment record is
+            // untouched; only enforcement is suppressed.
+            if (char.vacation_mode === true) break;
             // Callout guard — applies to the primary job only
             if (job.type === 'primary') {
               const hasCallout = char.work_exception_status === 'called_out' &&
