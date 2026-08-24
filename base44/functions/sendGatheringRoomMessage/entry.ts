@@ -488,9 +488,60 @@ Deno.serve(async (req) => {
       );
 
       if (characterRecords.length > 0) {
-        const characterDescriptions = characterRecords.map(c =>
-          `${c.record.name}: ${c.record.personality_summary || 'Not specified'}. Communication style: ${c.record.communication_style || 'Natural and conversational'}. Emotional state: ${c.record.emotional_state || 'calm'}`
-        ).join('\n');
+        // ── CANONICAL CHARACTER CONTEXT ──────────────────────────────────────
+        // Each character enters the Gathering Room as their FULL CANONICAL SELF.
+        // buildCanonicalCharacterContext is the single source of truth for character
+        // identity — personality, background, family, relationships, memories, hard
+        // facts, life journal, education, religion, wardrobe, co-presence, world state,
+        // story events, marketing traits, research findings. This is the SAME context
+        // architecture used by Chat, Text, Scene, World Contacts, Narrative, Proactive,
+        // and Automatic Narrative. No parallel memory system, no reduced identity.
+        //
+        // ownerEmailHint is set to each character's own owner_email so the canonical
+        // context is built from the character's owning account perspective — their
+        // world name, their user's presence, their memories, their relationships.
+        // Cross-account interaction changes who is authorized to interact, not who
+        // the character IS.
+        const canonicalBlocks = await Promise.all(
+          characterRecords.map(async (c) => {
+            try {
+              const ctxRes = await base44.asServiceRole.functions.invoke('buildCanonicalCharacterContext', {
+                characterId: c.record.id,
+                interactionContext: 'group_chat',
+                ownerEmailHint: c.record.owner_email || null,
+              });
+              const ctxData = ctxRes?.data || ctxRes;
+              if (ctxData?.systemPrompt) {
+                return { name: c.record.name, prompt: ctxData.systemPrompt };
+              }
+              return null;
+            } catch (_) {
+              return null;
+            }
+          })
+        );
+        const validCanonicalBlocks = canonicalBlocks.filter(Boolean);
+        const canonicalContextBlock = validCanonicalBlocks.length > 0
+          ? [
+              '════════════════════════════════════',
+              'FULL CANONICAL IDENTITY — EACH CHARACTER IS THEIR COMPLETE SELF',
+              'Each character below brings their full established identity, history,',
+              'family, relationships, memories, and personality into this Gathering Room.',
+              'They do NOT become a different, temporary, or reduced version of themselves',
+              'merely because they are interacting with characters or users from another account.',
+              'Use each character\'s full canonical identity when generating their response.',
+              '════════════════════════════════════',
+              ...validCanonicalBlocks.map(b => `\n=== ${b.name} — FULL CANONICAL IDENTITY ===\n${b.prompt}\n=== END ${b.name} ===`),
+              '════════════════════════════════════',
+            ].join('\n')
+          : '';
+
+        // Fallback: if canonical context failed for all characters, use minimal descriptions
+        const characterDescriptions = validCanonicalBlocks.length > 0
+          ? ''
+          : characterRecords.map(c =>
+              `${c.record.name}: ${c.record.personality_summary || 'Not specified'}. Communication style: ${c.record.communication_style || 'Natural and conversational'}. Emotional state: ${c.record.emotional_state || 'calm'}`
+            ).join('\n');
 
         const prompt = [
           `You are moderating responses in a shared social space called "${room?.name || 'a Gathering Room'}".`,
@@ -504,7 +555,7 @@ Deno.serve(async (req) => {
           `Recent conversation:`,
           conversationHistory || '(no conversation yet)',
           '',
-          `The characters who are present and could respond:`,
+          canonicalContextBlock || `The characters who are present and could respond:`,
           characterDescriptions,
           '',
           relationshipContextBlock,

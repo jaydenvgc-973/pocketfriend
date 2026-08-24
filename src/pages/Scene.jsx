@@ -1432,6 +1432,30 @@ export default function Scene() {
       try {const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: id, limitMessages: 12 });if (r?.data?.contextText) crossMem[id] = r.data.contextText;} catch {}
     }));
 
+    // ── CANONICAL CHARACTER CONTEXT ──────────────────────────────────────────
+    // Each character in the Scene brings their FULL CANONICAL SELF — the same
+    // identity, history, family, relationships, memories, and personality they
+    // have in Chat/Text. buildCanonicalCharacterContext is the single source of
+    // truth. This includes admin-owned employees at shared locations — they use
+    // their own owner_email so their canonical context comes from their owning
+    // account, not the visiting account. Cross-account interaction changes who
+    // is authorized to interact, not who the character IS.
+    const _canonicalCharIds = [...broughtCharacters, ...selectedNpcs]
+      .filter((c) => !c.isNpc && c.id)
+      .map((c) => c.id);
+    const canonicalCtx = {};
+    await Promise.all(_canonicalCharIds.map(async (id) => {
+      try {
+        const charRecord = characters.find((c) => c.id === id);
+        const r = await base44.functions.invoke('buildCanonicalCharacterContext', {
+          characterId: id,
+          interactionContext: 'scene',
+          ownerEmailHint: charRecord?.owner_email || currentUser?.email || null,
+        });
+        if (r?.data?.systemPrompt) canonicalCtx[id] = r.data.systemPrompt;
+      } catch {}
+    }));
+
     try {
       const conversationHistory = messages.slice(-12).map((m) =>
       `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
@@ -1466,6 +1490,7 @@ export default function Scene() {
 Residents, owners, and employees who are present but NOT selected must NOT respond.
 If no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
 
+      const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`).join('\n\n');
       const memSection = eligibleKnownChars.filter((c) => crossMem[c.id]).map((c) => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
 
       // AGE GATING: Babies (<3) only 1-2 words; toddlers (3-5) max 5-word phrases
@@ -1485,7 +1510,7 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
 ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}
 People present: ${displayName}, ${charSummaries || "no one they know"}
-${memSection ? `\n=== CROSS-PAGE MEMORY — use for continuity, do NOT act like strangers ===\n${memSection}\n===` : ''}
+${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}
 ${watchContextBlock}
 
 Recent scene conversation:
