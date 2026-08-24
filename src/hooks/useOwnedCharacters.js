@@ -336,6 +336,7 @@ export function useOwnedCharacters(
     npcFamilyMembers,
     npcRegular,
     travelCompanions,
+    sharedLocationEmployees,
     isInitialLoading,
     isRefreshing,
     isFinancialLoading,

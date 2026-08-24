@@ -42,6 +42,7 @@ export function resolveTravelPresenceEntities({
   npcFamilyMembers = [],
   allCharacters = [],
   locations = [],
+  sharedLocationEmployees = [],
 }) {
   const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
   const normalized = [];
@@ -52,7 +53,7 @@ export function resolveTravelPresenceEntities({
     console.log(`[travelPresenceResolver] ${msg}`);
   };
 
-  debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, locs=${locations.length}`);
+  debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, shared_emps=${sharedLocationEmployees.length}, locs=${locations.length}`);
 
   // 0. Include USER as a presence entity when they are not Away
   // Source of truth: UserSettings.user_presence_status + user_current_location_id
@@ -141,6 +142,27 @@ export function resolveTravelPresenceEntities({
   // They should not be included as world-presence entities automatically.
   // They only appear on the world if they're explicit Character records (npc_family_member type).
   debugLog(`SKIPPING internal family synthesis: ${allCharacters.length} parent characters checked, 0 internal family entities created`);
+
+  // 5. Include admin-owned shared-location employees (cross-account visibility)
+  // These are admin-owned characters employed at admin-owned Shared locations.
+  // They are the canonical admin records — not copies, not NPCs. Ownership is
+  // preserved completely. They become visible to this user only through legitimate
+  // shared-location presence: the presence resolver (resolveCharacterLocation)
+  // determines if they are currently at_work/present at the shared location, and
+  // getPresenceAtLocation only shows them if resolved_current_location_id matches.
+  // If the employee has gone home or is not on shift, they do NOT appear here.
+  sharedLocationEmployees.forEach(char => {
+    if (seenIds.has(char.id)) return;
+    seenIds.add(char.id);
+    const normalized_entity = {
+      ...normalizeCharacterToPresenceEntity(char, locationMap),
+      source_type: 'shared_location_employee',
+      effective_presence_type: char.character_type || 'active_created_character',
+      is_shared_location_employee: true,
+    };
+    debugLog(`+ shared_location_employee: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
+  });
 
   debugLog(`FINAL: ${normalized.length} presence entities resolved, ${normalized.filter(e => e.is_currently_present).length} present now`);
   return normalized;
