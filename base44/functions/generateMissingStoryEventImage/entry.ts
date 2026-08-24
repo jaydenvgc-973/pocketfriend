@@ -229,6 +229,25 @@ Deno.serve(async (req) => {
         appearanceParts.push(`style: ${c.style_identity}`);
       }
 
+      // ── OUTFIT AUTHORITY: resolveCharacterOutfitContext ────────────────────
+      // Story Event images must honor the same Character Closet authority as
+      // Chat and Scene. Pass venue_id as locationId so facility uniforms
+      // (work/school/jail/hospital patient) resolve correctly.
+      let outfitText = null;
+      let outfitSource = 'no_closet';
+      try {
+        const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+          characterId: c.id,
+          locationId: event.venue_id || null,
+          locationCategory: null,
+          ownerEmail: ownerEmail,
+        });
+        outfitText = outfitRes?.text || null;
+        outfitSource = outfitRes?.source || 'not_called';
+      } catch (outfitErr) {
+        console.warn(`[generateMissingStoryEventImage] Outfit resolve failed for ${c.id}: ${outfitErr?.message}`);
+      }
+
       participantBundles.push({
         participant_type: 'character',
         character_id: c.id,
@@ -237,6 +256,8 @@ Deno.serve(async (req) => {
         matched_prompt_name: firstName,
         ref_images: refImages,
         appearance_notes: appearanceParts.join(' | ') || null,
+        outfit_text: outfitText,
+        outfit_source: outfitSource,
         is_focus: focusIds.includes(cid),
         char_record: c,
       });
@@ -261,6 +282,21 @@ Deno.serve(async (req) => {
           const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
           const platformUserId = userEntityRecord?.id || ownerEmail;
 
+          // ── USER OUTFIT AUTHORITY: resolveUserOutfitContext ──────────────────
+          let userOutfitText = null;
+          let userOutfitSource = 'no_outfit';
+          try {
+            const userOutfitRes = await base44.asServiceRole.functions.invoke('resolveUserOutfitContext', {
+              ownerEmail: ownerEmail,
+              locationCategory: null,
+              locationId: event.venue_id || null,
+            });
+            userOutfitText = userOutfitRes?.text || null;
+            userOutfitSource = userOutfitRes?.source || 'no_outfit';
+          } catch (userOutfitErr) {
+            console.warn(`[generateMissingStoryEventImage] User outfit resolve failed: ${userOutfitErr?.message}`);
+          }
+
           userBundle = {
             participant_type: 'user',
             character_id: null,
@@ -272,6 +308,8 @@ Deno.serve(async (req) => {
             gender: userEntityRecord?.gender || settingsRecord?.user_gender || null,
             culture: settingsRecord?.user_culture || null,
             race: settingsRecord?.user_race || null,
+            outfit_text: userOutfitText,
+            outfit_source: userOutfitSource,
             is_focus: event.user_participant?.is_focus || false,
           };
         }
@@ -328,11 +366,15 @@ Deno.serve(async (req) => {
       const appearanceBlock = b.appearance_notes
         ? `  APPEARANCE: ${b.appearance_notes}`
         : '';
+      const outfitBlock = b.outfit_text
+        ? `  OUTFIT (authoritative — from Character Closet): ${b.outfit_text}`
+        : '';
       return [
         `- ${b.display_name} ${b.is_focus ? '★ FOCUS' : ''}`,
         c.personality_summary ? `  Personality: ${c.personality_summary}` : '',
         c.gender ? `  Gender: ${c.gender}` : '',
         appearanceBlock,
+        outfitBlock,
       ].filter(Boolean).join('\n');
     }).join('\n\n');
 
@@ -360,6 +402,7 @@ Deno.serve(async (req) => {
       ``,
       `CHARACTER APPEARANCE (use for image — DO NOT invent generic strangers):`,
       characterAppearanceContext || 'Use reference images.',
+      ...(userBundle?.outfit_text ? [``, `USER OUTFIT (authoritative — from User Closet): ${userBundle.outfit_text}`] : []),
       ``,
       `Generate a single image prompt for the ${moment_type.replace('_', ' ')} moment.`,
       `Describe the scene at ${venueName}, the visible characters using their documented appearance,`,
@@ -412,6 +455,25 @@ Deno.serve(async (req) => {
       visibleCharNames.length > 0 ? visibleCharNames.map(n => `- ${n}`).join('\n') : '- No specific characters',
       ...(userBundle ? [`- ${userBundle.display_name} (User)`] : []),
       ``,
+      // ── CLOSET OUTFIT LOCK — honor the same wardrobe authority as Chat/Scene ──
+      ...(() => {
+        const lines = [`CLOSET OUTFIT LOCK — AUTHORITY: resolveCharacterOutfitContext / resolveUserOutfitContext`];
+        lines.push(`Each person's clothing below is the AUTHORITATIVE outfit from their Character/User Closet.`);
+        lines.push(`Do NOT invent, substitute, or genericize clothing. Render exactly what is described.`);
+        let anyOutfit = false;
+        for (const b of visibleBundles) {
+          if (b.outfit_text) {
+            anyOutfit = true;
+            lines.push(`- ${b.display_name}: ${b.outfit_text}`);
+          }
+        }
+        if (userBundle?.outfit_text) {
+          anyOutfit = true;
+          lines.push(`- ${userBundle.display_name} (User): ${userBundle.outfit_text}`);
+        }
+        if (!anyOutfit) lines.push(`(No closet outfits resolved — use reference images for clothing.)`);
+        return [lines.join('\n'), ``];
+      })(),
       `Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.`,
       ``,
       `IDENTITY ENFORCEMENT:`,

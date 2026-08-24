@@ -85,6 +85,38 @@ Deno.serve(async (req) => {
       : momentType === 'key_moment' ? focusIds.length > 0 ? focusIds : allIds.slice(0, 2)
       : allIds.slice(0, 2);
 
+    // ── OUTFIT AUTHORITY: resolveCharacterOutfitContext ────────────────────
+    const ownerEmail = event.owner_email || user.email;
+    const outfitByCid = {};
+    for (const cid of visibleCharIds) {
+      try {
+        const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+          characterId: cid,
+          locationId: event.venue_id || null,
+          locationCategory: null,
+          ownerEmail: ownerEmail,
+        });
+        if (outfitRes?.text) outfitByCid[cid] = outfitRes.text;
+      } catch (outfitErr) {
+        console.warn(`[regenerateStoryEventImage] Outfit resolve failed for ${cid}: ${outfitErr?.message}`);
+      }
+    }
+    const outfitLockLines = [
+      `CLOSET OUTFIT LOCK — AUTHORITY: resolveCharacterOutfitContext`,
+      `Each person's clothing below is the AUTHORITATIVE outfit from their Character Closet.`,
+      `Do NOT invent, substitute, or genericize clothing. Render exactly what is described.`,
+    ];
+    let anyOutfit = false;
+    for (const cid of visibleCharIds) {
+      const c = charById[cid];
+      if (outfitByCid[cid]) {
+        anyOutfit = true;
+        outfitLockLines.push(`- ${c?.name || cid}: ${outfitByCid[cid]}`);
+      }
+    }
+    if (!anyOutfit) outfitLockLines.push(`(No closet outfits resolved — use reference images for clothing.)`);
+    const outfitLockBlock = outfitLockLines.join('\n');
+
     const appearanceContext = visibleCharIds.map(cid => {
       const c = charById[cid];
       if (!c) return '';
@@ -108,6 +140,8 @@ Deno.serve(async (req) => {
       '',
       `CHARACTER APPEARANCE (MUST MATCH — NO GENERIC PEOPLE):`,
       appearanceContext || 'Use reference images for character identity.',
+      '',
+      outfitLockBlock,
       '',
       `VENUE: ${venueName}`,
       `MOMENT: ${momentType.replace('_', ' ')}`,

@@ -151,6 +151,52 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── OUTFIT AUTHORITY: resolveCharacterOutfitContext / resolveUserOutfitContext ──
+    // Story Event image regeneration must honor the same wardrobe authority as
+    // Chat and Scene. Resolve the authoritative closet outfit for each visible
+    // character and the user, then inject it as a CLOSET OUTFIT LOCK block.
+    const ownerEmail = event.owner_email || user.email;
+    const outfitByCid = {};
+    for (const cid of effectiveCharacterIds) {
+      const isUserIdentity = cid.startsWith('user_');
+      try {
+        if (isUserIdentity) {
+          const outfitRes = await base44.asServiceRole.functions.invoke('resolveUserOutfitContext', {
+            ownerEmail: ownerEmail,
+            locationCategory: null,
+            locationId: event.venue_id || null,
+          });
+          if (outfitRes?.text) outfitByCid[cid] = outfitRes.text;
+        } else {
+          const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+            characterId: cid,
+            locationId: event.venue_id || null,
+            locationCategory: null,
+            ownerEmail: ownerEmail,
+          });
+          if (outfitRes?.text) outfitByCid[cid] = outfitRes.text;
+        }
+      } catch (outfitErr) {
+        console.warn(`[regenerateStoryEventImageWithCharacters] Outfit resolve failed for ${cid}: ${outfitErr?.message}`);
+      }
+    }
+
+    const outfitLockLines = [];
+    outfitLockLines.push(`CLOSET OUTFIT LOCK — AUTHORITY: resolveCharacterOutfitContext / resolveUserOutfitContext`);
+    outfitLockLines.push(`Each person's clothing below is the AUTHORITATIVE outfit from their Character/User Closet.`);
+    outfitLockLines.push(`Do NOT invent, substitute, or genericize clothing. Render exactly what is described.`);
+    let anyOutfit = false;
+    for (const cid of effectiveCharacterIds) {
+      const c = charById[cid];
+      const name = c?.name || c?.display_name || cid;
+      if (outfitByCid[cid]) {
+        anyOutfit = true;
+        outfitLockLines.push(`- ${name}: ${outfitByCid[cid]}`);
+      }
+    }
+    if (!anyOutfit) outfitLockLines.push(`(No closet outfits resolved — use reference images for clothing.)`);
+    const outfitLockBlock = outfitLockLines.join('\n');
+
     // Build appearance context ONLY from resolved characters
     const appearanceParts = effectiveCharacterIds.map(cid => {
       const c = charById[cid];
@@ -221,6 +267,8 @@ Deno.serve(async (req) => {
       '',
       `CHARACTER APPEARANCE (MUST MATCH EXACTLY — USE REFERENCE IMAGES):`,
       appearanceParts || 'Use reference images for character identity.',
+      '',
+      outfitLockBlock,
       '',
       `VENUE: ${venueName}`,
       `MOMENT: ${momentType.replace('_', ' ')}`,
