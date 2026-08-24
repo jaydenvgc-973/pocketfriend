@@ -1270,7 +1270,11 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
   // never take artificial priority over linked jobs.
   const todayET = etTime.toISOString().slice(0, 10);
   const hasValidCallout = character.work_exception_status === 'called_out' && character.work_exception_date === todayET;
-  if (!hasValidCallout) {
+  // Vacation Mode suppresses work-schedule enforcement. The legacy recompute
+  // must NOT resolve at_work from the raw schedule when Vacation Mode is ON.
+  // The underlying employment record remains intact; only enforcement is
+  // skipped. The character falls through to sleep/visit/home resolution.
+  if (!hasValidCallout && character.vacation_mode !== true) {
     // Stale-location correction: for an explicitly configured rabbit-hole primary,
     // do NOT fall back to current_work_location_id — that field may be stale from
     // a previous linked occupation. For non-rabbit-hole legacy occupations, existing

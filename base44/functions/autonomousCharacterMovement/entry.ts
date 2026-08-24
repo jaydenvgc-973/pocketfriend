@@ -1331,7 +1331,8 @@ Deno.serve(async (req) => {
           const homeId = char.current_home_location_id || char.home_location_id || null;
           const isShift = (
             Array.isArray(char.work_days) && char.work_days.length > 0 &&
-            char.work_start_time && char.work_end_time && char.occupation_location_id
+            char.work_start_time && char.work_end_time && char.occupation_location_id &&
+            char.vacation_mode !== true
           ) ? (() => {
             const nowMin2 = nowET.getHours() * 60 + nowET.getMinutes();
             const s = toMin(char.work_start_time), e = toMin(char.work_end_time);
