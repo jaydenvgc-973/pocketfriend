@@ -990,27 +990,8 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
 
       const memData = memoryResult?.data;
       const _activeMems = memData?.memories || [];
-      // ── TEMPORAL ORDERING IN MEMORY BANK ──────────────────────────────────
-      // Memory descriptions are frozen snapshots of single past turns. Without
-      // temporal markers the LLM cannot distinguish a stale state from the
-      // current progressed state — it may generate from an obsolete conversational
-      // position as though subsequent progression never occurred. Including a
-      // relative timestamp for each memory lets the LLM see which memories are
-      // more recent and which have been superseded, so it generates from the
-      // current progressed state rather than a stale snapshot.
-      const _memRelTime = (ts) => {
-        if (!ts) return '';
-        const diff = Date.now() - new Date(ts).getTime();
-        const mins = Math.floor(diff / 60000);
-        if (mins < 1) return 'just now';
-        if (mins < 60) return `${mins}m ago`;
-        const hours = Math.floor(mins / 60);
-        if (hours < 24) return `${hours}h ago`;
-        const days = Math.floor(hours / 24);
-        return days < 30 ? `${days}d ago` : `${Math.floor(days / 30)}mo ago`;
-      };
       const memoryContext = _activeMems.length > 0
-        ? `\n\nLONG-TERM MEMORY BANK (${_activeMems.length} most relevant — reference naturally when relevant, don't force it):\n${_activeMems.map(m => `- ${m.title}${m.timestamp ? ` [${_memRelTime(m.timestamp)}]` : ''}: ${m.description}`).join("\n")}`
+        ? `\n\nLONG-TERM MEMORY BANK (${_activeMems.length} most relevant — reference naturally when relevant, don't force it):\n${_activeMems.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
         : '';
       const progressionData = progressionResult?.data;
       const lifeEventContext = progressionData?.progressionContext ? `\n\n${progressionData.progressionContext}` : '';
