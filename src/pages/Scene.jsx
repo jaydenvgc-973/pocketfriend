@@ -233,7 +233,8 @@ export default function Scene() {
     backendNpcFictitious,
     rlsNpcFictitious,
     familyByCreatedBy,
-    familyByOwner
+    familyByOwner,
+    sharedLocationEmployees
   } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
@@ -259,6 +260,7 @@ export default function Scene() {
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       allCharacters: characters,
+      sharedLocationEmployees,
       locations: locationsData
     });
 

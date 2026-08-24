@@ -107,5 +107,5 @@ export function useSceneCharacters(currentUser) {
   }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees]);
 
   // Return all source arrays so Scene can track dependency-per-query, not just final count
-  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner };
+  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees };
 }
