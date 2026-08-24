@@ -101,8 +101,12 @@ export function useOwnedCharacters(
   // ── 2. NPC fictitious via service-role backend ───────────────────────────────
   // RATE LIMIT PROTECTION: staleTime is 15 minutes to reduce re-fetch frequency.
   // refetchOnMount=false prevents duplicate invocations on component remounts.
+  // Also returns sharedLocationEmployees — admin-owned characters employed at
+  // admin-owned Shared locations, made visible to visiting users through
+  // legitimate shared-location presence. Ownership never changes; these are the
+  // canonical admin records, not copies.
   const {
-    data: backendNpcs = [],
+    data: backendNpcData,
     isLoading: isLoadingNpc,
     isFetching: isFetchingNpc,
   } = useQuery({
@@ -122,7 +126,7 @@ export function useOwnedCharacters(
       const res = await base44.functions.invoke("fetchNPCsForUser", {});
       const npcs = res?.data?.npcs || [];
       if (npcs.length > 0 && email) lfcWrite(email, 'npc-characters', npcs);
-      return npcs;
+      return res?.data || { npcs, sharedLocationEmployees: [] };
     },
     enabled: !!userId,
     staleTime: 15 * 60 * 1000,  // 15 min — NPCs don't change frequently
@@ -138,10 +142,21 @@ export function useOwnedCharacters(
     placeholderData: (prev) => prev,
   });
 
+  // Derive arrays from the query result — backward-compatible with consumers
+  // that expect backendNpcs as an array.
+  const backendNpcs = Array.isArray(backendNpcData) ? backendNpcData : (backendNpcData?.npcs || []);
+  const sharedLocationEmployees = Array.isArray(backendNpcData) ? [] : (backendNpcData?.sharedLocationEmployees || []);
+
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
+  // sharedLocationEmployees are admin-owned characters from admin-owned Shared
+  // locations. They are included here so the presence resolver can show them at
+  // those shared locations. They are NOT owned by this user — ownership is
+  // preserved completely. They are only visible through legitimate shared-
+  // location presence (resolved by resolveTravelPresenceEntities →
+  // getPresenceAtLocation, which checks resolved_current_location_id match).
   const allCharacters = (() => {
     const seen = new Set();
-    return [...rlsCharacters, ...backendNpcs].filter(c => {
+    return [...rlsCharacters, ...backendNpcs, ...sharedLocationEmployees].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
       return true;

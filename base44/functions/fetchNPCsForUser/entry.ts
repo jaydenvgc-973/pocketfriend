@@ -86,16 +86,67 @@ Deno.serve(async (req) => {
       return !c.character_type || ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type);
     });
 
+    // ── SOURCE 4: Admin-owned shared-location employees (cross-account visibility) ──
+    // When an admin marks a location as Shared and assigns characters as workers
+    // (via worker_character_ids), those admin-owned characters become visible to
+    // other users who visit that shared location. This is the ONLY cross-account
+    // character visibility path — strictly limited to admin-owned Shared locations
+    // and their workers. Ownership never changes; these are the canonical admin
+    // records made visible through legitimate shared-location presence.
+    let sharedLocationEmployees = [];
+    try {
+      const sharedLocs = await base44.asServiceRole.entities.LocationReference.filter(
+        { scope: 'shared', created_by_role: 'admin' },
+        '-created_date',
+        100
+      ).catch(() => []);
+
+      const workerIds = new Set();
+      for (const loc of sharedLocs) {
+        if (Array.isArray(loc.worker_character_ids)) {
+          for (const id of loc.worker_character_ids) {
+            if (id) workerIds.add(id);
+          }
+        }
+      }
+
+      if (workerIds.size > 0) {
+        const workerChars = (await Promise.all(
+          [...workerIds].map(id =>
+            base44.asServiceRole.entities.Character.filter({ id }, null, 1)
+              .then(res => res[0] || null)
+              .catch(() => null)
+          )
+        )).filter(c =>
+          c &&
+          c.status !== 'deleted' &&
+          c.status !== 'soft_deleted' &&
+          c.status !== 'merged'
+        );
+
+        // Only include cross-account characters — the current user's own workers
+        // are already loaded by the owner_email-scoped queries above.
+        sharedLocationEmployees = workerChars.filter(c => c.owner_email !== ownerEmail);
+      }
+
+      if (sharedLocationEmployees.length > 0) {
+        console.log(`[fetchNPCsForUser] SOURCE 4: ${sharedLocationEmployees.length} shared-location employees (cross-account): ${sharedLocationEmployees.map(c => c.name).join(', ')}`);
+      }
+    } catch (e) {
+      console.warn('[fetchNPCsForUser] Shared-location employees fetch failed (non-blocking):', e.message);
+    }
+
     const fictitiousNames = all.filter(c => c.character_type === 'npc_fictitious').map(c => c.name);
     const summary = {
       total: all.length,
       fictitious: all.filter(c => c.character_type === 'npc_fictitious').length,
       family: all.filter(c => c.character_type === 'npc_family_member').length,
       regular: all.filter(c => c.character_type === 'npc_regular').length,
+      sharedLocationEmployees: sharedLocationEmployees.length,
       fictitiousNames,
     };
     console.log('[fetchNPCsForUser] summary:', JSON.stringify(summary));
-    return Response.json({ npcs: all });
+    return Response.json({ npcs: all, sharedLocationEmployees });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

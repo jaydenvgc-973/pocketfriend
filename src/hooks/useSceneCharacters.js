@@ -25,15 +25,25 @@ export function useSceneCharacters(currentUser) {
     staleTime: 0,
   });
 
-  const { data: backendNpcFictitious = [] } = useQuery({
+  // Also fetches sharedLocationEmployees — admin-owned characters employed at
+  // admin-owned Shared locations. These are the canonical admin records (not
+  // copies), made visible through legitimate shared-location presence. They
+  // are included in the character pool so the presence resolver can show them
+  // at those shared locations when they are legitimately present/on shift.
+  const { data: backendNpcData = {} } = useQuery({
     queryKey: ["npcCharacters", currentUser?.id],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious');
+      return {
+        npcFictitious: (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious'),
+        sharedLocationEmployees: res?.data?.sharedLocationEmployees || [],
+      };
     },
     enabled: enabledById,
     staleTime: 0,
   });
+  const backendNpcFictitious = backendNpcData?.npcFictitious || [];
+  const sharedLocationEmployees = backendNpcData?.sharedLocationEmployees || [];
 
   const { data: rlsNpcFictitious = [] } = useQuery({
     queryKey: ["npcFictitiousRls", currentUser?.email],
@@ -78,12 +88,23 @@ export function useSceneCharacters(currentUser) {
       seenFam.add(c.id);
       return true;
     });
-    return [...activeChars, ...npcFictitious, ...npcFamily].filter(c =>
+    // sharedLocationEmployees are admin-owned characters from admin-owned
+    // Shared locations. Dedupe against the user's own characters (seenNpc +
+    // seenFam already cover npc_fictitious and npc_family_member; activeChars
+    // are deduped separately). Include them so the Scene presence resolver
+    // can show them at those shared locations.
+    const seenShared = new Set([...activeChars, ...npcFictitious, ...npcFamily].map(c => c.id));
+    const sharedEmployees = sharedLocationEmployees.filter(c => {
+      if (seenShared.has(c.id)) return false;
+      seenShared.add(c.id);
+      return true;
+    });
+    return [...activeChars, ...npcFictitious, ...npcFamily, ...sharedEmployees].filter(c =>
       c.is_test_character !== true &&
       c.diagnostic_only !== true &&
       c.exclude_from_default_scene_queries !== true
     );
-  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner]);
+  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees]);
 
   // Return all source arrays so Scene can track dependency-per-query, not just final count
   return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner };
