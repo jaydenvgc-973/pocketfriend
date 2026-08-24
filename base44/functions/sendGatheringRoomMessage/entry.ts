@@ -502,14 +502,29 @@ Deno.serve(async (req) => {
         // world name, their user's presence, their memories, their relationships.
         // Cross-account interaction changes who is authorized to interact, not who
         // the character IS.
+        // ── TIMEOUT-WRAPPED CANONICAL CONTEXT ────────────────────────────────
+        // buildCanonicalCharacterContext is extremely heavy (calls
+        // enforceCharacterLocationPresence, retrieveActiveMemory,
+        // resolveCharacterFamilyGraph, getCharacterTravelContext, etc.).
+        // With multiple characters in the room, Promise.all can exceed the
+        // Deno function timeout, killing the entire async IIFE before the LLM
+        // call is made — characters stop responding entirely.
+        // The timeout ensures canonical context enriches responses when it
+        // loads fast, but falls back to minimal descriptions when it doesn't,
+        // so character responses are ALWAYS generated.
+        const CANONICAL_TIMEOUT_MS = 12000;
         const canonicalBlocks = await Promise.all(
           characterRecords.map(async (c) => {
             try {
-              const ctxRes = await base44.asServiceRole.functions.invoke('buildCanonicalCharacterContext', {
+              const ctxPromise = base44.asServiceRole.functions.invoke('buildCanonicalCharacterContext', {
                 characterId: c.record.id,
                 interactionContext: 'group_chat',
                 ownerEmailHint: c.record.owner_email || null,
               });
+              const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('canonical_context_timeout')), CANONICAL_TIMEOUT_MS)
+              );
+              const ctxRes = await Promise.race([ctxPromise, timeoutPromise]);
               const ctxData = ctxRes?.data || ctxRes;
               if (ctxData?.systemPrompt) {
                 return { name: c.record.name, prompt: ctxData.systemPrompt };

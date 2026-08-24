@@ -82,6 +82,12 @@ function isCharacterOnWorkSchedule(character, etTime) {
 // workplace — no LocationReference is required merely because the workplace
 // is off-screen. The callout guard matches the work schedule block above.
 function _findActiveRabbitHoleWorkShift(character, etTime) {
+  // Vacation Mode — temporary exemption from work attendance. Existing
+  // work schedule and employment records remain intact; only enforcement
+  // is skipped. This guard covers the rabbit-hole preservation path in
+  // computeResolvedLocation, which bypasses the main work-schedule guard
+  // (line 1277) and was the demonstrated Vacation Mode bypass path.
+  if (character.vacation_mode === true) return null;
   // Callout check — if the character called out today, no work shift is active
   const todayET = etTime.toISOString().slice(0, 10);
   const hasValidCallout =

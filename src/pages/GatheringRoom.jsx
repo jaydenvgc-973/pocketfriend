@@ -154,24 +154,14 @@ export default function GatheringRoom() {
       // Messages from a previous gathering (timestamp < gathering_epoch) are
       // excluded — they must not repopulate the active room.
       if (epoch && new Date(msg.timestamp).getTime() < new Date(epoch).getTime()) return;
-      queryClient.setQueryData(["gatheringRoomMessages", roomId, epoch], (old = []) => {
-        if (event.type === 'delete') return (old || []).filter(m => m.id !== msg.id);
-        const exists = (old || []).some(m => m.id === msg.id);
-        if (exists) {
-          return (old || []).map(m => m.id === msg.id ? { ...m, ...msg } : m);
-        }
-        // Append new message, maintain timestamp order
-        let updated = [...(old || []), msg];
-        updated.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        // ── Rolling 20-message window: trim oldest, newest survives ──
-        // The newest message is NEVER removed to preserve older ones. When the
-        // transcript exceeds 20, the oldest live message rolls off. Character
-        // memory of rolled-off messages is preserved through the Memory entity.
-        if (updated.length > 20) {
-          updated = updated.slice(updated.length - 20);
-        }
-        return updated;
-      });
+      // ── CANONICAL DELIVERY: invalidate the messages query ──
+      // Invalidating (instead of setQueryData with a potentially stale epoch
+      // ref) guarantees every participant fetches the same canonical message
+      // stream from the server. This is event-driven (fires only on
+      // subscription events), NOT polling. It resolves the cross-account sync
+      // issue where a stale gatheringEpochRef caused setQueryData to write to
+      // a cache key that didn't match the active query, losing messages.
+      queryClient.invalidateQueries({ queryKey: ["gatheringRoomMessages", roomId] });
     });
 
     const unsubRoom = base44.entities.GatheringRoom.subscribe((event) => {
