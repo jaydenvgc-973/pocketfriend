@@ -294,6 +294,24 @@ Deno.serve(async (req) => {
         appearanceParts.push(`style: ${c.style_identity}`);
       }
 
+      // ── OUTFIT AUTHORITY: resolveCharacterOutfitContext ────────────────────
+      // Story Event images must honor the same Character Closet authority as
+      // Chat and Scene. Pass venue_id as locationId so facility uniforms resolve.
+      let outfitText = null;
+      let outfitSource = 'no_closet';
+      try {
+        const outfitRes = await base44.asServiceRole.functions.invoke('resolveCharacterOutfitContext', {
+          characterId: c.id,
+          locationId: event.venue_id || null,
+          locationCategory: null,
+          ownerEmail: ownerEmail,
+        });
+        outfitText = outfitRes?.text || null;
+        outfitSource = outfitRes?.source || 'not_called';
+      } catch (outfitErr) {
+        console.warn(`[generateStoryEvent] Outfit resolve failed for ${c.id}: ${outfitErr?.message}`);
+      }
+
       participantBundles.push({
         participant_type: 'character',
         character_id: c.id,
@@ -302,6 +320,8 @@ Deno.serve(async (req) => {
         matched_prompt_name: firstName,
         ref_images: refImages,
         appearance_notes: appearanceParts.join(' | ') || null,
+        outfit_text: outfitText,
+        outfit_source: outfitSource,
         is_focus: focusIds.includes(cid),
         char_record: c,
       });
@@ -346,6 +366,21 @@ Deno.serve(async (req) => {
           const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
           const platformUserId = userEntityRecord?.id || ownerEmail; // user.id from User entity — NOT email
 
+          // ── USER OUTFIT AUTHORITY: resolveUserOutfitContext ──────────────────
+          let userOutfitText = null;
+          let userOutfitSource = 'no_outfit';
+          try {
+            const userOutfitRes = await base44.asServiceRole.functions.invoke('resolveUserOutfitContext', {
+              ownerEmail: ownerEmail,
+              locationCategory: null,
+              locationId: event.venue_id || null,
+            });
+            userOutfitText = userOutfitRes?.text || null;
+            userOutfitSource = userOutfitRes?.source || 'no_outfit';
+          } catch (userOutfitErr) {
+            console.warn(`[generateStoryEvent] User outfit resolve failed: ${userOutfitErr?.message}`);
+          }
+
           userBundle = {
             participant_type: 'user',
             character_id: null,
@@ -362,6 +397,8 @@ Deno.serve(async (req) => {
             ethnicities: userEntityRecord?.ethnicities || (settingsRecord?.user_race ? [settingsRecord.user_race] : []),
             avatar_url: settingsRecord?.avatar_url || userEntityAvatars[0] || null,
             image_avatar_url: settingsRecord?.image_avatar_url || null,
+            outfit_text: userOutfitText,
+            outfit_source: userOutfitSource,
             is_focus: event.user_participant?.is_focus || false,
           };
           console.log(`[generateStoryEvent] ✅ User bundle resolved (include_user=true): worldName="${worldName}" userId="${platformUserId}" refs=${userRefImages.length} appearance_lock=${!!settingsRecord?.appearance_lock} gender=${userBundle.gender || 'none'}`);
