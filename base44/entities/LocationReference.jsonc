@@ -69,7 +69,8 @@
       "enum": [
         "global",
         "character_specific",
-        "shared"
+        "shared",
+        "destination"
       ],
       "default": "global"
     },
@@ -176,8 +177,7 @@
         "community",
         "generic",
         "jail_prison",
-        "transportation",
-        "destination"
+        "transportation"
       ],
       "default": "generic"
     },

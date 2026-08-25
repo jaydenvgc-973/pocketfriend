@@ -2309,7 +2309,38 @@ Deno.serve(async (req) => {
           inventoryData.inventoryLevel === 'critical' ||
           inventoryData.inventoryLevel === 'low'
         );
+        // ── VACATION MODE LOCATION AUTHORITY + DESTINATION EXCLUSION ──────────
+        // Two rules applied at the shared destination-selection point:
+        //
+        // 1. DESTINATION CATEGORY EXCLUSION (always applies):
+        //    "destination" category locations are intentionally excluded from
+        //    ordinary autonomous needs-based travel. A Destination becomes
+        //    eligible ONLY when Vacation Mode is ON for this character AND that
+        //    Destination is explicitly selected in this character's
+        //    vacation_location_ids.
+        //
+        // 2. VACATION LOCATION RESTRICTION (Vacation Mode ON only):
+        //    When Vacation Mode is ON and vacation_location_ids is non-empty,
+        //    autonomous destination selection is restricted to those selected
+        //    locations only. The permanent home is NOT eligible unless explicitly
+        //    included. This prevents autonomous selection of otherwise-normal
+        //    locations merely because a need, social rule, routine, or general
+        //    travel logic would ordinarily make them eligible.
+        //
+        // When Vacation Mode is OFF, only rule 1 (Destination exclusion) applies.
+        // The permanent home and all normal locations remain normally eligible.
+        const _vacationModeOn = char.vacation_mode === true;
+        const _vacIds = Array.isArray(char.vacation_location_ids) ? char.vacation_location_ids : [];
         const eligibleLocations = openLocations.filter(loc => {
+          // Rule 1: Destination category exclusion
+          if (loc.category === 'destination') {
+            if (!(_vacationModeOn && _vacIds.includes(loc.id))) return false;
+          }
+          // Rule 2: Vacation Location restriction
+          if (_vacationModeOn && _vacIds.length > 0) {
+            if (!_vacIds.includes(loc.id)) return false;
+          }
+          // Existing grocery eligibility gate
           if (loc.category !== 'grocery') return true;
           return !!needsGroceryRun;
         });
