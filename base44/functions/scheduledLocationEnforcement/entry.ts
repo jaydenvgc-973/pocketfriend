@@ -208,12 +208,24 @@ function isNearSleepWindow(character, etTime, bufferMinutes) {
   return now >= windowStart && now < sleepStartMin;
 }
 
-// Valid sleep locations — categories that are acceptable for sleeping
-const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+// Valid sleep locations — capability-based, not just top-level category.
+// A location is sleep-eligible if its category is inherently sleep-permitting
+// OR it contains a sleep-permitting environment (residential or community).
+const VALID_SLEEP_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter', 'generic',
+  'jail_prison', 'transportation',
+]);
+const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 
 function isValidSleepLocation(location) {
   if (!location) return false;
-  return VALID_SLEEP_CATEGORIES.has(location.category || '');
+  if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  if (Array.isArray(location.environments)) {
+    for (const env of location.environments) {
+      if (SLEEP_PERMITTING_ENV_TYPES.has(env.type)) return true;
+    }
+  }
+  return false;
 }
 
 // Check if a location is currently open based on its operating_hours and ET time.
