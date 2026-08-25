@@ -42,15 +42,28 @@ function isLocationOpen(location, nowET) {
   return true;
 }
 
-// All categories where a character may validly sleep
-const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+// All categories where a character may validly sleep (capability-based, not just top-level category)
+const VALID_SLEEP_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter', 'generic',
+  'jail_prison', 'transportation',
+]);
+const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 // Outdoor/public categories valid for sleeping when character is homeless
 const HOMELESS_SLEEP_CATEGORIES = new Set(['outdoor', 'public', 'park', 'community']);
 // All confinement facility categories — these are LOCKED states, never corrected
 const CONFINEMENT_CATEGORIES = new Set(['jail_prison']);
 
 function isValidSleepLocation(loc) {
-  return loc && VALID_SLEEP_CATEGORIES.has(loc.category || '');
+  if (!loc) return false;
+  // Category-based eligibility
+  if (VALID_SLEEP_CATEGORIES.has(loc.category || '')) return true;
+  // Environment-based eligibility (multi-use locations with residential/community env)
+  if (Array.isArray(loc.environments)) {
+    for (const env of loc.environments) {
+      if (SLEEP_PERMITTING_ENV_TYPES.has(env.type)) return true;
+    }
+  }
+  return false;
 }
 
 function isConfinementLocation(loc) {
