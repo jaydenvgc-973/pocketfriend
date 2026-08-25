@@ -60,11 +60,16 @@ Deno.serve(async (req) => {
         housing_location_id = lastLocationId;
       } else {
         // Check SCENARIO 4: Resident scan for home associations
-        const homeLocs = Object.values(locationMap).filter(
-          loc => (loc.category === 'home' || loc.category === 'generic') &&
-                 ((loc.resident_character_ids || []).includes(character.id) ||
-                  (loc.residents || []).some(r => r.character_id === character.id))
-        );
+        const homeLocs = Object.values(locationMap).filter(loc => {
+          // Category-based: home, generic, or transportation
+          const catEligible = loc.category === 'home' || loc.category === 'generic' || loc.category === 'transportation';
+          // Environment-based: has residential or community environment
+          const envEligible = Array.isArray(loc.environments) &&
+            loc.environments.some(env => env.type === 'residential' || env.type === 'community');
+          if (!catEligible && !envEligible) return false;
+          return ((loc.resident_character_ids || []).includes(character.id) ||
+                  (loc.residents || []).some(r => r.character_id === character.id));
+        });
 
         if (homeLocs.length > 0) {
           // SCENARIO 4: Found home via resident scan

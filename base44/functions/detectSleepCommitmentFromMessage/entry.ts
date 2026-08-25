@@ -185,11 +185,16 @@ function classifyCommitment(text) {
 }
 
 // ── VALID SLEEP LOCATION CHECK (aligned with enforceCharacterLocationPresence) ──
+// Sleep-eligibility is based on location capabilities, not just top-level category.
+// A location is sleep-eligible if its category is inherently sleep-permitting
+// OR it contains a sleep-permitting environment (residential or community).
 const VALID_SLEEP_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'generic',
   'jail', 'prison', 'detention_center', 'correctional_facility',
   'juvenile_detention', 'halfway_house', 'holding_cell',
+  'transportation'
 ]);
+const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 
 function isAtValidSleepLocation(character, locationMap) {
   // Incarceration / house arrest are handled by the authority as hard locks;
@@ -207,8 +212,15 @@ function isAtValidSleepLocation(character, locationMap) {
     (character.resolved_location_type || '').toLowerCase() === 'home'
   )) return true;
 
-  // Valid sleep-category location (hotel, shelter, etc.)
+  // Valid sleep-category location (hotel, shelter, transportation, etc.)
   if (currentLoc && VALID_SLEEP_CATEGORIES.has(currentCat)) return true;
+
+  // Environment-based eligibility (multi-use locations with residential/community env)
+  if (currentLoc && Array.isArray(currentLoc.environments)) {
+    for (const env of currentLoc.environments) {
+      if (SLEEP_PERMITTING_ENV_TYPES.has(env.type)) return true;
+    }
+  }
 
   return false;
 }
