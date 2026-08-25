@@ -825,13 +825,28 @@ function _isCharacterCurrentlyOnAnyShift(character, locationMap = {}, currentTim
 }
 
 /**
- * Valid sleep location categories
+ * Valid sleep location — capability-based, not just top-level category.
+ * A location is sleep-eligible if its category is inherently sleep-permitting
+ * OR it contains a sleep-permitting environment (residential or community).
+ * Mirrors isValidSleepLocation in enforceCharacterLocationPresence.
  */
-const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+const VALID_SLEEP_CATEGORIES = new Set([
+  'home', 'hotel', 'shelter', 'generic',
+  'jail_prison', 'transportation',
+]);
+const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 
 function isValidSleepCategory(location) {
   if (!location) return false;
-  return VALID_SLEEP_CATEGORIES.has(location.category || '');
+  // Category-based eligibility
+  if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  // Environment-based eligibility (multi-use locations with residential/community env)
+  if (Array.isArray(location.environments)) {
+    for (const env of location.environments) {
+      if (SLEEP_PERMITTING_ENV_TYPES.has(env.type)) return true;
+    }
+  }
+  return false;
 }
 
 function resolveSleepHomeId(character, locationMap) {

@@ -1125,7 +1125,13 @@ export default function SupportAssistant({ user }) {
           c.character_type === 'active_created_character'
         );
         const noHome = activeCreated.filter(c => !c.current_home_location_id);
-        const locs = (locRes?.data?.locations || []).filter(l => ['home', 'hotel', 'shelter'].includes(l.category));
+        const locs = (locRes?.data?.locations || []).filter(l => {
+          if (['home', 'hotel', 'shelter', 'generic', 'transportation'].includes(l.category)) return true;
+          if (Array.isArray(l.environments)) {
+            return l.environments.some(env => env.type === 'residential' || env.type === 'community');
+          }
+          return false;
+        });
 
         if (noHome.length === 0) {
           addMsg({ role: 'ai', content: `✅ **All active characters already have a home location assigned.** No missing home assignments found.\n\nIf a character is still appearing in the wrong place, try **"sync my locations"** to re-run location enforcement.`, ts: ts() });
