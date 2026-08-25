@@ -178,15 +178,34 @@ function isCharacterOnSchoolSchedule(character, etTime, locationMap) {
   return false;
 }
 
+// Sleep-eligibility is based on location capabilities, not just top-level category.
+// A location is sleep-eligible if:
+//   1. Its category is inherently sleep-permitting (home, hotel, shelter, generic,
+//      confinement facilities, transportation), OR
+//   2. It contains a sleep-permitting environment (residential or community).
+// Multi-use locations (schools with dorms, community centers with residential
+// space, mixed-use buildings) are eligible when they have at least one
+// sleep-permitting environment — the primary category does not disqualify them.
 const VALID_SLEEP_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'generic',
   'jail', 'prison', 'detention_center', 'correctional_facility',
-  'juvenile_detention', 'halfway_house', 'holding_cell'
+  'juvenile_detention', 'halfway_house', 'holding_cell',
+  'transportation'
 ]);
+
+const SLEEP_PERMITTING_ENVIRONMENT_TYPES = new Set(['residential', 'community']);
 
 function isValidSleepLocation(location) {
   if (!location) return false;
-  return VALID_SLEEP_CATEGORIES.has(location.category || '');
+  // 1. Category-based eligibility — inherently sleep-permitting categories
+  if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  // 2. Environment-based eligibility — multi-use locations with a sleep-permitting environment
+  if (Array.isArray(location.environments)) {
+    for (const env of location.environments) {
+      if (SLEEP_PERMITTING_ENVIRONMENT_TYPES.has(env.type)) return true;
+    }
+  }
+  return false;
 }
 
 function resolveValidSleepLocationId(character, locationMap) {

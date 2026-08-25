@@ -162,7 +162,21 @@ function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId
   const [loading, setLoading] = useState(false);
 
   // Sleep-eligible categories (matches VALID_SLEEP_CATEGORIES in enforceCharacterLocationPresence)
-  const SLEEP_ELIGIBLE = new Set(['home', 'hotel', 'shelter', 'generic', 'jail_prison']);
+  // Plus environment-based eligibility: locations with a residential or community environment
+  // are also sleep-eligible, even if their primary category is not in this set.
+  const SLEEP_ELIGIBLE_CATEGORIES = new Set([
+    'home', 'hotel', 'shelter', 'generic', 'jail_prison', 'transportation'
+  ]);
+  const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
+
+  const isSleepEligible = (loc) => {
+    if (!loc) return false;
+    if (SLEEP_ELIGIBLE_CATEGORIES.has(loc.category)) return true;
+    if (Array.isArray(loc.environments)) {
+      return loc.environments.some(env => SLEEP_PERMITTING_ENV_TYPES.has(env.type));
+    }
+    return false;
+  };
 
   const loadLocations = async () => {
     if (loading) return;
@@ -273,13 +287,13 @@ function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId
           </p>
           <div className="space-y-1">
             {selectedLocations.map(loc => {
-              const isSleepEligible = SLEEP_ELIGIBLE.has(loc.category);
+              const sleepEligible = isSleepEligible(loc);
               const isCurrentHome = vacationHomeId === loc.id;
               return (
                 <button
                   key={loc.id}
-                  onClick={() => isSleepEligible && onSetVacationHome(loc.id)}
-                  disabled={!isSleepEligible || isUpdating}
+                  onClick={() => sleepEligible && onSetVacationHome(loc.id)}
+                  disabled={!sleepEligible || isUpdating}
                   className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg transition-colors ${
                     isCurrentHome ? "bg-primary/15 border border-primary/30" : "bg-secondary/50 hover:bg-secondary"
                   } ${!isSleepEligible ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -287,7 +301,7 @@ function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId
                   <div className="flex items-center gap-2 min-w-0">
                     <Home className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                     <span className="text-xs text-foreground truncate">{loc.name}</span>
-                    {!isSleepEligible && (
+                    {!sleepEligible && (
                       <span className="text-[10px] text-muted-foreground flex-shrink-0">(not sleep-eligible)</span>
                     )}
                   </div>

@@ -561,9 +561,10 @@
             "enum": [
               "operational",
               "residential",
-              "restricted"
+              "restricted",
+              "community"
             ],
-            "description": "operational = subject to business hours; residential = always available regardless of business hours; restricted = suppresses general ambient population, scene built from user + companions + explicitly included + contextually required occupants only"
+            "description": "operational = subject to business hours; residential = always available regardless of business hours, sleep-eligible; restricted = suppresses general ambient population, scene built from user + companions + explicitly included + contextually required occupants only; community = communal/social space, sleep-eligible, follows business hours by default"
           },
           "follows_business_hours": {
             "type": "boolean",

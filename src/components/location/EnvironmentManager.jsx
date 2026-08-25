@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Trash2, Building2, Home, Lock, X, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, Building2, Home, Lock, Users, X, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -99,6 +99,8 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
                   ? <Home className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                   : env.type === "restricted"
                   ? <Lock className="w-4 h-4 text-rose-400 flex-shrink-0" />
+                  : env.type === "community"
+                  ? <Users className="w-4 h-4 text-sky-400 flex-shrink-0" />
                   : <Building2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
                 }
                 <span className="text-sm font-semibold text-foreground flex-1">{env.name}</span>
@@ -107,9 +109,11 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
                     ? "bg-emerald-400/10 text-emerald-400"
                     : env.type === "restricted"
                     ? "bg-rose-400/10 text-rose-400"
+                    : env.type === "community"
+                    ? "bg-sky-400/10 text-sky-400"
                     : "bg-amber-400/10 text-amber-400"
                 }`}>
-                  {env.type === "residential" ? "Residential" : env.type === "restricted" ? "Restricted" : "Operational"}
+                  {env.type === "residential" ? "Residential" : env.type === "restricted" ? "Restricted" : env.type === "community" ? "Community" : "Operational"}
                 </span>
                 <button
                   type="button"
@@ -120,8 +124,8 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
                 </button>
               </div>
 
-              {/* Business hours toggle for operational / restricted */}
-              {(env.type === "operational" || env.type === "restricted") && (
+              {/* Business hours toggle for operational / restricted / community */}
+              {(env.type === "operational" || env.type === "restricted" || env.type === "community") && (
                 <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-card border border-border">
                   <span className="text-xs text-muted-foreground">Follows business hours</span>
                   <button
@@ -140,7 +144,10 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
                 </div>
               )}
               {env.type === "residential" && (
-                <p className="text-[10px] text-emerald-400/80 px-2">Always available — ignores business hours</p>
+                <p className="text-[10px] text-emerald-400/80 px-2">Always available — ignores business hours. Sleep-eligible.</p>
+              )}
+              {env.type === "community" && (
+                <p className="text-[10px] text-sky-400/80 px-2">Communal space — sleep-eligible, follows business hours by default</p>
               )}
               {env.type === "restricted" && (
                 <p className="text-[10px] text-rose-400/80 px-2">Restricted — suppresses ambient crowd; scene built from you, your companions, and required occupants only</p>
@@ -193,7 +200,8 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { value: "operational", label: "🏢 Operational", desc: "Follows business hours" },
-                  { value: "residential", label: "🏠 Residential", desc: "Always available" },
+                  { value: "residential", label: "🏠 Residential", desc: "Always available, sleep-eligible" },
+                  { value: "community", label: "👥 Community", desc: "Communal, sleep-eligible" },
                   { value: "restricted", label: "🔒 Restricted", desc: "Suppresses ambient crowd" },
                 ].map(opt => (
                   <button
@@ -216,7 +224,7 @@ export default function EnvironmentManager({ zones = [], environments = [], onCh
                 ))}
               </div>
 
-              {/* Business hours toggle for operational / restricted */}
+              {/* Business hours toggle for operational / restricted / community */}
               {newEnvType !== "residential" && (
                 <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-card border border-border">
                   <span className="text-xs text-muted-foreground">Follows business hours</span>
