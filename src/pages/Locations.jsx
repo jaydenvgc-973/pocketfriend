@@ -84,6 +84,7 @@ const CATEGORIES = [
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
   { value: "jail_prison", label: "Jail / Prison", icon: MapPin, emoji: "🔒" },
   { value: "transportation", label: "Transportation", icon: MapPin, emoji: "🚉" },
+  { value: "destination", label: "Destination", icon: MapPin, emoji: "📍" },
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
