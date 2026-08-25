@@ -55,6 +55,18 @@
       "default": false,
       "description": "When true, the character is temporarily exempt from mandatory work and school attendance enforcement. Existing work and school schedules remain intact \u2014 this only exempts the character from enforcement, it does not delete or modify the underlying records. The character remains free to travel and participate normally. When switched back to false, existing obligations resume normally through their existing behavior."
     },
+    "vacation_location_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Temporary set of location IDs authorized for this character's autonomous travel while Vacation Mode is ON. When non-empty, autonomous destination selection is restricted to these locations only. The permanent home is NOT eligible unless explicitly included here. Vacation Mode OFF clears this authority \u2014 the array persists but has no effect until Vacation Mode is turned back on. These are existing canonical LocationReference IDs (including rabbit-hole locations); no vacation copies are created."
+    },
+    "vacation_home_location_id": {
+      "type": "string",
+      "description": "Temporary Vacation Home location ID \u2014 authoritative only while Vacation Mode is ON. Must be one of the selected vacation_location_ids. When set, sleep/return-home behavior uses this location instead of the permanent home. The permanent home (current_home_location_id) is never overwritten. When Vacation Mode is OFF, this field has no authority and the permanent home resumes automatically. Must satisfy the app's existing sleep eligibility rules (home, hotel, shelter, generic, or confinement categories)."
+    },
     "hunger_lock": {
       "type": "boolean",
       "default": false,

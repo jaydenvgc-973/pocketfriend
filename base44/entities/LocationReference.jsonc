@@ -176,7 +176,8 @@
         "community",
         "generic",
         "jail_prison",
-        "transportation"
+        "transportation",
+        "destination"
       ],
       "default": "generic"
     },
