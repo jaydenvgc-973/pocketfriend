@@ -283,7 +283,7 @@ function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId
             Vacation Home
           </p>
           <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
-            Temporary sleep/return target while Vacation Mode is ON. Must be a sleep-eligible selected location (home, hotel, shelter, or generic).
+            Temporary sleep/return target while Vacation Mode is ON. Must be a sleep-eligible selected location — home, hotel, shelter, generic, transportation, or any location with a residential or community environment.
           </p>
           <div className="space-y-1">
             {selectedLocations.map(loc => {
