@@ -84,7 +84,6 @@ const CATEGORIES = [
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
   { value: "jail_prison", label: "Jail / Prison", icon: MapPin, emoji: "🔒" },
   { value: "transportation", label: "Transportation", icon: MapPin, emoji: "🚉" },
-  { value: "destination", label: "Destination", icon: MapPin, emoji: "📍" },
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
@@ -124,6 +123,10 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             {location.location_type === "global" ? (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Globe className="w-3 h-3" /> Global
+              </span>
+            ) : location.location_type === "destination" ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <MapPin className="w-3 h-3" /> Destination
               </span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -743,11 +746,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       <div className="space-y-3">
         <label className="text-xs text-muted-foreground uppercase tracking-wider block">Type</label>
-        <div className="grid grid-cols-2 gap-2">
-          {["global", "character_specific"].map(t => (
+        <div className="grid grid-cols-3 gap-2">
+          {["global", "character_specific", "destination"].map(t => (
             <button key={t} onClick={() => update("location_type", t)}
               className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.location_type === t ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
-              {t === "global" ? "🌐 Global" : "👤 Character-specific"}
+              {t === "global" ? "🌐 Global" : t === "character_specific" ? "👤 Character" : "📍 Destination"}
             </button>
           ))}
         </div>

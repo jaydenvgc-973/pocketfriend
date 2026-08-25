@@ -1538,7 +1538,7 @@ Deno.serve(async (req) => {
 
           // Past 6h (or no timestamp, or medical emergency) — allow home routing.
           if (energyUrgency < 4 && char.current_home_location_id) {
-            const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+            const ownHome = userLocations.find(loc => loc.id === getEffectiveHomeId(char));
             if (ownHome) {
               try { await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', { character_id: char.id, owner_email: char.owner_email, requested_presence_status: 'home', requested_location_id: ownHome.id, requested_location_type: 'home', requested_source_reason: 'pass_out_recovery', requested_timestamp: nowET.toISOString() }); } catch { /* non-fatal */ }
               moveLog.push(`${char.name} → ${ownHome.name} [PASS_OUT_RECOVERY after ${passOutElapsedHours.toFixed(1)}h]`);
@@ -1966,7 +1966,7 @@ Deno.serve(async (req) => {
         // sleep. Yields to a non-interruptible promised arrival. autonomousCharacterMovement
         // never writes sleeping — that is owned by simulateActiveCharacterNeeds at energy ≤ 20.
         {
-          const homeId = char.current_home_location_id;
+          const homeId = getEffectiveHomeId(char);
           const atHome = homeId && char.resolved_current_location_id === homeId;
           const alreadySleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
           const energyVal = char.energy_value ?? 75;
@@ -1995,7 +1995,7 @@ Deno.serve(async (req) => {
           const todayET4 = nowET.toISOString().slice(0, 10);
           const dowNow4 = nowET.getDay();
           const nowMin4 = nowET.getHours() * 60 + nowET.getMinutes();
-          const homeId4 = char.current_home_location_id;
+          const homeId4 = getEffectiveHomeId(char);
           const atHome4 = homeId4 && char.resolved_current_location_id === homeId4;
           const alreadyAtWork4 = char.resolved_presence_status === 'at_work';
           const alreadySleeping4 = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
@@ -2098,7 +2098,7 @@ Deno.serve(async (req) => {
         // Not at pass-out level but critically low. Must go home NOW.
         // Overrides stay-lock and toggle. Yields to a protected promised arrival.
         if (energyUrgency >= 3 && char.current_home_location_id) {
-          const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+          const ownHome = userLocations.find(loc => loc.id === getEffectiveHomeId(char));
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
             // ── ONE TRUTH: Route critical-energy return home through the authority ──
             await writeCharacterToDestination(base44, char, ownHome.id, ownHome.name, {
@@ -2193,7 +2193,7 @@ Deno.serve(async (req) => {
         // These are used by scoreLocation() for inventory-driven grocery and
         // affordability-aware destination scoring.
         {
-          const homeId = char.current_home_location_id;
+          const homeId = getEffectiveHomeId(char);
           if (homeId) {
             try {
               const hrArr = await base44.asServiceRole.entities.HouseholdResource.filter(
@@ -2312,9 +2312,9 @@ Deno.serve(async (req) => {
         // ── VACATION MODE LOCATION AUTHORITY + DESTINATION EXCLUSION ──────────
         // Two rules applied at the shared destination-selection point:
         //
-        // 1. DESTINATION CATEGORY EXCLUSION (always applies):
-        //    "destination" category locations are intentionally excluded from
-        //    ordinary autonomous needs-based travel. A Destination becomes
+        // 1. DESTINATION TYPE EXCLUSION (always applies):
+        //    Locations with location_type "destination" are intentionally excluded
+        //    from ordinary autonomous needs-based travel. A Destination becomes
         //    eligible ONLY when Vacation Mode is ON for this character AND that
         //    Destination is explicitly selected in this character's
         //    vacation_location_ids.
@@ -2332,8 +2332,8 @@ Deno.serve(async (req) => {
         const _vacationModeOn = char.vacation_mode === true;
         const _vacIds = Array.isArray(char.vacation_location_ids) ? char.vacation_location_ids : [];
         const eligibleLocations = openLocations.filter(loc => {
-          // Rule 1: Destination category exclusion
-          if (loc.category === 'destination') {
+          // Rule 1: Destination type exclusion
+          if (loc.location_type === 'destination') {
             if (!(_vacationModeOn && _vacIds.includes(loc.id))) return false;
           }
           // Rule 2: Vacation Location restriction
@@ -2348,8 +2348,10 @@ Deno.serve(async (req) => {
         // ── LOW ENERGY (urgent, < 50) → route home via travel session ────────
         // No teleport — initiate transit to home. processTravelArrivals delivers them.
         // Yields to a protected promised arrival.
-        if (energyUrgency >= 2 && char.current_home_location_id) {
-        const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+        // Uses getEffectiveHomeId to respect Vacation Home when Vacation Mode is ON.
+        const _effHomeId = getEffectiveHomeId(char);
+        if (energyUrgency >= 2 && _effHomeId) {
+        const ownHome = userLocations.find(loc => loc.id === _effHomeId);
         if (ownHome && char.resolved_current_location_id !== ownHome.id) {
           await writeCharacterToDestination(base44, char, ownHome.id, ownHome.name, {
             resolvedPresenceStatus: 'home',
@@ -2430,9 +2432,10 @@ Deno.serve(async (req) => {
         }
 
         // ── HOME WRITE PROTECTION ────────────────────────────────────────────
-        // If the selected location is home-category but NOT this character's authoritative home,
-        // that write is invalid. Re-select from non-home locations only.
-        if (finalLocation.category === 'home' && finalLocation.id !== char.current_home_location_id) {
+        // If the selected location is home-category but NOT this character's authoritative
+        // home (or Vacation Home when Vacation Mode is ON), that write is invalid.
+        // Re-select from non-home locations only.
+        if (finalLocation.category === 'home' && finalLocation.id !== getEffectiveHomeId(char)) {
           console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${finalLocation.name} (not their home). Re-selecting.`);
           blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${finalLocation.name} is not their authoritative home`);
           const nonHomeLocations = eligibleLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
