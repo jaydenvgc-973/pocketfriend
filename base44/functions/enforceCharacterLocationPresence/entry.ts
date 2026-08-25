@@ -190,6 +190,19 @@ function isValidSleepLocation(location) {
 }
 
 function resolveValidSleepLocationId(character, locationMap) {
+  // ── VACATION HOME AUTHORITY ──────────────────────────────────────────────
+  // When Vacation Mode is ON and a Vacation Home is designated, the Vacation
+  // Home is the authoritative sleep/return-home target. The permanent home is
+  // never overwritten — this is a temporary authority that ends when Vacation
+  // Mode is turned OFF. The Vacation Home must satisfy existing sleep
+  // eligibility (isValidSleepLocation) — it is NOT automatically valid just
+  // because it was selected.
+  if (character.vacation_mode === true && character.vacation_home_location_id) {
+    const vacHome = locationMap[character.vacation_home_location_id];
+    if (vacHome && isValidSleepLocation(vacHome)) {
+      return character.vacation_home_location_id;
+    }
+  }
   if (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id]) {
     return character.temporary_housing_location_id;
   }
@@ -1440,7 +1453,65 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
     // Fall through — stale 'at_work' or 'home' will be resolved by home base below
   }
 
-  // Home base fallback
+  // ── VACATION MODE HOME BASE AUTHORITY ──────────────────────────────────────
+  // When Vacation Mode is ON:
+  //   - If a Vacation Home is designated, use it as the home base fallback.
+  //   - If vacation_location_ids is non-empty and the permanent home is NOT in
+  //     that set, the permanent home is NOT an eligible autonomous destination.
+  //     Use the Vacation Home if set; otherwise preserve the current location
+  //     (if it's a valid vacation location) rather than forcing the permanent home.
+  //   - If vacation_location_ids is empty, the permanent home remains eligible
+  //     (no restriction applied — Vacation Mode only suppresses work/school).
+  // The permanent home (current_home_location_id) is never overwritten.
+  if (character.vacation_mode === true) {
+    // Vacation Home designated — use it as the home base
+    if (character.vacation_home_location_id && locationMap[character.vacation_home_location_id]) {
+      const vacHome = locationMap[character.vacation_home_location_id];
+      return {
+        resolved_current_location_id: character.vacation_home_location_id,
+        resolved_current_location_name: vacHome.name || 'Vacation Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'vacation_home_base',
+      };
+    }
+    // No Vacation Home — check if permanent home is eligible
+    const vacIds = Array.isArray(character.vacation_location_ids) ? character.vacation_location_ids : [];
+    const permanentHomeId = character.current_home_location_id || character.home_location_id || null;
+    const permanentHomeEligible = vacIds.length === 0 || (permanentHomeId && vacIds.includes(permanentHomeId));
+    if (permanentHomeEligible && permanentHomeId) {
+      const homeLocation = locationMap[permanentHomeId];
+      return {
+        resolved_current_location_id: permanentHomeId,
+        resolved_current_location_name: homeLocation?.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'fallback_to_home_base',
+      };
+    }
+    // Permanent home not eligible — preserve current location if it's a vacation location
+    const curLocId = character.resolved_current_location_id || null;
+    if (curLocId && vacIds.includes(curLocId)) {
+      const curLoc = locationMap[curLocId];
+      return {
+        resolved_current_location_id: curLocId,
+        resolved_current_location_name: curLoc?.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: 'vacation_location_preserved',
+      };
+    }
+    // No eligible home or vacation location — return current state
+    return {
+      resolved_current_location_id: curLocId || null,
+      resolved_current_location_name: character.resolved_current_location_name || 'Off-screen',
+      resolved_location_type: character.resolved_location_type || 'home',
+      resolved_presence_status: character.resolved_presence_status || 'home',
+      resolved_source_reason: 'vacation_no_eligible_home',
+    };
+  }
+
+  // Home base fallback (normal — Vacation Mode OFF)
   const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
   if (resolvedHomeId) {
     const homeLocation = locationMap[resolvedHomeId];

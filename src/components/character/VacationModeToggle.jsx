@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Plane } from "lucide-react";
+import { Plane, Home, MapPin, Check, X } from "lucide-react";
 
 /**
  * VacationModeToggle
@@ -9,9 +9,12 @@ import { Plane } from "lucide-react";
  * ON  → character is temporarily exempt from mandatory work and school attendance.
  *       Existing work/school schedules and enrollment remain intact — only enforcement
  *       is skipped. The character remains free to travel and participate normally.
+ *       When ON, the user can configure Vacation Locations (the authoritative
+ *       autonomous destination set) and a Vacation Home (temporary sleep/return target).
  * OFF → exemption is gone; existing obligations resume normally through their
- *       existing behavior. Nothing needs to be reconstructed because Vacation Mode
- *       never erases or replaces those obligations.
+ *       existing behavior. Vacation Location and Vacation Home authority end.
+ *       Nothing needs to be reconstructed because Vacation Mode never erases or
+ *       replaces those obligations or the permanent home.
  */
 export default function VacationModeToggle({ character }) {
   const queryClient = useQueryClient();
@@ -19,13 +22,18 @@ export default function VacationModeToggle({ character }) {
   const [optimistic, setOptimistic] = useState(null);
   const displayOn = optimistic ?? isOn;
 
+  const vacationLocationIds = useMemo(
+    () => Array.isArray(character?.vacation_location_ids) ? character.vacation_location_ids : [],
+    [character?.vacation_location_ids]
+  );
+  const vacationHomeId = character?.vacation_home_location_id || null;
+
   const mutation = useMutation({
     mutationFn: async (next) => {
       await base44.entities.Character.update(character.id, { vacation_mode: next });
     },
     onMutate: async (next) => {
       setOptimistic(next);
-      // Optimistically patch the singular + list caches so the UI updates instantly.
       queryClient.setQueryData(["character", character.id], (prev) =>
         prev ? { ...prev, vacation_mode: next } : prev
       );
@@ -37,7 +45,6 @@ export default function VacationModeToggle({ character }) {
       }
     },
     onError: () => {
-      // Revert optimistic state on failure
       setOptimistic(isOn);
       queryClient.setQueryData(["character", character.id], (prev) =>
         prev ? { ...prev, vacation_mode: isOn } : prev
@@ -60,6 +67,41 @@ export default function VacationModeToggle({ character }) {
 
   const handleToggle = () => {
     mutation.mutate(!displayOn);
+  };
+
+  // ── Vacation Locations + Vacation Home mutations ──
+  const updateVacationConfig = useMutation({
+    mutationFn: async (payload) => {
+      await base44.entities.Character.update(character.id, payload);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      if (character.owner_email) {
+        queryClient.invalidateQueries({ queryKey: ["characters", character.owner_email] });
+      }
+    },
+  });
+
+  const handleToggleLocation = async (locId) => {
+    const current = new Set(vacationLocationIds);
+    if (current.has(locId)) {
+      current.delete(locId);
+    } else {
+      current.add(locId);
+    }
+    const nextIds = Array.from(current);
+    // If removing the current vacation home, clear it
+    const nextHome = nextIds.includes(vacationHomeId) ? vacationHomeId : null;
+    updateVacationConfig.mutate({
+      vacation_location_ids: nextIds,
+      vacation_home_location_id: nextHome,
+    });
+  };
+
+  const handleSetVacationHome = async (locId) => {
+    updateVacationConfig.mutate({
+      vacation_home_location_id: locId,
+    });
   };
 
   return (
@@ -92,6 +134,170 @@ export default function VacationModeToggle({ character }) {
           />
         </button>
       </div>
+
+      {displayOn && (
+        <VacationLocationConfig
+          character={character}
+          vacationLocationIds={vacationLocationIds}
+          vacationHomeId={vacationHomeId}
+          onToggleLocation={handleToggleLocation}
+          onSetVacationHome={handleSetVacationHome}
+          isUpdating={updateVacationConfig.isPending}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * VacationLocationConfig
+ *
+ * Shows the Vacation Locations selector and Vacation Home picker.
+ * Fetches the user's locations via the existing LocationReference entity.
+ * Only rendered when Vacation Mode is ON.
+ */
+function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId, onToggleLocation, onSetVacationHome, isUpdating }) {
+  const [showPicker, setShowPicker] = useState(false);
+  const [locations, setLocations] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Sleep-eligible categories (matches VALID_SLEEP_CATEGORIES in enforceCharacterLocationPresence)
+  const SLEEP_ELIGIBLE = new Set(['home', 'hotel', 'shelter', 'generic', 'jail_prison']);
+
+  const loadLocations = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const me = await base44.auth.me();
+      if (!me?.email) { setLoading(false); return; }
+      const locs = await base44.entities.LocationReference.filter({ owner_email: me.email });
+      setLocations(locs || []);
+    } catch (e) {
+      console.warn("Failed to load locations for vacation config:", e);
+    }
+    setLoading(false);
+  };
+
+  React.useEffect(() => {
+    if (showPicker && locations.length === 0 && !loading) {
+      loadLocations();
+    }
+  }, [showPicker]);
+
+  const selectedLocations = locations.filter(l => vacationLocationIds.includes(l.id));
+  const vacationHomeLocation = locations.find(l => l.id === vacationHomeId) || null;
+
+  return (
+    <div className="border-t border-border pt-3 space-y-3">
+      {/* Vacation Locations */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs font-medium text-foreground flex items-center gap-1.5">
+            <MapPin className="w-3.5 h-3.5 text-primary" />
+            Vacation Locations
+          </p>
+          <button
+            onClick={() => setShowPicker(s => !s)}
+            className="text-xs text-primary hover:underline"
+          >
+            {showPicker ? "Done" : "Manage"}
+          </button>
+        </div>
+        <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
+          While Vacation Mode is ON, autonomous travel is restricted to these locations. The permanent home is not eligible unless included here.
+        </p>
+
+        {selectedLocations.length === 0 && !showPicker && (
+          <p className="text-xs text-muted-foreground italic">No vacation locations selected yet.</p>
+        )}
+
+        <div className="space-y-1.5">
+          {selectedLocations.map(loc => (
+            <div key={loc.id} className="flex items-center justify-between bg-secondary/50 rounded-lg px-2.5 py-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                <span className="text-xs text-foreground truncate">{loc.name}</span>
+                {vacationHomeId === loc.id && (
+                  <span className="text-[10px] text-primary font-medium flex-shrink-0">★ Home</span>
+                )}
+              </div>
+              <button
+                onClick={() => onToggleLocation(loc.id)}
+                disabled={isUpdating}
+                className="text-muted-foreground hover:text-destructive flex-shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {showPicker && (
+          <div className="mt-2 border border-border rounded-lg p-2 max-h-60 overflow-y-auto space-y-1">
+            {loading && <p className="text-xs text-muted-foreground text-center py-2">Loading...</p>}
+            {!loading && locations.length === 0 && (
+              <p className="text-xs text-muted-foreground text-center py-2">No locations found.</p>
+            )}
+            {!loading && locations.map(loc => {
+              const isSelected = vacationLocationIds.includes(loc.id);
+              return (
+                <button
+                  key={loc.id}
+                  onClick={() => onToggleLocation(loc.id)}
+                  disabled={isUpdating}
+                  className={`w-full flex items-center justify-between text-left px-2 py-1.5 rounded-md transition-colors ${
+                    isSelected ? "bg-primary/10" : "hover:bg-secondary"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xs text-foreground truncate">{loc.name}</span>
+                    <span className="text-[10px] text-muted-foreground flex-shrink-0">({loc.category})</span>
+                  </div>
+                  {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Vacation Home */}
+      {vacationLocationIds.length > 0 && (
+        <div className="border-t border-border pt-2">
+          <p className="text-xs font-medium text-foreground flex items-center gap-1.5 mb-1.5">
+            <Home className="w-3.5 h-3.5 text-primary" />
+            Vacation Home
+          </p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
+            Temporary sleep/return target while Vacation Mode is ON. Must be a sleep-eligible selected location (home, hotel, shelter, or generic).
+          </p>
+          <div className="space-y-1">
+            {selectedLocations.map(loc => {
+              const isSleepEligible = SLEEP_ELIGIBLE.has(loc.category);
+              const isCurrentHome = vacationHomeId === loc.id;
+              return (
+                <button
+                  key={loc.id}
+                  onClick={() => isSleepEligible && onSetVacationHome(loc.id)}
+                  disabled={!isSleepEligible || isUpdating}
+                  className={`w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded-lg transition-colors ${
+                    isCurrentHome ? "bg-primary/15 border border-primary/30" : "bg-secondary/50 hover:bg-secondary"
+                  } ${!isSleepEligible ? "opacity-50 cursor-not-allowed" : ""}`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Home className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                    <span className="text-xs text-foreground truncate">{loc.name}</span>
+                    {!isSleepEligible && (
+                      <span className="text-[10px] text-muted-foreground flex-shrink-0">(not sleep-eligible)</span>
+                    )}
+                  </div>
+                  {isCurrentHome && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

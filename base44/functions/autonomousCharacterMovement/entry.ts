@@ -84,6 +84,18 @@ function validateStayLock(char, nowET) {
 // Used by multiple helpers throughout this file (orphaned travel guard, work schedule check, etc.)
 function toMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); }
 
+// ── VACATION MODE EFFECTIVE HOME ──────────────────────────────────────────────
+// Returns the authoritative home location ID for home-return paths.
+// When Vacation Mode is ON and a Vacation Home is designated, the Vacation Home
+// is the effective home. The permanent home (current_home_location_id) is never
+// overwritten — this is a temporary authority that ends when Vacation Mode is OFF.
+function getEffectiveHomeId(char) {
+  if (char.vacation_mode === true && char.vacation_home_location_id) {
+    return char.vacation_home_location_id;
+  }
+  return char.current_home_location_id || null;
+}
+
 // ── FINANCIAL CONSEQUENCE TRIGGER ───────────────────────────────────────────────
 async function triggerSpendingForDestination(base44, char, destLocId, destLocName, destCategory, sourceReason, needType) {
   try {
