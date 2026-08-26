@@ -36,7 +36,8 @@ export default function NPCContactPanel() {
     queryFn: async () => {
       if (!currentUser?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
+      const npcs = res?.data?.npcs;
+      return Array.isArray(npcs) ? npcs : [];
     },
     enabled: !!currentUser?.id,
     staleTime: 15 * 60 * 1000,  // match useOwnedCharacters — prevents duplicate fetches
@@ -55,7 +56,7 @@ export default function NPCContactPanel() {
   // Merge and deduplicate
   const allNPCs = (() => {
     const seen = new Set();
-    return [...regularNPCs, ...npcBackendResult].filter(c => {
+    return [...(regularNPCs || []), ...(Array.isArray(npcBackendResult) ? npcBackendResult : [])].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
       return !['active_created_character', 'deleted', 'soft_deleted'].includes(c.status);
