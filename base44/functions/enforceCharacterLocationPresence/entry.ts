@@ -680,6 +680,56 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     };
   }
 
+  // ── RETURN HOME REQUESTED (non-sleep) ──────────────────────────────────────
+  // Used by Scene "Leave Together" and other return-home callers when the
+  // character is not sleeping. The character is actively returning home with
+  // the user. The canonical writer resolves the effective home — Vacation Home
+  // during Vacation Mode, permanent home otherwise — through
+  // resolveValidSleepLocationId, which already honors vacation_home_location_id.
+  // This is a home-resolution operation, not a sleep operation. The permanent
+  // home remains stored but is not the effective return-home destination while
+  // Vacation Mode is active.
+  if (requestedStatus === 'home') {
+    const homeLocId = resolveValidSleepLocationId(character, locationMap);
+    if (!homeLocId) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'no_valid_home_location' };
+    }
+    const homeLoc = locationMap[homeLocId];
+    const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
+    const canonicalFields = {
+      resolved_current_location_id: homeLocId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: requested.requested_source_reason || 'return_home',
+      resolved_last_updated_at: etTime.toISOString(),
+      presence_stay_lock: false,
+      presence_stay_lock_reason: null,
+      presence_stay_lock_authority: null,
+      presence_stay_lock_location_id: null,
+      presence_stay_lock_set_at: null,
+      presence_stay_lock_created_by: null,
+      travel_status: 'not_traveling',
+      travel_destination_location_id: null,
+      traveling_to_location_id: null,
+      traveling_to_location_name: null,
+    };
+    if (wasSleeping) {
+      canonicalFields.last_wake_time = etTime.toISOString();
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields,
+      committed_result: {
+        resolved_current_location_id: homeLocId,
+        resolved_current_location_name: homeLoc?.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: requested.requested_source_reason || 'return_home',
+      },
+    };
+  }
+
   // ── WORK REQUESTED (at_work) ───────────────────────────────────────────────
   // enforceCharacterWorkSchedule requests at_work when its rules determine
   // the active work obligation requires that transition.
@@ -1031,6 +1081,7 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
         };
       }
     }
+    const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
     const canonicalFields = {
       resolved_current_location_id: destLocId,
       resolved_current_location_name: destLoc.name,
@@ -1045,9 +1096,29 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
       traveling_to_location_id: null,
       traveling_to_location_name: null,
     };
-    if (requested.clear_stay_lock) {
+    // Scene "Stay Behind" passes stay-lock fields — commit them atomically with
+    // the presence transition so the lock and the presence are never out of sync.
+    if (requested.requested_stay_lock === true) {
+      canonicalFields.presence_stay_lock = true;
+      canonicalFields.presence_stay_lock_location_id = destLocId;
+      canonicalFields.presence_stay_lock_set_at = etTime.toISOString();
+      canonicalFields.presence_stay_lock_reason = requested.presence_stay_lock_reason || 'user_scene_stay';
+      canonicalFields.presence_stay_lock_authority = requested.presence_stay_lock_authority || 'SceneExit';
+      canonicalFields.presence_stay_lock_release_condition = requested.presence_stay_lock_release_condition || 'scene_end';
+      canonicalFields.presence_stay_lock_created_by = requested.presence_stay_lock_created_by || 'user';
+    } else if (requested.clear_stay_lock) {
       canonicalFields.presence_stay_lock = false;
       canonicalFields.presence_stay_lock_reason = null;
+    }
+    // If transitioning from sleep to visiting (e.g., user traveled with a
+    // sleeping character), wake them — clear sleep lock and stamp last_wake_time.
+    if (wasSleeping) {
+      canonicalFields.last_wake_time = etTime.toISOString();
+      if (!requested.requested_stay_lock) {
+        canonicalFields.presence_stay_lock = false;
+        canonicalFields.presence_stay_lock_reason = null;
+        canonicalFields.presence_stay_lock_authority = null;
+      }
     }
     return {
       disposition: 'accepted',

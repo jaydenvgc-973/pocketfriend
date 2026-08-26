@@ -321,9 +321,14 @@ export default function Scene() {
 
   useEffect(() => {
     if (!location || broughtCharacters.length === 0) return;
+    const _isHomeCat = location.category === 'home';
     broughtCharacters.forEach((char) => {
-      const isAsleep = ['sleeping', 'napping', 'passed_out'].includes(char.resolved_presence_status);
-      base44.entities.Character.update(char.id, { resolved_current_location_id: location.id, resolved_current_location_name: location.name, resolved_location_type: location.category === 'home' ? 'home' : 'visit', resolved_presence_status: isAsleep ? char.resolved_presence_status : (location.category === 'home' ? 'home' : 'visiting'), resolved_source_reason: isAsleep ? char.resolved_source_reason : 'user_travel', resolved_last_updated_at: new Date().toISOString(), travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {});
+      base44.functions.invoke('enforceCharacterLocationPresence', {
+        character_id: char.id, owner_email: currentUser?.email,
+        requested_presence_status: _isHomeCat ? 'home' : 'visiting',
+        requested_location_id: location.id, requested_location_name: location.name,
+        requested_source_reason: 'user_travel', requested_authority: 'SceneArrival'
+      }).catch(() => {});
     });
   }, [location?.id, broughtCharacters.length]);
 
@@ -332,14 +337,37 @@ export default function Scene() {
   const _exitMemoryArgs = (outcome) => ({ broughtCharacters, alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
 
   const handleLeaveWithCharacters = async () => {
-    setShowLeaveModal(false); const homeNow = new Date().toISOString();
-    await Promise.all([...broughtCharacters.map((char) => base44.entities.Character.update(char.id, { resolved_current_location_id: char.current_home_location_id || char.home_location_id || null, resolved_current_location_name: char.current_home_location_id || char.home_location_id ? char.resolved_current_location_name || 'Home' : null, resolved_location_type: 'home', resolved_presence_status: 'home', resolved_source_reason: 'returned_home_with_user', resolved_last_updated_at: homeNow, presence_stay_lock: false, presence_stay_lock_location_id: null, presence_stay_lock_set_at: null, travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {})), writeSceneExitMemories(_exitMemoryArgs('left_together'))]);
+    setShowLeaveModal(false);
+    await Promise.all([
+      ...broughtCharacters.map((char) =>
+        base44.functions.invoke('enforceCharacterLocationPresence', {
+          character_id: char.id, owner_email: currentUser?.email,
+          requested_presence_status: 'home',
+          requested_source_reason: 'returned_home_with_user', requested_authority: 'SceneExit'
+        }).catch(() => {})
+      ),
+      writeSceneExitMemories(_exitMemoryArgs('left_together'))
+    ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
   const handleLeaveCharactersBehind = async () => {
-    setShowLeaveModal(false); const now = new Date().toISOString();
-    await Promise.all([...broughtCharacters.map((char) => base44.entities.Character.update(char.id, { resolved_current_location_id: location.id, resolved_current_location_name: location.name, resolved_presence_status: location.category === 'home' ? 'home' : 'visiting', resolved_source_reason: 'user_stay_decision', resolved_last_updated_at: now, presence_stay_lock: true, presence_stay_lock_location_id: location.id, presence_stay_lock_set_at: now, presence_stay_lock_reason: "user_scene_stay", presence_stay_lock_authority: "SceneExit", presence_stay_lock_release_condition: "scene_end", presence_stay_lock_created_by: "user", travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {})), writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))]);
+    setShowLeaveModal(false);
+    const _isHomeCat = location.category === 'home';
+    await Promise.all([
+      ...broughtCharacters.map((char) =>
+        base44.functions.invoke('enforceCharacterLocationPresence', {
+          character_id: char.id, owner_email: currentUser?.email,
+          requested_presence_status: _isHomeCat ? 'home' : 'visiting',
+          requested_location_id: location.id, requested_location_name: location.name,
+          requested_source_reason: 'user_stay_decision', requested_authority: 'SceneExit',
+          requested_stay_lock: true, presence_stay_lock_reason: 'user_scene_stay',
+          presence_stay_lock_authority: 'SceneExit', presence_stay_lock_release_condition: 'scene_end',
+          presence_stay_lock_created_by: 'user'
+        }).catch(() => {})
+      ),
+      writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))
+    ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 

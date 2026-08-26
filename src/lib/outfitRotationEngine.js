@@ -206,17 +206,25 @@ export function resolveTargetCategory(character, activityText = '', locationCate
   if (locationCategory === 'gym') return 'gym';
 
   // ── PRIORITY 5: WORK ─────────────────────────────────────────────────────────
-  if (presenceStatus === 'at_work') return 'work';
-  if (ACTIVITY_CATEGORY_MAP[10].activities.some(a => combined.includes(a))) return 'work';
-  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
+  // Vacation Mode suspends employment — work cannot be inferred from presence,
+  // activity, or workplace/business location category. Fall through to the
+  // remaining context (activity, location, home, daily casual).
+  if (character?.vacation_mode !== true) {
+    if (presenceStatus === 'at_work') return 'work';
+    if (ACTIVITY_CATEGORY_MAP[10].activities.some(a => combined.includes(a))) return 'work';
+    if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
+  }
 
   // ── PRIORITY 6: FORMAL / EVENT ───────────────────────────────────────────────
   if (ACTIVITY_CATEGORY_MAP[5].activities.some(a => combined.includes(a))) return 'formal';
 
   // ── PRIORITY 7: LOCATION-SPECIFIC ────────────────────────────────────────────
+  // Vacation Mode suppresses workplace/business/school location-category mappings.
   if (locationCategory) {
     const mapped = LOCATION_CATEGORY_TO_OUTFIT[locationCategory];
-    if (mapped) return mapped;
+    if (mapped && !(character?.vacation_mode === true && ['work', 'school'].includes(mapped))) {
+      return mapped;
+    }
   }
   if (ACTIVITY_CATEGORY_MAP[4].activities.some(a => combined.includes(a))) return 'church';
   if (ACTIVITY_CATEGORY_MAP[6].activities.some(a => combined.includes(a))) return 'nightlife';

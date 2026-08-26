@@ -76,43 +76,54 @@ function resolveUniformText(character: any, location: any): string | null {
     }
   }
 
-  // 1. Manual assignment
-  const manualKey = location.worker_manual_uniforms?.[charId];
-  if (manualKey && uniforms[manualKey]) return uText(uniforms[manualKey]);
+  // Vacation Mode suppresses employment-based uniform activation (manual
+  // assignment, job title, generic staff). Legitimate non-employment role
+  // requirements (inmate, patient, gym member, religious member, resident)
+  // remain governed by their existing authority.
+  const _vacationMode = character.vacation_mode === true;
 
-  // 2. Job title at THIS location
-  let jobTitle = location.worker_job_titles?.[charId] || null;
-  if (!jobTitle && character.occupation_location_id === location.id && character.work_details?.job_title) {
-    jobTitle = character.work_details.job_title;
+  // 1. Manual assignment (employment uniform — suppressed during Vacation Mode)
+  if (!_vacationMode) {
+    const manualKey = location.worker_manual_uniforms?.[charId];
+    if (manualKey && uniforms[manualKey]) return uText(uniforms[manualKey]);
   }
-  if (!jobTitle && Array.isArray(character.additional_occupation_locations)) {
-    for (const loc of character.additional_occupation_locations) {
-      if ((loc.location_id || loc.id) === location.id && loc.job_title) { jobTitle = loc.job_title; break; }
+
+  // 2. Job title at THIS location (employment — suppressed during Vacation Mode)
+  if (!_vacationMode) {
+    let jobTitle = location.worker_job_titles?.[charId] || null;
+    if (!jobTitle && character.occupation_location_id === location.id && character.work_details?.job_title) {
+      jobTitle = character.work_details.job_title;
     }
-  }
-  if (jobTitle) {
-    const norm = jobTitle.toLowerCase().trim();
-    for (const u of Object.values(uniforms) as any[]) {
-      if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === norm) return uText(u);
+    if (!jobTitle && Array.isArray(character.additional_occupation_locations)) {
+      for (const loc of character.additional_occupation_locations) {
+        if ((loc.location_id || loc.id) === location.id && loc.job_title) { jobTitle = loc.job_title; break; }
+      }
+    }
+    if (jobTitle) {
+      const norm = jobTitle.toLowerCase().trim();
+      for (const u of Object.values(uniforms) as any[]) {
+        if (u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === norm) return uText(u);
+      }
     }
   }
 
   // 3. Role/status — actual status strings at THIS location
+  // School and employment statuses suppressed during Vacation Mode.
   const statusStrings: string[] = [];
   if (presence) statusStrings.push(presence);
-  if (character.student_status && character.student_status !== 'not_student' &&
+  if (!_vacationMode && character.student_status && character.student_status !== 'not_student' &&
       (character.current_school_location_id === location.id || character.education_location_id === location.id)) {
     statusStrings.push(character.student_status);
   }
   const inArr = (arr: any) => Array.isArray(arr) && arr.some((i: any) => typeof i === 'string' ? i === charId : i?.character_id === charId);
-  if (inArr(location.enrolled_students)) statusStrings.push('enrolled_students');
+  if (!_vacationMode && inArr(location.enrolled_students)) statusStrings.push('enrolled_students');
   if (inArr(location.inmates)) statusStrings.push('inmates');
   if (character.is_jailed === true || presence === 'incarcerated') statusStrings.push('inmate');
   if (presence === 'hospitalized') statusStrings.push('patient');
   if (location.gym_members?.includes(charId)) statusStrings.push('gym_members');
   if (inArr(location.religious_members)) statusStrings.push('religious_members');
   if (inArr(location.residents)) statusStrings.push('residents');
-  if (location.worker_character_ids?.includes(charId)) statusStrings.push('worker_character_ids');
+  if (!_vacationMode && location.worker_character_ids?.includes(charId)) statusStrings.push('worker_character_ids');
 
   for (const u of Object.values(uniforms) as any[]) {
     if (u?.applicability === 'role_status' && u.role_status) {
@@ -122,10 +133,13 @@ function resolveUniformText(character: any, location: any): string | null {
   }
 
   // 4. Generic staff — worker at THIS location, no job title required
-  const isStaff = location.worker_character_ids?.includes(charId) ||
+  // Employment inference — suppressed during Vacation Mode.
+  const isStaff = !_vacationMode && (
+    location.worker_character_ids?.includes(charId) ||
     character.occupation_location_id === location.id ||
     (Array.isArray(character.additional_occupation_locations) &&
-      character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id));
+      character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id))
+  );
   if (isStaff) {
     for (const u of Object.values(uniforms) as any[]) {
       if (u?.applicability === 'generic_staff') return uText(u);
@@ -220,9 +234,14 @@ function resolveTargetCategory(character, locationCategory) {
   if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
   if (locationCategory === 'gym') return 'gym';
 
-  if (presence === 'at_work') return 'work';
-  if (/\b(working|at work|work shift|on the clock)\b/.test(activity)) return 'work';
-  if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
+  // Vacation Mode suspends employment — work cannot be inferred from presence,
+  // activity, or workplace/business location category. Fall through to the
+  // remaining context (activity, location, home, daily casual).
+  if (character?.vacation_mode !== true) {
+    if (presence === 'at_work') return 'work';
+    if (/\b(working|at work|work shift|on the clock)\b/.test(activity)) return 'work';
+    if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
+  }
 
   if (/\b(church|worship|mass|prayer|service)\b/.test(activity)) return 'church';
   if (locationCategory === 'religion') return 'church';
@@ -233,7 +252,8 @@ function resolveTargetCategory(character, locationCategory) {
   if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
 
   if (/\b(school|class|campus|lecture|study|college|university)\b/.test(activity)) return 'school';
-  if (locationCategory === 'school' || locationCategory === 'education') return 'school';
+  // School location category suppressed during Vacation Mode (school obligation suspended).
+  if (character?.vacation_mode !== true && (locationCategory === 'school' || locationCategory === 'education')) return 'school';
 
   if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
 

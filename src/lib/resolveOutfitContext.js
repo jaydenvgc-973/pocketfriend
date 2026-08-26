@@ -87,6 +87,7 @@ export function buildOutfitContext(character, locationMap = {}) {
     at_work_shift: atWorkShift,
     at_water_venue: isAtWaterVenue,
     at_home_relaxing: atHomeRelaxing,
+    vacation_mode: character.vacation_mode === true,
     // manual_override is no longer stored on current_outfit or closet items.
     // It is resolved by reading today_category_outfit_overrides (rotation ON)
     // or manual_category_selections (rotation OFF) in resolveCurrentOutfit.
@@ -114,8 +115,8 @@ export function resolveCategoryFromContext(context) {
   // 4. Water venue → swimwear
   if (context.at_water_venue) return 'swimwear';
 
-  // 5. Work shift → work
-  if (context.at_work_shift) return 'work';
+  // 5. Work shift → work (suppressed during Vacation Mode)
+  if (context.at_work_shift && context.vacation_mode !== true) return 'work';
 
   // 6. Home + relaxing → lounge
   if (context.at_home_relaxing) return 'lounge';
@@ -126,9 +127,9 @@ export function resolveCategoryFromContext(context) {
       home: 'lounge',
       gym: 'gym',
       religion: 'church',
-      school: 'school',
-      workplace: 'work',
-      business: 'work',
+      school: context.vacation_mode === true ? null : 'school',
+      workplace: context.vacation_mode === true ? null : 'work',
+      business: context.vacation_mode === true ? null : 'work',
     };
     const mapped = locMap[context.current_location_type];
     if (mapped) return mapped;
