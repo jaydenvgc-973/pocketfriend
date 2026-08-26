@@ -2377,7 +2377,16 @@ Deno.serve(async (req) => {
         const currentLoc = userLocations.find(l => l.id === char.resolved_current_location_id);
         const sat = currentLoc ? satisfactionQuality(char, vals, currentLoc) : { quality: 'no_location', detail: 'No current location' };
 
-        if (sat.quality !== 'not' && sat.quality !== 'no_need' && sat.quality !== 'no_location') {
+        // ── INVALID DESTINATION PRESENCE — PRESENCE IS NOT PERMISSION ──────
+        // A character sitting at a Destination they are not eligible for (placed
+        // by a prior bypass) must NOT be treated as authorized to stay. Force a
+        // move so the existing authoritative behavior reconciles the placement.
+        // selectBestLocation picks from eligibleLocations (which excludes the
+        // ineligible Destination), so the character is relocated to a valid spot.
+        const _invalidDestPresence = currentLoc && currentLoc.location_type === 'destination' &&
+          !(_vacationModeOn && _vacIds.includes(currentLoc.id));
+
+        if (!_invalidDestPresence && sat.quality !== 'not' && sat.quality !== 'no_need' && sat.quality !== 'no_location') {
           const stayProb = computeStayProbability(char, vals, currentLoc, nowET, sat);
           const roll = Math.random();
           if (roll < stayProb) {
@@ -2386,6 +2395,10 @@ Deno.serve(async (req) => {
             continue;
           }
           console.log(`[autonomousMovement] ${char.name}: traveling — sat=${sat.quality} but stayProb=${(stayProb*100).toFixed(0)}%, roll=${(roll*100).toFixed(0)}% — personality/combined pressures override`);
+        }
+        if (_invalidDestPresence) {
+          console.log(`[autonomousMovement] ${char.name}: invalid Destination presence (${currentLoc.name}) — forcing relocation`);
+          moveLog.push(`${char.name}: invalid Destination presence (${currentLoc.name}) — relocating`);
         }
 
         // ── SELECT BEST LOCATION ──────────────────────────────────────────────
