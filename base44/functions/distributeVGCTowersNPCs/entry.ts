@@ -260,6 +260,14 @@ Deno.serve(async (req) => {
       // Age filter: under-21 cannot go to bars/clubs
       const npcAge = npc.age || null;
       const ageSafe = socialLocations.filter(loc => {
+        // DESTINATION eligibility — per-character Vacation Mode + selection required.
+        // Same predicate as enforceCharacterLocationPresence canonical writer guard.
+        // VGC Towers dispatch must not bypass the shared Destination eligibility rule.
+        if (loc.location_type === 'destination') {
+          const _vacModeOn = npc.vacation_mode === true;
+          const _vacIds = Array.isArray(npc.vacation_location_ids) ? npc.vacation_location_ids : [];
+          if (!(_vacModeOn && _vacIds.includes(loc.id))) return false;
+        }
         if (npcAge && npcAge < 21) {
           if (loc.age_restricted) return false;
           const n = loc.name.toLowerCase();
