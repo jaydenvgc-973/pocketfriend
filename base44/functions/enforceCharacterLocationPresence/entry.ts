@@ -643,9 +643,13 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
   // current location unless another authorized transition moves the character.
   // It does NOT automatically force "home".
   if (requestedStatus === 'home' && ['sleeping', 'napping', 'passed_out', 'hospitalized'].includes(currentStatus)) {
-    // Wake — preserve current location if it's a valid home, otherwise use resolved sleep home
+    // Wake — preserve current location if it's a valid home, otherwise use resolved sleep home.
+    // During Vacation Mode, the Vacation Home IS the effective home — recognize it here so
+    // waking at the Vacation Home does not get reclassified as "not home" and redirected.
     const currentLoc = currentLocId ? locationMap[currentLocId] : null;
-    const isAtHome = currentLoc && (currentLoc.category === 'home' || character.current_home_location_id === currentLocId);
+    const isAtHome = currentLoc && (currentLoc.category === 'home'
+      || character.current_home_location_id === currentLocId
+      || (character.vacation_mode === true && character.vacation_home_location_id === currentLocId));
     const wakeLocId = isAtHome ? currentLocId : resolveValidSleepLocationId(character, locationMap);
     const wakeLoc = wakeLocId ? locationMap[wakeLocId] : null;
     const canonicalFields = {

@@ -192,11 +192,16 @@ function VacationLocationConfig({ character, vacationLocationIds, vacationHomeId
     setLoading(false);
   };
 
+  // Load locations on mount when Vacation Mode is ON — the collapsed display needs
+  // location names to show persisted selections without requiring the user to open
+  // Manage. vacation_location_ids are on the character record, but the names come
+  // from LocationReference entities. Without this load, navigating away and back
+  // shows "No vacation locations selected yet" even though the IDs are persisted.
   React.useEffect(() => {
-    if (showPicker && locations.length === 0 && !loading) {
+    if (locations.length === 0 && !loading) {
       loadLocations();
     }
-  }, [showPicker]);
+  }, []);
 
   const selectedLocations = locations.filter(l => vacationLocationIds.includes(l.id));
   const vacationHomeLocation = locations.find(l => l.id === vacationHomeId) || null;

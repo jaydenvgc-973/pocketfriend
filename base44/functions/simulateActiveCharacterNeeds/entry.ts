@@ -1306,7 +1306,13 @@ Deno.serve(async (req) => {
             const awakeHours = (Date.now() - awakeTimerStartMs) / 3_600_000;
             if (awakeHours >= 19) {
               const passOutCount19h = (char.pass_out_count ?? 0) + 1;
-              const homeLocId = char.current_home_location_id;
+              // Effective home — Vacation Home authority when Vacation Mode is ON and a
+              // valid Vacation Home is designated. Mirrors resolveValidSleepLocationId in
+              // enforceCharacterLocationPresence. The permanent home is never overwritten;
+              // this is temporary authority that ends when Vacation Mode is turned OFF.
+              const homeLocId = (char.vacation_mode === true && char.vacation_home_location_id)
+                ? char.vacation_home_location_id
+                : char.current_home_location_id;
               const isAlreadyAtHome = char.resolved_current_location_id === homeLocId ||
                 (char.resolved_location_type || '').toLowerCase() === 'home' ||
                 char.resolved_presence_status === 'home';
