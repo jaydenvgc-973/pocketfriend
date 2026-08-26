@@ -74,9 +74,15 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
 
   // HOME CONTRADICTION GUARD (runs before all layers):
   // If the DB claims resolved_presence_status = home but the resolved location is NOT
-  // the character's authoritative current_home_location_id, reject the stale state
+  // the character's authoritative effective home, reject the stale state
   // immediately and return the correct home — or flag it if the home is not in the map.
-  const trueHomeId = character.current_home_location_id || character.home_location_id;
+  // VACATION MODE: When vacation_mode is ON and a Vacation Home is designated, the
+  // Vacation Home IS the effective home — not the permanent home. The permanent home
+  // temporarily loses effective-home authority. This guard must recognize the Vacation
+  // Home so it does not "correct" a character at the Vacation Home back to permanent home.
+  const trueHomeId = (character.vacation_mode === true && character.vacation_home_location_id)
+    ? character.vacation_home_location_id
+    : (character.current_home_location_id || character.home_location_id);
   if (
     character.resolved_presence_status === 'home' &&
     character.resolved_current_location_id &&
@@ -850,6 +856,12 @@ function isValidSleepCategory(location) {
 }
 
 function resolveSleepHomeId(character, locationMap) {
+  // VACATION HOME AUTHORITY: When Vacation Mode is ON and a Vacation Home is designated,
+  // the Vacation Home is the authoritative sleep location — not the permanent home.
+  // Mirrors resolveValidSleepLocationId in enforceCharacterLocationPresence.
+  if (character.vacation_mode === true && character.vacation_home_location_id && locationMap[character.vacation_home_location_id]) {
+    return character.vacation_home_location_id;
+  }
   if (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id]) {
     return character.temporary_housing_location_id;
   }

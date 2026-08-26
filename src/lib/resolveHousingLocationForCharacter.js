@@ -33,8 +33,14 @@ export function resolveHousingLocationForCharacter(character, locations, options
     ? locations.reduce((map, loc) => ({ ...map, [loc.id]: loc }), {})
     : (locations || {});
 
-  // ── SCENARIO 1: Valid Permanent Home ────────────────────────────────────
-  const homeId = character.current_home_location_id || character.home_location_id;
+  // ── SCENARIO 1: Valid Effective Home ────────────────────────────────────
+  // VACATION MODE: When vacation_mode is ON and a Vacation Home is designated, the
+  // Vacation Home is the effective home — not the permanent home. The permanent home
+  // temporarily loses effective-home authority. This is a read-only resolution; the
+  // permanent home (current_home_location_id) is never overwritten in the database.
+  const homeId = (character.vacation_mode === true && character.vacation_home_location_id)
+    ? character.vacation_home_location_id
+    : (character.current_home_location_id || character.home_location_id);
   if (homeId) {
     const homeLocation = locationMap[homeId];
     if (homeLocation) {
