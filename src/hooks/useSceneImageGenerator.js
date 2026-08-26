@@ -13,7 +13,6 @@ import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { resolveSceneRole } from "@/lib/sceneRoleResolver";
 
 /**
  * useSceneImageGenerator

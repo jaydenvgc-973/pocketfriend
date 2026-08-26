@@ -1,8 +1,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { RefreshCw, MapPin, ChevronDown, ChevronUp, Check, ZoomIn, Sparkles, Tv } from "lucide-react";
+import { RefreshCw, MapPin, ChevronDown, ChevronUp, Check, ZoomIn, Sparkles } from "lucide-react";
 import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
-import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
