@@ -2,25 +2,23 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut, X, Tv } from "lucide-react";
+import { ArrowLeft, Camera, Tv } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
+import SceneMediaArea from "@/components/scene/SceneMediaArea";
 import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { isLocationOpen } from "@/lib/locationHoursUtils";
 import { generateLocationActions } from "@/lib/actionGenerator";
-import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, getLocationMemories } from "@/lib/memoryUnity";
-import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
 import { getPresenceAtLocation, resolveTravelPresenceEntities } from "@/lib/travelPresenceResolver";
 import ConversationTypeSelector from "@/components/scene/ConversationTypeSelector";
 import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
 import WhosHereDropdown from "@/components/scene/WhosHereDropdown";
-import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
 import { writeSceneExitMemories } from "@/lib/sceneExitMemory";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
@@ -32,31 +30,22 @@ import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
-import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { getEnvironmentTypeForZone } from "@/components/location/EnvironmentSelectorModal";
-import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
-import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
-import { extractSceneItemLabel } from "@/lib/sceneItemResolver";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
-import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
-import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { useUserSettings } from "@/hooks/useUserSettings";
-import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
+import { useSceneImageGenerator } from "@/hooks/useSceneImageGenerator";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useAuth } from "@/lib/AuthContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
 import { handleCharacterWorldPhoneAction } from "@/lib/worldPhoneActionHandler";
 import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
-import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
-import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
-import { buildSealedSubjectBundles } from "@/lib/sceneSubjectBundle";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -64,71 +53,18 @@ const CATEGORY_EMOJIS = {
   bar: "🍸", generic: "📍", transportation: "🚉"
 };
 
-// Categories that serve food/drinks
-const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
-
-// ── PARTICIPANT REFERENCE KEY ──────────────────────────────────────────────
-// Reuses the existing image-index-to-participant convention from generateImageAsync
-// and _buildSubjectBundle. Orders participant avatars first (contiguous per person),
-// then environment refs. Returns the ordered visual ref array AND a prompt-text block
-// that explicitly maps each image index range to a named participant, so the model
-// knows exactly which reference image belongs to which person — no implicit ordering
-// inference. This is the same pattern generateImageAsync uses via charRefStart/userRefStart.
-function buildParticipantReferenceKey(participants, envRefs) {
-  const visualRefs = [];
-  const ranges = [];
-  for (const p of (participants || [])) {
-    if (!p || !p.name) continue;
-    const personRefs = [];
-    const avatar = p.avatar_url || p.image_avatar_url;
-    if (avatar && avatar.trim().length > 0 && !visualRefs.includes(avatar)) {
-      personRefs.push(avatar);
-    }
-    // Include up to 1 extra reference_image_url per participant for a stronger
-    // identity lock — the same established manner generateImageAsync uses
-    // (multiple reference photos per subject, not just a single avatar).
-    const refUrls = (p.reference_image_urls || []).filter(u =>
-      u && u.trim().length > 0 && !u.includes('generated_image') && !visualRefs.includes(u) && !personRefs.includes(u)
-    );
-    for (const url of refUrls.slice(0, 1)) {
-      personRefs.push(url);
-    }
-    if (personRefs.length > 0) {
-      const start = visualRefs.length + 1;
-      for (const url of personRefs) visualRefs.push(url);
-      const end = visualRefs.length;
-      ranges.push({ id: p.id, name: p.name, start, end });
-    } else {
-      ranges.push({ id: p.id, name: p.name, start: null, end: null });
-    }
-  }
-  const envStart = visualRefs.length + 1;
-  for (const url of (envRefs || [])) {
-    if (url && url.trim().length > 0 && !visualRefs.includes(url)) {
-      visualRefs.push(url);
-    }
-  }
-  const envEnd = visualRefs.length;
-  return { visualRefs, ranges, envStart, envEnd };
-}
-
 export default function Scene() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const urlParams = new URLSearchParams(window.location.search);
   const locationId = urlParams.get("locationId");
   const characterIds = (urlParams.get("characterIds") || "").split(",").filter(Boolean);
-  // zoneName passed from Travel when user selected an explicit environment
   const initialZoneName = urlParams.get("zoneName") || null;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [sceneImage, setSceneImage] = useState(null);
-  // Tracks whether the user has explicitly requested an image (↻ button or zone change).
-  // Prevents automatic generation on mount — the page renders a placeholder until the user acts.
   const [hasUserRequestedImage, setHasUserRequestedImage] = useState(false);
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [actions, setActions] = useState([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
@@ -136,2365 +72,505 @@ export default function Scene() {
   const [showNpcDropdown, setShowNpcDropdown] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [activeZone, setActiveZone] = useState(initialZoneName);
-  const [showZonePicker, setShowZonePicker] = useState(false);
-  const [conversationModal, setConversationModal] = useState(null); // {npcId, npcName, hasEmployees}
-  const [narratorMode, setNarratorMode] = useState(false); // toggles between dialogue and narration input
+  const [conversationModal, setConversationModal] = useState(null);
+  const [narratorMode, setNarratorMode] = useState(false);
   const [showTourModal, setShowTourModal] = useState(false);
   const [showMoveInPopup, setShowMoveInPopup] = useState(false);
   const [isMoveInLoading, setIsMoveInLoading] = useState(false);
-  const [extraNpcs, setExtraNpcs] = useState([]); // realtor + other added NPCs
+  const [extraNpcs, setExtraNpcs] = useState([]);
   const [pendingInvitations, setPendingInvitations] = useState(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
-  const [privateTarget, setPrivateTarget] = useState(null); // { id, name } — pull aside mode
-  const [pendingPurchase, setPendingPurchase] = useState(null); // { price, productId, targetCharacterId }
-  // Watch Video / Watch Party — ephemeral session state only, never persisted to entities.
+  const [privateTarget, setPrivateTarget] = useState(null);
+  const [pendingPurchase, setPendingPurchase] = useState(null);
   const [watchVideoActive, setWatchVideoActive] = useState(false);
-  const [watchContext, setWatchContext] = useState(null); // { provider, title, videoType }
+  const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
-  const zonPickerRef = useRef(null);
-  // Stable refs for send handlers — prevents SceneInputBar from re-rendering on every keystroke
   const narratorModeRef = useRef(narratorMode);
   const sendMessageRef = useRef(null);
   const sendNarrationRef = useRef(null);
 
-  // AUTHENTICATED USER: useAuth() is the single source of truth for the logged-in
-  // user's identity. The userParticipant for Scene images is built exclusively from
-  // this authenticated user — never from an unscoped User list, admin fallback, or
-  // cached data from another account. The stable ID/email in the dependency arrays
-  // below ensures switching accounts cannot reuse another account's user/avatar data.
   const { user: currentUser } = useAuth();
-  // Use the shared useUserSettings hook (same as Home, Travel, MyProfile) so the
-  // ["userSettings", email] cache always holds a single object — never an array.
-  // Scene previously used an inline array-returning query that clashed with the
-  // hook's object-returning queryFn on the SAME cache key: when the cache held the
-  // object form, Array.isArray() failed here, settings became {}, and the user
-  // closet resolved empty in the Change Clothes modal.
   const { settings, isLoading: isUserSettingsLoading } = useUserSettings(currentUser?.email || null);
-  // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
-  // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
-  // ── USER PARTICIPANT FOR SCENE IMAGES ──────────────────────────────────────
-  // The user is present at the scene (they traveled here). Build a pseudo-character
-  // object so the image generator includes the user alongside their companions.
-  // Only created when the user has an avatar — without one, identity can't be locked.
   const userParticipant = useMemo(() => {
-    const userAvatar = currentUser?.generated_avatar_urls?.[0]
-      || currentUser?.reference_image_urls?.[0]
-      || currentUser?.avatar_url
-      || null;
+    const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null;
     if (!userAvatar) return null;
     return {
-      id: currentUser?.id || 'user',
-      name: displayName,
-      avatar_url: userAvatar,
-      image_avatar_url: userAvatar,
-      reference_image_urls: currentUser?.reference_image_urls || [],
-      appearance_lock: settings?.appearance_lock || null,
-      user_race: settings?.user_race || null,
-      gender: settings?.user_gender || currentUser?.gender || null,
-      isUser: true,
+      id: currentUser?.id || 'user', name: displayName, avatar_url: userAvatar, image_avatar_url: userAvatar,
+      reference_image_urls: currentUser?.reference_image_urls || [], appearance_lock: settings?.appearance_lock || null,
+      user_race: settings?.user_race || null, gender: settings?.user_gender || currentUser?.gender || null, isUser: true,
     };
   }, [currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
 
   const { data: locationsData = [], isFetching: isLocationsFetching } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
-    queryFn: async () => {
-      const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
-      return res?.data?.locations || [];
-    },
+    queryFn: async () => { const res = await base44.functions.invoke("fetchAllLocationsForUser", {}); return res?.data?.locations || []; },
     enabled: !!currentUser?.email
   });
 
-  // FALLBACK: If the location isn't in the list (e.g., just created via real-location
-  // promotion and the list cache is stale), fetch it directly by ID. This prevents
-  // a stale-cache "Location not found" flash when navigating from Travel to Scene
-  // for a newly promoted real-world location.
   const { data: directLocation = null, isLoading: isDirectLoading } = useQuery({
     queryKey: ["locationReferenceDirect", locationId],
-    queryFn: async () => {
-      if (!locationId) return null;
-      try {
-        return await base44.entities.LocationReference.get(locationId);
-      } catch {
-        return null;
-      }
-    },
+    queryFn: async () => { if (!locationId) return null; try { return await base44.entities.LocationReference.get(locationId); } catch { return null; } },
     enabled: !!locationId && !locationsData.find((l) => l.id === locationId),
   });
 
-  // Multi-source character loading — same strategy as Travel page so Scene sees all NPCs
-  const {
-    characters,
-    activeChars,
-    backendNpcFictitious,
-    rlsNpcFictitious,
-    familyByCreatedBy,
-    familyByOwner,
-    sharedLocationEmployees
-  } = useSceneCharacters(currentUser);
+  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
   const locationZones = location?.zones || [];
-  // Resolve the active zone's environment type (operational / residential / restricted).
-  // Restricted environments suppress general ambient population — the scene is built
-  // from the user, the active interaction target, explicitly included companions,
-  // and any contextually required occupants (on-shift workers, real characters present).
   const activeEnvType = getEnvironmentTypeForZone(location, activeZone || locationZones[0]?.zone_name);
   const isRestrictedEnv = activeEnvType === 'restricted';
-
-  // Active characters explicitly brought (from URL params) — must be before useMemo that uses it
   const broughtCharacters = characters.filter((c) => characterIds.includes(c.id));
 
-  // ── UNIFIED PRESENCE RESOLUTION ─────────────────────────────────────────────
-  // SAME resolver as Travel page (Map + popup) — one source of truth for all surfaces
   const unifiedPresenceEntities = useMemo(() => {
     const resolved = resolveTravelPresenceEntities({
-      currentUser,
-      userSettings: settings || null,
-      activeCharacters: activeChars,
+      currentUser, userSettings: settings || null, activeCharacters: activeChars,
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
-      allCharacters: characters,
-      sharedLocationEmployees,
-      locations: locationsData
+      allCharacters: characters, sharedLocationEmployees, locations: locationsData
     });
-
-    // CRITICAL: Brought characters MUST appear in presence, even if resolved_current_location_id hasn't synced yet
-    // They are explicitly here with the user, so override their presence state
-    const withBroughtCharacters = resolved.map((entity) => {
-      if (broughtCharacters.find((bc) => bc.id === entity.id)) {
-        return {
-          ...entity,
-          resolved_current_location_id: locationId,
-          is_currently_present: true
-        };
-      }
+    const withBrought = resolved.map((entity) => {
+      if (broughtCharacters.find((bc) => bc.id === entity.id)) return { ...entity, resolved_current_location_id: locationId, is_currently_present: true };
       return entity;
     });
-
-    // Add any brought characters missing from resolved list (e.g., newly arrived)
     broughtCharacters.forEach((brought) => {
-      if (!withBroughtCharacters.find((e) => e.id === brought.id)) {
-        withBroughtCharacters.push({
-          id: brought.id,
-          display_name: brought.display_name || brought.name,
-          name: brought.name,
-          character_type: brought.character_type,
-          avatar_url: brought.avatar_url,
-          resolved_current_location_id: locationId,
-          resolved_current_location_name: location?.name,
-          resolved_presence_status: 'visiting',
-          is_currently_present: true,
-          is_home_resident: brought.current_home_location_id === locationId,
-          personality_summary: brought.personality_summary,
-          emotional_state: brought.emotional_state
-        });
+      if (!withBrought.find((e) => e.id === brought.id)) {
+        withBrought.push({ id: brought.id, display_name: brought.display_name || brought.name, name: brought.name, character_type: brought.character_type, avatar_url: brought.avatar_url, resolved_current_location_id: locationId, resolved_current_location_name: location?.name, resolved_presence_status: 'visiting', is_currently_present: true, is_home_resident: brought.current_home_location_id === locationId, personality_summary: brought.personality_summary, emotional_state: brought.emotional_state });
       }
     });
-
-    return withBroughtCharacters;
+    return withBrought;
   }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, locationsData, broughtCharacters, locationId, location?.name]);
-
-  // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
-  // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
-  // Staff assignment is NOT scene presence. Schedule-blocked characters are NOT here.
-  // This aligns Scene with Home page and Travel page.
 
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
-  const isAdmin = currentUser?.role === 'admin';
   const isVGCTowers = location?.name === 'VGC Towers';
-
-  // Active characters home at a home location
-  const homeResidents = isHomeLocation ?
-  characters.filter((c) => c.current_home_location_id === location.id) :
-  [];
-  // VGC Towers: residents are selectable but not auto-shown in the presence strip
+  const homeResidents = isHomeLocation ? characters.filter((c) => c.current_home_location_id === location.id) : [];
   const homeResidentsPresent = homeResidents.filter((c) => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter((c) => !isCharacterHome(c, locationMap));
 
-  // Family NPCs for home scenes.
-  // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
-  // A family NPC is "away" if their current_location_id is set to a DIFFERENT location.
-  // We do NOT require fictional_relationships lookup — resident_family_members is the source of truth.
   const getFamilyNpcLocationId = (fm) => {
-    // Check source character's fictional_relationships for current_location_id
     for (const char of homeResidents) {
-      const rel = char.fictional_relationships?.find(
-        (r) => r.person_name?.trim().toLowerCase() === fm.name?.trim().toLowerCase() && !r.related_character_id
-      );
+      const rel = char.fictional_relationships?.find((r) => r.person_name?.trim().toLowerCase() === fm.name?.trim().toLowerCase() && !r.related_character_id);
       if (rel) return rel.current_location_id || null;
     }
-    return null; // no location set = home by default
+    return null;
   };
-
-  const familyMemberNpcsAway = isHomeLocation ?
-  (location.resident_family_members || []).filter((fm) => {
-    if (!fm.name) return false;
-    const locId = getFamilyNpcLocationId(fm);
-    return locId && locId !== location.id;
-  }) :
-  [];
-
-  const familyMemberNpcsPresent = isHomeLocation ?
-  (location.resident_family_members || []).filter((fm) => {
-    if (!fm.name) return false;
-    const locId = getFamilyNpcLocationId(fm);
-    return !locId || locId === location.id;
-  }) :
-  [];
-
-  // Build NPC pseudo-characters for family members present (for sceneCharacters roster)
+  const familyMemberNpcsAway = isHomeLocation ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return locId && locId !== location.id; }) : [];
+  const familyMemberNpcsPresent = isHomeLocation ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return !locId || locId === location.id; }) : [];
   const familyNpcSceneObjects = familyMemberNpcsPresent.map((fm) => {
-    // Look up photo_url from source character's family_members array
     let photoUrl = null;
-    for (const char of homeResidents) {
-      const match = char.family_members?.find(
-        (m) => m.name?.trim().toLowerCase() === fm.name?.trim().toLowerCase()
-      );
-      if (match?.photo_url) {photoUrl = match.photo_url;break;}
-    }
-    return {
-      id: `npc_family_${fm.name.replace(/\s+/g, '_')}`,
-      name: fm.name,
-      role: fm.relationship_type || 'Family',
-      isNpc: true,
-      character_type: 'family_npc',
-      avatar_url: photoUrl
-    };
+    for (const char of homeResidents) { const match = char.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name?.trim().toLowerCase()); if (match?.photo_url) { photoUrl = match.photo_url; break; } }
+    return { id: `npc_family_${fm.name.replace(/\s+/g, '_')}`, name: fm.name, role: fm.relationship_type || 'Family', isNpc: true, character_type: 'family_npc', avatar_url: photoUrl };
   });
 
-  // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
-  // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
   const workerCharacters = (() => {
     if (!location) return [];
-    // CANONICAL PRESENCE MAP: same resolution as Who's Here / Travel map.
-    // The raw DB resolved_current_location_id may be stale (e.g. an on-shift
-    // employee whose DB still shows their home). unifiedPresenceEntities holds
-    // the canonical resolution from resolveCharacterLocation — use it so the
-    // worker classification and Who's Here consume the same location truth.
     const canonicalLocById = {};
-    unifiedPresenceEntities.forEach((e) => {
-      if (e.id) canonicalLocById[e.id] = e.resolved_current_location_id;
-    });
+    unifiedPresenceEntities.forEach((e) => { if (e.id) canonicalLocById[e.id] = e.resolved_current_location_id; });
     const onShift = characters.filter((c) => {
       if (characterIds.includes(c.id)) return false;
       if (isCharacterAsleep(c)) return false;
-      // AUTHORITY PRIORITY: hospitalization and incarceration override employment.
-      // A hospitalized or incarcerated character is never classified as an employee,
-      // even if they also have a shift at this location.
       if (c.resolved_presence_status === 'hospitalized') return false;
       if (['incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)) return false;
-      // EMPLOYMENT AT THIS LOCATION: a generic work schedule for another
-      // location must NOT count as employment here. The character must be
-      // actually employed at this exact location (shift defined here, or
-      // occupation_location_id / additional_occupation_locations links here).
       if (!isEmployedAtLocation(c, location)) return false;
       if (!isCharacterAtWork(c, location)) return false;
-      // CANONICAL PRESENCE: use the canonical resolver's location (same as
-      // Who's Here / Travel map), not the potentially stale raw DB field.
       const canonicalLocId = canonicalLocById[c.id] || c.resolved_current_location_id;
       if (canonicalLocId && canonicalLocId !== locationId) return false;
       return true;
     });
-    // JAIL SCENE CAP: max 4 real scheduled staff loaded into a jail/prison scene at once.
-    // Runtime display cap ONLY — does not affect assignments, payroll, or schedules.
     if (location.is_confinement_facility || location.category === 'jail_prison') return onShift.slice(0, 4);
     return onShift;
   })();
 
-  // Role resolution sets — built ONCE, consumed by all Scene surfaces (Who's Here + image generation).
-  // No downstream consumer reclassifies participants. These sets feed resolveSceneRole at the
-  // participant level, and the result (sceneRole) is attached to each participant permanently.
   const onShiftIds = new Set(workerCharacters.map((w) => w.id));
   const homeResidentIds = new Set(homeResidentsPresent.map((r) => r.id));
-
-  // VGC Towers NPC characters distributed to this location (authoritative presence)
-  // These are Character entity records with resolved_current_location_id === locationId
   const vgcDistributedNpcs = characters.filter((c) => {
     if (!c.character_type) return false;
-    const isNpcType = ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type);
-    if (!isNpcType) return false;
+    if (!['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type)) return false;
     if (characterIds.includes(c.id)) return false;
-    // Must have authoritative resolved presence at this exact location
     if (c.resolved_current_location_id !== locationId) return false;
-    // Must be in a valid presence state (social_visit, home, work)
     if (c.presence_state === 'in_transit') return false;
     return true;
   });
 
-  // ── CHANGE CLOTHES: eligible persistent characters present in the scene ─────
-  // Any persistent Character entity record present at this location is a valid
-  // clothing target — active_created_character, npc_fictitious, npc_family_member,
-  // etc. All share the same Character-entity closet fields (character_closet,
-  // today_category_outfit_overrides, outfit_rotation_enabled, current_outfit) and
-  // the same applyManualCategoryOverride activation pathway.
-  // Non-persistent scene constructs (venue templates, temp staff, synthesized
-  // presence objects) are plain objects without DB identity and never reach this
-  // list because they are not in the `characters` array.
-  // The user is NOT listed here — they are represented by "Me" in the modal.
-  // This selector is independent of the conversation target and does not alter
-  // occupancy, conversation eligibility, location, sleep, or character type.
   const changeClothesEligibleCharacters = useMemo(() => {
-    const seen = new Set();
-    const list = [];
-    const add = (c) => {
-      if (!c || !c.id || seen.has(c.id)) return;
-      seen.add(c.id);
-      list.push(c);
-    };
-    broughtCharacters.forEach(add);
-    homeResidentsPresent.forEach(add);
-    workerCharacters.forEach(add);
-    vgcDistributedNpcs.forEach(add);
-    // Any other real Character records resolved present at this location
+    const seen = new Set(); const list = [];
+    const add = (c) => { if (!c || !c.id || seen.has(c.id)) return; seen.add(c.id); list.push(c); };
+    broughtCharacters.forEach(add); homeResidentsPresent.forEach(add); workerCharacters.forEach(add); vgcDistributedNpcs.forEach(add);
     characters.filter((c) => c.resolved_current_location_id === locationId).forEach(add);
     return list;
   }, [broughtCharacters, homeResidentsPresent, workerCharacters, vgcDistributedNpcs, characters, locationId]);
 
-  // PRESENCE SYNC: Scan all characters for NPCs currently at this location (legacy fictional_relationships)
   const npcsTravelingHere = (() => {
     const traveling = [];
-    characters.forEach((char) => {
-      if (!char.fictional_relationships) return;
-      char.fictional_relationships.forEach((rel) => {
-        if (!rel.related_character_id && rel.person_name && rel.current_location_id === locationId) {
-          traveling.push({
-            id: `npc_${rel.person_name.replace(/\s+/g, "_")}_${char.id}`,
-            name: rel.person_name,
-            role: rel.relationship_type || "NPC",
-            isNpc: true,
-            avatar_url: null
-          });
-        }
-      });
-    });
+    characters.forEach((char) => { if (!char.fictional_relationships) return; char.fictional_relationships.forEach((rel) => { if (!rel.related_character_id && rel.person_name && rel.current_location_id === locationId) { traveling.push({ id: `npc_${rel.person_name.replace(/\s+/g, "_")}_${char.id}`, name: rel.person_name, role: rel.relationship_type || "NPC", isNpc: true, avatar_url: null }); } }); });
     return traveling;
   })();
 
-  // "Here Now" real characters from unified presence resolver — must be selectable in Who's Here
   const hereNowFromPresence = useMemo(() => {
     if (!location) return [];
-    return getPresenceAtLocation(location, unifiedPresenceEntities).
-    filter((e) => !characterIds.includes(e.id)) // exclude already-traveled-with
-    .map((entity) => ({
-      id: entity.id,
-      name: entity.display_name,
-      avatar_url: entity.avatar_url,
-      role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
-      isNpc: false,
-      npcType: 'present',
-      resolved_presence_status: entity.resolved_presence_status,
-      personality_summary: entity.personality_summary,
-      emotional_state: entity.emotional_state
-    }));
+    return getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)).map((entity) => ({ id: entity.id, name: entity.display_name, avatar_url: entity.avatar_url, role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now', isNpc: false, npcType: 'present', resolved_presence_status: entity.resolved_presence_status, personality_summary: entity.personality_summary, emotional_state: entity.emotional_state }));
   }, [location, unifiedPresenceEntities, characterIds]);
 
-  // Build the full pool of possible NPCs for ANY venue
   const allPossibleNpcs = (() => {
     const npcs = [];
-
-    // Home: build resident NPC list with correct hierarchy:
-    // 1. Fictitious NPC Character entities (highest priority)
-    // 2. Real Character residents
-    // 3. NPC family members (resident_family_members)
     if (isHomeLocation) {
-      // FIRST: fictional NPC Character records (vgcDistributedNpcs / Character entities)
-      vgcDistributedNpcs.forEach((n) => {
-        if (!npcs.find((x) => x.id === n.id)) {
-          npcs.push({
-            id: n.id,
-            name: n.name,
-            role: n.character_type === 'family_npc' ? 'Family' : 'Resident',
-            isNpc: true,
-            npcType: 'resident',
-            avatar_url: n.avatar_url || null,
-            personality_summary: n.personality_summary,
-            emotional_state: n.emotional_state
-          });
-        }
-      });
-
-      // SECOND: real Character entities living here
-      homeResidents.forEach((c) => {
-        if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) {
-          npcs.push({
-            id: c.id,
-            name: c.name,
-            role: 'Resident',
-            isNpc: false,
-            npcType: 'resident',
-            avatar_url: c.avatar_url || null,
-            personality_summary: c.personality_summary,
-            emotional_state: c.emotional_state
-          });
-        }
-      });
-
-      // THIRD: NPC family members from resident_family_members (lowest priority)
-      (location.resident_family_members || []).forEach((fm) => {
-        if (!fm.name) return;
-        // Skip if already represented by a real Character entity above
-        const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
-        if (alreadyAdded) return;
-        const sourceChar = fm.source_character_id ?
-        characters.find((c) => c.id === fm.source_character_id) :
-        homeResidents.find((c) =>
-        c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())
-        );
-        const familyMemberRecord = sourceChar?.family_members?.find(
-          (m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
-        );
-        const avatarUrl = familyMemberRecord?.photo_url || null;
-        npcs.push({
-          id: `npc_${fm.name.replace(/\s+/g, "_")}`,
-          name: fm.name,
-          role: fm.relationship_type || "Family",
-          isNpc: true,
-          npcType: "resident",
-          avatar_url: avatarUrl
-        });
-      });
+      vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.character_type === 'family_npc' ? 'Family' : 'Resident', isNpc: true, npcType: 'resident', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); });
+      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state }); });
+      (location.resident_family_members || []).forEach((fm) => { if (!fm.name) return; const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); if (alreadyAdded) return; const sourceChar = fm.source_character_id ? characters.find((c) => c.id === fm.source_character_id) : homeResidents.find((c) => c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())); const familyMemberRecord = sourceChar?.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); npcs.push({ id: `npc_${fm.name.replace(/\s+/g, "_")}`, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, npcType: "resident", avatar_url: familyMemberRecord?.photo_url || null }); });
     }
-
-    // Any venue: NPC owner/operator — ONLY add if live presence confirms they are on-site.
-    // RULE: Ownership is NOT presence. owner_is_npc alone never adds them to the scene.
-    // They appear here only as a selectable "Who's here" option if the user explicitly engages them.
-    // (We keep them in the picker so the user can choose to interact if owner happens to be present,
-    //  but they are NOT auto-added to the scene roster or traveled-with.)
-    if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) {
-      npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
-    }
-
-    // On-shift real character employees — MUST be in allPossibleNpcs as npcType 'staff'
-    // so they appear under the EMPLOYEES section of Who's Here (not "Here Now") and
-    // remain selectable to talk to. Without this, workerCharacters are absent from
-    // allPossibleNpcs and fall through to the "Here Now" visitor section.
-    workerCharacters.forEach((w) => {
-      if (npcs.find((x) => x.id === w.id)) return;
-      if (characterIds.includes(w.id)) return;
-      const jobTitle = location.worker_job_titles?.[w.id] || w.work_details?.job_title || "Employee";
-      npcs.push({
-        id: w.id,
-        name: w.name,
-        role: jobTitle,
-        isNpc: false,
-        npcType: "staff",
-        avatar_url: w.avatar_url || null,
-        personality_summary: w.personality_summary,
-        archetype: w.archetype,
-        emotional_state: w.emotional_state,
-        resolved_presence_status: w.resolved_presence_status,
-      });
-    });
-
-    // Real named workers from the location record (worker_character_ids + worker_job_titles)
-    // RULE: A worker assigned to a location is NOT automatically present.
-    // They must have live presence confirmed (resolved_current_location_id === locationId).
-    // Only add to the selectable "Who's here" list if live presence is confirmed.
+    if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
+    workerCharacters.forEach((w) => { if (npcs.find((x) => x.id === w.id)) return; if (characterIds.includes(w.id)) return; const jobTitle = location.worker_job_titles?.[w.id] || w.work_details?.job_title || "Employee"; npcs.push({ id: w.id, name: w.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: w.avatar_url || null, personality_summary: w.personality_summary, archetype: w.archetype, emotional_state: w.emotional_state, resolved_presence_status: w.resolved_presence_status }); });
     const locationWorkerIds = location?.worker_character_ids || [];
-    // Reuse the canonical presence map built above (same resolution as Who's Here)
     const canonicalLocByIdWorkerLoop = {};
-    unifiedPresenceEntities.forEach((e) => {
-      if (e.id) canonicalLocByIdWorkerLoop[e.id] = e.resolved_current_location_id;
-    });
-    locationWorkerIds.forEach((wid) => {
-      // Skip characters already auto-shown as "on shift" workers
-      if (workerCharacters.find((w) => w.id === wid)) return;
-      // Skip characters brought by user
-      if (characterIds.includes(wid)) return;
-      const workerChar = characters.find((c) => c.id === wid);
-      if (!workerChar) return;
-      // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if canonical presence confirmed at this location.
-      // Use the canonical resolver's location (same as Who's Here), not the stale raw DB field.
-      const canonicalLocId = canonicalLocByIdWorkerLoop[wid] || workerChar.resolved_current_location_id;
-      if (canonicalLocId !== locationId) return;
-      const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
-      npcs.push({
-        id: workerChar.id,
-        name: workerChar.name,
-        role: jobTitle,
-        isNpc: false, // real character
-        npcType: "staff",
-        avatar_url: workerChar.avatar_url,
-        personality_summary: workerChar.personality_summary,
-        archetype: workerChar.archetype,
-        emotional_state: workerChar.emotional_state
-      });
-    });
-
-    // For home locations, stop here — no generic venue NPCs, no strangers, no locals.
-    // Only residents explicitly listed on the location record are ever present in a home.
-    // BUT still include "Here Now" real characters so they can be selected.
-    if (isHomeLocation) {
-      hereNowFromPresence.forEach((n) => {
-        if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
-      });
-      return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
-    }
-
-    // TEMPORARY SCENE STAFF: Fill roles not covered by a real on-shift worker.
-    // Priority: real on-shift → real off-shift (temp fills in) → no assignment (temp fills in).
-    // Temp staff are scene-only and never overwrite Locations page data.
-    // Restricted environments suppress general ambient population — skip temp staff.
-    if (!isRestrictedEnv) {
-      const onShiftIds = workerCharacters.map((w) => w.id);
-      const tempSceneStaff = getTemporarySceneStaff(location, onShiftIds);
-      tempSceneStaff.forEach((tmpNpc) => {
-        if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc);
-      });
-    }
-
-    // NPC staff workers defined on the location record — check if on shift
-    // Restricted environments suppress ambient NPC staff.
-    if (!isRestrictedEnv) {
-      const npcWorkerKeys = Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_"));
-      npcWorkerKeys.forEach((key) => {
-        // Only add if on shift at this location
-        if (isNPCOnShift(location, key)) {
-          const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-          const jobTitle = location.worker_job_titles[key];
-          if (!npcs.find((x) => x.id === key)) {
-            npcs.push({
-              id: key,
-              name: npcName,
-              role: jobTitle || "Staff",
-              isNpc: true,
-              npcType: "staff",
-              avatar_url: null
-            });
-          }
-        }
-      });
-    }
-
-    // Generic venue NPCs — loaded from extracted constant (lib/sceneVenueNPCs.js)
-    // Restricted environments suppress general ambient population.
-    if (!isRestrictedEnv) {
-      const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
-      venueDefaults.forEach((n) => {
-        if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
-      });
-    }
-
-    // Add NPCs currently traveling to this location (presence sync — legacy fictional_relationships)
-    // Restricted environments suppress ambient traveling NPCs.
-    if (!isRestrictedEnv) {
-      npcsTravelingHere.forEach((n) => {
-        if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
-      });
-    }
-
-    // Add VGC Towers distributed NPC Character entities at this location
-    // These have authoritative resolved_current_location_id === locationId
-    // Restricted environments suppress ambient distributed NPCs.
-    if (!isRestrictedEnv) {
-      vgcDistributedNpcs.forEach((n) => {
-        if (!npcs.find((x) => x.id === n.id)) {
-          npcs.push({
-            id: n.id,
-            name: n.name,
-            role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ?
-            'Visiting' :
-            n.character_type === 'family_npc' ? 'Family' : 'NPC',
-            isNpc: true,
-            npcType: 'customer',
-            avatar_url: n.avatar_url || null,
-            personality_summary: n.personality_summary,
-            emotional_state: n.emotional_state
-          });
-        }
-      });
-    }
-
-    // Add "Here Now" real characters from unified presence resolver
-    // These MUST be in allPossibleNpcs so selectedNpcIds can find them
-    hereNowFromPresence.forEach((n) => {
-      if (!npcs.find((x) => x.id === n.id)) npcs.push(n);
-    });
-
-    // Add invite-arrived extras (onCharacterArrived) so they appear in Who's Here immediately
-    extraNpcs.forEach((n) => {
-      if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' });
-    });
-
-    // Dedupe by id
+    unifiedPresenceEntities.forEach((e) => { if (e.id) canonicalLocByIdWorkerLoop[e.id] = e.resolved_current_location_id; });
+    locationWorkerIds.forEach((wid) => { if (workerCharacters.find((w) => w.id === wid)) return; if (characterIds.includes(wid)) return; const workerChar = characters.find((c) => c.id === wid); if (!workerChar) return; const canonicalLocId = canonicalLocByIdWorkerLoop[wid] || workerChar.resolved_current_location_id; if (canonicalLocId !== locationId) return; const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee"; npcs.push({ id: workerChar.id, name: workerChar.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: workerChar.avatar_url, personality_summary: workerChar.personality_summary, archetype: workerChar.archetype, emotional_state: workerChar.emotional_state }); });
+    if (isHomeLocation) { hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i); }
+    if (!isRestrictedEnv) { const onShiftIdsLocal = workerCharacters.map((w) => w.id); const tempSceneStaff = getTemporarySceneStaff(location, onShiftIdsLocal); tempSceneStaff.forEach((tmpNpc) => { if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc); }); }
+    if (!isRestrictedEnv) { Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_")).forEach((key) => { if (isNPCOnShift(location, key)) { const npcName = key.replace(/^npc_/, "").replace(/_/g, " "); const jobTitle = location.worker_job_titles[key]; if (!npcs.find((x) => x.id === key)) npcs.push({ id: key, name: npcName, role: jobTitle || "Staff", isNpc: true, npcType: "staff", avatar_url: null }); } }); }
+    if (!isRestrictedEnv) { const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC; venueDefaults.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null }); }); }
+    if (!isRestrictedEnv) { npcsTravelingHere.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); }
+    if (!isRestrictedEnv) { vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ? 'Visiting' : n.character_type === 'family_npc' ? 'Family' : 'NPC', isNpc: true, npcType: 'customer', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); }); }
+    hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); });
+    extraNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' }); });
     return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
-  })().map((n) => ({
-    ...n,
-    // Attach sceneRole ONCE — consumed by Who's Here grouping AND image generation.
-    // No downstream consumer reclassifies this participant.
-    sceneRole: n.isNpc === true
-      ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : 'visitor')
-      : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }),
-  }));
+  })().map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
 
-  // Selected NPCs — default: none selected until user picks
-  const selectedNpcs = selectedNpcIds !== null ?
-  allPossibleNpcs.filter((n) => selectedNpcIds.includes(n.id)) :
-  [];
+  const selectedNpcs = selectedNpcIds !== null ? allPossibleNpcs.filter((n) => selectedNpcIds.includes(n.id)) : [];
+  const traveledWithChars = broughtCharacters;
 
-  // ── COMPLETED SCENE PARTICIPANTS — from authoritative presence ──────────────
-  // ONE participant per present person. The pipeline begins with the authoritative
-  // presence result (getPresenceAtLocation) — the people actually at this location
-  // now — NOT the candidate/possible-person collection (allPossibleNpcs).
-  // Each completed participant carries: stable ID → full Character/User record →
-  // current authoritative presence → current Scene role → current resolved outfit →
-  // identity/reference data. Outfit is resolved ONCE (async) and attached to the
-  // same participant object. No downstream consumer reconstructs the person.
-  //
-  // allPossibleNpcs is preserved for the Who's Here selection UI only — it is NOT
-  // the source of truth for the Scene roster.
-
-  // traveled-with = only URL-param companions + invite-joined extras
-  const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
-
-  // ── BASE PARTICIPANTS — from authoritative presence + user + explicit selections ──
   const baseSceneParticipants = (() => {
     if (!location) return [];
-
-    const participants = [];
-    const seenIds = new Set();
-
-    // 1. AUTHORITATIVE PRESENCE: people actually at this location now.
-    //    Same resolver as Travel page and the corrected Scene presence path.
-    //    Includes brought characters (forced present), home residents, on-shift
-    //    workers, VGC-distributed NPCs, and visitors — all from one authoritative source.
+    const participants = []; const seenIds = new Set();
     const presentEntities = getPresenceAtLocation(location, unifiedPresenceEntities);
     for (const entity of presentEntities) {
       if (!entity || !entity.id || seenIds.has(entity.id)) continue;
       seenIds.add(entity.id);
-      // Enrich with the full Character record for identity/reference/appearance data
-      const char = characters.find((c) => c.id === entity.id);
-      const full = char || {};
-      participants.push({
-        ...full,
-        id: entity.id,
-        name: full.name || entity.display_name,
-        display_name: entity.display_name,
-        avatar_url: full.avatar_url || entity.avatar_url,
-        image_avatar_url: full.image_avatar_url,
-        reference_image_urls: full.reference_image_urls || [],
-        appearance_lock: full.appearance_lock,
-        ethnicities: full.ethnicities,
-        gender: full.gender,
-        personality_summary: full.personality_summary || entity.personality_summary,
-        emotional_state: full.emotional_state || entity.emotional_state,
-        archetype: full.archetype,
-        age: full.age,
-        age_range: full.age_range,
-        resolved_presence_status: entity.resolved_presence_status,
-        is_home_resident: entity.is_home_resident,
-        isNpc: false,
-        sceneRole: resolveSceneRole(
-          { id: entity.id, resolved_presence_status: entity.resolved_presence_status },
-          { onShiftAtLocationIds: onShiftIds, homeResidentIds }
-        ),
-      });
+      const char = characters.find((c) => c.id === entity.id); const full = char || {};
+      participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: full.reference_image_urls || [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
     }
-
-    // 2. Family NPC objects (home location, derived from resident_family_members
-    //    — location-data-only family members without Character entity records)
-    if (isHomeLocation) {
-      for (const fn of familyNpcSceneObjects) {
-        if (!fn || !fn.id || seenIds.has(fn.id)) continue;
-        seenIds.add(fn.id);
-        participants.push({ ...fn, sceneRole: 'home resident', isNpc: true });
-      }
-    }
-
-    // 3. NPC travelers (legacy fictional_relationships sync — not in Character records)
-    for (const n of npcsTravelingHere) {
-      if (!n || !n.id || seenIds.has(n.id)) continue;
-      seenIds.add(n.id);
-      participants.push({ ...n, sceneRole: 'visitor', isNpc: true });
-    }
-
-    // 4. Selected NPCs from Who's Here (user's explicit choices — venue templates,
-    //    temp staff, etc. that are NOT in the authoritative presence result)
-    for (const n of selectedNpcs) {
-      if (!n || !n.id || seenIds.has(n.id)) continue;
-      seenIds.add(n.id);
-      participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' });
-    }
-
-    // 5. Extra NPCs from invite arrivals (characters that arrived after the
-    //    presence resolver ran — onCharacterArrived)
-    for (const n of extraNpcs) {
-      if (!n || !n.id || seenIds.has(n.id)) continue;
-      seenIds.add(n.id);
-      participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' });
-    }
-
-    // 6. The authenticated user (always present — they traveled here).
-    //    Sourced exclusively from useAuth(), never from a cached/shared list.
-    if (userParticipant && !seenIds.has(userParticipant.id)) {
-      seenIds.add(userParticipant.id);
-      participants.push({ ...userParticipant, sceneRole: 'visitor' });
-    }
-
+    if (isHomeLocation) { for (const fn of familyNpcSceneObjects) { if (!fn || !fn.id || seenIds.has(fn.id)) continue; seenIds.add(fn.id); participants.push({ ...fn, sceneRole: 'home resident', isNpc: true }); } }
+    for (const n of npcsTravelingHere) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: 'visitor', isNpc: true }); }
+    for (const n of selectedNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
+    for (const n of extraNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
+    if (userParticipant && !seenIds.has(userParticipant.id)) { seenIds.add(userParticipant.id); participants.push({ ...userParticipant, sceneRole: 'visitor' }); }
     return participants;
   })();
 
-  // ── COMPLETED PARTICIPANTS — state collection with role + outfit attached ─────
-  // The completed participant collection is STATE — not a derived merge of a person
-  // list and a separate outfit map. The enrichment effect resolves the current outfit
-  // for each participant and produces completed participant objects with resolvedOutfit
-  // attached directly to the participant. No detached outfit map exists.
-  //
-  // Flow: authoritative presence → baseSceneParticipants (role + identity) →
-  //   async outfit enrichment → sceneParticipants (completed, with resolvedOutfit)
-  //
-  // outfitVersion is an existing clothing-change signal (set by Change Clothes modal)
-  // that triggers re-enrichment of the completed participant collection.
   const [outfitVersion, setOutfitVersion] = useState(0);
-  const [sceneParticipants, setSceneParticipants] = useState(
-    () => baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null }))
-  );
+  const [sceneParticipants, setSceneParticipants] = useState(() => baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null })));
   const [participantsReady, setParticipantsReady] = useState(false);
   const participantIdsKey = baseSceneParticipants.map((p) => p.id).sort().join(',');
 
   useEffect(() => {
-    if (!location || baseSceneParticipants.length === 0) {
-      setSceneParticipants([]);
-      setParticipantsReady(false);
-      return;
-    }
-
-    // Step 1: Immediately set participants with role + identity (outfit pending).
-    // The completed participant collection owns the person — outfit is attached
-    // directly to each participant object, not stored in a separate map.
+    if (!location || baseSceneParticipants.length === 0) { setSceneParticipants([]); setParticipantsReady(false); return; }
     setSceneParticipants(baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null })));
     setParticipantsReady(false);
-
-    // Step 2: Async resolve current outfit for each participant and produce
-    //         completed participant objects with resolvedOutfit attached directly.
     let cancelled = false;
     Promise.all(baseSceneParticipants.map(async (p) => {
       if (!p || !p.id || p.isNpc === true) return p;
       try {
         let outfitText = null;
-        if (p.isUser) {
-          const res = await base44.functions.invoke('resolveUserOutfitContext', {
-            ownerEmail: currentUser?.email,
-            locationCategory: location?.category,
-            locationId: location?.id,
-          });
-          outfitText = res?.data?.text || res?.text || null;
-        } else {
-          const res = await base44.functions.invoke('resolveCharacterOutfitContext', {
-            characterId: p.id,
-            locationCategory: location?.category,
-            locationId: location?.id,
-            ownerEmail: currentUser?.email,
-          });
-          outfitText = res?.data?.text || res?.text || null;
-        }
+        if (p.isUser) { const res = await base44.functions.invoke('resolveUserOutfitContext', { ownerEmail: currentUser?.email, locationCategory: location?.category, locationId: location?.id }); outfitText = res?.data?.text || res?.text || null; }
+        else { const res = await base44.functions.invoke('resolveCharacterOutfitContext', { characterId: p.id, locationCategory: location?.category, locationId: location?.id, ownerEmail: currentUser?.email }); outfitText = res?.data?.text || res?.text || null; }
         return { ...p, resolvedOutfit: outfitText };
-      } catch {
-        return { ...p, resolvedOutfit: null };
-      }
-    })).then((enriched) => {
-      if (cancelled) return;
-      setSceneParticipants(enriched);
-      setParticipantsReady(true);
-    });
-
+      } catch { return { ...p, resolvedOutfit: null }; }
+    })).then((enriched) => { if (cancelled) return; setSceneParticipants(enriched); setParticipantsReady(true); });
     return () => { cancelled = true; };
-  }, [participantIdsKey, location?.id, location?.category, currentUser?.email, outfitVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [participantIdsKey, location?.id, location?.category, currentUser?.email, outfitVersion]);
 
   const allSceneChars = sceneParticipants;
-
-  // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
   const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
-  const sceneCharacters = allSceneChars; // Keep full roster available for NPC spawning logic
+  const sceneCharacters = allSceneChars;
+  const firstImage = location?.zones?.find((z) => z.image_urls?.length > 0)?.image_urls?.[0] || location?.image_urls?.[0] || null;
 
-  const firstImage = location?.zones?.find((z) => z.image_urls?.length > 0)?.image_urls?.[0] ||
-  location?.image_urls?.[0] ||
-  null;
+  // ── IMAGE GENERATION HOOK ──
+  // Uses the SAME identity authority chain as regenerateImageWithReason:
+  //   Scene participant ID → reference_image_urls (NOT avatars) → participant binding
+  //   → authoritative wardrobe → Scene/environment/composition
+  // Avatars are excluded — they carry background/pose/clothing contamination.
+  // Includes a Name Reference Key mapping each prompt name → Character ID / User ID.
+  const { sceneImage, setSceneImage, isGeneratingImage, generateSceneImage } = useSceneImageGenerator();
 
-  // Pre-seed brought characters into selectedNpcIds so they start selected (dot visible, respond to messages).
-  // Runs once when broughtCharacters resolve. User can deselect them individually from Who's Here.
   useEffect(() => {
     if (broughtCharacters.length === 0) return;
-    setSelectedNpcIds((prev) => {
-      const existing = prev || [];
-      const broughtIds = broughtCharacters.map((c) => c.id);
-      const merged = [...new Set([...existing, ...broughtIds])];
-      if (merged.length === existing.length && merged.every((id) => existing.includes(id))) return prev;
-      return merged;
-    });
-  }, [broughtCharacters.map((c) => c.id).join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSelectedNpcIds((prev) => { const existing = prev || []; const broughtIds = broughtCharacters.map((c) => c.id); const merged = [...new Set([...existing, ...broughtIds])]; if (merged.length === existing.length && merged.every((id) => existing.includes(id))) return prev; return merged; });
+  }, [broughtCharacters.map((c) => c.id).join(',')]);
 
-  // Close NPC dropdown on outside click
   useEffect(() => {
-    const handler = (e) => {
-      if (npcDropdownRef.current && !npcDropdownRef.current.contains(e.target)) {
-        setShowNpcDropdown(false);
-      }
-    };
+    const handler = (e) => { if (npcDropdownRef.current && !npcDropdownRef.current.contains(e.target)) setShowNpcDropdown(false); };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   const handleZoneChange = (zoneName) => {
     setActiveZone(zoneName);
-    setShowZonePicker(false);
-    setMessages((prev) => [...prev, {
-      id: Date.now().toString(),
-      sender: "narrative",
-      content: `You move to the ${zoneName}.`,
-      timestamp: new Date().toISOString()
-    }]);
-    // Regenerate the scene image for the new zone (user-triggered zone change)
+    setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You move to the ${zoneName}.`, timestamp: new Date().toISOString() }]);
     setHasUserRequestedImage(true);
     setTimeout(() => setSceneImage(null), 50);
   };
 
-  const toggleNpc = (npcId) => {
-    const current = selectedNpcIds ?? [];
-    setSelectedNpcIds(
-      current.includes(npcId) ? current.filter((id) => id !== npcId) : [...current, npcId]
-    );
-  };
+  const toggleNpc = (npcId) => { const current = selectedNpcIds ?? []; setSelectedNpcIds(current.includes(npcId) ? current.filter((id) => id !== npcId) : [...current, npcId]); };
 
-  // Initialize actions — read-only, location-scoped
-  useEffect(() => {
-    if (location) {
-      const newActions = getSceneInteractions(
-        location,
-        activeZone || locationZones[0]?.zone_name,
-        null // No character-scoped actions
-      );
-      setActions(newActions);
-    }
-  }, [location?.id, activeZone]);
+  useEffect(() => { if (location) { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); } }, [location?.id, activeZone]);
 
-  // ── CHILD SAFETY INVARIANT ──────────────────────────────────────────────
-  // When entering a home/location scene, ensure no child is left alone.
-  // This is a safety/continuity requirement, not optional maintenance.
-  // Scoped to active location only. Fast-exits if no children exist on account.
-  // Writes only when needed (sitter assignment/despawn). No AI, no broad invalidation.
-  useEffect(() => {
-    if (!isHomeLocation || !location?.id || !currentUser?.email) return;
-    // targetLocationId gates to active location only
-    base44.functions.invoke('ensureChildCaregiverPresence', {
-      locationId: location.id
-    }).catch(() => {});
-  }, [isHomeLocation, location?.id, currentUser?.email]);
+  useEffect(() => { if (!isHomeLocation || !location?.id || !currentUser?.email) return; base44.functions.invoke('ensureChildCaregiverPresence', { locationId: location.id }).catch(() => {}); }, [isHomeLocation, location?.id, currentUser?.email]);
 
-  // PRESENCE ENFORCEMENT: When characters arrive at a scene, write to the AUTHORITATIVE resolved fields.
-  // This is the single location truth that propagates across ALL UI surfaces:
-  // Home page card, Travel page, Travel pop-ups, Chat/Narrative, Image generation.
-  // RULE: One character = one location. No overlap. No stale state.
   useEffect(() => {
     if (!location || broughtCharacters.length === 0) return;
-
-    // Update brought characters — they have traveled here, so this IS their current location now.
-    // OBSERVATIONAL RULE: Scene loading must NOT change a character's canonical state.
-    // A sleeping/napping/passed_out character keeps that status — only the location fields
-    // sync. Waking is the sole responsibility of the existing sleep/authority systems
-    // (explicit interaction, scheduled routines, simulation updates). Scene arrival is a
-    // read-only consumer of presence, never a second wake authority.
     broughtCharacters.forEach((char) => {
       const isAsleep = ['sleeping', 'napping', 'passed_out'].includes(char.resolved_presence_status);
-      base44.entities.Character.update(char.id, {
-        // AUTHORITATIVE fields — these are what every UI surface reads
-        resolved_current_location_id: location.id,
-        resolved_current_location_name: location.name,
-        resolved_location_type: location.category === 'home' ? 'home' : 'visit',
-        // Preserve the canonical rest state — arriving at a scene must not wake a sleeping character.
-        resolved_presence_status: isAsleep ? char.resolved_presence_status : (location.category === 'home' ? 'home' : 'visiting'),
-        resolved_source_reason: isAsleep ? char.resolved_source_reason : 'user_travel',
-        resolved_last_updated_at: new Date().toISOString(),
-        // Clear any stale travel transit state
-        travel_status: 'not_traveling',
-        travel_destination_location_id: null
-      }).catch(() => {});
+      base44.entities.Character.update(char.id, { resolved_current_location_id: location.id, resolved_current_location_name: location.name, resolved_location_type: location.category === 'home' ? 'home' : 'visit', resolved_presence_status: isAsleep ? char.resolved_presence_status : (location.category === 'home' ? 'home' : 'visiting'), resolved_source_reason: isAsleep ? char.resolved_source_reason : 'user_travel', resolved_last_updated_at: new Date().toISOString(), travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {});
     });
   }, [location?.id, broughtCharacters.length]);
 
-  // Register page context so simulationGate knows scene is active for this location
   usePageContext({ page: 'scene', locationId: locationId || null });
 
-  // Shared helper: build the exit memory args (same for both exit paths)
-  const _exitMemoryArgs = (outcome) => ({
-    broughtCharacters,
-    alreadyPresentChars: selectedNpcs,
-    allSceneChars: sceneCharacters,
-    location,
-    messages,
-    userDisplayName: displayName,
-    ownerEmail: currentUser?.email,
-    outcome
-  });
+  const _exitMemoryArgs = (outcome) => ({ broughtCharacters, alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
 
   const handleLeaveWithCharacters = async () => {
-    setShowLeaveModal(false);
-    const homeNow = new Date().toISOString();
-    await Promise.all([
-    ...broughtCharacters.map((char) =>
-    base44.entities.Character.update(char.id, {
-      resolved_current_location_id: char.current_home_location_id || char.home_location_id || null,
-      resolved_current_location_name: char.current_home_location_id || char.home_location_id ? char.resolved_current_location_name || 'Home' : null,
-      resolved_location_type: 'home',
-      resolved_presence_status: 'home',
-      resolved_source_reason: 'returned_home_with_user',
-      resolved_last_updated_at: homeNow,
-      presence_stay_lock: false,
-      presence_stay_lock_location_id: null,
-      presence_stay_lock_set_at: null,
-      travel_status: 'not_traveling',
-      travel_destination_location_id: null
-    }).catch(() => {})
-    ),
-    writeSceneExitMemories(_exitMemoryArgs('left_together'))]
-    );
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    navigate("/travel");
+    setShowLeaveModal(false); const homeNow = new Date().toISOString();
+    await Promise.all([...broughtCharacters.map((char) => base44.entities.Character.update(char.id, { resolved_current_location_id: char.current_home_location_id || char.home_location_id || null, resolved_current_location_name: char.current_home_location_id || char.home_location_id ? char.resolved_current_location_name || 'Home' : null, resolved_location_type: 'home', resolved_presence_status: 'home', resolved_source_reason: 'returned_home_with_user', resolved_last_updated_at: homeNow, presence_stay_lock: false, presence_stay_lock_location_id: null, presence_stay_lock_set_at: null, travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {})), writeSceneExitMemories(_exitMemoryArgs('left_together'))]);
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
   const handleLeaveCharactersBehind = async () => {
-    setShowLeaveModal(false);
-    const now = new Date().toISOString();
-    await Promise.all([
-    ...broughtCharacters.map((char) =>
-    base44.entities.Character.update(char.id, {
-      resolved_current_location_id: location.id,
-      resolved_current_location_name: location.name,
-      resolved_presence_status: location.category === 'home' ? 'home' : 'visiting',
-      resolved_source_reason: 'user_stay_decision',
-      resolved_last_updated_at: now,
-      presence_stay_lock: true,
-      presence_stay_lock_location_id: location.id,
-      presence_stay_lock_set_at: now,
-      presence_stay_lock_reason: "user_scene_stay",
-      presence_stay_lock_authority: "SceneExit",
-      presence_stay_lock_release_condition: "scene_end",
-      presence_stay_lock_created_by: "user",
-      travel_status: 'not_traveling',
-      travel_destination_location_id: null
-    }).catch(() => {})
-    ),
-    writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))]
-    );
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    navigate("/travel");
+    setShowLeaveModal(false); const now = new Date().toISOString();
+    await Promise.all([...broughtCharacters.map((char) => base44.entities.Character.update(char.id, { resolved_current_location_id: location.id, resolved_current_location_name: location.name, resolved_presence_status: location.category === 'home' ? 'home' : 'visiting', resolved_source_reason: 'user_stay_decision', resolved_last_updated_at: now, presence_stay_lock: true, presence_stay_lock_location_id: location.id, presence_stay_lock_set_at: now, presence_stay_lock_reason: "user_scene_stay", presence_stay_lock_authority: "SceneExit", presence_stay_lock_release_condition: "scene_end", presence_stay_lock_created_by: "user", travel_status: 'not_traveling', travel_destination_location_id: null }).catch(() => {})), writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))]);
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
-  // Check for pending invitations on first mount only — NEVER on the Scene page itself
-  // Invites should not interrupt an active scene
-  useEffect(() => {
-    // Scene page: skip all invite checks
-    return;
-  }, [currentUser?.email]);
+  useEffect(() => { const el = bottomRef.current; if (!el) return; const container = el.parentElement; if (container) { const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight; if (distFromBottom < 150) el.scrollIntoView({ behavior: "smooth", block: "end" }); } }, [messages.length]);
 
-  // Auto-scroll — only scroll if user is near the bottom, never steal focus
-  useEffect(() => {
-    const el = bottomRef.current;
-    if (!el) return;
-    // Only auto-scroll if we're already near the bottom (within 150px)
-    const container = el.parentElement;
-    if (container) {
-      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distFromBottom < 150) {
-        el.scrollIntoView({ behavior: "smooth", block: "end" });
-      }
-    }
-  }, [messages.length]);
+  useEffect(() => { if (!location) return; const interval = setInterval(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 180000); return () => clearInterval(interval); }, [location?.id, activeZone]);
 
-  // Rotate actions every 3 minutes — location-scoped only
-  useEffect(() => {
-    if (!location) return;
-    const interval = setInterval(() => {
-      const newActions = getSceneInteractions(
-        location,
-        activeZone || locationZones[0]?.zone_name,
-        null
-      );
-      setActions(newActions);
-    }, 180000);
-    return () => clearInterval(interval);
-  }, [location?.id, activeZone]);
-
-  // Scene image auto-loads when the page is navigated to (once key data is ready).
-  // Also generated when:
-  //   1. User explicitly taps the ↻ refresh button (sets hasUserRequestedImage=true + sceneImage=null)
-  //   2. User changes zone (handleZoneChange sets hasUserRequestedImage=true + sceneImage=null)
-  //   3. An action triggers generateSceneImage() directly (handleAction path)
-  // RABBIT HOLE MODE: Skip scene generation for real-world locations
-  useEffect(() => {
-    if (!hasUserRequestedImage) return;
-    if (!participantsReady) return; // Wait for completed participants before serializing
-    if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      generateSceneImage();
-    }
-  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady]);
-
-  // ── AUTO-LOAD ON NAVIGATION ──────────────────────────────────────────────
-  // Trigger the first scene image generation once the page data is ready.
-  // Gated on brought characters resolving so companions appear in the first image.
-  useEffect(() => {
-    if (hasUserRequestedImage) return;
-    if (!location || location.is_rabbit_hole) return;
-    if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return;
-    setHasUserRequestedImage(true);
-  }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
-
-  // Duplicate ensureChildCaregiverPresence removed — see comment above.
-
-  // ── IMAGE PARTICIPANT SELECTION ────────────────────────────────────────────
-  // Selects a subset of the completed sceneParticipants by stable ID for image
-  // generation. The user is already a participant in sceneParticipants (sourced
-  // from useAuth) — they are NOT added separately here. No reconstruction,
-  // re-resolution, or re-assembly of any participant. This only filters the
-  // single completed collection by ID.
+  // ── IMAGE PARTICIPANT SELECTION ──
+  // Selects a subset of sceneParticipants by stable ID. The user is already a participant.
   const selectImageParticipants = () => {
     const userId = userParticipant?.id;
-
-    if (isHomeLocation) {
-      const selectedIds = new Set([
-        ...broughtCharacters.map((c) => c.id),
-        ...(selectedNpcIds || []),
-        ...(userId ? [userId] : [])
-      ]);
-      return sceneParticipants.filter((p) => selectedIds.has(p.id));
-    }
-
-    if (!isRestrictedEnv && location?.location_type === "global") {
-      const nonUser = sceneParticipants.filter((p) => p.id !== userId);
-      const userP = sceneParticipants.find((p) => p.id === userId);
-      return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])];
-    }
-
-    const selectedIds = new Set([
-      ...broughtCharacters.map((c) => c.id),
-      ...workerCharacters.map((w) => w.id),
-      ...(selectedNpcIds || []),
-      ...(userId ? [userId] : [])
-    ]);
+    if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
+    if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
+    const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
     return sceneParticipants.filter((p) => selectedIds.has(p.id)).slice(0, 4);
   };
 
-  // ── SLEEP/REST STATE DESCRIPTOR ──────────────────────────────────────────────
-  // Scene rendering is OBSERVATIONAL: it reflects each character's authoritative
-  // resolved_presence_status (sleeping / napping / passed_out) so the image depicts
-  // them in their canonical rest state — never awake/active while the simulation says
-  // they are asleep. Reuses isCharacterAsleep (the existing single sleep truth) and the
-  // DB status; it introduces no new sleep flags or parallel tracking. A character shown
-  // asleep here remains asleep until an existing authority changes their state.
-  const buildSleepDescriptor = (people) => {
-    const asleep = [];
-    const napping = [];
-    const passedOut = [];
-    for (const p of people || []) {
-      if (!p || p.isUser) continue;
-      const rec = characters.find((c) => c.id === p.id);
-      if (!rec) continue;
-      const status = rec.resolved_presence_status;
-      if (status === 'passed_out') passedOut.push(p.name);
-      else if (status === 'napping') napping.push(p.name);
-      else if (status === 'sleeping' || isCharacterAsleep(rec, locationMap)) asleep.push(p.name);
+  // Scene image auto-loads when key data is ready.
+  useEffect(() => {
+    if (!hasUserRequestedImage) return;
+    if (!participantsReady) return;
+    if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
+      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap });
     }
-    const parts = [];
-    if (asleep.length) parts.push(`${asleep.join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep — depict sleeping with eyes closed, in bed or wherever they fell asleep, NOT awake, NOT active, NOT talking`);
-    if (napping.length) parts.push(`${napping.join(', ')} ${napping.length === 1 ? 'is' : 'are'} napping — drowsy, eyes closed, resting`);
-    if (passedOut.length) parts.push(`${passedOut.join(', ')} ${passedOut.length === 1 ? 'is' : 'are'} passed out unconscious from exhaustion — slumped, unresponsive`);
-    return parts.length ? ` SLEEP/REST STATE (authoritative — do not contradict): ${parts.join('. ')}.` : '';
-  };
+  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady]);
 
-  const generateSceneImage = async (actionOverridePrompt = null) => {
-    if (!location || isGeneratingImage) return;
-    setIsGeneratingImage(true);
+  useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
-    // Log validation — sceneParticipants is the single completed participant collection
-    const avatarCheckList = sceneParticipants.map((p) => ({
-      name: p.name,
-      id: p.id,
-      avatar_url: p.avatar_url,
-      image_avatar_url: p.image_avatar_url,
-      hasAvatar: !!(p.avatar_url || p.image_avatar_url)
-    }));
-    console.log(
-      `[Scene generateSceneImage] VALIDATION:`,
-      `participants count: ${sceneParticipants.length} |`,
-      `avatars present: ${sceneParticipants.filter((p) => p.avatar_url || p.image_avatar_url).length} |`,
-      'avatars:', avatarCheckList
-    );
-
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const hour = nowET.getHours();
-    const lightingDesc = getLightingDescriptor(hour);
-
-    // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──────────
-    // sceneParticipants already carries: stable ID → person record → sceneRole →
-    // resolvedOutfit (resolved once, before this function runs). Image generation
-    // selects a subset by stable ID — it does NOT reconstruct people, resolve
-    // outfits, add the user separately, or create another representation.
-    const finalParticipants = selectImageParticipants();
-
-    // ── USER IDENTITY: full appearance lock (all fields + height/body proportions) ──
-    // buildMultiCharacterIdentityLocks only injects a compact 3-field summary per person,
-    // dropping the user's hair_type, appearance_age, custom_keywords, and height lock.
-    // buildAppearanceLockBlock is the full identity authority — inject it for the user so
-    // their face/body identity stays intact alongside the closet-driven outfit.
-    // The avatar remains the visual identity anchor; this text reinforces it.
-    const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
-
-    // ── REFERENCE IMAGE ASSEMBLY: AVATARS FIRST (IDENTITY SOURCE) ──────────────
-    // Prioritize character avatars for identity locking, then location environment refs
-    const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone) || locationZones[0];
-    const allZoneImagesFlat = locationZones.flatMap((z) => z.image_urls || []);
-    const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
-    const envRefs = activeZoneImagesForAction.length > 0 ?
-    [...activeZoneImagesForAction, ...allZoneImagesFlat.filter((u) => !activeZoneImagesForAction.includes(u))].slice(0, 4) :
-    allZoneImagesFlat.length > 0 ?
-    allZoneImagesFlat.slice(0, 4) :
-    firstImage ? [firstImage] : [];
-
-    // ── REFERENCE KEY + SEALED BUNDLES — built from finalParticipants ──────────
-    // Iterate through the final participant array in order. For each participant,
-    // collect only that person's own identity references, append contiguously,
-    // and record start/end indexes. Environment refs appended AFTER all participant
-    // refs. The same refKey feeds the sealed bundles and the image request.
-    const refKey = buildParticipantReferenceKey(finalParticipants, envRefs);
-    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
-
-    // Prioritize avatars (identity lock) before environment images (for env note)
-    const authoratativeEnvRefs = prioritizeAvatarReferences(finalParticipants, envRefs);
-
-    // If an action triggered this, use the action's specific prompt
-    if (actionOverridePrompt) {
-      let finalPrompt = actionOverridePrompt;
-      const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
-
-      if (!isGlobal) {
-        if (finalParticipants.length === 0) {
-          finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
-        } else {
-          finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
-          if (isHomeLocation) {
-            finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
-          }
-        }
-      }
-      if (envRefs.length > 0) {
-        finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
-      }
-      finalPrompt += buildSleepDescriptor(finalParticipants);
-      finalPrompt += sealedBundles;
-      try {
-        console.log('[Scene action] Passing visual references:', refKey.visualRefs.length, 'for participants:', finalParticipants.map((c) => c.name).join(', ') || 'none');
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
-          existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
-        });
-        setSceneImage(result.url);
-      } catch { setSceneImage(firstImage); } finally { setIsGeneratingImage(false); }
-      return;
-    }
-
-    // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
-    const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
-    const activeZoneName = currentZoneForAction?.zone_name || "this area";
-    // isGlobal must NEVER be true for residential locations or restricted environments — they use the strict explicit-people path
-    const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
-    const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
-    const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
-
-    let prompt;
-    if (isHomeLocation) {
-      // finalParticipants, refKey, sealedBundles already built above from the
-      // single participant array. Only prompt text is assembled here.
-      const visibleNames = finalParticipants.map((c) => c.name);
-      const strictPeopleRule = visibleNames.length > 0 ?
-        `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
-        `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
-      const atmosphereSuffix = finalParticipants.length > 0 ?
-        " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
-        "";
-      const residentialConstraint = buildResidentialImageConstraint(location, finalParticipants);
-      console.log('[Scene residential] Avatar refs:', refKey.visualRefs.length, '| people:', finalParticipants.map((p) => p.name).join(', ') || 'none');
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
-      try {
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt,
-          existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
-        });
-        setSceneImage(result.url);
-      } catch {
-        setSceneImage(firstImage);
-      } finally {
-        setIsGeneratingImage(false);
-      }
-      return;
-    }
-
-    // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
-    // finalParticipants, refKey, and sealedBundles are already built above from
-    // the same single participant array. Only the prompt text differs by branch.
-    {
-      if (isGlobal) {
-        const charNames = finalParticipants.map((c) => c.name).join(", ");
-        const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
-      } else {
-        const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
-        const peopleDesc = (finalParticipants.length > 0 ?
-          `Only these specific people are present: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
-          `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${userAppearanceBlock}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
-      }
-    }
-
-    try {
-      console.log('[Scene main] Passing visual references:', refKey.visualRefs.length, 'for participants:', finalParticipants.map((c) => c.name).join(', ') || 'none');
-      const result = await base44.integrations.Core.GenerateImage({
-        prompt,
-        existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
-      });
-      setSceneImage(result.url);
-    } catch {
-      setSceneImage(firstImage);
-    } finally {
-      setIsGeneratingImage(false);
-    }
-  };
-
-  // Generate a focused image for food, drinks, or "show me X"
   const generateFocusedImage = (prompt) => {
     if (isGeneratingImage) return;
-    setIsGeneratingImage(true);
-    base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).
-    then((r) => setSceneImage(r.url)).catch(() => {}).finally(() => setIsGeneratingImage(false));
+    base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
   };
 
-  // Image/purchase-card trigger — delegates to lib/sceneCheckImageTrigger.js
-  // PURCHASE CARDS: Only spawned when actionCategory + explicitPrice > 0 are BOTH present (paid purchase actions).
-  // Free actions always pass actionCategory=null — guaranteed no product card.
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => {
-    _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, location, messages, generateFocusedImage, setMessages });
-  };
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, location, messages, generateFocusedImage, setMessages }); };
 
-  const sendNarration = (text) => {
-    if (!text.trim()) return;
-    setInputText("");
-    setMessages((prev) => [...prev, {
-      id: Date.now().toString(),
-      sender: "narrative",
-      content: text,
-      timestamp: new Date().toISOString()
-    }]);
-  };
+  const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, timestamp: new Date().toISOString() }]); };
 
   const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => {
-    if (!text.trim() || !location) return;
-    setInputText("");
-
+    if (!text.trim() || !location) return; setInputText("");
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
-    // ── WORLD PHONE USER INTENT DETECTION ──────────────────────────────────
-    // Rule 2: When the user instructs a character to contact another individual character,
-    // the instruction must execute through World Phone. In a Scene context, the sender is
-    // the privateTarget (pull-aside) or the single eligible known character.
     const wpIntent = detectWorldPhoneIntent(text);
     if (wpIntent && wpIntent.recipient && (privateTarget || (broughtCharacters.filter(c => !c.isNpc).length === 1))) {
       const wpSender = privateTarget || broughtCharacters.find(c => !c.isNpc);
-      if (wpSender) {
-        base44.functions.invoke('sendWorldPhoneMessage', {
-          sender_character_id: wpSender.id,
-          recipient_identifier: wpIntent.recipient,
-          requested_message: wpIntent.message,
-          user_instruction_context: wpIntent.message ? null : text,
-          source: 'user_instruction',
-          owner_email: currentUser?.email,
-        }).catch(err => console.warn('[Scene] World Phone user intent send failed:', err?.message));
-      }
+      if (wpSender) base44.functions.invoke('sendWorldPhoneMessage', { sender_character_id: wpSender.id, recipient_identifier: wpIntent.recipient, requested_message: wpIntent.message, user_instruction_context: wpIntent.message ? null : text, source: 'user_instruction', owner_email: currentUser?.email }).catch(err => console.warn('[Scene] World Phone send failed:', err?.message));
     }
 
-    // Image trigger: product card spawns ONLY when actionCategory AND explicitPrice > 0 are both present.
-    // Free actions pass actionCategory=null → no product card, no purchase UI.
     checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource);
-
     setIsTyping(true);
 
-    // Cross-page memory — fetch in parallel, non-blocking
     const _memIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
     const crossMem = {};
-    await Promise.all(_memIds.map(async (id) => {
-      try {const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: id, limitMessages: 12 });if (r?.data?.contextText) crossMem[id] = r.data.contextText;} catch {}
-    }));
+    await Promise.all(_memIds.map(async (id) => { try { const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: id, limitMessages: 12 }); if (r?.data?.contextText) crossMem[id] = r.data.contextText; } catch {} }));
 
-    // ── CANONICAL CHARACTER CONTEXT ──────────────────────────────────────────
-    // Each character in the Scene brings their FULL CANONICAL SELF — the same
-    // identity, history, family, relationships, memories, and personality they
-    // have in Chat/Text. buildCanonicalCharacterContext is the single source of
-    // truth. This includes admin-owned employees at shared locations — they use
-    // their own owner_email so their canonical context comes from their owning
-    // account, not the visiting account. Cross-account interaction changes who
-    // is authorized to interact, not who the character IS.
-    const _canonicalCharIds = [...broughtCharacters, ...selectedNpcs]
-      .filter((c) => !c.isNpc && c.id)
-      .map((c) => c.id);
+    const _canonicalCharIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
     const canonicalCtx = {};
-    await Promise.all(_canonicalCharIds.map(async (id) => {
-      try {
-        const charRecord = characters.find((c) => c.id === id);
-        const r = await base44.functions.invoke('buildCanonicalCharacterContext', {
-          characterId: id,
-          interactionContext: 'scene',
-          ownerEmailHint: charRecord?.owner_email || currentUser?.email || null,
-        });
-        if (r?.data?.systemPrompt) canonicalCtx[id] = r.data.systemPrompt;
-      } catch {}
-    }));
+    await Promise.all(_canonicalCharIds.map(async (id) => { try { const charRecord = characters.find((c) => c.id === id); const r = await base44.functions.invoke('buildCanonicalCharacterContext', { characterId: id, interactionContext: 'scene', ownerEmailHint: charRecord?.owner_email || currentUser?.email || null }); if (r?.data?.systemPrompt) canonicalCtx[id] = r.data.systemPrompt; } catch {} }));
 
     try {
-      const conversationHistory = messages.slice(-12).map((m) =>
-      `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
-      ).join("\n");
-
+      const conversationHistory = messages.slice(-12).map((m) => `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`).join("\n");
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
-
-      // SPEAKER SELECTION: Build dialogueEligible from selectedNpcIds only.
-      // Brought characters show up in Who's Here and can be selected/deselected like any other character.
-      // After selection, they respond ONLY when their ID is in selectedNpcIds (same rule as all others).
       const selectedCharIds = selectedNpcIds || [];
-      const dialogueEligible = privateTarget ?
-      sceneCharacters.filter((c) => c.id === privateTarget.id || c.name === privateTarget.name) :
-      selectedCharIds.length > 0 ?
-      [...broughtCharacters.filter((c) => selectedCharIds.includes(c.id)),
-      ...selectedNpcs].
-      filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i) :
-      [];
-
-      const charSummaries = dialogueEligible.map((c) =>
-      `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
-      ).join("; ");
-
+      const dialogueEligible = privateTarget ? sceneCharacters.filter((c) => c.id === privateTarget.id || c.name === privateTarget.name) : selectedCharIds.length > 0 ? [...broughtCharacters.filter((c) => selectedCharIds.includes(c.id)), ...selectedNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i) : [];
+      const charSummaries = dialogueEligible.map((c) => `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`).join("; ");
       const eligibleKnownChars = dialogueEligible.filter((c) => !c.isNpc);
-      const eligibleNpcList = dialogueEligible.
-      filter((c) => c.isNpc).
-      map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).
-      join(", ");
-
-      const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:
-- Selected characters: ${[...eligibleKnownChars.map((c) => c.name), ...(eligibleNpcList ? [eligibleNpcList] : [])].join(", ") || "none"}
-Residents, owners, and employees who are present but NOT selected must NOT respond.
-If no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
-
+      const eligibleNpcList = dialogueEligible.filter((c) => c.isNpc).map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
+      const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:\n- Selected characters: ${[...eligibleKnownChars.map((c) => c.name), ...(eligibleNpcList ? [eligibleNpcList] : [])].join(", ") || "none"}\nResidents, owners, and employees who are present but NOT selected must NOT respond.\nIf no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
       const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`).join('\n\n');
       const memSection = eligibleKnownChars.filter((c) => crossMem[c.id]).map((c) => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
-
-      // AGE GATING: Babies (<3) only 1-2 words; toddlers (3-5) max 5-word phrases
-      const ageGateRules = dialogueEligible.map((char) => {
-        const age = char.age || (char.age_range?.match(/\d+/) ? parseInt(char.age_range.match(/\d+/)[0]) : null);
-        if (!age || age >= 6) return null;
-        if (age < 3) return `${char.name} is a baby: speak ONLY 1-2 words max (e.g., "mama", "no", "up"). Never full sentences.`;
-        if (age < 6) return `${char.name} is a toddler: max 5 words, missing words (e.g., "want juice", "go play").`;
-        return null;
-      }).filter(Boolean).join('\n');
-
-      const watchContextBlock = watchContext
-        ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together. You may react to the shared activity, the mood, the setting, or the title/type/source if provided.\n- You MUST NOT pretend to know the video's contents, plot, dialogue, score, or specific scenes until the analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n`
-        : "";
+      const ageGateRules = dialogueEligible.map((char) => { const age = char.age || (char.age_range?.match(/\d+/) ? parseInt(char.age_range.match(/\d+/)[0]) : null); if (!age || age >= 6) return null; if (age < 3) return `${char.name} is a baby: speak ONLY 1-2 words max.`; if (age < 6) return `${char.name} is a toddler: max 5 words.`; return null; }).filter(Boolean).join('\n');
+      const watchContextBlock = watchContext ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together.\n- You MUST NOT pretend to know the video's contents until analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n` : "";
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
-${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}
-People present: ${displayName}, ${charSummaries || "no one they know"}
-${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}
-${watchContextBlock}
-
-Recent scene conversation:
-${conversationHistory}
-
-${displayName} just said: "${text}"
-${fromAction ? "(This was from a scene action, not typed directly)" : ""}
-
-${npcInstruction}
-${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}
-Keep each response 1-2 sentences, natural and in-character.
-CRITICAL: Do NOT say your character's own name in the response — never speak about yourself in third person. Use "I", "we", "me", or "us" instead. Only mention your name if ${displayName} directly asks for it.
-
-Return JSON:
-{
-  "responses": [
-    { "character_name": "...", "content": "..." }
-  ]
-}`,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            responses: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  character_name: { type: "string" },
-                  content: { type: "string" }
-                }
-              }
-            }
-          }
-        }
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
       setIsTyping(false);
-
       const responseList = responses?.responses || [];
       for (const resp of responseList) {
-        // IDENTITY PROTECTION: never render an AI response under the real user's identity
         const respNameLower = resp.character_name?.trim().toLowerCase();
-        const userNames = [
-        displayName?.trim().toLowerCase(),
-        currentUser?.full_name?.trim().toLowerCase(),
-        currentUser?.email?.split("@")[0]?.toLowerCase(),
-        settings?.fictional_world_name?.trim().toLowerCase(),
-        ...(settings?.user_aliases || []).map((a) => a?.trim().toLowerCase())].
-        filter(Boolean);
-        if (userNames.includes(respNameLower)) continue; // BLOCKED — AI tried to speak as the user
-
+        const userNames = [displayName?.trim().toLowerCase(), currentUser?.full_name?.trim().toLowerCase(), currentUser?.email?.split("@")[0]?.toLowerCase(), settings?.fictional_world_name?.trim().toLowerCase(), ...(settings?.user_aliases || []).map((a) => a?.trim().toLowerCase())].filter(Boolean);
+        if (userNames.includes(respNameLower)) continue;
         const char = sceneCharacters.find((c) => c.name === resp.character_name);
-
-        // ── WORLD PHONE CLAIM ENFORCEMENT (Rules 3 & 5) ──────────────────────
-        // A character in a scene may claim "I texted him" or "I'll call her".
-        // These claims must produce real World Phone messages or be stripped.
-        // handleCharacterWorldPhoneAction: detects past-tense claims (back-fills WP
-        // or strips false claim) and proactive outreach (sends WP or records failure).
         let cleanedContent = filterDashes(resp.content);
-        if (char) {
-          try {
-            const wpResult = await handleCharacterWorldPhoneAction({
-              responseText: cleanedContent,
-              character: char,
-              characterId: char.id,
-              conversationId: null,
-              ownerEmail: currentUser?.email,
-              recentMessages: messages.slice(-15),
-            });
-            cleanedContent = wpResult.responseText || cleanedContent;
-          } catch (wpErr) {
-            console.warn('[Scene] World Phone action handler failed:', wpErr?.message);
-          }
-        }
-
-        const msg = {
-          id: Date.now().toString() + resp.character_name,
-          sender: "character",
-          senderName: resp.character_name,
-          characterId: char?.id,
-          avatarUrl: char?.avatar_url,
-          content: cleanedContent,
-          timestamp: new Date().toISOString()
-        };
+        if (char) { try { const wpResult = await handleCharacterWorldPhoneAction({ responseText: cleanedContent, character: char, characterId: char.id, conversationId: null, ownerEmail: currentUser?.email, recentMessages: messages.slice(-15) }); cleanedContent = wpResult.responseText || cleanedContent; } catch {} }
+        const msg = { id: Date.now().toString() + resp.character_name, sender: "character", senderName: resp.character_name, characterId: char?.id, avatarUrl: char?.avatar_url, content: cleanedContent, timestamp: new Date().toISOString() };
         setMessages((prev) => [...prev, msg]);
-
-        if (char) {
-          const realBrought = broughtCharacters.filter((c) => !c.isNpc && c.id !== char.id);
-          base44.functions.invoke("extractMemoriesFromTurn", {
-            characterId: char.id, userMessage: text, characterReply: cleanedContent,
-            playingAsCharacterId: realBrought[0]?.id || null,
-            witnessCharacterIds: realBrought.slice(1).map((c) => c.id)
-          }).catch(() => {});
-        }
-
+        if (char) { const realBrought = broughtCharacters.filter((c) => !c.isNpc && c.id !== char.id); base44.functions.invoke("extractMemoriesFromTurn", { characterId: char.id, userMessage: text, characterReply: cleanedContent, playingAsCharacterId: realBrought[0]?.id || null, witnessCharacterIds: realBrought.slice(1).map((c) => c.id) }).catch(() => {}); }
         await new Promise((r) => setTimeout(r, 400));
       }
-
-      if (responseList.length === 0) {
-        const hasAnyone = dialogueEligible.length > 0;
-        setMessages((prev) => [...prev, {
-          id: Date.now().toString(),
-          sender: "narrative",
-          content: hasAnyone ?
-          `The atmosphere at ${location.name} hums quietly. No one responds right away.` :
-          `You take in the surroundings at ${location.name}. Use the "Who's here" button to start talking to someone.`,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    } catch {
-      setIsTyping(false);
-    }
+      if (responseList.length === 0) { const hasAnyone = dialogueEligible.length > 0; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: hasAnyone ? `The atmosphere at ${location.name} hums quietly. No one responds right away.` : `You take in the surroundings at ${location.name}. Use the "Who's here" button to start talking to someone.`, timestamp: new Date().toISOString() }]); }
+    } catch { setIsTyping(false); }
   };
 
-  // Keep refs current so SceneInputBar's stable onSend callback always calls the latest versions
-  useEffect(() => {narratorModeRef.current = narratorMode;}, [narratorMode]);
-  useEffect(() => {sendMessageRef.current = sendMessage;}, [sendMessage]);
-  useEffect(() => {sendNarrationRef.current = sendNarration;}, [sendNarration]);
-
-  // Stable onSend — never changes identity, so SceneInputBar never re-renders due to prop change
-  const stableOnSend = useRef((text) => {
-    if (narratorModeRef.current) {
-      sendNarrationRef.current?.(text);
-    } else {
-      sendMessageRef.current?.(text);
-    }
-  }).current;
+  useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+  useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
+  const stableOnSend = useRef((text) => { if (narratorModeRef.current) sendNarrationRef.current?.(text); else sendMessageRef.current?.(text); }).current;
 
   const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName }) => {
-    if (!location) return;
-    setIsMoveInLoading(true);
-    try {
-      await base44.functions.invoke("moveCharactersToNewHome", {
-        sourceHomeId: broughtCharacters[0]?.current_home_location_id || null,
-        destinationHomeId: location.id,
-        moversToMove,
-        npcMovers,
-        newHomeName
-      });
-      setShowMoveInPopup(false);
-      // Refresh location + character data so resident list updates immediately
-      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-      setMessages((prev) => [...prev, {
-        id: Date.now().toString(),
-        sender: "narrative",
-        content: `Move-in complete. ${newHomeName || location.name} is now home.`,
-        timestamp: new Date().toISOString()
-      }]);
-    } catch (err) {
-      console.error("Move-in failed:", err);
-    } finally {
-      setIsMoveInLoading(false);
-    }
+    if (!location) return; setIsMoveInLoading(true);
+    try { await base44.functions.invoke("moveCharactersToNewHome", { sourceHomeId: broughtCharacters[0]?.current_home_location_id || null, destinationHomeId: location.id, moversToMove, npcMovers, newHomeName }); setShowMoveInPopup(false); queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Move-in complete. ${newHomeName || location.name} is now home.`, timestamp: new Date().toISOString() }]); } catch (err) { console.error("Move-in failed:", err); } finally { setIsMoveInLoading(false); }
   };
 
   const handleMoveOut = async () => {
-    if (!location || broughtCharacters.length === 0) return;
-    const mover = broughtCharacters[0];
-    try {
-      // AUTHORITATIVE: Only update the character's home location
-      // Do NOT write to occupancy arrays — they are computed only
-      await base44.entities.Character.update(mover.id, { current_home_location_id: "" });
-      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-      setMessages((prev) => [...prev, {
-        id: Date.now().toString(),
-        sender: "narrative",
-        content: `${mover.name} has moved out of ${location.name}.`,
-        timestamp: new Date().toISOString()
-      }]);
-    } catch (err) {
-      console.error("Move-out failed:", err);
-    }
+    if (!location || broughtCharacters.length === 0) return; const mover = broughtCharacters[0];
+    try { await base44.entities.Character.update(mover.id, { current_home_location_id: "" }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${mover.name} has moved out of ${location.name}.`, timestamp: new Date().toISOString() }]); } catch (err) { console.error("Move-out failed:", err); }
   };
 
-  const handleAskToLeave = (type, narrativeText) => {
-    setMessages((prev) => [...prev, {
-      id: Date.now().toString(),
-      sender: "narrative",
-      content: narrativeText || `You ask the ${type} to leave.`,
-      timestamp: new Date().toISOString()
-    }]);
-  };
+  const handleAskToLeave = (type, narrativeText) => { setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: narrativeText || `You ask the ${type} to leave.`, timestamp: new Date().toISOString() }]); };
 
   const handleAction = async (action) => {
-    if (actionCooldown) return;
-    setActionCooldown(true);
-
+    if (actionCooldown) return; setActionCooldown(true);
     try {
-      // ── ACTION CLASSIFICATION ────────────────────────────────────────────────
-      // action_class is the SOLE classification source — set by classifyAll() in actionGenerator.js.
-      // No runtime inference is permitted. If action_class is absent, fail closed: treat as free.
       const actionClass = action.action_class;
-      if (!actionClass) {
-        console.warn(`[Scene handleAction] action_class missing for action.id="${action.id}" — treating as free action, no commerce.`);
-      }
-
-      const payer = action.payer || "user";
-      const cost = Number(action.cost) || 0;
-
-      // STRICT COMMERCE GATE:
-      // Only actions with an explicit catalog-set action_class of purchase/service/fee may involve money.
-      // Missing action_class = free. Free activities NEVER charge.
+      const payer = action.payer || "user"; const cost = Number(action.cost) || 0;
       const isPaidClass = actionClass && ['purchase', 'service', 'fee'].includes(actionClass);
-
-      // PRODUCT CARD RULE: Only 'purchase' class renders a product card.
-      // Service and fee actions use inline confirm (no product card).
-      // Products REQUIRE: action_class === 'purchase' AND cost > 0 AND action_category defined.
-      const isProductCardAction =
-        actionClass === 'purchase' &&
-        cost > 0 &&
-        payer === 'user' &&
-        !!action.action_category &&
-        action.purchase_source != null; // must have real inventory/menu source
-
-      // EATING EVENT RECORDING (need-system side-effect, not a commerce event)
-      // Scene food actions are consumption by default — no detection gate needed.
-      // The app already knows the character ate: the user triggered a food action.
-      // Vick Servicio (world-service) characters are excluded by recordEatingEvent backend.
+      const isProductCardAction = actionClass === 'purchase' && cost > 0 && payer === 'user' && !!action.action_category && action.purchase_source != null;
       const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch'];
-      if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
-        const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal';
-        const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c));
-        eatingChars.forEach((char) => {
-          base44.functions.invoke('recordEatingEvent', {
-            characterId: char.id,
-            mealSize,
-            foodDescription: action.label,
-            locationName: location?.name
-          }).catch(err => {
-            console.error(`[Scene] recordEatingEvent FAILED — char="${char.name}" (id=${char.id}) action_id="${action.id}" mealSize="${mealSize}" error="${err?.message || err}"`);
-          });
-        });
-        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-      }
-
-      // TRANSACTION AUTHORITY: All balance changes go through executeSceneTransaction.
-      // Direct UserSettings.update and CharacterFinancial.update are FORBIDDEN here.
-      // Only paid classified actions with real cost may invoke the transaction authority.
-      if (isPaidClass && cost > 0 && !isProductCardAction) {
-        // Non-product-card paid actions (services, fees, payer=character) charge immediately
-        // through the transaction authority — not directly.
-        base44.functions.invoke('executeSceneTransaction', {
-          action_class: actionClass,
-          is_paid: true,
-          cost,
-          payer_type: payer,
-          action_id: action.id,
-          purchase_source: action.purchase_source || null,
-          service_source: action.service_source || (actionClass === 'service' ? location?.name : null),
-          fee_source: action.fee_source || (actionClass === 'fee' ? location?.name : null),
-          action_label: action.label,
-          location_name: location?.name,
-          character_id: payer === 'character' ? broughtCharacters[0]?.id : null
-        }).then(() => {
-          queryClient.invalidateQueries({ queryKey: ['userSettings'] });
-        }).catch(() => {});
-      }
-
-      // Determine if this action should trigger a scene image update.
-      // action.id is the stable catalog ID — ACTION_IMAGE_PROMPTS lookup now works correctly.
+      if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
+      if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      if (actionImageFn) {
-        const presentPeople = [
-        ...homeResidentsPresent,
-        ...broughtCharacters].
-        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i);
-        const whoDesc = presentPeople.length > 0 ?
-        presentPeople.map((c) => c.name).join(" and ") :
-        "no one — the space is empty";
-        const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
-        generateSceneImage(imagePrompt);
-      }
-
-      const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ?
-      ` (${broughtCharacters[0].name} pays)` :
-      cost > 0 ? ` — $${cost}` : "";
-
-      // PRODUCT CARD: pass category + explicit cost ONLY for purchase class with action_category.
-      // Free, social, navigation, environment, narrative, service, and fee actions pass null — no purchase UI.
-      await sendMessage(
-        `[${action.emoji} ${action.label}${payerNote}]`,
-        true, null, null,
-        isProductCardAction ? action.action_category : null,
-        isProductCardAction ? cost : null,
-        isProductCardAction ? (action.purchase_source || 'menu') : null
-      );
-
-      setTimeout(() => {
-        const newActions = getSceneInteractions(
-          location,
-          activeZone || locationZones[0]?.zone_name,
-          null
-        );
-        setActions(newActions);
-      }, 1000);
-    } finally {
-      // ALWAYS release action lock — never leave buttons permanently disabled
-      setActionCooldown(false);
-    }
+      if (actionImageFn) { const presentPeople = [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoDesc = presentPeople.length > 0 ? presentPeople.map((c) => c.name).join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
+      const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, isProductCardAction ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : null);
+      setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
+    } finally { setActionCooldown(false); }
   };
 
-  // Check if location is closed
   const locationClosed = isLocationOpen(location) === false;
 
   const renderNpc = (npc) => {
-    // Check against raw selectedNpcIds (which now also contains brought character IDs when selected)
-    // Brought characters start pre-selected (their IDs are seeded into selectedNpcIds on mount)
     const isSelected = (selectedNpcIds || []).includes(npc.id);
     return (
-      <button
-        key={npc.id}
-        onClick={() => {
-          setSelectedNpcIds((prev) => {
-            const current = prev || [];
-            return isSelected ? current.filter((id) => id !== npc.id) : [...current, npc.id];
-          });
-          setShowNpcDropdown(false);
-        }}
-        className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-secondary ${
-        isSelected ? "bg-primary/10" : ""}`
-        }>
-        
-        <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">
-          {npc.avatar_url ?
-          <img src={npc.avatar_url} alt={npc.name} className="w-full h-full object-cover" /> :
-          <span className="text-[9px] font-bold text-foreground">{npc.name?.[0]}</span>
-          }
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className={`text-xs font-medium truncate ${isSelected ? "text-primary" : "text-foreground"}`}>{npc.name}</p>
-          {npc.mood && <p className="text-[10px] text-muted-foreground truncate">{npc.mood}</p>}
-        </div>
+      <button key={npc.id} onClick={() => { setSelectedNpcIds((prev) => { const current = prev || []; return isSelected ? current.filter((id) => id !== npc.id) : [...current, npc.id]; }); setShowNpcDropdown(false); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-secondary ${isSelected ? "bg-primary/10" : ""}`}>
+        <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">{npc.avatar_url ? <img src={npc.avatar_url} alt={npc.name} className="w-full h-full object-cover" /> : <span className="text-[9px] font-bold text-foreground">{npc.name?.[0]}</span>}</div>
+        <div className="flex-1 min-w-0"><p className={`text-xs font-medium truncate ${isSelected ? "text-primary" : "text-foreground"}`}>{npc.name}</p>{npc.mood && <p className="text-[10px] text-muted-foreground truncate">{npc.mood}</p>}</div>
         {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
-      </button>);
-
+      </button>
+    );
   };
 
   if (!location) {
-    if (isLocationsFetching || isDirectLoading) {
-      return (
-        <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-        </div>
-      );
-    }
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <p className="text-sm text-muted-foreground">Location not found</p>
-          <Link to="/travel"><Button variant="outline" size="sm">Back to Travel</Button></Link>
-        </div>
-      </div>);
-
+    if (isLocationsFetching || isDirectLoading) return (<div className="min-h-screen bg-background flex items-center justify-center"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div></div>);
+    return (<div className="min-h-screen bg-background flex items-center justify-center"><div className="text-center space-y-3"><p className="text-sm text-muted-foreground">Location not found</p><Link to="/travel"><Button variant="outline" size="sm">Back to Travel</Button></Link></div></div>);
   }
-
-  // If location is closed, show a closure message
   if (locationClosed) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 space-y-4">
-        <div className="text-center space-y-3">
-          <span className="text-4xl">🚫</span>
-          <h2 className="text-lg font-bold text-foreground">{location.name} is currently closed</h2>
-          <p className="text-sm text-muted-foreground max-w-xs">This location is not open at the moment. Come back during operating hours.</p>
-        </div>
-        <Link to="/travel" className="w-full max-w-xs">
-          <Button variant="outline" size="lg" className="w-full rounded-xl">Back to Travel</Button>
-        </Link>
-      </div>);
-
+    return (<div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 space-y-4"><div className="text-center space-y-3"><span className="text-4xl">🚫</span><h2 className="text-lg font-bold text-foreground">{location.name} is currently closed</h2><p className="text-sm text-muted-foreground max-w-xs">This location is not open at the moment. Come back during operating hours.</p></div><Link to="/travel" className="w-full max-w-xs"><Button variant="outline" size="lg" className="w-full rounded-xl">Back to Travel</Button></Link></div>);
   }
 
   return (
     <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
-      {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
-        <button
-          onClick={() => setShowLeaveModal(true)}
-          className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
-          title="Leave location">
-          
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2>
-          <p className="text-xs text-muted-foreground capitalize">
-            {CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} ·{" "}
-            {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
-          </p>
-        </div>
-
-        {/* Residence Options — only for home locations, not shared */}
-        {isHomeLocation && !isSharedLocation &&
-        <ResidenceOptionsDropdown
-          location={location}
-          sceneCharacters={sceneCharacters}
-          isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)}
-          currentUser={currentUser}
-          allCharacters={characters}
-          onTour={() => setShowTourModal(true)}
-          onMoveIn={() => setShowMoveInPopup(true)}
-          onMoveOut={handleMoveOut}
-          onAskToLeave={handleAskToLeave}
-          onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })}
-          onKickOut={() => setMessages((prev) => [...prev, {
-            id: Date.now().toString(),
-            sender: "narrative",
-            content: "You assert your authority and ask them to leave immediately.",
-            timestamp: new Date().toISOString()
-          }])} />
-
-        }
-
-        {/* NPC Dropdown — uses unified presence resolver (same as Map + Travel popup) */}
-        <div ref={npcDropdownRef}>
-          <WhosHereDropdown
-            presentParticipants={sceneParticipants}
-            candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))}
-            selectedNpcs={selectedNpcs}
-            onToggleNpc={toggleNpc}
-            showDropdown={showNpcDropdown}
-            onToggleDropdown={setShowNpcDropdown}
-            onInviteClick={() => {setShowNpcDropdown(false);setShowInviteModal(true);}}
-            renderNpc={renderNpc} />
-          
-        </div>
-
-        <button
-          onClick={() => setShowPhotoModal(true)}
-          className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-          title="Scene photo">
-          
-          <Camera className="w-4 h-4" />
-        </button>
-
-        {/* Watch Video / Watch Party toggle — available in ANY scene/location type */}
-        <button
-          onClick={() => setWatchVideoActive((v) => !v)}
-          className={`p-2 rounded-xl transition-colors ${
-            watchVideoActive
-              ? "bg-primary text-primary-foreground"
-              : "bg-secondary text-muted-foreground hover:text-foreground"
-          }`}
-          title="Watch Video">
-          <Tv className="w-4 h-4" />
-        </button>
+        <button onClick={() => setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title="Leave location"><ArrowLeft className="w-5 h-5" /></button>
+        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
+        {isHomeLocation && !isSharedLocation && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
+        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} /></div>
+        <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
+        <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
       </div>
 
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
-      {/* Scene media area — switches between Watch Video player and Scene Image */}
-      <div className="relative flex-shrink-0" style={{ zIndex: 0, height: "40dvh" }}>
-        {watchVideoActive ? (
-          <WatchVideoPanel
-            onClose={() => {
-              setWatchVideoActive(false);
-              setWatchContext(null);
-            }}
-            onStarted={(ctx) => {
-              setWatchContext(ctx);
-              setMessages((prev) => [...prev, {
-                id: Date.now().toString(),
-                sender: "narrative",
-                content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`,
-                timestamp: new Date().toISOString()
-              }]);
-            }}
-            onAnalysisComplete={({ linkAnalysisContext, linkData, title }) => {
-              // Update watchContext with the real analysis from the existing
-              // Chat/Text shared-link pipeline. Characters now receive the same
-              // structured understanding they would in Chat — no duplicate system.
-              setWatchContext((prev) => ({
-                ...prev,
-                linkAnalysisContext,
-                title: title || prev?.title,
-              }));
-              if (linkData?.title && !title) {
-                setMessages((prev) => [...prev, {
-                  id: Date.now().toString(),
-                  sender: "narrative",
-                  content: `Now playing: ${linkData.title}.`,
-                  timestamp: new Date().toISOString()
-                }]);
-              }
-            }}
-            onStopped={() => {
-              setWatchContext(null);
-              setMessages((prev) => [...prev, {
-                id: Date.now().toString(),
-                sender: "narrative",
-                content: `The watch party ended.`,
-                timestamp: new Date().toISOString()
-              }]);
-            }}
-          />
-        ) : isGeneratingImage ?
-        <div className="w-full h-full bg-secondary flex items-center justify-center">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Sparkles className="w-4 h-4 animate-pulse" />
-              <span className="text-xs">Setting the scene...</span>
-            </div>
-          </div> :
-        sceneImage ?
-        <button onClick={() => setLightboxSrc(sceneImage)} className="w-full h-full block group relative">
-            <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" style={{ imageOrientation: 'from-image' }} />
-            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <ZoomIn className="w-6 h-6 text-white drop-shadow" />
-            </div>
-          </button> :
+      {/* Scene media area — extracted component with collapse/expand (no side effects) */}
+      <SceneMediaArea location={location} locationZones={locationZones} activeZone={activeZone} onZoneChange={handleZoneChange} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
+        watchVideoActive={watchVideoActive} onToggleWatchVideo={() => { setWatchVideoActive(false); setWatchContext(null); }} watchContext={watchContext} displayName={displayName}
+        onWatchStarted={(ctx) => { setWatchContext(ctx); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`, timestamp: new Date().toISOString() }]); }}
+        onWatchAnalysisComplete={({ linkAnalysisContext, linkData, title }) => { setWatchContext((prev) => ({ ...prev, linkAnalysisContext, title: title || prev?.title })); if (linkData?.title && !title) setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Now playing: ${linkData.title}.`, timestamp: new Date().toISOString() }]); }}
+        onWatchStopped={() => { setWatchContext(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `The watch party ended.`, timestamp: new Date().toISOString() }]); }}
+      />
 
-        <div className="w-full h-full bg-secondary flex items-center justify-center">
-            <span className="text-5xl">{CATEGORY_EMOJIS[location.category]}</span>
-          </div>
-        }
-        {!watchVideoActive && <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60 pointer-events-none" />}
-
-        {/* Zone picker */}
-        {locationZones.length > 1 &&
-        <div className="absolute top-2 left-2 z-[200]" ref={zonPickerRef}>
-            <button
-            onClick={() => setShowZonePicker((v) => !v)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/50 text-white text-xs font-medium hover:bg-black/70 transition-colors">
-            
-              <MapPin className="w-3 h-3" />
-              <span>{activeZone || locationZones[0]?.zone_name || "Zone"}</span>
-              <ChevronDown className={`w-3 h-3 transition-transform ${showZonePicker ? "rotate-180" : ""}`} />
-            </button>
-            <AnimatePresence>
-              {showZonePicker &&
-            <motion.div
-              initial={{ opacity: 0, y: -4, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -4, scale: 0.97 }}
-              transition={{ duration: 0.12 }}
-              className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[140px] z-[200]">
-              
-                  {locationZones.map((zone) =>
-              <button
-                key={zone.zone_name}
-                onClick={() => handleZoneChange(zone.zone_name)}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${
-                activeZone === zone.zone_name ? "text-primary font-medium" : "text-foreground"}`
-                }>
-                
-                      {activeZone === zone.zone_name && <Check className="w-3 h-3 flex-shrink-0" />}
-                      <span className={activeZone === zone.zone_name ? "" : "ml-5"}>{zone.zone_name}</span>
-                    </button>
-              )}
-                </motion.div>
-            }
-            </AnimatePresence>
-          </div>
-        }
-
-        <button
-          onClick={() => {setHasUserRequestedImage(true);setSceneImage(null);}}
-          disabled={isGeneratingImage}
-          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
-          title="Refresh scene image">
-          
-          <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingImage ? "animate-spin" : ""}`} />
-        </button>
-      </div>
-
-      {/* Character presence strip — only shows characters the user explicitly traveled with or selected */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0 opacity-100">
-        {/* User */}
-        <div className="flex flex-col items-center gap-1">
-          <div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">
-            {currentUser?.generated_avatar_urls?.[0] ?
-            <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> :
-            <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>
-            }
-          </div>
-          <span className="text-[9px] text-primary font-medium">{displayName}</span>
-        </div>
-        {[...traveledWithChars, ...selectedNpcs, ...extraNpcs].
-        filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).
-        map((char) =>
-        <div key={char.id} className="flex flex-col items-center gap-1">
-            <div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">
-              {char.avatar_url ?
-            <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> :
-            <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>
-            }
-            </div>
-            <span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span>
-          </div>
-        )}
-        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 &&
-        <span className="text-xs text-muted-foreground ml-1">You're here alone</span>
-        }
+      {/* Character presence strip */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
+        <div className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">{currentUser?.generated_avatar_urls?.[0] ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>}</div><span className="text-[9px] text-primary font-medium">{displayName}</span></div>
+        {[...traveledWithChars, ...selectedNpcs, ...extraNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).map((char) => (<div key={char.id} className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">{char.avatar_url ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>}</div><span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span></div>))}
+        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">You're here alone</span>}
       </div>
 
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {/* Arrival narrative */}
         <div className="text-center space-y-2">
-          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
-            You arrive at {location.name}
-            {activeZone ? ` · ${activeZone}` : ""}
-            {traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}
-          </span>
-          {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) &&
-          <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">
-              {[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home
-            </span></div>
-          }
-          {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) &&
-          <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">
-              {homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away
-            </span></div>
-          }
-          {workerCharacters.length > 0 &&
-          <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">
-              {workerCharacters.map((c) => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
-            </span></div>
-          }
-          {(() => {
-            // Show real characters present at this location from unified resolver (same as map)
-            const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter(
-              (e) => !characterIds.includes(e.id)
-            );
-            return presentHere.length > 0 ?
-            <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">
-                {presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact
-              </span></div> :
-            null;
-          })()}
-
+          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">You arrive at {location.name}{activeZone ? ` · ${activeZone}` : ""}{traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}</span>
+          {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
+          {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">{homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away</span></div>}
+          {workerCharacters.length > 0 && <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">{workerCharacters.map((c) => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working</span></div>}
+          {(() => { const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)); return presentHere.length > 0 ? <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">{presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact</span></div> : null; })()}
         </div>
 
         <AnimatePresence>
-          {messages.map((msg) =>
-          <motion.div
-            key={msg.id}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-            
-              {msg.sender === "narrative" ?
-            <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span> :
-            msg.sender === "product" ?
-            <SceneProductCard
-              msg={msg}
-              settings={settings}
-              location={location}
-              currentUser={currentUser}
-              queryClient={queryClient}
-              base44={base44}
-              setPendingPurchase={setPendingPurchase}
-              setMessages={setMessages} /> :
-
-            msg.sender === "character" ?
-            <>
-                  <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">
-                    {msg.avatarUrl ?
-                <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> :
-                <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>
-                }
-                  </div>
-                  <div className="max-w-[75%]">
-                    <p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p>
-                    <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2">
-                      <p className="text-sm text-foreground">{msg.content}</p>
-                    </div>
-                  </div>
-                </> :
-
-            <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]">
-                  <p className="text-sm text-primary-foreground">{msg.content}</p>
-                </div>
-            }
+          {messages.map((msg) => (
+            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
+              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
             </motion.div>
-          )}
+          ))}
         </AnimatePresence>
 
-        {isTyping &&
-        <div className="flex gap-2">
-            <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center">
-              <span className="text-xs">...</span>
-            </div>
-            <div className="bg-card border border-border rounded-2xl px-3 py-2">
-              <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" />
-                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" />
-                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" />
-              </div>
-            </div>
-          </div>
-        }
-
+        {isTyping && <div className="flex gap-2"><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"><span className="text-xs">...</span></div><div className="bg-card border border-border rounded-2xl px-3 py-2"><div className="flex gap-1"><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" /></div></div></div>}
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons — location-scoped, validated */}
+      {/* Action buttons */}
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
-          {/* All contextual actions are shown — strip is horizontally scrollable, no artificial cap */}
-          {/* Change Clothes — reuses the user's existing closet/outfit systems */}
-          <button
-            onClick={() => setShowChangeClothesModal(true)}
-            disabled={actionCooldown}
-            className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${
-              actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"
-            }`}
-            title="Change your outfit"
-          >
-            <span className="text-base leading-none">👕</span>
-            <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span>
-          </button>
-        {actions.map((action) => {
-            const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
-            const isDisabled = action.disabled || actionCooldown;
-            return (
-              <button
-                key={action.scene_instance_id || action.id}
-                onClick={() => {
-                  if (isDisabled) return;
-                  if (needsZone) {handleZoneChange(action.suggested_zone_name);setTimeout(() => handleAction(action), 400);} else
-                  {handleAction(action);}
-                }}
-                disabled={isDisabled}
-                title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)}
-                className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${
-                isDisabled ? "opacity-40 cursor-not-allowed" :
-                action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" :
-                action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" :
-                needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" :
-                "bg-secondary border-border hover:border-primary/30"}`
-                }>
-                
-                <span className="text-base leading-none">{action.emoji}</span>
-                <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
-                {action.cost > 0 &&
-                <span className="text-[9px] text-green-500">${action.cost}</span>
-                }
-                {action.no_staff_warning &&
-                <span className="text-[8px] text-amber-500 leading-tight">no staff</span>
-                }
-              </button>);
-
-          })}
+          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title="Change your outfit"><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
+          {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name; const isDisabled = action.disabled || actionCooldown; return (
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+              <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
+              {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
+            </button>); })}
         </div>
       </div>
 
-      {/* Private conversation banner */}
-      {privateTarget &&
-      <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0">
-          <span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span>
-          <button
-          onClick={() => {
-            setPrivateTarget(null);
-            setMessages((prev) => [...prev, {
-              id: Date.now().toString(),
-              sender: "narrative",
-              content: `You rejoin the group.`,
-              timestamp: new Date().toISOString()
-            }]);
-          }}
-          className="text-[10px] text-primary/70 hover:text-primary underline">
-          
-            End private chat
-          </button>
-        </div>
-      }
+      {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
 
-      {/* NPC Evolution Tracker — watches venue NPC interactions, surfaces Level 4 promotion prompt */}
-      <NPCEvolutionTracker
-        messages={messages}
-        selectedNpcs={selectedNpcs}
-        currentUser={currentUser}
-        locationName={location.name}
-        onNpcSaved={(name) => setMessages((prev) => [...prev, {
-          id: Date.now().toString(),
-          sender: "narrative",
-          content: `${name} has been saved to your world.`,
-          timestamp: new Date().toISOString()
-        }])} />
-      
+      <NPCEvolutionTracker messages={messages} selectedNpcs={selectedNpcs} currentUser={currentUser} locationName={location.name} onNpcSaved={(name) => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${name} has been saved to your world.`, timestamp: new Date().toISOString() }])} />
+      <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
 
-      {/* Input bar — stable, never remounts. Uses stable callbacks to prevent re-renders. */}
-      <SceneInputBar
-        inputText={inputText}
-        setInputText={setInputText}
-        narratorMode={narratorMode}
-        setNarratorMode={setNarratorMode}
-        onSend={stableOnSend} />
-      
+      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
+      <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
+      <AnimatePresence>{showMoveInPopup && !isSharedLocation && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
-      {/* Photo modal */}
-      <AnimatePresence>
-        {showPhotoModal &&
-        <ScenePhotoModal
-          location={location}
-          characters={allSceneChars}
-          allPossibleNpcs={allPossibleNpcs}
-          currentUser={currentUser}
-          displayName={displayName}
-          onClose={() => setShowPhotoModal(false)}
-          allCharacters={characters}
-          onGenerateSceneImage={generateSceneImage}
-          isGeneratingImage={isGeneratingImage} />
-
-        }
-      </AnimatePresence>
-
-      {/* Realtor Tour Modal */}
-      <AnimatePresence>
-        {showTourModal &&
-        <RealtorTourModal
-          isOpen={showTourModal}
-          location={location}
-          onClose={() => setShowTourModal(false)}
-          onAddRealtor={(realtorNpc) => {
-            setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]);
-            if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) {
-              setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]);
-            }
-          }} />
-
-        }
-      </AnimatePresence>
-
-      {/* Move-In Popup */}
-      <AnimatePresence>
-        {showMoveInPopup && !isSharedLocation &&
-        <MoveInPopup
-          isOpen={showMoveInPopup}
-          character={broughtCharacters[0]}
-          sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)}
-          destinationHome={location}
-          allCharacters={characters}
-          broughtCharacters={broughtCharacters}
-          onApprove={handleMoveIn}
-          onReject={() => setShowMoveInPopup(false)}
-          onClose={() => setShowMoveInPopup(false)}
-          isLoading={isMoveInLoading} />
-
-        }
-      </AnimatePresence>
-
-      {/* Invite to scene modal */}
-      <InviteToSceneModal
-        isOpen={showInviteModal}
-        onClose={() => setShowInviteModal(false)}
-        location={location}
-        characters={characters}
-        userDisplayName={displayName}
-        onCharacterArrived={(char) => {
-          // Add arrived character to the scene immediately
-          setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]);
-          setMessages((prev) => [...prev, {
-            id: Date.now().toString(),
-            sender: "narrative",
-            content: `${char.name} arrives at ${location.name}.`,
-            timestamp: new Date().toISOString()
-          }]);
-          queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] });
-          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-        }} />
-      
-
-      {/* Conversation type selector */}
-      <ConversationTypeSelector
-        isOpen={!!conversationModal}
-        onClose={() => setConversationModal(null)}
-        onSelect={(conversationType) => {
-          if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) {
-            setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName });
-            setMessages((prev) => [...prev, {
-              id: Date.now().toString(),
-              sender: "narrative",
-              content: `You pull ${conversationModal.npcName} aside for a private conversation.`,
-              timestamp: new Date().toISOString()
-            }]);
-          } else {
-            // Any other conversation type clears private mode
-            setPrivateTarget(null);
-          }
-        }}
-        npcName={conversationModal?.npcName || "them"}
-        hasEmployees={conversationModal?.hasEmployees || false}
-        isGroup={conversationModal?.isGroup || false} />
-      
-
-      {/* Leave Location Modal */}
-      <LeaveLocationModal
-        isOpen={showLeaveModal}
-        onClose={() => setShowLeaveModal(false)}
-        locationName={location.name}
-        broughtCharacters={broughtCharacters}
-        onLeaveWithChars={handleLeaveWithCharacters}
-        onLeaveCharactersBehind={handleLeaveCharactersBehind} />
-      
-
-      {/* Product Purchase Modal */}
-      <ProductPurchaseModal
-        isOpen={!!pendingPurchase}
-        price={pendingPurchase?.price}
-        productId={pendingPurchase?.productId}
-        preview_image_url={pendingPurchase?.preview_image_url}
-        userBalance={settings.user_balance ?? 6000}
-        userSettings={settings}
-        currentUser={currentUser}
-        traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)}
-        item_label={pendingPurchase?.item_label}
-        item_category={pendingPurchase?.item_category}
-        action_id={pendingPurchase?.action_id}
-        purchase_source={pendingPurchase?.purchase_source}
-        location_name={location?.name}
-        onClose={() => setPendingPurchase(null)}
-        onPurchased={(message) => {
-          const price = pendingPurchase?.price;
-          setMessages((prev) => [...prev, {
-            id: Date.now().toString(),
-            sender: "narrative",
-            content: `✓ Purchased for $${price} — ${message}.`,
-            timestamp: new Date().toISOString()
-          }]);
-          setPendingPurchase(null);
-        }} />
-      
-      {/* Change Clothes — explicit per-person targeting via established outfit authorities */}
-      <ChangeClothesModal
-        isOpen={showChangeClothesModal}
-        onClose={() => setShowChangeClothesModal(false)}
-        settings={settings}
-        isUserSettingsLoading={isUserSettingsLoading}
-        presentCharacters={changeClothesEligibleCharacters}
-        location={location}
-        currentUser={currentUser}
-        userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null}
-        userName={displayName}
-        onOutfitChanged={(targetType) => {
-          // The modal has already persisted the override AND verified via the
-          // canonical backend resolver that the selected outfit won. Now refresh
-          // the owner's query (for UI consistency) and re-resolve outfits for the
-          // completed participants — then regenerate the scene image.
-          if (targetType === 'user') {
-            queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] });
-          } else {
-            queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
-          }
-          setOutfitVersion((v) => v + 1); // Trigger outfit re-resolution on completed participants
-          setHasUserRequestedImage(true);
-          setSceneImage(null);
-        }} />
-      
-
-      {/* Invite notifications */}
-      {pendingInvitations &&
-      <InviteOutModal
-        invitations={pendingInvitations}
-        onAccept={(invite) => {
-          base44.functions.invoke('recordCharacterInviteAccepted', {
-            characterId: invite.characterId,
-            locationId: invite.locationId,
-            inviteType: invite.inviteType
-          }).catch(() => {});
-          const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId);
-          setPendingInvitations(remaining.length > 0 ? remaining : null);
-          const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
-          navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
-        }}
-        onDecline={(selectedInv) => {
-          base44.functions.invoke('recordCharacterInviteDeclined', {
-            characterId: selectedInv.characterId,
-            locationId: selectedInv.locationId
-          }).catch(() => {});
-          const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId);
-          setPendingInvitations(remaining.length > 0 ? remaining : null);
-          // CHARACTER MUST STILL GO — do NOT navigate to scene, user stays on current screen
-        }}
-        onClose={() => {
-          if (settings.id) {
-            base44.entities.UserSettings.update(settings.id, {
-              pending_character_invites: []
-            }).catch(() => {});
-          }
-          setPendingInvitations(null);
-        }} />
-
-      }
-    </div>);
-
+      <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
+      <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
+      <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
+      <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(message) => { const price = pendingPurchase?.price; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `✓ Purchased for $${price} — ${message}.`, timestamp: new Date().toISOString() }]); setPendingPurchase(null); }} />
+      <ChangeClothesModal isOpen={showChangeClothesModal} onClose={() => setShowChangeClothesModal(false)} settings={settings} isUserSettingsLoading={isUserSettingsLoading} presentCharacters={changeClothesEligibleCharacters} location={location} currentUser={currentUser} userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null} userName={displayName} onOutfitChanged={(targetType) => { if (targetType === 'user') queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] }); else queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] }); setOutfitVersion((v) => v + 1); setHasUserRequestedImage(true); setSceneImage(null); }} />
+      {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
+    </div>
+  );
 }
