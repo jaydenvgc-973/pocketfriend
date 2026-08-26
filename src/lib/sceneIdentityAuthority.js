@@ -91,18 +91,30 @@ export function buildSceneNameReferenceKey(participants) {
 /**
  * Build the participant reference key for Scene image generation.
  *
- * CRITICAL FIX: This version EXCLUDES avatars — it uses ONLY reference_image_urls,
- * matching the regenerateImageWithReason path which explicitly identifies avatars
- * as the ROOT CAUSE of "pasted character" failures:
- *   "Avatar is typically a raw selfie/mirror shot — when passed as a reference,
- *    the AI copies its entire visual context (background, pose, props, lighting),
- *    causing scene contamination."
+ * IDENTITY AUTHORITY CHAIN:
+ *   participant ID → avatar/reference identity + Appearance Lock reinforcement
+ *   → correct participant binding → User Closet/Character Closet → Scene composition
  *
- * Orders participant reference_image_urls first (contiguous per person), then
- * environment refs. Returns the ordered visual ref array AND a prompt-text block
- * that explicitly maps each image index range to a named participant.
+ * The visual reference (reference_image_urls, with avatar fallback) provides the
+ * actual person's recognizable face and body. The Appearance Lock (in the sealed
+ * subject bundle) reinforces what must remain stable across poses, angles,
+ * lighting, and clothing. Together they preserve the recognizable person —
+ * approximately 72–100% facial resemblance — while allowing natural variation
+ * in expression, perspective, pose, lighting, and hair movement.
  *
- * @param {Array} participants - Completed scene participants (each with id, name, reference_image_urls)
+ * REFERENCE PRIORITY (matches regenerateImageWithReason):
+ *   1. reference_image_urls — cleaner face-focused photos (up to 2)
+ *   2. avatar_url / image_avatar_url — FALLBACK when reference_image_urls are
+ *      empty. The avatar provides facial identity (face structure, skin tone,
+ *      hair, body type). The sealed subject bundle adds FACE-ONLY EXTRACTION
+ *      instructions so the model ignores background/pose/clothing contamination.
+ *
+ * Avatars are NOT removed — they are a legitimate identity source, reinforced
+ * by the Appearance Lock. When no reference_image_urls exist, the avatar is
+ * better than generating a random person. The face-only extraction instructions
+ * prevent the avatar's background/pose/clothing from contaminating the scene.
+ *
+ * @param {Array} participants - Completed scene participants (each with id, name, reference_image_urls, avatar_url, image_avatar_url)
  * @param {Array} envRefs     - Environment reference image URLs
  * @returns {{ visualRefs: string[], ranges: Array, envStart: number, envEnd: number }}
  */
@@ -112,26 +124,42 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
   for (const p of (participants || [])) {
     if (!p || !p.name) continue;
     const personRefs = [];
-    // CRITICAL: Use ONLY reference_image_urls — NOT avatar_url / image_avatar_url.
-    // Avatars carry background/pose/clothing contamination that causes identity drift.
-    // This matches the regenerateImageWithReason path exactly.
+    let usedAvatarFallback = false;
+
+    // 1. reference_image_urls FIRST — cleaner face-focused photos (up to 2)
     const refUrls = (p.reference_image_urls || []).filter(u =>
       u && u.trim().length > 0 &&
       !u.includes('generated_image') &&
       !visualRefs.includes(u) &&
       !personRefs.includes(u)
     );
-    // Cap at 2 reference images per participant (matches regenerate path)
     for (const url of refUrls.slice(0, 2)) {
       personRefs.push(url);
     }
+
+    // 2. AVATAR FALLBACK — when reference_image_urls are empty, supplement with
+    //    avatar. The avatar provides facial identity (face structure, skin tone,
+    //    hair, body type). The sealed subject bundle adds face-only extraction
+    //    instructions so the model ignores background/pose/clothing contamination
+    //    from the avatar. This matches the regenerateImageWithReason fallback.
+    if (personRefs.length === 0) {
+      const avatarUrl = p.avatar_url || p.image_avatar_url || null;
+      if (avatarUrl &&
+          avatarUrl.trim().length > 0 &&
+          !avatarUrl.includes('generated_image') &&
+          !visualRefs.includes(avatarUrl)) {
+        personRefs.push(avatarUrl);
+        usedAvatarFallback = true;
+      }
+    }
+
     if (personRefs.length > 0) {
       const start = visualRefs.length + 1;
       for (const url of personRefs) visualRefs.push(url);
       const end = visualRefs.length;
-      ranges.push({ id: p.id, name: p.name, start, end });
+      ranges.push({ id: p.id, name: p.name, start, end, usedAvatarFallback });
     } else {
-      ranges.push({ id: p.id, name: p.name, start: null, end: null });
+      ranges.push({ id: p.id, name: p.name, start: null, end: null, usedAvatarFallback: false });
     }
   }
   const envStart = visualRefs.length + 1;

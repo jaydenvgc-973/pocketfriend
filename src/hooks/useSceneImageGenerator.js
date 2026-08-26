@@ -21,15 +21,20 @@ import { isCharacterAsleep } from "@/lib/sleepUtils";
  * for maintainability. Uses the SAME identity authority chain as
  * regenerateImageWithReason (the stronger identity path):
  *
- *   Scene participant ID → authoritative identity/reference → participant binding
- *   → authoritative wardrobe → Scene/environment/composition
+ *   Scene participant ID → avatar/reference identity + Appearance Lock reinforcement
+ *   → correct participant binding → User Closet/Character Closet → Scene composition
  *
- * Key identity fixes (matching regenerateImageWithReason):
- *   - Uses ONLY reference_image_urls (NOT avatars) — avatars carry background/pose/
- *     clothing contamination, the ROOT CAUSE of "pasted character" failures.
- *   - Includes a Name Reference Key mapping each prompt name → Character ID / User ID.
- *   - Includes the fictional character declaration.
- *   - Includes the Caucasian-default prohibition.
+ * Identity authority (matching regenerateImageWithReason):
+ *   - reference_image_urls FIRST (up to 2) — cleaner face-focused photos.
+ *   - avatar_url FALLBACK when reference_image_urls are empty — the avatar provides
+ *     facial identity; the sealed subject bundle adds FACE-ONLY EXTRACTION instructions
+ *     so the model ignores background/pose/clothing contamination. Avatars are NOT
+ *     removed — they are a legitimate identity source reinforced by the Appearance Lock.
+ *   - Name Reference Key mapping each prompt name → Character ID / User ID.
+ *   - Fictional character declaration + Caucasian-default prohibition.
+ *   - Sealed subject bundles with Appearance Lock reinforcement + identity preservation
+ *     directive (72–100% resemblance across natural variation in angle/expression/pose/
+ *     lighting — NOT face cut-and-paste).
  *
  * Initial generation, Refresh, and action-triggered generation all use this same
  * function — they all derive their cast from the exact Scene participant IDs.
@@ -77,9 +82,11 @@ export function useSceneImageGenerator() {
       allZoneImagesFlat.slice(0, 4) :
       firstImage ? [firstImage] : [];
 
-    // ── REFERENCE KEY — uses ONLY reference_image_urls (NOT avatars) ──
-    // This matches regenerateImageWithReason which explicitly excludes avatars
-    // as the ROOT CAUSE of "pasted character" failures.
+    // ── REFERENCE KEY — reference_image_urls first, avatar fallback ──
+    // Matches regenerateImageWithReason: reference_image_urls (up to 2) are
+    // preferred; avatar_url is the fallback when no reference_image_urls exist.
+    // The sealed subject bundle adds face-only extraction instructions for
+    // avatar fallback so background/pose/clothing contamination is suppressed.
     const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs);
     const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
 

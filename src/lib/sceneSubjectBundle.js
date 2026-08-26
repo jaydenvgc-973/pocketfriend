@@ -54,7 +54,34 @@ function buildSubjectAppearanceLock(person) {
   return lines.length > 0 ? lines.join('\n') : '';
 }
 
-function buildSealedSubjectBundle(person, refRange, outfitText, role) {
+// ── IDENTITY PRESERVATION DIRECTIVE ──────────────────────────────────────────
+// Appended to every sealed subject bundle. Tells the model to preserve the
+// RECOGNIZABLE PERSON (72–100% facial resemblance) across natural variation
+// in angle, expression, pose, lighting, and hair movement — NOT face
+// cut-and-paste. The visual reference + Appearance Lock together form the
+// identity authority; wardrobe is separate and must never substitute for it.
+const IDENTITY_PRESERVATION_DIRECTIVE = `IDENTITY PRESERVATION STANDARD (72–100% resemblance):
+  ✅ The reference images + appearance lock TOGETHER define this person's recognizable identity.
+  ✅ Preserve across ALL angles, expressions, poses, lighting, and compositions:
+     — facial structure and proportions (face shape, jaw/chin, cheek structure)
+     — eye shape and spacing, nose shape, mouth and lip structure
+     — skin color, skin undertone, and overall complexion
+     — hair type, hair texture, hairline, and characteristic hairstyle properties
+     — facial hair where applicable
+     — body type and physical build
+     — other established distinguishing physical features
+  ✅ Natural variation is EXPECTED and DESIRED: front-facing, three-quarter, profile,
+     looking upward/downward, seated, standing, moving, interacting, smiling, different
+     lighting, different camera angle, hair movement from wind/activity.
+  ✅ A person viewed from the side must still clearly be that person.
+  ✅ A person smiling must still clearly be that person.
+  ✅ A person under different lighting must still clearly be that person.
+  ⛔ Do NOT make the face unnaturally identical from image to image (no cut-and-paste).
+  ⛔ Do NOT default to Caucasian or replace established skin color/features with demographic defaults.
+  ⛔ Wardrobe (outfit) must NEVER substitute for identity — clothing comes from the outfit lock only.
+  What must remain STABLE is the RECOGNIZABLE PERSON underneath those natural variations.`;
+
+function buildSealedSubjectBundle(person, refRange, outfitText, role, usedAvatarFallback) {
   if (!person || !person.name) return '';
   const name = person.name;
   const subjectId = person.id || (person.isUser ? 'authenticated_user' : 'unknown');
@@ -74,10 +101,25 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
 
   if (refRange) {
     lines.push(`REFERENCE IMAGES: ${refRange}`);
-    lines.push(`  Use ONLY for: face structure, skin tone, hair, body type of "${name}".`);
-    lines.push(`  ⛔ IGNORE background, pose, clothing in these reference photos.`);
-    lines.push(`  ⛔ Reference photos establish IDENTITY ONLY (face, skin, hair, body).`);
-    lines.push(`  ⛔ Clothing visible in reference photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
+    if (usedAvatarFallback) {
+      // Avatar fallback — face-only extraction instructions matching regenerateImageWithReason.
+      // The avatar is typically a selfie/portrait — it provides facial identity but carries
+      // background/pose/clothing contamination. The face-only extraction instructions tell
+      // the model to extract ONLY the face/identity and ignore everything else.
+      lines.push(`  These reference photos include a portrait/avatar shot of "${name}".`);
+      lines.push(`  ✅ Use for FACE IDENTITY ONLY: face structure, face shape, jaw/chin, eye shape and spacing,`);
+      lines.push(`     nose shape, mouth/lip structure, cheek structure, skin color and undertone,`);
+      lines.push(`     hair type/texture/hairline, facial hair, body type of "${name}".`);
+      lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, props,`);
+      lines.push(`     and clothing in these reference photos MUST BE COMPLETELY IGNORED.`);
+      lines.push(`  ⛔ Treat as face/identity texture samples ONLY — NOT a scene to replicate.`);
+      lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
+    } else {
+      lines.push(`  Use ONLY for: face structure, skin tone, hair, body type of "${name}".`);
+      lines.push(`  ⛔ IGNORE background, pose, clothing in these reference photos.`);
+      lines.push(`  ⛔ Reference photos establish IDENTITY ONLY (face, skin, hair, body).`);
+      lines.push(`  ⛔ Clothing visible in reference photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
+    }
     lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject.`);
   } else {
     lines.push(`REFERENCE IMAGES: None — generate "${name}" from appearance lock below only.`);
@@ -88,10 +130,18 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
   if (appearanceLock) {
     lines.push(`APPEARANCE LOCK (for "${name}" ONLY — immutable):`);
     lines.push(appearanceLock);
+    lines.push(`  The appearance lock REINFORCES the reference images — together they define the`);
+    lines.push(`  recognizable person. The lock keeps identity stable across angles, lighting, and poses.`);
   } else {
     lines.push(`APPEARANCE LOCK: No structured appearance data — render from reference images only.`);
   }
   lines.push('');
+
+  // Identity preservation directive — appended to every bundle with refs or appearance lock
+  if (refRange || appearanceLock) {
+    lines.push(IDENTITY_PRESERVATION_DIRECTIVE);
+    lines.push('');
+  }
 
   if (role) {
     lines.push(`ROLE: ${role}`);
@@ -131,12 +181,13 @@ export function buildSealedSubjectBundles(people, refKey, location) {
     .map((p) => {
       const range = ranges.find(r => r.id === p.id);
       const refRange = range && range.start !== null ? formatRefRange(range.start, range.end) : null;
+      const usedAvatarFallback = range ? !!range.usedAvatarFallback : false;
       // Role and outfit are read from the completed participant — not reclassified here.
       // The participant was enriched at the Scene level: sceneRole + resolvedOutfit attached
       // directly to the person. This function is a serialization boundary, not a person resolver.
       const role = p.sceneRole || null;
       const outfit = p.resolvedOutfit || null;
-      return buildSealedSubjectBundle(p, refRange, outfit, role);
+      return buildSealedSubjectBundle(p, refRange, outfit, role, usedAvatarFallback);
     })
     .filter(Boolean);
 
