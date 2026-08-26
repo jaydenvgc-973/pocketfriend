@@ -81,7 +81,7 @@ const IDENTITY_PRESERVATION_DIRECTIVE = `IDENTITY PRESERVATION STANDARD (72–10
   ⛔ Wardrobe (outfit) must NEVER substitute for identity — clothing comes from the outfit lock only.
   What must remain STABLE is the RECOGNIZABLE PERSON underneath those natural variations.`;
 
-function buildSealedSubjectBundle(person, refRange, outfitText, role, usedAvatarFallback) {
+function buildSealedSubjectBundle(person, refRange, outfitText, role) {
   if (!person || !person.name) return '';
   const name = person.name;
   const subjectId = person.id || (person.isUser ? 'authenticated_user' : 'unknown');
@@ -101,25 +101,19 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role, usedAvatar
 
   if (refRange) {
     lines.push(`REFERENCE IMAGES: ${refRange}`);
-    if (usedAvatarFallback) {
-      // Avatar fallback — face-only extraction instructions matching regenerateImageWithReason.
-      // The avatar is typically a selfie/portrait — it provides facial identity but carries
-      // background/pose/clothing contamination. The face-only extraction instructions tell
-      // the model to extract ONLY the face/identity and ignore everything else.
-      lines.push(`  These reference photos include a portrait/avatar shot of "${name}".`);
-      lines.push(`  ✅ Use for FACE IDENTITY ONLY: face structure, face shape, jaw/chin, eye shape and spacing,`);
-      lines.push(`     nose shape, mouth/lip structure, cheek structure, skin color and undertone,`);
-      lines.push(`     hair type/texture/hairline, facial hair, body type of "${name}".`);
-      lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, props,`);
-      lines.push(`     and clothing in these reference photos MUST BE COMPLETELY IGNORED.`);
-      lines.push(`  ⛔ Treat as face/identity texture samples ONLY — NOT a scene to replicate.`);
-      lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
-    } else {
-      lines.push(`  Use ONLY for: face structure, skin tone, hair, body type of "${name}".`);
-      lines.push(`  ⛔ IGNORE background, pose, clothing in these reference photos.`);
-      lines.push(`  ⛔ Reference photos establish IDENTITY ONLY (face, skin, hair, body).`);
-      lines.push(`  ⛔ Clothing visible in reference photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
-    }
+    // The avatar is the primary visual identity image; additional reference images
+    // supplement it. All reference photos for this subject are identity guidance —
+    // use for face/identity only, ignore background/pose/clothing/props. This applies
+    // to the avatar whenever it is present — not conditionally on "fallback".
+    lines.push(`  These reference photos establish the visual identity of "${name}".`);
+    lines.push(`  The primary identity image is the avatar/portrait; any additional photos supplement it.`);
+    lines.push(`  ✅ Use for FACE IDENTITY ONLY: face structure, face shape, jaw/chin, eye shape and spacing,`);
+    lines.push(`     nose shape, mouth/lip structure, cheek structure, skin color and undertone,`);
+    lines.push(`     hair type/texture/hairline, facial hair, body type of "${name}".`);
+    lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, props,`);
+    lines.push(`     and clothing in these reference photos MUST BE COMPLETELY IGNORED.`);
+    lines.push(`  ⛔ Treat as face/identity texture samples ONLY — NOT a scene to replicate.`);
+    lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
     lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject.`);
   } else {
     lines.push(`REFERENCE IMAGES: None — generate "${name}" from appearance lock below only.`);
@@ -181,13 +175,12 @@ export function buildSealedSubjectBundles(people, refKey, location) {
     .map((p) => {
       const range = ranges.find(r => r.id === p.id);
       const refRange = range && range.start !== null ? formatRefRange(range.start, range.end) : null;
-      const usedAvatarFallback = range ? !!range.usedAvatarFallback : false;
       // Role and outfit are read from the completed participant — not reclassified here.
       // The participant was enriched at the Scene level: sceneRole + resolvedOutfit attached
       // directly to the person. This function is a serialization boundary, not a person resolver.
       const role = p.sceneRole || null;
       const outfit = p.resolvedOutfit || null;
-      return buildSealedSubjectBundle(p, refRange, outfit, role, usedAvatarFallback);
+      return buildSealedSubjectBundle(p, refRange, outfit, role);
     })
     .filter(Boolean);
 

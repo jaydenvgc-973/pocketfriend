@@ -21,15 +21,17 @@ import { isCharacterAsleep } from "@/lib/sleepUtils";
  * for maintainability. Uses the SAME identity authority chain as
  * regenerateImageWithReason (the stronger identity path):
  *
- *   Scene participant ID → avatar/reference identity + Appearance Lock reinforcement
- *   → correct participant binding → User Closet/Character Closet → Scene composition
+ *   Scene participant ID → avatar (primary) + additional reference images (supplements)
+ *   + Appearance Lock reinforcement → participant binding → Closet → composition
  *
- * Identity authority (matching regenerateImageWithReason):
- *   - reference_image_urls FIRST (up to 2) — cleaner face-focused photos.
- *   - avatar_url FALLBACK when reference_image_urls are empty — the avatar provides
- *     facial identity; the sealed subject bundle adds FACE-ONLY EXTRACTION instructions
- *     so the model ignores background/pose/clothing contamination. Avatars are NOT
- *     removed — they are a legitimate identity source reinforced by the Appearance Lock.
+ * Identity authority:
+ *   - avatar_url / image_avatar_url is the PRIMARY visual identity image — always
+ *     included when present. The avatar is the main established image of the person;
+ *     it is NOT a fallback and is NOT displaced by additional references.
+ *   - reference_image_urls SUPPLEMENT the avatar (up to 2) — additional angles / detail
+ *     that strengthen identity coverage alongside the avatar.
+ *   - The sealed subject bundle adds FACE-ONLY EXTRACTION instructions so the model
+ *     uses the avatar for identity while ignoring its background/pose/clothing/props.
  *   - Name Reference Key mapping each prompt name → Character ID / User ID.
  *   - Fictional character declaration + Caucasian-default prohibition.
  *   - Sealed subject bundles with Appearance Lock reinforcement + identity preservation
@@ -82,11 +84,11 @@ export function useSceneImageGenerator() {
       allZoneImagesFlat.slice(0, 4) :
       firstImage ? [firstImage] : [];
 
-    // ── REFERENCE KEY — reference_image_urls first, avatar fallback ──
-    // Matches regenerateImageWithReason: reference_image_urls (up to 2) are
-    // preferred; avatar_url is the fallback when no reference_image_urls exist.
-    // The sealed subject bundle adds face-only extraction instructions for
-    // avatar fallback so background/pose/clothing contamination is suppressed.
+    // ── REFERENCE KEY — avatar primary, reference images supplement ──
+    // The avatar is the primary visual identity image (always included when present).
+    // Additional reference_image_urls supplement it (up to 2) with more angles/detail.
+    // The sealed subject bundle adds face-only extraction instructions so the avatar
+    // is used for identity while its background/pose/clothing/props are ignored.
     const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs);
     const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
 

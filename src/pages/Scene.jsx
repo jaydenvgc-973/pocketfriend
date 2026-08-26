@@ -288,11 +288,11 @@ export default function Scene() {
   const firstImage = location?.zones?.find((z) => z.image_urls?.length > 0)?.image_urls?.[0] || location?.image_urls?.[0] || null;
 
   // ── IMAGE GENERATION HOOK ──
-  // Identity authority chain (matches regenerateImageWithReason):
-  //   Scene participant ID → avatar/reference identity + Appearance Lock reinforcement
-  //   → correct participant binding → User Closet/Character Closet → Scene composition
-  // reference_image_urls are preferred; avatar_url is the fallback when no refs exist.
-  // Sealed subject bundles add face-only extraction instructions for avatar fallback.
+  // Identity authority chain:
+  //   participant ID → avatar (primary) + additional reference images (supplements)
+  //   + Appearance Lock reinforcement → participant binding → Closet → composition
+  // The avatar is the main established image — always included, NOT a fallback.
+  // reference_image_urls supplement the avatar with more angles/detail.
   const { sceneImage, setSceneImage, isGeneratingImage, generateSceneImage } = useSceneImageGenerator();
 
   useEffect(() => {

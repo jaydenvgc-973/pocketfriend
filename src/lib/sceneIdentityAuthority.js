@@ -92,27 +92,31 @@ export function buildSceneNameReferenceKey(participants) {
  * Build the participant reference key for Scene image generation.
  *
  * IDENTITY AUTHORITY CHAIN:
- *   participant ID → avatar/reference identity + Appearance Lock reinforcement
- *   → correct participant binding → User Closet/Character Closet → Scene composition
+ *   participant ID → avatar (primary visual identity) + additional reference images
+ *   (supplements) + Appearance Lock reinforcement → participant binding
+ *   → User Closet/Character Closet → Scene composition
  *
- * The visual reference (reference_image_urls, with avatar fallback) provides the
- * actual person's recognizable face and body. The Appearance Lock (in the sealed
- * subject bundle) reinforces what must remain stable across poses, angles,
- * lighting, and clothing. Together they preserve the recognizable person —
- * approximately 72–100% facial resemblance — while allowing natural variation
- * in expression, perspective, pose, lighting, and hair movement.
+ * The avatar is the main established image of the user or character — the PRIMARY
+ * visual identity source. It is NOT a fallback and is NOT optional. Additional
+ * reference_image_urls supplement the avatar by providing more visual evidence,
+ * angles, hair detail, facial structure, or body type. They strengthen identity
+ * coverage; they do NOT replace or displace the avatar.
  *
- * REFERENCE PRIORITY (matches regenerateImageWithReason):
- *   1. reference_image_urls — cleaner face-focused photos (up to 2)
- *   2. avatar_url / image_avatar_url — FALLBACK when reference_image_urls are
- *      empty. The avatar provides facial identity (face structure, skin tone,
- *      hair, body type). The sealed subject bundle adds FACE-ONLY EXTRACTION
- *      instructions so the model ignores background/pose/clothing contamination.
+ * The Appearance Lock (in the sealed subject bundle) is text reinforcement derived
+ * from the established appearance. It reinforces what must remain stable across
+ * poses, angles, lighting, and clothing. It does NOT replace the avatar or become
+ * the primary identity source.
  *
- * Avatars are NOT removed — they are a legitimate identity source, reinforced
- * by the Appearance Lock. When no reference_image_urls exist, the avatar is
- * better than generating a random person. The face-only extraction instructions
- * prevent the avatar's background/pose/clothing from contaminating the scene.
+ * REFERENCE ORDER:
+ *   1. avatar_url / image_avatar_url — PRIMARY identity image (always included
+ *      when present). The avatar is the main established image of this person.
+ *   2. reference_image_urls — SUPPLEMENTS (up to 2) — additional angles / detail
+ *      that strengthen identity coverage alongside the avatar.
+ *
+ * The sealed subject bundle adds FACE-ONLY EXTRACTION instructions for the avatar
+ * so the model uses it for identity (face structure, skin tone, hair, body type)
+ * while ignoring its background, pose, clothing, and props. These instructions
+ * apply to the avatar whenever it is present — not conditionally on "fallback".
  *
  * @param {Array} participants - Completed scene participants (each with id, name, reference_image_urls, avatar_url, image_avatar_url)
  * @param {Array} envRefs     - Environment reference image URLs
@@ -124,9 +128,24 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
   for (const p of (participants || [])) {
     if (!p || !p.name) continue;
     const personRefs = [];
-    let usedAvatarFallback = false;
+    let hasAvatar = false;
+    let hasAdditionalRefs = false;
 
-    // 1. reference_image_urls FIRST — cleaner face-focused photos (up to 2)
+    // 1. AVATAR — PRIMARY visual identity image (always included when present).
+    //    The avatar is the main established image of this person. It is NOT a
+    //    fallback and is NOT displaced by additional reference images.
+    const avatarUrl = p.avatar_url || p.image_avatar_url || null;
+    if (avatarUrl &&
+        avatarUrl.trim().length > 0 &&
+        !avatarUrl.includes('generated_image') &&
+        !visualRefs.includes(avatarUrl)) {
+      personRefs.push(avatarUrl);
+      hasAvatar = true;
+    }
+
+    // 2. ADDITIONAL reference_image_urls — SUPPLEMENTS to the avatar (up to 2).
+    //    These provide more visual evidence, angles, hair detail, facial structure,
+    //    or body type. They strengthen identity coverage; they do NOT replace the avatar.
     const refUrls = (p.reference_image_urls || []).filter(u =>
       u && u.trim().length > 0 &&
       !u.includes('generated_image') &&
@@ -135,31 +154,16 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
     );
     for (const url of refUrls.slice(0, 2)) {
       personRefs.push(url);
-    }
-
-    // 2. AVATAR FALLBACK — when reference_image_urls are empty, supplement with
-    //    avatar. The avatar provides facial identity (face structure, skin tone,
-    //    hair, body type). The sealed subject bundle adds face-only extraction
-    //    instructions so the model ignores background/pose/clothing contamination
-    //    from the avatar. This matches the regenerateImageWithReason fallback.
-    if (personRefs.length === 0) {
-      const avatarUrl = p.avatar_url || p.image_avatar_url || null;
-      if (avatarUrl &&
-          avatarUrl.trim().length > 0 &&
-          !avatarUrl.includes('generated_image') &&
-          !visualRefs.includes(avatarUrl)) {
-        personRefs.push(avatarUrl);
-        usedAvatarFallback = true;
-      }
+      hasAdditionalRefs = true;
     }
 
     if (personRefs.length > 0) {
       const start = visualRefs.length + 1;
       for (const url of personRefs) visualRefs.push(url);
       const end = visualRefs.length;
-      ranges.push({ id: p.id, name: p.name, start, end, usedAvatarFallback });
+      ranges.push({ id: p.id, name: p.name, start, end, hasAvatar, hasAdditionalRefs });
     } else {
-      ranges.push({ id: p.id, name: p.name, start: null, end: null, usedAvatarFallback: false });
+      ranges.push({ id: p.id, name: p.name, start: null, end: null, hasAvatar: false, hasAdditionalRefs: false });
     }
   }
   const envStart = visualRefs.length + 1;
