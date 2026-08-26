@@ -998,6 +998,35 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     if (!destLoc) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'destination_not_in_scope' };
     }
+    // ── DESTINATION-TYPE VACATION ELIGIBILITY GUARD ──────────────────────────
+    // A location with location_type === 'destination' is restricted autonomous
+    // travel. It is eligible ONLY when BOTH conditions are true for this character:
+    //   1. character.vacation_mode === true
+    //   2. character.vacation_location_ids includes this destination's canonical ID
+    // This guard is the shared eligibility authority at the canonical writer —
+    // it catches every caller that routes here, not just autonomousCharacterMovement.
+    // User-confirmed scheduled relocations (explicit user travel commitments) are
+    // exempt: the user explicitly chose the destination, so Vacation Mode
+    // authority does not apply. Home/work/school paths use different presence
+    // statuses and are not caught by this visit/relocation branch.
+    const _isUserConfirmedRelocation = (requested.requested_source_reason || '').startsWith('scheduled_user_confirmed') ||
+      (requested.requested_authority || '').startsWith('processScheduledRelocations');
+    if (!_isUserConfirmedRelocation && destLoc.location_type === 'destination') {
+      const _vacModeOn = character.vacation_mode === true;
+      const _vacIds = Array.isArray(character.vacation_location_ids) ? character.vacation_location_ids : [];
+      if (!(_vacModeOn && _vacIds.includes(destLocId))) {
+        return {
+          disposition: 'rejected',
+          canonicalFields: {},
+          reason: 'destination_vacation_eligibility_blocked',
+          destination_eligibility: {
+            location_type: 'destination',
+            vacation_mode: _vacModeOn,
+            selected: _vacIds.includes(destLocId),
+          },
+        };
+      }
+    }
     const canonicalFields = {
       resolved_current_location_id: destLocId,
       resolved_current_location_name: destLoc.name,
