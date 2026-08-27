@@ -1872,7 +1872,7 @@ Deno.serve(async (req) => {
 
     // ── Step 9b: Build recent message context block ──────────────────────────
     let recentMessageBlock = '';
-    if (recentMessages.length > 0) {
+    if (recentMessages.length > 0 && interactionContext !== 'direct_chat' && interactionContext !== 'text') {
       const lines = recentMessages.slice(0, 8).map(m => {
         // Played-as messages are the character's own dialogue — label with their name, not "User"
         const speaker = m.played_as_character_id === characterId

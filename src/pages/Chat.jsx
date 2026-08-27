@@ -1991,6 +1991,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         return null;
       }
       if (!txtMsg?.id) return null;
+      // ── CORRECTION 3: Invalidate canonical cache after text response commit ──
+      // A successfully committed Chat/Text response invalidates the pre-commit
+      // canonical conversation-state cache so the next turn cannot reuse a
+      // snapshot from before this completed turn.
+      delete systemPromptCacheRef.current[`canonical::${characterId}`];
+      if (currentUser?.email) {
+        import('@/lib/characterRuntimeCache.js').then(({ invalidateCharacterCache }) => {
+          invalidateCharacterCache(currentUser.email, characterId);
+        }).catch(() => {});
+      }
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
         // Synchronously update messagesRef so a concurrent generation chained
