@@ -717,7 +717,15 @@ export default function Chat({ chatTypeOverride } = {}) {
       // Await the previous generation's completion so its committed character
       // response is in messagesRef before this generation builds its context.
       if (prevGeneration) await prevGeneration.catch(() => {});
-      recentMsgs = [...messagesRef.current.slice(-50), userMsg];
+      // ── DUPLICATE USER MESSAGE GUARD ──────────────────────────────────────────
+      // setMessages at line 560 may have already triggered a re-render that updated
+      // messagesRef.current to include userMsg. If we unconditionally append userMsg
+      // again, it appears TWICE in recentMsgs → conversationLog → LLM prompt, causing
+      // the LLM to see duplicate user turns and generate byte-for-byte identical
+      // responses. Only append if userMsg is not already in the ref.
+      const _existingRecent = messagesRef.current.slice(-50);
+      const _userMsgAlreadyInRef = _existingRecent.some(m => m.id === userMsg.id);
+      recentMsgs = _userMsgAlreadyInRef ? _existingRecent : [..._existingRecent, userMsg];
       // ── VICK SERVICE BRIDGE: routes ALL Vick service questions through Account Help & Repair intelligence ──
       // Same source as Settings SupportAssistant. Persistent context per conversation. No one-shot summaries.
       if (shouldUseVickFastPath(character, text, !!userImageUrl)) { const fp = await executeVickDiagnosticFastPath({ character, characterId, text, convoId, userMsg, callLLMWithRetry, parseCharacterResponse, filterDashes, stripCharacterNamePrefix, base44, setMessages, setIsTyping, releaseFgTask, isMountedRef, ownerEmail: currentUser?.email, isPrivate: !characterSpeechMode, imageUrls: userImageUrl ? [userImageUrl] : [] }); if (fp.handled) return; }
