@@ -1428,13 +1428,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // validateLocationInResponse is imported from lib/promptContextBuilders.js
 
-      // ── STALE_TEST: canonical cache + RECENT CONV HISTORY + fullPrompt ──
-      const _staleSnip = "I'm still here, just trying to soak in the quiet";
-      const _staleCacheDecision = cacheIsFresh ? (globalCachedPrompt ? 'GLOBAL_CACHE_HIT_FRESH' : 'MOUNT_CACHE_HIT_FRESH') : (canonicalFallbackUsed ? 'FALLBACK' : 'DB_FETCH_FRESH');
-      const _staleHasRCH = canonicalPrompt ? canonicalPrompt.includes('RECENT CONVERSATION HISTORY') : 'N/A';
-      console.log(`[STALE_TEST] 5_CANONICAL_CACHE | decision=${_staleCacheDecision} | canonicalLen=${canonicalPrompt?.length || 0}`);
-      console.log(`[STALE_TEST] 6_7_CANONICAL_RCH | hasRecentConvHistory=${_staleHasRCH} | staleInCanonical=${canonicalPrompt ? canonicalPrompt.includes(_staleSnip) : 'N/A'}`);
-      console.log(`[STALE_TEST] 9_FULL_PROMPT | len=${fullPrompt.length} | staleInFullPrompt=${fullPrompt.includes(_staleSnip)} | tail=${fullPrompt.substring(fullPrompt.length - 800)}`);
       const t_llm_start = Date.now();
       // needsInternet: true restores the character's existing external-information
       // capability. The LLM itself recognizes the information need from conversation
@@ -1445,10 +1438,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // the conversation, not a regex. This is the pre-regression execution path.
       response = await callLLMWithRetry(fullPrompt, 'gemini_3_flash', 3, true);
       const t_llm_end = Date.now();
-      // ── STALE_TEST: LLM return capture ──
-      const _staleSnippetLLM = "I'm still here, just trying to soak in the quiet";
-      const _staleInLLMResponse = (response||'').includes(_staleSnippetLLM);
-      console.log(`[STALE_TEST] 10_LLM_RETURN | length=${(response||'').length} | staleSnippetInLLMResponse=${_staleInLLMResponse} | preview=${(response||'').substring(0, 600)}`);
       console.log(`[SEND_TIMING_PROOF] llm_call_ms=${t_llm_end - t_llm_start} | llm_start_ms=${t_llm_start - t_send_start}`);
       // Step 7 — Vick final response (only logged when diagnostic was used)
       if (vickDiagnosticResults) {
@@ -1465,8 +1454,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
 
       responseObj = parseCharacterResponse(response);
-      const _staleSnipP = "I'm still here, just trying to soak in the quiet";
-      console.log(`[STALE_TEST] 11_PARSED_RESPONSE | mt=${responseObj.message_type} | stale=${(responseObj.text_content||'').includes(_staleSnipP)} | text="${(responseObj.text_content||'').substring(0, 400)}"`);
 
       msgType = responseObj.message_type || "text_only";
       if (isPhotogenic && explicitImageRequest && msgType === "text_only") {
@@ -2021,8 +2008,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         return null;
       }
       if (!txtMsg?.id) return null;
-      const _staleSnipC = "I'm still here, just trying to soak in the quiet";
-      console.log(`[STALE_TEST] 12_COMMITTED_MSG | id=${txtMsg.id} | stale=${(textContent||'').includes(_staleSnipC)} | content="${(textContent||'').substring(0, 200)}" | source=${txtMsg.source_message_id} | reply_to=${txtMsg.reply_to_message_id}`);
       // ── CORRECTION 3: Invalidate canonical cache after text response commit ──
       // A successfully committed Chat/Text response invalidates the pre-commit
       // canonical conversation-state cache so the next turn cannot reuse a
