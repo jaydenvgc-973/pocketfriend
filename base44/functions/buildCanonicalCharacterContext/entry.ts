@@ -1648,10 +1648,6 @@ Deno.serve(async (req) => {
               // passed_out = involuntary forced recovery — same exclusion as sleeping
               const ps = c.resolved_presence_status;
               if (ps === 'sleeping' || ps === 'napping' || ps === 'passed_out') return false;
-              if (c.exclude_from_roster === true) return false;
-              if (c.exclude_from_default_scene_queries === true) return false;
-              if (c.is_test_character === true) return false;
-              if (c.diagnostic_only === true) return false;
               if (c.is_jailed) return false;
               if (c.travel_status && c.travel_status !== 'not_traveling') return false;
               return true;

@@ -283,22 +283,12 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   const promptLower = prompt.toLowerCase();
 
   // Filter to active characters only, excluding sender.
-  // AUTHORITY: Characters explicitly excluded from the roster or from default scene
-  // queries must NEVER be resolved as visual subjects in images — even if the LLM
-  // mentions their name in the prompt text. These characters include corrupted-name
-  // records (e.g. a character whose name is a location + role label like "Thompson
-  // Home - 221 E 26th st Babysitter"), test fixtures, and other non-canonical entries
-  // that should not appear in generated images. Excluding them here prevents their
-  // reference images from being injected and their identity from contaminating the
-  // rendered scene.
   const activeRoster = allChars.filter(c =>
     c.name &&
     c.id !== senderCharacterId &&
     c.status !== 'deleted' &&
     c.status !== 'soft_deleted' &&
-    c.status !== 'merged' &&
-    c.exclude_from_roster !== true &&
-    c.exclude_from_default_scene_queries !== true
+    c.status !== 'merged'
   );
 
   // Sort by name length descending — prefer more specific/longer matches first
