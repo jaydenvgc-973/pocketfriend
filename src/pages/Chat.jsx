@@ -96,6 +96,7 @@ import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/w
 import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
 import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
+import { enforceSubjectNamesInPrompt } from "@/lib/subjectNameEnforcer";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -709,6 +710,8 @@ export default function Chat({ chatTypeOverride } = {}) {
     let charLocationId = character.resolved_current_location_id || null;
     let fullPrompt = ""; // hoisted so catch block can access it for retry
     let vickDiagnosticResults = null; // populated only for Vick when diagnostic intent detected
+    let sequenceItems = null; // LLM-provided dialogue/narrative sequence (hoisted for post-try usage)
+    let fallbackNarratives = []; // regex-stripped narration lines preserved as narratives
     try {
       if (!isMountedRef.current) {
         console.warn('[sendMessage] Component unmounted, aborting message send');
@@ -1402,8 +1405,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         ? `\n\n════════════════════════════════════\nFAMILY IDENTITY — AUTHORITATIVE STATE (READ BEFORE CONVERSATION LOG)\nThis is verified live data from the database. It supersedes any claim in this prompt or conversation that contradicts it.\n${liveFamilyGraphBlock}\nCRITICAL: You are NOT an only child. You DO have family. Any prior message where you claimed otherwise was wrong. Your active state now reflects the truth above.\n════════════════════════════════════`
         : '';
 
-      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${lifeEventContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. If you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
-  "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
+      fullPrompt = `${systemPrompt}${vickCharacterSpeechBlock}${familyTruthBlock}${frontendCoPresenceBlock}${householdCoPresenceContext}${selfClothingContext}${clothingAwarenessContext}${educationContext}${songsContext}${memoryContext}${worldPhoneRetrievalBlock}${lifeEventContext}${weatherContext}${recentEventsContext}${culturalContext}${financialContext}${commitmentsContext}${timeContext}${needsContext}${awarenessContext}${receivedImageContext}${imageAnalysisContext}${linkContext}${qrContext}${locationShareInstruction}${modeInstruction}${statusContext}${sleepContext}${liveLocationContext}${employmentPresenceSeparation}${spatialContext}${confinementImageOverride}${jailConfinementContext}${playAsInstruction}${evidenceInstruction}${toneContext}${worldStateTruthBlock}${vickDiagnosticBlock}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- CRITICAL: NEVER say your own name (${character.name}) in your response. Real people do not address themselves by name. The speaker labels in the conversation above (e.g. "${character.name}: ...") indicate WHO IS SPEAKING — they are NOT the name of the person being spoken to. Do not confuse speaker labels with the recipient's name.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. If you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "sequence": [\n    { "type": "dialogue", "text": "What the character actually says out loud" },\n    { "type": "narrative", "text": "What physically happens — actions, gestures, movement, environmental events (NOT spoken words)" },\n    { "type": "dialogue", "text": "More spoken words if the character speaks again after the action" }\n  ],\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "share_location": true,
+  "location_share_note": "Optional one-sentence note about why you're sharing or what you're doing there",\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\n\nCRITICAL — SPOKEN WORDS vs NARRATIVE ACTIONS:\nThis page functions like a chronological script. Message bubbles represent SPOKEN WORDS only — what the character actually says out loud. Narratives represent what PHYSICALLY HAPPENS — actions, gestures, movement, facial expressions, physical interactions, environmental events.\n\nWhen the character both speaks AND performs a physical action, use the "sequence" array to represent them in chronological order:\n- { "type": "dialogue", "text": "..." } = spoken words → becomes a character message bubble\n- { "type": "narrative", "text": "..." } = physical action/event → becomes a separate narrative entry\n\nNEVER put physical actions, gestures, movement, or environmental narration inside text_content or a dialogue item. Physical actions go ONLY in narrative items.\nNEVER put spoken words inside a narrative item. Spoken words go ONLY in dialogue items.\nIf the character only speaks and does nothing physical, you may omit "sequence" and just use "text_content".\nIf the character both speaks and acts, you MUST use "sequence" to preserve the chronological order.\nDo NOT use asterisks, italics, parentheses, or any formatting to disguise actions as dialogue.\n\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Only include share_location:true when genuinely sharing location. Omit fields you don't use.\n\n${imageRule}`;
 
 
       // Response lag applied POST-LLM, not before — preserves typing feel without blocking
@@ -1466,7 +1469,14 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
-      if (responseText) {
+      // ── SPOKEN WORDS vs NARRATIVE SEPARATION ──────────────────────────────
+      // If LLM provided "sequence", it's authoritative — no regex needed.
+      // Fallback: regex-strip narration from text_content, preserve as narratives.
+      sequenceItems = Array.isArray(responseObj.sequence) ? responseObj.sequence : null;
+      fallbackNarratives = [];
+      if (sequenceItems?.length > 0) {
+        responseText = sequenceItems.filter(s => s.type === 'dialogue').map(s => s.text).join('\n').trim() || (hasText ? '...' : '');
+      } else if (responseText) {
         const charFirstName = character.name.split(' ')[0];
         const narrationLinePattern = new RegExp(
           `^(?:${charFirstName}|He|She|They|His|Her|Their)\\s+(?:pulls|settles|leans|moves|looks|reaches|sits|stands|shifts|sighs|turns|walks|steps|grabs|holds|wraps|places|rests|draws|closes|opens|breathes|exhales|inhales|drops|lifts|slides|presses|curls|stretches|rolls|nods|shakes|smiles|frowns|watches|stares|gazes|feels|senses|notices|realizes|allows|lets|keeps|stays|remains|becomes|seems|appears)`,
@@ -1477,7 +1487,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           const trimmed = line.trim();
           if (!trimmed) return true;
           if (narrationLinePattern.test(trimmed)) {
-            console.warn(`[NARRATION_BLEED] Stripped prose line from message: "${trimmed.substring(0, 80)}..."`);
+            fallbackNarratives.push(trimmed);
             return false;
           }
           return true;
@@ -1697,75 +1707,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
     const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
-    // ── PROMPT NAME ENFORCEMENT ──────────────────────────────────────────────
-    // Ensures the resolved subject's real name appears in the final prompt.
-    // Called AFTER subject resolution so the correct name is known.
-    //
-    // Rules:
-    //   "[CHARACTER] sitting at the table"  → "[CHARACTER] Vick Servicio sitting at the table"
-    //   "[character] sitting at the table"  → "[character] Vick Servicio sitting at the table"
-    //   "sitting at the table"              → "[CHARACTER] Vick Servicio sitting at the table"
-    //   "[CHARACTER] Vick Servicio sitting" → unchanged (name already present)
-    //   "[Joint] X and Y together"          → validated that both names are present
-    //
-    // For multi-subject: every resolved subject name must appear.
-    const enforceSubjectNamesInPrompt = (prompt, resolvedPrimaryName, resolvedAdditionalNames = []) => {
-      if (!resolvedPrimaryName) return prompt; // inanimate or no-subject — leave unchanged
-
-      let result = prompt;
-      const allSubjectNames = [resolvedPrimaryName, ...resolvedAdditionalNames].filter(Boolean);
-
-      // Check if each resolved name is already present in the prompt (case-insensitive)
-      const promptLowerCheck = result.toLowerCase();
-      const allNamesPresent = allSubjectNames.every(name =>
-        promptLowerCheck.includes(name.toLowerCase())
-      );
-
-      if (allNamesPresent) return result; // already correct
-
-      // Single or primary subject: fix the [character] tag or prepend
-      const primaryNameInPrompt = promptLowerCheck.includes(resolvedPrimaryName.toLowerCase());
-
-      if (!primaryNameInPrompt) {
-        // Replace "[CHARACTER]", "[character]", "[Character]" (tag only) with "[CHARACTER] Name"
-        const taggedReplace = result.replace(/^\[character\]/i, `[CHARACTER] ${resolvedPrimaryName}`);
-        if (taggedReplace !== result) {
-          result = taggedReplace;
-        } else if (/^\[character\]/i.test(result.trim())) {
-          // Handles whitespace edge cases
-          result = result.trim().replace(/^\[character\]/i, `[CHARACTER] ${resolvedPrimaryName}`);
-        } else if (!result.match(/^\[CHARACTER\]/i)) {
-          // No tag at all — prepend the full subject header
-          result = `[CHARACTER] ${resolvedPrimaryName} ${result}`;
-        } else {
-          // Tag present but name not following — inject name right after tag
-          result = result.replace(/(\[CHARACTER\])\s*/i, `$1 ${resolvedPrimaryName} `);
-        }
-        console.log(`[SubjectNameEnforcement] Injected primary name "${resolvedPrimaryName}" into prompt`);
-      }
-
-      // Multi-subject: ensure additional names are present too
-      if (resolvedAdditionalNames.length > 0) {
-        const resultLower = result.toLowerCase();
-        const missingNames = resolvedAdditionalNames.filter(
-          name => !resultLower.includes(name.toLowerCase())
-        );
-        if (missingNames.length > 0) {
-          // Append missing co-subject names before the action phrase
-          // e.g. "and [Name]" inserted after primary subject name
-          const insertAfter = resolvedPrimaryName;
-          const insertIdx = result.toLowerCase().indexOf(insertAfter.toLowerCase()) + insertAfter.length;
-          const before = result.slice(0, insertIdx);
-          const after = result.slice(insertIdx);
-          result = `${before} and ${missingNames.join(' and ')}${after}`;
-          console.log(`[SubjectNameEnforcement] Injected co-subject name(s) [${missingNames.join(', ')}] into prompt`);
-        }
-      }
-
-      console.log(`[SubjectNameEnforcement] Final prompt: "${result.substring(0, 120)}"`);
-      return result;
-    };
-
+    // enforceSubjectNamesInPrompt is imported from lib/subjectNameEnforcer.js
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
 
@@ -2051,11 +1993,38 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       ? `location_share::${characterId}::direct::${charLocationId}::${new Date().toISOString().substring(0, 13)}`
       : null;
 
-    if (msgType === "text_only") {
-      // CRITICAL: Never save a hardcoded fallback string as character dialogue.
-      // If responseText is empty after a successful LLM call, save "..." (minimal safe token) not a fake apology.
+    // ── NARRATIVE MESSAGE HELPER ────────────────────────────────────────────
+    const createNarrativeMessage = async (narrativeText) => {
+      if (!narrativeText?.trim()) return null;
+      try {
+        const nMsg = await base44.entities.Message.create({
+          conversation_id: convoId, sender_type: 'character', character_id: characterId,
+          character_name: character.name, content: narrativeText, is_narrative: true,
+          is_read: !isMountedRef.current ? false : true, timestamp: new Date().toISOString(),
+          channel: isPhone ? 'phone' : 'direct', source_message_id: userMsg?.id || null,
+        });
+        if (nMsg?.id && isMountedRef.current) setMessages(prev => prev.some(m => m.id === nMsg.id) ? prev : [...prev, nMsg]);
+        return nMsg;
+      } catch { return null; }
+    };
+
+    // ── SEQUENCE-BASED INTERLEAVED CREATION ──────────────────────────────────
+    // If LLM provided a sequence with narrative items, create interleaved
+    // dialogue + narrative messages in chronological order.
+    const hasSeqNarratives = sequenceItems?.some(s => s.type === 'narrative');
+    if (hasSeqNarratives && (msgType === 'text_only' || msgType === 'text_then_image')) {
+      for (const item of sequenceItems) {
+        if (item.type === 'dialogue') primaryTextMsg = await createTextMessage(item.text, idempotencyOpts);
+        else await createNarrativeMessage(item.text);
+      }
+      if (msgType === 'text_then_image' && imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 800);
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800);
+      }
+    } else if (msgType === "text_only") {
       primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
+      for (const n of fallbackNarratives) await createNarrativeMessage(n);
 
     } else if (msgType === "image_only") {
       if (imagePrompts.length > 0) {
@@ -2071,25 +2040,24 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 800);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 800 + i * 800);
-        }
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800);
       }
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+      for (const n of fallbackNarratives) await createNarrativeMessage(n);
 
     } else if (msgType === "image_then_text") {
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 300);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 300 + i * 800);
-        }
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 300 + i * 800);
       }
       await new Promise(r => setTimeout(r, 600));
       primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+      for (const n of fallbackNarratives) await createNarrativeMessage(n);
 
     } else {
       primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
+      for (const n of fallbackNarratives) await createNarrativeMessage(n);
     }
 
     // Create location share card if flagged

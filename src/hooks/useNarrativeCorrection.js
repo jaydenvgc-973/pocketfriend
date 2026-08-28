@@ -124,95 +124,41 @@ Write a corrected sleep-only narrative (1-2 sentences). The environment must ref
   // ── REPEATED MESSAGE CORRECTION ───────────────────────────────────────────
   // User-selected action: "This is a repeated message"
   // An already-completed character response was reused as the active response to a
-  // later different user message. This is a failed response + continuity failure.
+  // later, different user message. This is a failed response + continuity failure.
   //
-  // TWO-PHASE FLOW:
-  //   Phase 1 — INVESTIGATE: trace the exact occurrence to determine which earlier
-  //             completed response was reused, which user message the failed response
-  //             was supposed to answer, and where the old response became eligible.
-  //   Phase 2 — REGENERATE: build a new response from the last four message bubbles
-  //             at that conversational position, preserving character identity.
+  // ORDER: Regenerate FIRST (repair the conversation immediately), then investigate
+  // to establish the actual execution boundary where the completed response became
+  // active again. The investigation must NOT delay the regeneration.
   const handleRepeatedMessage = async (msg) => {
     if (!msg) return;
     setIsRegeneratingNarrative(true);
     try {
-      // ── PHASE 1: INVESTIGATION ──────────────────────────────────────────────
-      // Identify the user message this failed response was supposed to answer.
       const failedIndex = messages.findIndex(m => m.id === msg.id);
+      const failedContent = (msg.content || '').trim();
+
+      // Identify the user message this failed response was supposed to answer.
       const sourceMsgId = msg.source_message_id || msg.reply_to_message_id;
-      const targetUserMsg = sourceMsgId
-        ? messages.find(m => m.id === sourceMsgId)
-        : null;
-      // Fallback: the user message immediately before the failed response position
+      const targetUserMsg = sourceMsgId ? messages.find(m => m.id === sourceMsgId) : null;
       const precedingUserMsg = targetUserMsg ||
         [...messages.slice(0, failedIndex > 0 ? failedIndex : 0)]
           .reverse().find(m => m.sender_type === 'user' && !m.is_narrative);
 
-      // Search for an earlier completed character message with the same content
-      const failedContent = (msg.content || '').trim();
-      const earlierMatch = messages.find(m =>
-        m.id !== msg.id &&
-        m.sender_type === 'character' &&
-        !m.is_narrative &&
-        (m.content || '').trim() === failedContent &&
-        new Date(m.timestamp || m.created_date) < new Date(msg.timestamp || msg.created_date)
-      );
-
-      // Determine the user message the earlier match originally answered
-      const earlierSourceMsgId = earlierMatch?.source_message_id || earlierMatch?.reply_to_message_id;
-      const earlierOriginalUserMsg = earlierSourceMsgId
-        ? messages.find(m => m.id === earlierSourceMsgId)
-        : null;
-
-      // Classify the likely content origin
-      let contentOrigin = 'unknown';
-      if (earlierMatch) {
-        contentOrigin = 'conversation_history_reuse';
-      } else if (msg.recovery_signal === true) {
-        contentOrigin = 'recovery_fallback_state';
-      } else if (msg.generation_lock_id) {
-        contentOrigin = 'generation_lock_path';
-      }
-
-      const investigation = {
-        failedMessageId: msg.id,
-        failedContent: failedContent.substring(0, 120),
-        failedTimestamp: msg.timestamp,
-        failedSourceMessageId: sourceMsgId || null,
-        failedReplyToMessageId: msg.reply_to_message_id || null,
-        precedingUserMessageId: precedingUserMsg?.id || null,
-        precedingUserContent: (precedingUserMsg?.content || '').substring(0, 120),
-        earlierMatchMessageId: earlierMatch?.id || null,
-        earlierMatchTimestamp: earlierMatch?.timestamp || null,
-        earlierMatchSourceMessageId: earlierMatch?.source_message_id || null,
-        earlierOriginalUserMessageId: earlierOriginalUserMsg?.id || null,
-        earlierOriginalUserContent: (earlierOriginalUserMsg?.content || '').substring(0, 120),
-        contentOrigin,
-      };
-      console.warn('[REPEATED_MESSAGE_INVESTIGATION]', JSON.stringify(investigation, null, 2));
-
-      // ── PHASE 2: REGENERATION ───────────────────────────────────────────────
+      // ── PHASE 1: REGENERATE (immediately repair) ───────────────────────────
       // Build context from the last four message bubbles at the failed response's
       // position, including any narrative that falls within those positions.
       const contextStart = Math.max(0, failedIndex - 4);
       const lastFour = messages.slice(contextStart, failedIndex > 0 ? failedIndex : 0);
-
       const contextLog = lastFour.map(m => {
         if (m.is_narrative) return `[NARRATIVE] ${m.content}`;
         return `${m.sender_type === 'user' ? 'User' : (character?.name || 'Character')}: ${m.content}`;
       }).join('\n');
 
       const userMessageContent = precedingUserMsg?.content || '(no preceding user message found)';
-
-      // Infer original timestamp context so regeneration matches the time the
-      // message was originally created — not the current time.
       const originalTime = msg.timestamp || msg.created_date || new Date().toISOString();
-      const originalDate = new Date(originalTime);
-      const timeLabel = originalDate.toLocaleString('en-US', {
+      const timeLabel = new Date(originalTime).toLocaleString('en-US', {
         timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
       });
 
-      // Character identity block — preserves voice, personality, mannerisms
       const identityLines = [];
       if (character?.name) identityLines.push(`Name: ${character.name}`);
       if (character?.personality_summary) identityLines.push(`Personality: ${character.personality_summary}`);
@@ -245,10 +191,112 @@ THE USER MESSAGE THIS RESPONSE MUST ANSWER:
 
 This message was originally at ${timeLabel} Eastern. The regenerated response must reflect that time.
 
-Write the character's response (natural dialogue, 1-3 sentences, in the character's own voice and words):`,
+Write ONLY the character's spoken dialogue (1-3 sentences, in the character's own voice and words). Do NOT include narrative actions, physical descriptions, or stage directions — only what the character says out loud:`,
       });
 
       await regenerateInPlace(msg, correctedText);
+
+      // ── PHASE 2: INVESTIGATE (establish the actual cause) ──────────────────
+      // Fetch the actual DB records to examine all evidence fields — the local
+      // messages array may not carry every field needed for boundary tracing.
+      let failedDbRecord = null;
+      try {
+        failedDbRecord = await base44.entities.Message.get(msg.id);
+      } catch { /* record may be stale or deleted */ }
+
+      // Search for an earlier completed character message with the same content
+      const earlierMatch = messages.find(m =>
+        m.id !== msg.id && m.sender_type === 'character' && !m.is_narrative &&
+        (m.content || '').trim() === failedContent &&
+        new Date(m.timestamp || m.created_date) < new Date(msg.timestamp || msg.created_date)
+      );
+
+      let earlierDbRecord = null;
+      if (earlierMatch?.id) {
+        try { earlierDbRecord = await base44.entities.Message.get(earlierMatch.id); } catch {}
+      }
+
+      const earlierSourceMsgId = earlierDbRecord?.source_message_id || earlierDbRecord?.reply_to_message_id || earlierMatch?.source_message_id || earlierMatch?.reply_to_message_id;
+      const earlierOriginalUserMsg = earlierSourceMsgId ? messages.find(m => m.id === earlierSourceMsgId) : null;
+
+      // ── EVIDENCE-BASED BOUNDARY TRACING ────────────────────────────────────
+      // Examine actual field values to determine which execution boundary allowed
+      // the completed response to become active. Do NOT classify by likelihood —
+      // only state what the evidence actually establishes.
+      const evidence = {
+        failedMessageId: msg.id,
+        failedContent: failedContent.substring(0, 200),
+        failedTimestamp: msg.timestamp || msg.created_date,
+        failedFields: {
+          source_message_id: failedDbRecord?.source_message_id ?? msg.source_message_id ?? null,
+          reply_to_message_id: failedDbRecord?.reply_to_message_id ?? msg.reply_to_message_id ?? null,
+          generation_lock_id: failedDbRecord?.generation_lock_id ?? msg.generation_lock_id ?? null,
+          recovery_signal: failedDbRecord?.recovery_signal ?? msg.recovery_signal ?? null,
+          idempotency_key: failedDbRecord?.idempotency_key ?? msg.idempotency_key ?? null,
+          channel: failedDbRecord?.channel ?? msg.channel ?? null,
+        },
+        precedingUserMessageId: precedingUserMsg?.id || null,
+        precedingUserContent: (precedingUserMsg?.content || '').substring(0, 200),
+        sourceMessageMatchesPreceding: !!(sourceMsgId && precedingUserMsg && sourceMsgId === precedingUserMsg.id),
+        earlierMatch: earlierMatch ? {
+          messageId: earlierMatch.id,
+          timestamp: earlierMatch.timestamp || earlierMatch.created_date,
+          content: (earlierMatch.content || '').substring(0, 200),
+          fields: {
+            source_message_id: earlierDbRecord?.source_message_id ?? earlierMatch.source_message_id ?? null,
+            reply_to_message_id: earlierDbRecord?.reply_to_message_id ?? earlierMatch.reply_to_message_id ?? null,
+            generation_lock_id: earlierDbRecord?.generation_lock_id ?? earlierMatch.generation_lock_id ?? null,
+            recovery_signal: earlierDbRecord?.recovery_signal ?? earlierMatch.recovery_signal ?? null,
+          },
+          originallyAnsweredUserId: earlierSourceMsgId || null,
+          originallyAnsweredUserContent: (earlierOriginalUserMsg?.content || '').substring(0, 200),
+        } : null,
+        contentMatchType: earlierMatch ? 'exact' : 'no_earlier_match_found',
+      };
+
+      // ── EXECUTION BOUNDARY ANALYSIS ────────────────────────────────────────
+      // Trace the earliest proven boundary where the completed response became
+      // active. Each boundary is only marked when the evidence actually supports it.
+      const boundaryAnalysis = [];
+
+      if (evidence.failedFields.recovery_signal === true) {
+        boundaryAnalysis.push({
+          boundary: 'recovery_fallback_path',
+          evidence: 'failed message has recovery_signal=true',
+          meaning: 'The recovery/fallback pipeline replaced the correct response with completed response content. The LLM may have produced correct output, but the recovery system substituted old content.',
+        });
+      }
+      if (evidence.failedFields.generation_lock_id) {
+        boundaryAnalysis.push({
+          boundary: 'generation_lock_path',
+          evidence: `failed message has generation_lock_id=${evidence.failedFields.generation_lock_id}`,
+          meaning: 'The generation lock pipeline was involved in producing or committing this response. The lock may have served stale content from a prior generation cycle.',
+        });
+      }
+      if (earlierMatch && !evidence.sourceMessageMatchesPreceding && sourceMsgId && earlierSourceMsgId && sourceMsgId !== earlierSourceMsgId) {
+        boundaryAnalysis.push({
+          boundary: 'retrieval_reuse_path',
+          evidence: `failed response source_message_id (${sourceMsgId}) differs from earlier match source_message_id (${earlierSourceMsgId}), but content is identical`,
+          meaning: 'The completed response from an earlier user turn was supplied as active response material before or during generation. The response was not generated fresh for the current user message.',
+        });
+      }
+      if (earlierMatch && evidence.sourceMessageMatchesPreceding && sourceMsgId === earlierSourceMsgId) {
+        boundaryAnalysis.push({
+          boundary: 'same_source_message_reuse',
+          evidence: `failed response and earlier match both reference the same source_message_id (${sourceMsgId})`,
+          meaning: 'The same user message triggered both responses. The earlier completed response may not have been cleared, and the generation produced or committed identical content.',
+        });
+      }
+      if (!earlierMatch && !evidence.failedFields.recovery_signal && !evidence.failedFields.generation_lock_id) {
+        boundaryAnalysis.push({
+          boundary: 'generation_output_boundary',
+          evidence: 'no earlier exact match found, no recovery_signal, no generation_lock_id',
+          meaning: 'The raw LLM output may have reproduced prior content from conversation history context. The duplication first appears at the generation/output boundary — the model repeated itself from context.',
+        });
+      }
+
+      const investigation = { ...evidence, boundaryAnalysis, timestamp: new Date().toISOString() };
+      console.warn('[REPEATED_MESSAGE_INVESTIGATION]', JSON.stringify(investigation, null, 2));
     } finally {
       setIsRegeneratingNarrative(false);
     }

@@ -13,7 +13,7 @@
  * @returns {{ message_type: string, text_content: string, image_generation_prompt: string|null, image_generation_prompts: string[], scheduled_events: object[] }}
  */
 export function parseCharacterResponse(raw) {
-  if (!raw) return { message_type: "text_only", text_content: "" };
+  if (!raw) return { message_type: "text_only", text_content: "", sequence: null };
 
   let obj = null;
 
@@ -37,29 +37,42 @@ export function parseCharacterResponse(raw) {
     const textContent = obj.text_content || obj.text || "";
     const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
     const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
+    // ── SEQUENCE: chronological interleaving of dialogue and narrative ──────
+    // Each item: { type: "dialogue"|"narrative", text: "..." }
+    // When present, the caller creates separate messages in order — dialogue
+    // becomes a character message bubble, narrative becomes an is_narrative entry.
+    let sequence = Array.isArray(obj.sequence) ? obj.sequence : null;
+    if (sequence) {
+      // Sanitize: only keep items with type and text
+      sequence = sequence
+        .filter(item => item && typeof item === 'object' && (item.type === 'dialogue' || item.type === 'narrative') && item.text && typeof item.text === 'string' && item.text.trim())
+        .map(item => ({ type: item.type, text: item.text.trim() }));
+      if (sequence.length === 0) sequence = null;
+    }
     return {
       message_type: messageType,
       text_content: textContent,
       image_generation_prompt: imgPrompt,
       image_generation_prompts: imgPrompts,
       scheduled_events: obj.scheduled_events || [],
+      sequence,
     };
   }
 
   // 4. Fallback: try to extract text_content or text field
   const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   if (textMatch) {
-    try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
-    catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
+    try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [], sequence: null }; }
+    catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [], sequence: null }; }
   }
 
   // 5. Last resort: plain text
   const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
   if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-    return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
+    return { message_type: "text_only", text_content: stripped, image_generation_prompts: [], sequence: null };
   }
 
-  return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
+  return { message_type: "text_only", text_content: "", image_generation_prompts: [], sequence: null };
 }
 
 /**
