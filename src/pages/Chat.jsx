@@ -172,10 +172,6 @@ export default function Chat({ chatTypeOverride } = {}) {
     }
   }, [characterId]);
 
-  const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
-    characterId, conversationId, messages, setMessages,
-  });
-
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
   const { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval, triggerHousingChangePopup } = useApprovalEvents();
@@ -285,6 +281,10 @@ export default function Chat({ chatTypeOverride } = {}) {
 
   // Computed after character query — safe, never crashes on undefined
   const isVickChat = !!character && isVickServicioCharacter(character);
+
+  const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative, handleRepeatedMessage } = useNarrativeCorrection({
+    characterId, conversationId, messages, setMessages, character,
+  });
 
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
   const { settings: userSettings } = useUserSettings();
@@ -2419,6 +2419,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onCancel={() => setDeleteTarget(null)}
         onNonsense={() => { const t = deleteTarget; setDeleteTarget(null); handleNonsenseNarrative(t); }}
         onSleepViolation={() => { const t = deleteTarget; setDeleteTarget(null); handleSleepViolationNarrative(t); }}
+        onRepeatedMessage={() => { const t = deleteTarget; setDeleteTarget(null); handleRepeatedMessage(t); }}
         onArchive={handleArchiveMessage}
         isRegenerating={isRegeneratingNarrative}
       />
