@@ -353,16 +353,19 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
 
-⛔ SUBJECT PURITY — CRITICAL — READ CAREFULLY:
-The SUBJECTS of an image prompt are ONLY actual person names — your character name and/or the user's world name.
-NEVER include any of the following as subjects in an image prompt:
-- Location names, place names, or addresses (e.g. "Thompson Home", "221 E 26th st", "Jaydens Family Home") — these are PLACES, not people.
-- Role labels, job titles, or relationship labels (e.g. "Babysitter", "Mother", "Father", "Teacher", "Nanny", "Caregiver") — these are ROLES, not person names.
-- Descriptive nouns or generic terms (e.g. "the babysitter", "a woman", "a child", "the kid") — these are DESCRIPTIONS, not identities.
-For [JOINT] prompts: list ONLY the actual person names who appear in the image, separated by "and".
-  CORRECT: "[JOINT] Ethan Thompson and Jayden are sitting on the bed..."
+⛔ SUBJECT vs ENVIRONMENT SEPARATION — CRITICAL:
+An image prompt has two distinct parts: SUBJECTS and ENVIRONMENT.
+- SUBJECTS = the actual people who appear in the image. These are ONLY real person names — your character name and/or the user's world name.
+- ENVIRONMENT = where those people are and what the place looks like. Location names, room names, and setting descriptions belong HERE.
+A location CAN and SHOULD appear in the environment/setting portion of the prompt — the generator needs to know where the scene takes place.
+But a location, address, role label, or descriptive noun must NEVER be parsed or promoted as a human subject.
+NEVER list any of the following as a SUBJECT (a person in the image):
+- Location names or addresses (e.g. "Thompson Home", "221 E 26th st") — these are PLACES, not people.
+- Role labels or job titles (e.g. "Babysitter", "Mother", "Teacher", "Nanny") — these are ROLES, not person names.
+- Descriptive nouns (e.g. "a woman", "a child", "the kid") — these are DESCRIPTIONS, not identities.
+For [JOINT] prompts: the SUBJECT portion lists ONLY the actual person names who appear in the image, separated by "and".
+  CORRECT: "[JOINT] Ethan Thompson and Jayden are sitting on the bed at Jayden's Family Home..."
   WRONG: "[JOINT] Ethan Thompson and Thompson Home - 221 E 26th st Babysitter and Jayden are close together on the bed..."
-  The location, setting, and any background characters are described in the scene description portion — NEVER listed as subjects.
 If only you and the user are in the image, the subject list is exactly two names: yours and "${userNameForPrompts || 'the user'}" — nothing else.
 
 WORD PROHIBITION — NEVER USE IN ANY IMAGE PROMPT:
@@ -1024,6 +1027,13 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   for (const other of allCharacters) {
     if (other.id === character.id) continue;
     if (other.status === 'deleted') continue;
+    // AUTHORITY: Exclude characters explicitly marked as not belonging in scenes.
+    // Prevents corrupted-name or roster-excluded characters from being injected
+    // into the household co-presence block and contaminating image prompts.
+    if (other.exclude_from_roster === true) continue;
+    if (other.exclude_from_default_scene_queries === true) continue;
+    if (other.is_test_character === true) continue;
+    if (other.diagnostic_only === true) continue;
 
     const otherHome = other.current_home_location_id;
     const otherCurrent = other.resolved_current_location_id;
