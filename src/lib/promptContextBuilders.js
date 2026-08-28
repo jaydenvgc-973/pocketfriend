@@ -353,6 +353,18 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
 
+⛔ SUBJECT PURITY — CRITICAL — READ CAREFULLY:
+The SUBJECTS of an image prompt are ONLY actual person names — your character name and/or the user's world name.
+NEVER include any of the following as subjects in an image prompt:
+- Location names, place names, or addresses (e.g. "Thompson Home", "221 E 26th st", "Jaydens Family Home") — these are PLACES, not people.
+- Role labels, job titles, or relationship labels (e.g. "Babysitter", "Mother", "Father", "Teacher", "Nanny", "Caregiver") — these are ROLES, not person names.
+- Descriptive nouns or generic terms (e.g. "the babysitter", "a woman", "a child", "the kid") — these are DESCRIPTIONS, not identities.
+For [JOINT] prompts: list ONLY the actual person names who appear in the image, separated by "and".
+  CORRECT: "[JOINT] Ethan Thompson and Jayden are sitting on the bed..."
+  WRONG: "[JOINT] Ethan Thompson and Thompson Home - 221 E 26th st Babysitter and Jayden are close together on the bed..."
+  The location, setting, and any background characters are described in the scene description portion — NEVER listed as subjects.
+If only you and the user are in the image, the subject list is exactly two names: yours and "${userNameForPrompts || 'the user'}" — nothing else.
+
 WORD PROHIBITION — NEVER USE IN ANY IMAGE PROMPT:
 - NEVER write the word "shirtless" — use "no shirt" or "no top" instead.
 - NEVER write the word "intimate" — use "close", "tender", "affectionate", or describe the specific action instead.
