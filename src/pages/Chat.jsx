@@ -97,6 +97,7 @@ import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
 import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
 import { enforceSubjectNamesInPrompt } from "@/lib/subjectNameEnforcer";
+import { buildPreviousCharacterTexts, isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from "@/lib/duplicateResponseGuard";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1456,52 +1457,92 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         if (lagRemaining > 0) await new Promise(r => setTimeout(r, lagRemaining));
       }
 
-      responseObj = parseCharacterResponse(response);
+      // ── RESPONSE EXTRACTION HELPER ─────────────────────────────────────────
+      // Encapsulates parse + text/narrative separation so the duplicate guard
+      // can re-invoke it for corrected regenerations without duplicating logic.
+      const parseAndExtract = (rawResponse) => {
+        const rObj = parseCharacterResponse(rawResponse);
+        let mType = rObj.message_type || "text_only";
+        if (isPhotogenic && explicitImageRequest && mType === "text_only") {
+          mType = "text_then_image";
+        }
+        const hText = ["text_only", "text_then_image", "image_then_text"].includes(mType);
+        const hImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(mType);
 
-      msgType = responseObj.message_type || "text_only";
-      if (isPhotogenic && explicitImageRequest && msgType === "text_only") {
-        msgType = "text_then_image";
+        let rText = hText ? (rObj.text_content?.trim() || "") : "";
+        if (rText.startsWith("{") || rText.startsWith("```") || rText.startsWith("[IMAGE]") || rText.startsWith("[CHARACTER]") || rText.startsWith("[USER]") || rText.startsWith("[JOINT]")) {
+          rText = "";
+        }
+        let seqItems = Array.isArray(rObj.sequence) ? rObj.sequence : null;
+        let fbNarratives = [];
+        if (seqItems?.length > 0) {
+          rText = seqItems.filter(s => s.type === 'dialogue').map(s => s.text).join('\n').trim() || (hText ? '...' : '');
+        } else if (rText) {
+          const charFirstName = character.name.split(' ')[0];
+          const narrationLinePattern = new RegExp(
+            `^(?:${charFirstName}|He|She|They|His|Her|Their}\\s+(?:pulls|settles|leans|moves|looks|reaches|sits|stands|shifts|sighs|turns|walks|steps|grabs|holds|wraps|places|rests|draws|closes|opens|breathes|exhales|inhales|drops|lifts|slides|presses|curls|stretches|rolls|nods|shakes|smiles|frowns|watches|stares|gazes|feels|senses|notices|realizes|allows|lets|keeps|stays|remains|becomes|seems|appears)`,
+            'i'
+          );
+          const textLines = rText.split('\n');
+          const cleanLines = textLines.filter(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return true;
+            if (narrationLinePattern.test(trimmed)) {
+              fbNarratives.push(trimmed);
+              return false;
+            }
+            return true;
+          });
+          rText = cleanLines.join('\n').trim();
+          if (!rText && hText) rText = '...';
+        }
+        if (rText) {
+          rText = validateLocationInResponse(rText, _presenceForValidation);
+        }
+        rText = filterDashes(rText);
+        rText = stripCharacterNamePrefix(rText, character.name);
+        return { responseObj: rObj, msgType: mType, hasText: hText, hasImage: hImage, responseText: rText, sequenceItems: seqItems, fallbackNarratives: fbNarratives };
+      };
+
+      // Initial extraction
+      const _initial = parseAndExtract(response);
+      responseObj = _initial.responseObj;
+      msgType = _initial.msgType;
+      responseText = _initial.responseText;
+      sequenceItems = _initial.sequenceItems;
+      fallbackNarratives = _initial.fallbackNarratives;
+
+      // ── DUPLICATE RESPONSE GUARD — PRE-COMMIT ─────────────────────────────
+      // An exact duplicate of a previously completed character response is a
+      // generation failure. It must be corrected BEFORE the message is committed.
+      // The guard checks the dialogue text against all previous character messages
+      // in this conversation. If an exact match is found, the response is rejected
+      // and regenerated with an anti-repeat instruction appended to the prompt.
+      // This uses the existing LLM call path — no parallel system, no redesign.
+      // Characters may still revisit subjects or express the same idea — they
+      // just cannot reuse a previously completed response payload verbatim.
+      const previousCharTexts = buildPreviousCharacterTexts(messagesRef.current);
+      let duplicateRetries = 0;
+      const MAX_DUPLICATE_RETRIES = 2;
+      while (responseText && isExactDuplicateResponse(responseText, previousCharTexts) && duplicateRetries < MAX_DUPLICATE_RETRIES) {
+        console.error(`[DUPLICATE_GUARD] Exact duplicate response detected (retry ${duplicateRetries + 1}/${MAX_DUPLICATE_RETRIES}). Regenerating with anti-repeat instruction.`);
+        const antiRepeatSuffix = buildAntiRepeatPromptSuffix([...previousCharTexts]);
+        response = await callLLMWithRetry(fullPrompt + antiRepeatSuffix, 'gemini_3_flash', 3, true);
+        const _retry = parseAndExtract(response);
+        responseObj = _retry.responseObj;
+        msgType = _retry.msgType;
+        responseText = _retry.responseText;
+        sequenceItems = _retry.sequenceItems;
+        fallbackNarratives = _retry.fallbackNarratives;
+        duplicateRetries++;
       }
+      if (duplicateRetries > 0) {
+        const _stillDup = isExactDuplicateResponse(responseText || '', previousCharTexts);
+        console.log(`[DUPLICATE_GUARD] Correction complete after ${duplicateRetries} retry/retries. Duplicate resolved: ${!_stillDup}`);
+      }
+
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
-
-      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
-      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
-        responseText = "";
-      }
-      // ── SPOKEN WORDS vs NARRATIVE SEPARATION ──────────────────────────────
-      // If LLM provided "sequence", it's authoritative — no regex needed.
-      // Fallback: regex-strip narration from text_content, preserve as narratives.
-      sequenceItems = Array.isArray(responseObj.sequence) ? responseObj.sequence : null;
-      fallbackNarratives = [];
-      if (sequenceItems?.length > 0) {
-        responseText = sequenceItems.filter(s => s.type === 'dialogue').map(s => s.text).join('\n').trim() || (hasText ? '...' : '');
-      } else if (responseText) {
-        const charFirstName = character.name.split(' ')[0];
-        const narrationLinePattern = new RegExp(
-          `^(?:${charFirstName}|He|She|They|His|Her|Their)\\s+(?:pulls|settles|leans|moves|looks|reaches|sits|stands|shifts|sighs|turns|walks|steps|grabs|holds|wraps|places|rests|draws|closes|opens|breathes|exhales|inhales|drops|lifts|slides|presses|curls|stretches|rolls|nods|shakes|smiles|frowns|watches|stares|gazes|feels|senses|notices|realizes|allows|lets|keeps|stays|remains|becomes|seems|appears)`,
-          'i'
-        );
-        const lines = responseText.split('\n');
-        const cleanLines = lines.filter(line => {
-          const trimmed = line.trim();
-          if (!trimmed) return true;
-          if (narrationLinePattern.test(trimmed)) {
-            fallbackNarratives.push(trimmed);
-            return false;
-          }
-          return true;
-        });
-        responseText = cleanLines.join('\n').trim();
-        if (!responseText && hasText) responseText = '...';
-      }
-
-      if (responseText) {
-        responseText = validateLocationInResponse(responseText, _presenceForValidation);
-      }
-
-      responseText = filterDashes(responseText);
-      responseText = stripCharacterNamePrefix(responseText, character.name);
 
       // FAMILY TRUTH SAVE GUARD: block + regenerate if response contradicts resolved family graph.
       if (responseText && liveFamilyGraphBlock) {
