@@ -58,6 +58,7 @@ Deno.serve(async (req) => {
       character_name,
       blocking_stage,
       failure_count = 0,
+      rejected_response_texts = [],
     } = body;
 
     // Auth: allow both user-session callers AND service-role backend callers
@@ -202,18 +203,40 @@ Deno.serve(async (req) => {
     const sourceUserMsg = recentMsgsForDupCheck.find(m => m.id === source_message_id);
     const sourceUserSnippet = (sourceUserMsg?.content || '').substring(0, 200).replace(/\s+/g, ' ').trim();
 
+    // Merge completed character responses with rejected_response_texts from
+    // previous recovery rounds. A candidate that already failed during this
+    // response opportunity cannot regain eligibility in the next round.
+    const allForbiddenTexts = new Set(prevCharTexts);
+    const accumulatedRejected: string[] = [];
+    for (const r of rejected_response_texts) {
+      const normalized = normalizeText(r);
+      if (normalized && !allForbiddenTexts.has(normalized)) {
+        allForbiddenTexts.add(normalized);
+        accumulatedRejected.push(normalized);
+      }
+    }
+
+    // Idempotency key — defined early for use in both exhaustion handler and commit path
+    const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
+
     const MAX_RECOVERY_ATTEMPTS = 8;
     let recoveryAttempt = 0;
 
     while (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
       const currentNormalized = normalizeText(responseText);
-      if (responseText && !prevCharTexts.has(currentNormalized)) {
+      if (responseText && !allForbiddenTexts.has(currentNormalized)) {
         // Non-stale response — proceed to commit
         break;
       }
 
-      // Stale candidate — discard permanently. Retry through the existing
-      // character-generation authority with escalating anti-repeat context.
+      // Stale candidate — discard permanently. Record in accumulated
+      // rejected set so it cannot regain eligibility in this round or
+      // future rounds. Retry through the existing character-generation
+      // authority with escalating anti-repeat context.
+      if (currentNormalized && !accumulatedRejected.includes(currentNormalized)) {
+        accumulatedRejected.push(currentNormalized);
+      }
+
       console.error(`[triggerRecoveryBackground] Stale duplicate (attempt ${recoveryAttempt + 1}/${MAX_RECOVERY_ATTEMPTS}). Discarding — retrying through character authority.`);
 
       const escalation =
@@ -249,44 +272,142 @@ Deno.serve(async (req) => {
       recoveryAttempt++;
     }
 
-    // ── EXHAUSTION CHECK: stale final candidate must NOT be committed ───────
-    // If all MAX_RECOVERY_ATTEMPTS finite attempts produced stale duplicates,
-    // the final candidate is ALSO stale — it has ZERO active-response
-    // authority. It CANNOT be committed, recycled, or used as a terminal
-    // response. Committing it would restore the exact stale-fallthrough
-    // defect: "8 stale attempts → commit attempt 8 anyway."
+    // ── EXHAUSTION: all bounded attempts produced stale duplicates ─────────
+    // The final candidate is stale — it has ZERO active-response authority.
+    // It is NOT committed. The turn is NOT abandoned. Instead:
+    //   STEP A: discard the final stale candidate (done — not committed)
+    //   STEP B: run conversation-advancement check
+    //     - if conversation advanced → release lock, expire old turn, stop
+    //     - if still active → STEP C
+    //   STEP C: hand the SAME unresolved turn into another bounded recovery
+    //     round via the existing triggerRecoveryBackground invocation.
+    //     The generation lock is NOT released — the response opportunity
+    //     is still owned. rejected_response_texts is carried forward so
+    //     failed candidates stay dead in the next round.
     //
-    // Instead: release the generation lock so future messages are not
-    // blocked, and return a structured failure response. This is NOT
-    // silence — the lock release allows the user to send a new message
-    // which triggers a fresh generation attempt through the normal Chat
-    // flow. No deterministic filler is committed. No stale candidate is
-    // committed. The conversation-advancement safeguard (below) remains
-    // intact for non-exhausted cases where the candidate is non-stale but
-    // the conversation has advanced.
+    // This is event-driven continuation, not polling, not a timer, not
+    // recursive await. Each execution round is finite (8 attempts). The
+    // total response opportunity has no arbitrary global cap — it ends
+    // only through a valid response commit or conversation advancement.
     const finalNormalized = normalizeText(responseText);
-    if (!responseText || prevCharTexts.has(finalNormalized)) {
+    if (!responseText || allForbiddenTexts.has(finalNormalized)) {
+      // Ensure the final stale candidate is in the accumulated rejected set
+      if (finalNormalized && !accumulatedRejected.includes(finalNormalized)) {
+        accumulatedRejected.push(finalNormalized);
+      }
+
       console.error(
         `[triggerRecoveryBackground] EXHAUSTED: All ${MAX_RECOVERY_ATTEMPTS} bounded attempts ` +
-        `produced stale duplicates. Final candidate is stale — NOT committing. ` +
-        `Releasing lock so future messages can proceed.`
+        `produced stale duplicates. Checking conversation advancement before handoff.`
       );
-      await base44.asServiceRole.functions.invoke('generationLock', {
-        action: 'release',
+
+      // STEP B — conversation-advancement check
+      if (source_message_id) {
+        const recentMsgs = await base44.asServiceRole.entities.Message.filter(
+          { conversation_id },
+          '-timestamp', 20
+        ).catch(() => []);
+
+        const sourceMsg = recentMsgs.find(m => m.id === source_message_id);
+        const sourceTimestamp = sourceMsg?.timestamp || null;
+
+        // CHECK 1 — REDUNDANCY: real response already committed for this turn
+        const realResponseExists = recentMsgs.some(m =>
+          m.sender_type === 'character' &&
+          m.reply_to_message_id === source_message_id &&
+          m.idempotency_key !== idempotencyKey &&
+          m.recovery_signal !== true &&
+          m.content && m.content.trim().length > 0
+        );
+
+        if (realResponseExists) {
+          console.log(
+            `[triggerRecoveryBackground] STALE_DISCARD: real response already exists for ` +
+            `source_message_id=${source_message_id}. Recovery expired — turn already answered.`
+          );
+          await base44.asServiceRole.functions.invoke('generationLock', {
+            action: 'release',
+            conversation_id,
+          }).catch(() => {});
+          return Response.json({
+            success: false,
+            reason: 'stale_recovery_expired',
+            discard_reason: 'real_response_already_exists',
+            source_message_id,
+          });
+        }
+
+        // CHECK 2 — ADVANCEMENT: newer user message after the original turn
+        if (sourceTimestamp) {
+          const sourceTime = new Date(sourceTimestamp).getTime();
+          const conversationAdvanced = recentMsgs.some(m =>
+            m.sender_type === 'user' &&
+            m.id !== source_message_id &&
+            m.timestamp &&
+            new Date(m.timestamp).getTime() > sourceTime
+          );
+
+          if (conversationAdvanced) {
+            console.log(
+              `[triggerRecoveryBackground] STALE_DISCARD: conversation has advanced past ` +
+              `source_message_id=${source_message_id}. Recovery expired — old turn obsolete.`
+            );
+            await base44.asServiceRole.functions.invoke('generationLock', {
+              action: 'release',
+              conversation_id,
+            }).catch(() => {});
+            return Response.json({
+              success: false,
+              reason: 'stale_recovery_expired',
+              discard_reason: 'conversation_advanced',
+              source_message_id,
+            });
+          }
+        }
+      }
+
+      // STEP C — still active: hand the SAME unresolved turn to the next
+      // bounded recovery round. Do NOT release the generation lock — the
+      // response opportunity is still owned. Fire the next round
+      // asynchronously; the current execution ends after handoff.
+      console.log(
+        `[triggerRecoveryBackground] Handing off unresolved turn to next recovery round ` +
+        `(rejected_count=${accumulatedRejected.length}). Lock retained — turn still owned.`
+      );
+
+      base44.asServiceRole.functions.invoke('triggerRecoveryBackground', {
         conversation_id,
-      }).catch(() => {});
+        character_id,
+        owner_email: effectiveEmail,
+        channel,
+        source_message_id,
+        prompt,
+        character_name,
+        blocking_stage,
+        failure_count: 0,
+        rejected_response_texts: accumulatedRejected,
+      }).catch(err => {
+        console.error(
+          `[triggerRecoveryBackground] Next round handoff failed: ${err.message}. ` +
+          `Releasing lock to prevent permanent block.`
+        );
+        base44.asServiceRole.functions.invoke('generationLock', {
+          action: 'release',
+          conversation_id,
+        }).catch(() => {});
+      });
+
       return Response.json({
         success: false,
-        reason: 'recovery_exhausted_stale',
-        discard_reason: 'all_attempts_produced_stale_duplicates',
-        attempts: MAX_RECOVERY_ATTEMPTS,
+        reason: 'recovery_round_handed_off',
+        next_round: true,
+        rejected_count: accumulatedRejected.length,
       });
     }
 
     console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Non-stale response confirmed.`);
 
     // ── SAVE RECOVERED TEXT: with idempotency protection ────────────────────
-    const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
 
     // Check if recovery message already exists
     const existingRecovery = await base44.asServiceRole.entities.Message.filter({
