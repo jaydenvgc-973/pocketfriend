@@ -18,6 +18,19 @@
  * SCOPE: Text responses only (Chat, Text, World Phone, World Contacts, Group Chat, proactive)
  * IDEMPOTENCY: owner_email + conversation_id + character_id + channel + source_message_id
  * PROTECTION: Uses generationLock to prevent duplicate recovery attempts
+ *
+ * LIFECYCLE BOUNDARY SAFEGUARD:
+ * Before committing a recovered response, the function checks whether the
+ * conversation has advanced beyond the original failed turn. If a real
+ * response was already committed for the source message, or if newer user
+ * messages exist after the source message's timestamp, the recovery is
+ * DISCARDED rather than inserted with a fresh timestamp. This prevents a
+ * stale old-turn response from being repositioned as a current response.
+ *
+ * NOTE: This safeguard is a defensive containment measure. It does not
+ * address the broader regression where completed historical responses
+ * regain active-response authority through other paths (cache, pending
+ * generation, retry, etc.). That regression requires its own proven cause.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -167,6 +180,94 @@ Deno.serve(async (req) => {
         reason: 'idempotent_already_saved',
         message_id: existingRecovery[0].id,
       });
+    }
+
+    // ── LIFECYCLE BOUNDARY SAFEGUARD ──────────────────────────────────────
+    // A recovery response generated for an earlier user message must NOT be
+    // inserted into the conversation if the conversation has already advanced
+    // beyond the original failed turn. Inserting a stale old-turn response
+    // with a fresh timestamp would visually and logically reposition it as
+    // though it belongs to the newer conversation — violating the boundary
+    // where completed historical responses must remain historical.
+    //
+    // This is a DEFENSIVE CONTAINMENT measure. It prevents one obvious
+    // stale-insertion scenario. It does NOT explain or fix the broader
+    // repeated-message regression where previously completed response
+    // content regains active-response authority through other paths.
+    //
+    // Two checks (only when source_message_id is available):
+    // 1. REDUNDANCY — a real (non-recovery) character response already exists
+    //    for this source_message_id, meaning the turn was already answered.
+    // 2. ADVANCEMENT — a newer user message exists after the original source
+    //    message's timestamp, meaning the conversation has moved on.
+    //
+    // In either case the recovery is DISCARDED and the generation lock is
+    // released so future messages are not blocked.
+    if (source_message_id) {
+      const recentMsgs = await base44.asServiceRole.entities.Message.filter(
+        { conversation_id },
+        '-timestamp', 20
+      ).catch(() => []);
+
+      const sourceMsg = recentMsgs.find(m => m.id === source_message_id);
+      const sourceTimestamp = sourceMsg?.timestamp || null;
+
+      // CHECK 1 — REDUNDANCY: real response already committed for this turn
+      const realResponseExists = recentMsgs.some(m =>
+        m.sender_type === 'character' &&
+        m.reply_to_message_id === source_message_id &&
+        m.idempotency_key !== idempotencyKey &&
+        m.recovery_signal !== true &&
+        m.content && m.content.trim().length > 0
+      );
+
+      if (realResponseExists) {
+        console.log(
+          `[triggerRecoveryBackground] STALE_DISCARD: real response already exists for ` +
+          `source_message_id=${source_message_id}. Recovery discarded — turn already answered.`
+        );
+        // Release lock so future messages are not blocked
+        await base44.asServiceRole.functions.invoke('generationLock', {
+          action: 'release',
+          conversation_id,
+        }).catch(() => {});
+        return Response.json({
+          success: false,
+          reason: 'stale_recovery_discarded',
+          discard_reason: 'real_response_already_exists',
+          source_message_id,
+        });
+      }
+
+      // CHECK 2 — ADVANCEMENT: newer user message after the original turn
+      if (sourceTimestamp) {
+        const sourceTime = new Date(sourceTimestamp).getTime();
+        const conversationAdvanced = recentMsgs.some(m =>
+          m.sender_type === 'user' &&
+          m.id !== source_message_id &&
+          m.timestamp &&
+          new Date(m.timestamp).getTime() > sourceTime
+        );
+
+        if (conversationAdvanced) {
+          console.log(
+            `[triggerRecoveryBackground] STALE_DISCARD: conversation has advanced past ` +
+            `source_message_id=${source_message_id}. Recovery discarded — would reposition ` +
+            `old-turn response as current via fresh timestamp.`
+          );
+          // Release lock so future messages are not blocked
+          await base44.asServiceRole.functions.invoke('generationLock', {
+            action: 'release',
+            conversation_id,
+          }).catch(() => {});
+          return Response.json({
+            success: false,
+            reason: 'stale_recovery_discarded',
+            discard_reason: 'conversation_advanced',
+            source_message_id,
+          });
+        }
+      }
     }
 
     // Get character for name
