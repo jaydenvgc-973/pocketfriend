@@ -368,41 +368,59 @@ Deno.serve(async (req) => {
 
       // STEP C — still active: hand the SAME unresolved turn to the next
       // bounded recovery round. Do NOT release the generation lock — the
-      // response opportunity is still owned. Fire the next round
-      // asynchronously; the current execution ends after handoff.
+      // response opportunity is still owned. AWAIT the next invocation to
+      // confirm it was accepted before ending the current execution.
+      //
+      // A handoff transport failure does NOT release the lock and does NOT
+      // abandon the turn — the response opportunity remains ACTIVE_UNRESOLVED.
+      // The lock is released only by a valid response commit or by proven
+      // conversation advancement, never by a handoff call failure.
       console.log(
         `[triggerRecoveryBackground] Handing off unresolved turn to next recovery round ` +
         `(rejected_count=${accumulatedRejected.length}). Lock retained — turn still owned.`
       );
 
-      base44.asServiceRole.functions.invoke('triggerRecoveryBackground', {
-        conversation_id,
-        character_id,
-        owner_email: effectiveEmail,
-        channel,
-        source_message_id,
-        prompt,
-        character_name,
-        blocking_stage,
-        failure_count: 0,
-        rejected_response_texts: accumulatedRejected,
-      }).catch(err => {
-        console.error(
-          `[triggerRecoveryBackground] Next round handoff failed: ${err.message}. ` +
-          `Releasing lock to prevent permanent block.`
-        );
-        base44.asServiceRole.functions.invoke('generationLock', {
-          action: 'release',
+      try {
+        await base44.asServiceRole.functions.invoke('triggerRecoveryBackground', {
           conversation_id,
-        }).catch(() => {});
-      });
+          character_id,
+          owner_email: effectiveEmail,
+          channel,
+          source_message_id,
+          prompt,
+          character_name,
+          blocking_stage,
+          failure_count: 0,
+          rejected_response_texts: accumulatedRejected,
+        });
 
-      return Response.json({
-        success: false,
-        reason: 'recovery_round_handed_off',
-        next_round: true,
-        rejected_count: accumulatedRejected.length,
-      });
+        // Handoff accepted — ownership successfully transferred to the next
+        // bounded recovery execution. The generation lock is NOT released.
+        return Response.json({
+          success: true,
+          continued: true,
+          source_message_id,
+          rejected_count: accumulatedRejected.length,
+        });
+      } catch (handoffErr) {
+        // Handoff transport failure — the turn is still ACTIVE_UNRESOLVED.
+        // Do NOT release the generation lock. Do NOT abandon the turn.
+        // The response opportunity remains owned; a future recovery attempt
+        // must continue this same turn. Invocation failure is not turn
+        // expiration and is not a lock-release condition.
+        console.error(
+          `[triggerRecoveryBackground] Next round handoff FAILED: ${handoffErr.message}. ` +
+          `Lock NOT released — turn remains ACTIVE_UNRESOLVED. ` +
+          `Response opportunity preserved for future recovery.`
+        );
+        return Response.json({
+          success: false,
+          reason: 'recovery_handoff_failed',
+          error: handoffErr.message,
+          source_message_id,
+          lock_retained: true,
+        });
+      }
     }
 
     console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Non-stale response confirmed.`);
