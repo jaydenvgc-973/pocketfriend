@@ -164,6 +164,47 @@ Deno.serve(async (req) => {
 
     console.log(`[triggerRecoveryBackground] ✓ LLM recovered text: "${responseText.substring(0, 60)}..."`);
 
+    // ── STALE-DUPLICATE REJECTION BOUNDARY ─────────────────────────────────
+    // A recovered response that is an exact duplicate of a previously completed
+    // character message in this conversation is a FAILED recovery — it has zero
+    // active-response authority. It must NOT be committed with a fresh message ID
+    // or timestamp. Recovery exists to recover a failed response opportunity,
+    // not to resurrect obsolete completed content. Discard it.
+    const normalizeText = (s: string): string =>
+      (s || '').replace(/\s+/g, ' ').trim();
+
+    const recoveredNormalized = normalizeText(responseText);
+    if (recoveredNormalized) {
+      const recentMsgsForDupCheck = await base44.asServiceRole.entities.Message.filter(
+        { conversation_id },
+        '-timestamp', 30
+      ).catch(() => []);
+
+      const prevCharTexts = new Set(
+        recentMsgsForDupCheck
+          .filter(m => m.sender_type === 'character' && m.content)
+          .map(m => normalizeText(m.content || ''))
+          .filter(t => t.length > 0)
+      );
+
+      if (prevCharTexts.has(recoveredNormalized)) {
+        console.log(
+          `[triggerRecoveryBackground] STALE_DISCARD: recovered response is an exact ` +
+          `duplicate of a previously completed character message. Discarding — ` +
+          `recovery cannot resurrect obsolete completed content.`
+        );
+        await base44.asServiceRole.functions.invoke('generationLock', {
+          action: 'release',
+          conversation_id,
+        }).catch(() => {});
+        return Response.json({
+          success: false,
+          reason: 'stale_recovery_discarded',
+          discard_reason: 'recovered_response_is_stale_duplicate',
+        });
+      }
+    }
+
     // ── SAVE RECOVERED TEXT: with idempotency protection ────────────────────
     const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
 

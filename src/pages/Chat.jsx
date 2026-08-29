@@ -98,6 +98,7 @@ import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
 import { enforceSubjectNamesInPrompt } from "@/lib/subjectNameEnforcer";
 import { buildPreviousCharacterTexts, isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from "@/lib/duplicateResponseGuard";
+import { correctDuplicateResponse } from "@/lib/duplicateGuardCorrector";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1514,32 +1515,19 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // ── DUPLICATE RESPONSE GUARD — PRE-COMMIT ─────────────────────────────
       // An exact duplicate of a previously completed character response is a
-      // generation failure. It must be corrected BEFORE the message is committed.
-      // The guard checks the dialogue text against all previous character messages
-      // in this conversation. If an exact match is found, the response is rejected
-      // and regenerated with an anti-repeat instruction appended to the prompt.
-      // This uses the existing LLM call path — no parallel system, no redesign.
-      // Characters may still revisit subjects or express the same idea — they
-      // just cannot reuse a previously completed response payload verbatim.
+      // generation failure. A completed historical response has ZERO active-
+      // response authority — if detected, it is discarded and cannot proceed to
+      // commit, receive a new message ID, or be recycled. See duplicateGuardCorrector.
       const previousCharTexts = buildPreviousCharacterTexts(messagesRef.current);
-      let duplicateRetries = 0;
-      const MAX_DUPLICATE_RETRIES = 2;
-      while (responseText && isExactDuplicateResponse(responseText, previousCharTexts) && duplicateRetries < MAX_DUPLICATE_RETRIES) {
-        console.error(`[DUPLICATE_GUARD] Exact duplicate response detected (retry ${duplicateRetries + 1}/${MAX_DUPLICATE_RETRIES}). Regenerating with anti-repeat instruction.`);
-        const antiRepeatSuffix = buildAntiRepeatPromptSuffix([...previousCharTexts]);
-        response = await callLLMWithRetry(fullPrompt + antiRepeatSuffix, 'gemini_3_flash', 3, true);
-        const _retry = parseAndExtract(response);
-        responseObj = _retry.responseObj;
-        msgType = _retry.msgType;
-        responseText = _retry.responseText;
-        sequenceItems = _retry.sequenceItems;
-        fallbackNarratives = _retry.fallbackNarratives;
-        duplicateRetries++;
-      }
-      if (duplicateRetries > 0) {
-        const _stillDup = isExactDuplicateResponse(responseText || '', previousCharTexts);
-        console.log(`[DUPLICATE_GUARD] Correction complete after ${duplicateRetries} retry/retries. Duplicate resolved: ${!_stillDup}`);
-      }
+      const _corrected = await correctDuplicateResponse({
+        responseText, responseObj, msgType, sequenceItems, fallbackNarratives,
+        previousCharTexts, fullPrompt, userText: text, parseAndExtract,
+      });
+      responseObj = _corrected.responseObj;
+      msgType = _corrected.msgType;
+      responseText = _corrected.responseText;
+      sequenceItems = _corrected.sequenceItems;
+      fallbackNarratives = _corrected.fallbackNarratives;
 
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
