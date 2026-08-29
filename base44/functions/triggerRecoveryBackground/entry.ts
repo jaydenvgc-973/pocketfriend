@@ -249,20 +249,41 @@ Deno.serve(async (req) => {
       recoveryAttempt++;
     }
 
-    console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Response: "${responseText.substring(0, 60)}..."`);
-
-    // Bounded continuation complete after MAX_RECOVERY_ATTEMPTS finite attempts.
-    // The candidate held in responseText is a genuine character response
-    // produced by the existing character-generation authority (InvokeLLM with
-    // the full character prompt). It is not a deterministic substitute, not
-    // filler, not empty, not "...", and not a thrown error.
+    // ── EXHAUSTION CHECK: stale final candidate must NOT be committed ───────
+    // If all MAX_RECOVERY_ATTEMPTS finite attempts produced stale duplicates,
+    // the final candidate is ALSO stale — it has ZERO active-response
+    // authority. It CANNOT be committed, recycled, or used as a terminal
+    // response. Committing it would restore the exact stale-fallthrough
+    // defect: "8 stale attempts → commit attempt 8 anyway."
     //
-    // This terminal is genuinely bounded: MAX_RECOVERY_ATTEMPTS finite LLM
-    // calls, no while-until-success loop, no recursion, no unbounded retry,
-    // no polling. Recovery's conversation-advancement safeguard (below)
-    // remains intact — if the conversation has advanced beyond this recovery
-    // turn, the safeguard discards the recovery regardless of this candidate.
-    console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${MAX_RECOVERY_ATTEMPTS} finite attempts.`);
+    // Instead: release the generation lock so future messages are not
+    // blocked, and return a structured failure response. This is NOT
+    // silence — the lock release allows the user to send a new message
+    // which triggers a fresh generation attempt through the normal Chat
+    // flow. No deterministic filler is committed. No stale candidate is
+    // committed. The conversation-advancement safeguard (below) remains
+    // intact for non-exhausted cases where the candidate is non-stale but
+    // the conversation has advanced.
+    const finalNormalized = normalizeText(responseText);
+    if (!responseText || prevCharTexts.has(finalNormalized)) {
+      console.error(
+        `[triggerRecoveryBackground] EXHAUSTED: All ${MAX_RECOVERY_ATTEMPTS} bounded attempts ` +
+        `produced stale duplicates. Final candidate is stale — NOT committing. ` +
+        `Releasing lock so future messages can proceed.`
+      );
+      await base44.asServiceRole.functions.invoke('generationLock', {
+        action: 'release',
+        conversation_id,
+      }).catch(() => {});
+      return Response.json({
+        success: false,
+        reason: 'recovery_exhausted_stale',
+        discard_reason: 'all_attempts_produced_stale_duplicates',
+        attempts: MAX_RECOVERY_ATTEMPTS,
+      });
+    }
+
+    console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Non-stale response confirmed.`);
 
     // ── SAVE RECOVERED TEXT: with idempotency protection ────────────────────
     const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
