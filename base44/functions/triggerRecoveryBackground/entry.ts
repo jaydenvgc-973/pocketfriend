@@ -31,12 +31,15 @@
  * If the first recovered response is an exact duplicate of a previously
  * completed character message, it is discarded (zero authority). But the
  * response opportunity is NOT terminated — recovery makes ONE more bounded
- * LLM attempt. If that produces a non-stale response, it is committed. If
- * that also produces a stale duplicate, a deterministic current-turn response
- * is constructed and committed so the user's turn still receives a valid
- * response. The stale result never returns; the user still gets a response.
- * This is NOT polling (one bounded extra attempt within a single invocation)
- * and NOT indefinite (no loop, no scheduler, no repeated invocations).
+ * LLM attempt using the same full prompt (the existing recovery generation
+ * authority — character voice, personality, memory, conversation) with an
+ * anti-repeat suffix. If that produces a non-stale response, it is committed.
+ * If that also produces a stale duplicate, both stale results are rejected —
+ * NOT committed, NOT resurrected, and NO deterministic substitute is
+ * manufactured. Recovery releases the lock and returns; the main Chat path
+ * (corrector) is the primary response authority. This is NOT polling (one
+ * bounded extra attempt within a single invocation) and NOT indefinite (no
+ * loop, no scheduler, no repeated invocations).
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -199,26 +202,6 @@ Deno.serve(async (req) => {
         .filter(t => t.length > 0)
     );
 
-    // Deterministic current-turn response — used only if both bounded LLM
-    // attempts produce stale duplicates. Anchored to the user's CURRENT message
-    // so it is inherently new and cannot be an exact duplicate of a prior
-    // character response. Not "...", not silence, not "Try again", not a
-    // paraphrase of an obsolete response.
-    const buildDeterministicResponse = (): string => {
-      const sourceUserMsg = recentMsgsForDupCheck.find(m => m.id === source_message_id);
-      const userSnippet = (sourceUserMsg?.content || '').substring(0, 120).replace(/\s+/g, ' ').trim();
-      let det = userSnippet
-        ? `I hear you about "${userSnippet}". That's on my mind right now — what else?`
-        : `I'm here with you. What's on your mind right now?`;
-      if (prevCharTexts.has(normalizeText(det))) {
-        det = `I'm here. Tell me more about what you just said.`;
-        if (prevCharTexts.has(normalizeText(det))) {
-          det = `I'm listening — go on.`;
-        }
-      }
-      return det;
-    };
-
     const recoveredNormalized = normalizeText(responseText);
     if (recoveredNormalized && prevCharTexts.has(recoveredNormalized)) {
       console.log(
@@ -226,6 +209,10 @@ Deno.serve(async (req) => {
         `duplicate. Discarding — making one more bounded LLM attempt.`
       );
       // ── SECOND BOUNDED ATTEMPT with anti-repeat instruction ─────────────
+      // Uses the same full prompt (character's voice, personality, memory,
+      // conversation) — the existing recovery generation authority — with an
+      // anti-repeat suffix steering the LLM away from prior responses. No
+      // deterministic substitute is manufactured.
       let secondText = '';
       try {
         const secondResponse = await base44.integrations.Core.InvokeLLM({
@@ -248,9 +235,23 @@ Deno.serve(async (req) => {
         responseText = secondText;
         console.log(`[triggerRecoveryBackground] ✓ Second attempt produced non-stale text: "${responseText.substring(0, 60)}..."`);
       } else {
-        // Both bounded attempts stale/failed — deterministic current-turn response
-        console.log(`[triggerRecoveryBackground] Both attempts stale/failed. Producing deterministic current-turn response.`);
-        responseText = buildDeterministicResponse();
+        // Both bounded attempts stale/failed. The stale results are rejected —
+        // NOT committed, NOT given a new ID, NOT resurrected. No deterministic
+        // substitute is manufactured; no handcrafted acknowledgment is committed.
+        // Recovery releases the lock and returns. The lifecycle-advancement
+        // safeguard is NOT bypassed: if the conversation has advanced, the turn
+        // is expired and this return is correct. If it has not advanced, the
+        // main Chat path (corrector) is the primary response authority.
+        console.log(`[triggerRecoveryBackground] Both recovery attempts stale/failed. Rejecting — no deterministic substitute.`);
+        await base44.asServiceRole.functions.invoke('generationLock', {
+          action: 'release',
+          conversation_id,
+        }).catch(() => {});
+        return Response.json({
+          success: false,
+          reason: 'stale_recovery_discarded',
+          discard_reason: 'all_recovery_attempts_stale',
+        });
       }
     }
 

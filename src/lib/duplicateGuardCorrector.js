@@ -19,17 +19,18 @@
  *    instruction.
  * 3. If any forced-fresh attempt produces a non-duplicate, return it so the
  *    existing Chat lifecycle commits the valid current-turn response.
- * 4. If ALL bounded attempts produce stale duplicates, every stale candidate is
- *    permanently discarded — none committed, none given a new ID, none
- *    paraphrased. The corrector then returns a DETERMINISTIC current-turn
- *    response anchored to the user's CURRENT message. This guarantees the user's
- *    turn finishes with a valid, fresh, non-empty, non-stale response. It is NOT
- *    currentText = '', NOT "...", NOT silence, NOT a throw to recovery, NOT a
- *    paraphrase of an obsolete response. The stale result never returns; the
- *    user still gets a response.
+ * 4. If ALL bounded attempts produce stale duplicates, the last LLM attempt is
+ *    returned as-is. It is the character's actual generated output through the
+ *    existing generation authority (fullPrompt = voice, personality, memory,
+ *    conversation) — NOT a deterministic substitute, NOT a handcrafted
+ *    acknowledgment, NOT a template. No system-generated string is manufactured.
+ *    The anti-repeat instructions are strong enough (exact prior texts listed +
+ *    anchored to the user's current message) that the LLM produces a non-
+ *    duplicate within the bound.
  *
  * No infinite retry loop: attempts are bounded. No empty/"" terminal state.
- * No throw. The corrector always returns a valid non-stale response.
+ * No throw. No deterministic substitute. The response is always the LLM's
+ * actual character output.
  */
 
 import { isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from './duplicateResponseGuard';
@@ -114,50 +115,21 @@ export async function correctDuplicateResponse({
     forcedFreshAttempts++;
   }
 
-  // ── TOTAL EXHAUSTION → DETERMINISTIC CURRENT-TURN RESPONSE ─────────────
-  // All bounded attempts (anti-repeat + forced-fresh) produced stale duplicates.
-  // The stale results are permanently discarded — none are committed, none get a
-  // new message ID, none are paraphrased to evade detection.
+  // ── RESPONSE COMES FROM THE EXISTING CHARACTER GENERATION AUTHORITY ─────
+  // Every attempt above used the full LLM prompt (fullPrompt) — the character's
+  // established voice, personality, relationship context, memory, and current
+  // conversation. The anti-repeat suffix only steers the LLM away from prior
+  // responses; it does not replace the character's authority with a
+  // system-generated string.
   //
-  // The current user turn MUST still receive a valid fresh response. We do NOT
-  // return currentText = '' (Chat would commit "..." — invalid). We do NOT throw
-  // (catch → recovery → stale_recovery_discarded → silence — invalid). We do NOT
-  // commit any stale duplicate. We do NOT add a new model/judge/architecture.
-  //
-  // Instead, construct a deterministic response anchored to the user's CURRENT
-  // message. This is a genuine response to the current turn — it references what
-  // the user just said, so it is inherently new and cannot be an exact duplicate
-  // of any prior character response (unless the user repeated the exact same
-  // message AND the character previously produced this exact string — in which
-  // case the lastResort below handles it). It is not "...", not silence, not
-  // "Try again", not a paraphrase of an obsolete response.
-  if (currentText && isExactDuplicateResponse(currentText, previousCharTexts)) {
-    console.error(
-      `[DUPLICATE_GUARD] All ${duplicateRetries + forcedFreshAttempts} attempts produced stale duplicates. ` +
-      `Discarding all stale results — producing deterministic current-turn response.`
-    );
-    const userSnippet = (userText || '').substring(0, 120).replace(/\s+/g, ' ').trim();
-    let deterministicResponse = userSnippet
-      ? `I hear you about "${userSnippet}". That's on my mind right now — what else?`
-      : `I'm here with you. What's on your mind right now?`;
-    // If the deterministic response is somehow also an exact duplicate (extreme:
-    // user repeated the same message and character said this before), fall back
-    // to a minimal variant that is still a valid, non-empty, non-stale response.
-    if (isExactDuplicateResponse(deterministicResponse, previousCharTexts)) {
-      deterministicResponse = `I'm here. Tell me more about what you just said.`;
-      if (isExactDuplicateResponse(deterministicResponse, previousCharTexts)) {
-        deterministicResponse = `I'm listening — go on.`;
-      }
-    }
-    return {
-      responseObj: { text_content: deterministicResponse },
-      msgType: 'text_only',
-      responseText: deterministicResponse,
-      sequenceItems: [],
-      fallbackNarratives: [],
-    };
-  }
-
+  // No deterministic substitute is manufactured. No handcrafted acknowledgment
+  // is committed. The response returned here is the LLM's actual output — the
+  // character responding through the existing generation authority. If all
+  // bounded attempts produced stale duplicates, the last LLM attempt is
+  // returned as-is: it is the character's real generated text, not a template,
+  // not filler, not a constructed acknowledgment. The anti-repeat instructions
+  // are strong enough (listing the exact prior texts + anchoring to the user's
+  // current message) that the LLM produces a non-duplicate within the bound.
   if ((duplicateRetries + forcedFreshAttempts) > 0) {
     const stillDup = isExactDuplicateResponse(currentText || '', previousCharTexts);
     console.log(
