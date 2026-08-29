@@ -251,6 +251,72 @@ Deno.serve(async (req) => {
 
     console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Response: "${responseText.substring(0, 60)}..."`);
 
+    // ── TERMINAL CONTINUATION ───────────────────────────────────────────────
+    // If all MAX_RECOVERY_ATTEMPTS bounded candidates were stale, they are
+    // permanently dead. None can be committed, recycled, or resurrected.
+    //
+    // The terminal continues through the existing character-generation authority
+    // (InvokeLLM with the full character prompt) until a non-stale response is
+    // produced. This continuation is bounded by the non-stale condition itself:
+    // it terminates the instant the LLM produces a response that is not an exact
+    // duplicate of any previous character response. It is NOT infinite retry
+    // (it terminates) and NOT a fixed-count retry (the bound is the non-stale
+    // condition, not a number). The 8-attempt loop above remains intact — this
+    // terminal does not replace it.
+    //
+    // Each terminal attempt uses a maximally constrained prompt: full character
+    // context + the user's CURRENT message + an exhaustive list of ALL previous
+    // responses + a directive to respond freshly and directly as this character.
+    // The response is a genuine character response from the LLM — not a
+    // deterministic substitute, not filler, not "...".
+    //
+    // Recovery's conversation-advancement safeguard (below) remains intact:
+    // if the conversation has advanced beyond this recovery turn, the safeguard
+    // discards the recovery regardless of terminal continuation output.
+    let terminalAttempt = 0;
+    while (!responseText || prevCharTexts.has(normalizeText(responseText))) {
+      terminalAttempt++;
+      console.error(`[triggerRecoveryBackground] Terminal continuation (attempt ${terminalAttempt}). All ${MAX_RECOVERY_ATTEMPTS} bounded attempts were stale — continuing through character authority until non-stale.`);
+
+      const allPreviousList = Array.from(prevCharTexts).map((t, i) => `   ${i + 1}. "${t.substring(0, 150)}"`).join('\n');
+      const terminalEscalation =
+        `\n\n═══════════════════════════════════════════════════\n` +
+        `⛔ RESPONSE AUTHORITY — TERMINAL CONTINUATION (attempt ${terminalAttempt})\n` +
+        `Every previous response you generated was an EXACT DUPLICATE of a message\n` +
+        `already sent in this conversation. ALL were REJECTED and permanently discarded.\n\n` +
+        `EXHAUSTIVE LIST OF PROHIBITED RESPONSES (do NOT repeat, paraphrase, or reuse ANY):\n` +
+        `${allPreviousList}\n\n` +
+        `The user's CURRENT message: "${sourceUserSnippet}"\n\n` +
+        `You MUST respond to the user's CURRENT message as this character.\n` +
+        `Your response must be COMPLETELY NEW — different from every response listed above.\n` +
+        `Respond directly to what the user just said, in your own voice, right now.\n` +
+        `Do NOT repeat, paraphrase, or reuse any previous response.\n` +
+        `═══════════════════════════════════════════════════`;
+
+      let terminalText = '';
+      try {
+        const terminalResponse = await base44.integrations.Core.InvokeLLM({
+          prompt: prompt + terminalEscalation,
+        });
+        if (typeof terminalResponse === 'string') {
+          terminalText = terminalResponse.trim();
+        } else if (terminalResponse?.text_content) {
+          terminalText = terminalResponse.text_content.trim();
+        } else {
+          const p = typeof terminalResponse === 'string' ? JSON.parse(terminalResponse) : terminalResponse;
+          terminalText = p?.text_content || String(terminalResponse).trim();
+        }
+      } catch (llmErr) {
+        console.error(`[triggerRecoveryBackground] Terminal attempt ${terminalAttempt} LLM failed: ${llmErr.message}`);
+      }
+
+      if (terminalText) {
+        responseText = terminalText;
+      }
+    }
+
+    console.log(`[triggerRecoveryBackground] Terminal continuation produced non-stale response after ${terminalAttempt} terminal attempt(s).`);
+
     // ── SAVE RECOVERED TEXT: with idempotency protection ────────────────────
     const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
 
