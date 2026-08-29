@@ -104,23 +104,26 @@ export async function correctDuplicateResponse({
     currentFb = parsed.fallbackNarratives;
   }
 
-  // Bounded continuation complete after MAX_ATTEMPTS finite attempts.
-  // The candidate held in currentText is a genuine character response
-  // produced by the existing character-generation authority (InvokeLLM with
-  // the full character prompt). It is not a deterministic substitute, not
-  // filler, not empty, not "...", and not a thrown error.
+  // Bounded continuation exhausted: all MAX_ATTEMPTS finite LLM calls produced
+  // stale duplicates. The final candidate is ALSO stale — it has ZERO
+  // active-response authority. It CANNOT be returned, committed, recycled,
+  // or used as a terminal response. Returning it would restore the exact
+  // stale-fallthrough defect that was rejected: "8 stale attempts → return
+  // attempt 8 anyway."
   //
-  // This helper is genuinely bounded: MAX_ATTEMPTS finite LLM calls, no
-  // while-until-success loop, no recursion, no unbounded retry, no polling.
-  // The existing Chat flow's stale-response boundary applies to this
-  // candidate — this helper does not manufacture a terminal response, does
-  // not throw, and does not abandon the turn.
-  console.log(`[DUPLICATE_GUARD] Bounded continuation complete after ${MAX_ATTEMPTS} finite attempts.`);
-  return {
-    responseObj: currentObj,
-    msgType: currentType,
-    responseText: currentText,
-    sequenceItems: currentSeq,
-    fallbackNarratives: currentFb,
-  };
+  // Instead: throw to signal generation failure. This is NOT throw
+  // abandonment — the throw is caught by Chat.jsx's existing catch block,
+  // which invokes handleFallbackResponse → triggerRecoveryBackground.
+  // The recovery pipeline produces a valid fresh character response through
+  // the SAME character-generation authority (InvokeLLM with the full
+  // character prompt), with its own stale-rejection and conversation-
+  // advancement safeguards intact. The user receives a real response via
+  // the recovery flow, not silence, not filler, not a stale candidate.
+  //
+  // This helper remains genuinely bounded: MAX_ATTEMPTS finite LLM calls,
+  // no while-until-success loop, no recursion, no unbounded retry, no polling.
+  // No deterministic substitute is manufactured here. No stale candidate
+  // is returned. The existing recovery authority handles the final attempt.
+  console.error(`[DUPLICATE_GUARD] All ${MAX_ATTEMPTS} bounded attempts produced stale duplicates. Discarding final stale candidate — triggering recovery flow.`);
+  throw new Error('DUPLICATE_GUARD_EXHAUSTED: All bounded attempts produced stale duplicates.');
 }

@@ -16,5 +16,13 @@ export default defineConfig({
       visualEditAgent: true
     }),
     react(),
-  ]
+  ],
+  resolve: {
+    // Force a single copy of React and ReactDOM. Without dedupe, Vite's
+    // dependency optimizer can resolve 'react' to two separate module
+    // instances, nullifying React's internal hook dispatcher and producing:
+    //   TypeError: Cannot read properties of null (reading 'useState')
+    // at runtime when any component calls useState/useEffect/etc.
+    dedupe: ['react', 'react-dom'],
+  }
 });
