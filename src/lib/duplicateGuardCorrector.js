@@ -19,16 +19,17 @@
  *    instruction.
  * 3. If any forced-fresh attempt produces a non-duplicate, return it so the
  *    existing Chat lifecycle commits the valid current-turn response.
- * 4. If ALL bounded attempts produce stale duplicates (extreme edge), THROW an
- *    error so Chat's existing catch block triggers handleFallbackResponse →
- *    triggerRecoveryBackground — the SAME lifecycle used for any failed LLM
- *    generation. The UI shows "Reconnecting…" (NOT a saved "..." message), and
- *    recovery re-runs the LLM with backoff. The stale result is NEVER committed,
- *    NEVER given a new message ID, and NEVER returned as empty text.
+ * 4. If ALL bounded attempts produce stale duplicates, every stale candidate is
+ *    permanently discarded — none committed, none given a new ID, none
+ *    paraphrased. The corrector then returns a DETERMINISTIC current-turn
+ *    response anchored to the user's CURRENT message. This guarantees the user's
+ *    turn finishes with a valid, fresh, non-empty, non-stale response. It is NOT
+ *    currentText = '', NOT "...", NOT silence, NOT a throw to recovery, NOT a
+ *    paraphrase of an obsolete response. The stale result never returns; the
+ *    user still gets a response.
  *
- * No infinite retry loop: attempts are bounded. No empty/"" terminal state:
- * the corrector either returns a valid non-duplicate or throws to the existing
- * fallback path. It never returns currentText = ''.
+ * No infinite retry loop: attempts are bounded. No empty/"" terminal state.
+ * No throw. The corrector always returns a valid non-stale response.
  */
 
 import { isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from './duplicateResponseGuard';
@@ -113,21 +114,48 @@ export async function correctDuplicateResponse({
     forcedFreshAttempts++;
   }
 
-  // ── TOTAL EXHAUSTION → THROW TO EXISTING FALLBACK/RECOVERY LIFECYCLE ─────
+  // ── TOTAL EXHAUSTION → DETERMINISTIC CURRENT-TURN RESPONSE ─────────────
   // All bounded attempts (anti-repeat + forced-fresh) produced stale duplicates.
-  // The stale result is permanently discarded. Rather than returning empty text
-  // (which Chat would commit as "..." — an invalid terminal state), THROW so
-  // Chat's existing catch block triggers handleFallbackResponse →
-  // triggerRecoveryBackground — the SAME lifecycle used for any failed LLM
-  // generation. The UI shows "Reconnecting…" (NOT a saved "..." message), and
-  // recovery re-runs the LLM with exponential backoff. The stale result is never
-  // committed, never given a new message ID, and never returned as empty text.
+  // The stale results are permanently discarded — none are committed, none get a
+  // new message ID, none are paraphrased to evade detection.
+  //
+  // The current user turn MUST still receive a valid fresh response. We do NOT
+  // return currentText = '' (Chat would commit "..." — invalid). We do NOT throw
+  // (catch → recovery → stale_recovery_discarded → silence — invalid). We do NOT
+  // commit any stale duplicate. We do NOT add a new model/judge/architecture.
+  //
+  // Instead, construct a deterministic response anchored to the user's CURRENT
+  // message. This is a genuine response to the current turn — it references what
+  // the user just said, so it is inherently new and cannot be an exact duplicate
+  // of any prior character response (unless the user repeated the exact same
+  // message AND the character previously produced this exact string — in which
+  // case the lastResort below handles it). It is not "...", not silence, not
+  // "Try again", not a paraphrase of an obsolete response.
   if (currentText && isExactDuplicateResponse(currentText, previousCharTexts)) {
     console.error(
       `[DUPLICATE_GUARD] All ${duplicateRetries + forcedFreshAttempts} attempts produced stale duplicates. ` +
-      `Throwing to existing fallback/recovery lifecycle — stale result permanently discarded, no empty terminal.`
+      `Discarding all stale results — producing deterministic current-turn response.`
     );
-    throw new Error('DUPLICATE_RESPONSE_EXHAUSTED: all bounded generation attempts produced stale duplicates');
+    const userSnippet = (userText || '').substring(0, 120).replace(/\s+/g, ' ').trim();
+    let deterministicResponse = userSnippet
+      ? `I hear you about "${userSnippet}". That's on my mind right now — what else?`
+      : `I'm here with you. What's on your mind right now?`;
+    // If the deterministic response is somehow also an exact duplicate (extreme:
+    // user repeated the same message and character said this before), fall back
+    // to a minimal variant that is still a valid, non-empty, non-stale response.
+    if (isExactDuplicateResponse(deterministicResponse, previousCharTexts)) {
+      deterministicResponse = `I'm here. Tell me more about what you just said.`;
+      if (isExactDuplicateResponse(deterministicResponse, previousCharTexts)) {
+        deterministicResponse = `I'm listening — go on.`;
+      }
+    }
+    return {
+      responseObj: { text_content: deterministicResponse },
+      msgType: 'text_only',
+      responseText: deterministicResponse,
+      sequenceItems: [],
+      fallbackNarratives: [],
+    };
   }
 
   if ((duplicateRetries + forcedFreshAttempts) > 0) {
