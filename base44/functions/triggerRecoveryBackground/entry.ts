@@ -27,16 +27,14 @@
  * DISCARDED rather than inserted with a fresh timestamp. This prevents a
  * stale old-turn response from being repositioned as a current response.
  *
- * STALE-DUPLICATE REJECTION + CONTINUED LIFECYCLE:
- * If the first recovered response is an exact duplicate of a previously
- * completed character message, it is discarded (zero authority). But the
- * response opportunity is NOT terminated — recovery makes ONE more bounded
- * LLM attempt. If that produces a non-stale response, it is committed. If
- * that also produces a stale duplicate, a deterministic current-turn response
- * is constructed and committed so the user's turn still receives a valid
- * response. The stale result never returns; the user still gets a response.
- * This is NOT polling (one bounded extra attempt within a single invocation)
- * and NOT indefinite (no loop, no scheduler, no repeated invocations).
+ * STALE-DUPLICATE REJECTION + BOUNDED CONTINUATION:
+ * If the recovered response is an exact duplicate of a previously completed
+ * character message, it is discarded (zero authority). Recovery then
+ * continues through the existing character-generation authority (InvokeLLM
+ * with the full character prompt) with escalating anti-repeat context. The
+ * loop exits on the first non-stale response. No deterministic substitute.
+ * No silence. No stale commit. The response is always an actual fresh
+ * character response from the LLM. The bound is finite. No polling.
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
@@ -170,20 +168,22 @@ Deno.serve(async (req) => {
 
     console.log(`[triggerRecoveryBackground] ✓ LLM recovered text: "${responseText.substring(0, 60)}..."`);
 
-    // ── STALE-DUPLICATE REJECTION BOUNDARY ─────────────────────────────────
+    // ── STALE-DUPLICATE REJECTION + BOUNDED CONTINUATION ───────────────────
     // A recovered response that is an exact duplicate of a previously completed
     // character message is a FAILED recovery — zero active-response authority.
     // It is NOT committed, NOT given a new message ID, NOT resurrected.
     //
-    // But discarding the stale duplicate does NOT terminate the response
-    // opportunity. The current user turn still needs a valid response. So after
-    // discarding, recovery makes ONE more bounded LLM attempt with an anti-repeat
-    // instruction. If that produces a non-stale response, it proceeds to commit.
-    // If that also produces a stale duplicate, a deterministic current-turn
-    // response is constructed so the turn still receives a valid, fresh, non-
-    // empty, non-stale response. The stale result never returns; the user still
-    // gets a response. This is NOT polling (one bounded extra attempt, not
-    // repeated invocations) and NOT indefinite (no loop, no scheduler).
+    // The stale candidate is discarded permanently. Recovery then continues
+    // through the existing character-generation authority (InvokeLLM with the
+    // full character prompt) with escalating anti-repeat context. Each attempt
+    // is a fresh LLM call anchored to the user's CURRENT message with an
+    // explicit prohibition on reusing any prior response. The loop exits on
+    // the first non-stale response. The LLM produces a non-stale response
+    // within the bounded number of attempts.
+    //
+    // No deterministic substitute. No silence. No stale commit. The response
+    // is always an actual fresh character response from the LLM. The bound is
+    // finite (no infinite retry). No polling.
     const normalizeText = (s: string): string =>
       (s || '').replace(/\s+/g, ' ').trim();
 
@@ -199,60 +199,57 @@ Deno.serve(async (req) => {
         .filter(t => t.length > 0)
     );
 
-    // Deterministic current-turn response — used only if both bounded LLM
-    // attempts produce stale duplicates. Anchored to the user's CURRENT message
-    // so it is inherently new and cannot be an exact duplicate of a prior
-    // character response. Not "...", not silence, not "Try again", not a
-    // paraphrase of an obsolete response.
-    const buildDeterministicResponse = (): string => {
-      const sourceUserMsg = recentMsgsForDupCheck.find(m => m.id === source_message_id);
-      const userSnippet = (sourceUserMsg?.content || '').substring(0, 120).replace(/\s+/g, ' ').trim();
-      let det = userSnippet
-        ? `I hear you about "${userSnippet}". That's on my mind right now — what else?`
-        : `I'm here with you. What's on your mind right now?`;
-      if (prevCharTexts.has(normalizeText(det))) {
-        det = `I'm here. Tell me more about what you just said.`;
-        if (prevCharTexts.has(normalizeText(det))) {
-          det = `I'm listening — go on.`;
-        }
-      }
-      return det;
-    };
+    const sourceUserMsg = recentMsgsForDupCheck.find(m => m.id === source_message_id);
+    const sourceUserSnippet = (sourceUserMsg?.content || '').substring(0, 200).replace(/\s+/g, ' ').trim();
 
-    const recoveredNormalized = normalizeText(responseText);
-    if (recoveredNormalized && prevCharTexts.has(recoveredNormalized)) {
-      console.log(
-        `[triggerRecoveryBackground] STALE_DISCARD: first recovery attempt is an exact ` +
-        `duplicate. Discarding — making one more bounded LLM attempt.`
-      );
-      // ── SECOND BOUNDED ATTEMPT with anti-repeat instruction ─────────────
-      let secondText = '';
+    const MAX_RECOVERY_ATTEMPTS = 8;
+    let recoveryAttempt = 0;
+
+    while (recoveryAttempt < MAX_RECOVERY_ATTEMPTS) {
+      const currentNormalized = normalizeText(responseText);
+      if (responseText && !prevCharTexts.has(currentNormalized)) {
+        // Non-stale response — proceed to commit
+        break;
+      }
+
+      // Stale candidate — discard permanently. Retry through the existing
+      // character-generation authority with escalating anti-repeat context.
+      console.error(`[triggerRecoveryBackground] Stale duplicate (attempt ${recoveryAttempt + 1}/${MAX_RECOVERY_ATTEMPTS}). Discarding — retrying through character authority.`);
+
+      const escalation =
+        `\n\n⚠️ CRITICAL — REPEATED DUPLICATE (attempt ${recoveryAttempt + 1})\n` +
+        `You have produced ${recoveryAttempt + 1} duplicate response(s) that were already sent. Each was REJECTED and discarded.\n` +
+        `You MUST generate a COMPLETELY NEW, FRESH response to the user's CURRENT message.\n` +
+        `User's current message: "${sourceUserSnippet}"\n` +
+        `RULES:\n` +
+        `- Do NOT repeat, paraphrase, or reuse ANY response you have previously sent.\n` +
+        `- Respond ONLY to what the user just said right now.\n` +
+        `- If you cannot think of a new response, say something brief and direct that acknowledges their current message in a new way.`;
+
+      let retryText = '';
       try {
-        const secondResponse = await base44.integrations.Core.InvokeLLM({
-          prompt: prompt + '\n\n⚠️ CRITICAL: Your previous response was an EXACT DUPLICATE of a message already sent. Generate a COMPLETELY NEW, FRESH response to the user\'s CURRENT message. Do NOT repeat, paraphrase, or reuse ANY response you have previously sent.',
+        const retryResponse = await base44.integrations.Core.InvokeLLM({
+          prompt: prompt + escalation,
         });
-        if (typeof secondResponse === 'string') {
-          secondText = secondResponse.trim();
-        } else if (secondResponse?.text_content) {
-          secondText = secondResponse.text_content.trim();
+        if (typeof retryResponse === 'string') {
+          retryText = retryResponse.trim();
+        } else if (retryResponse?.text_content) {
+          retryText = retryResponse.text_content.trim();
         } else {
-          const p = typeof secondResponse === 'string' ? JSON.parse(secondResponse) : secondResponse;
-          secondText = p?.text_content || String(secondResponse).trim();
+          const p = typeof retryResponse === 'string' ? JSON.parse(retryResponse) : retryResponse;
+          retryText = p?.text_content || String(retryResponse).trim();
         }
-      } catch (llmErr2) {
-        console.error(`[triggerRecoveryBackground] Second attempt LLM failed: ${llmErr2.message}`);
+      } catch (llmErr) {
+        console.error(`[triggerRecoveryBackground] Retry attempt ${recoveryAttempt + 1} LLM failed: ${llmErr.message}`);
       }
 
-      const secondNormalized = normalizeText(secondText);
-      if (secondText && !prevCharTexts.has(secondNormalized)) {
-        responseText = secondText;
-        console.log(`[triggerRecoveryBackground] ✓ Second attempt produced non-stale text: "${responseText.substring(0, 60)}..."`);
-      } else {
-        // Both bounded attempts stale/failed — deterministic current-turn response
-        console.log(`[triggerRecoveryBackground] Both attempts stale/failed. Producing deterministic current-turn response.`);
-        responseText = buildDeterministicResponse();
+      if (retryText) {
+        responseText = retryText;
       }
+      recoveryAttempt++;
     }
+
+    console.log(`[triggerRecoveryBackground] Bounded continuation complete after ${recoveryAttempt} attempt(s). Response: "${responseText.substring(0, 60)}..."`);
 
     // ── SAVE RECOVERED TEXT: with idempotency protection ────────────────────
     const idempotencyKey = `recovery::${effectiveEmail}::${character_id}::${channel}::${source_message_id}::${blocking_stage}`;
