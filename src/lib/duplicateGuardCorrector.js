@@ -11,16 +11,24 @@
  *
  * The flow:
  * 1. Anti-repeat retries: regenerate with an explicit "do not repeat" suffix.
- * 2. Forced-fresh call: if the stale duplicate survived all retries, make one
- *    final call anchored to the user's CURRENT message with a hard prohibition
- *    on reusing any prior response. This is NOT recycling the same candidate —
- *    it is a fresh attempt with a fundamentally different instruction.
- * 3. Terminal discard: if the forced-fresh call ALSO produces a stale duplicate
- *    (extreme edge), discard it entirely. The stale result never receives a new
- *    message ID or is committed.
+ * 2. Forced-fresh attempts: if the stale duplicate survived all retries, make
+ *    up to MAX_FORCED_FRESH_ATTEMPTS fresh calls anchored to the user's CURRENT
+ *    message with a hard prohibition on reusing any prior response. Each stale
+ *    result is DISCARDED before the next attempt — this is NOT recycling the
+ *    same candidate, it is a fresh attempt with a fundamentally different
+ *    instruction.
+ * 3. If any forced-fresh attempt produces a non-duplicate, return it so the
+ *    existing Chat lifecycle commits the valid current-turn response.
+ * 4. If ALL bounded attempts produce stale duplicates (extreme edge), THROW an
+ *    error so Chat's existing catch block triggers handleFallbackResponse →
+ *    triggerRecoveryBackground — the SAME lifecycle used for any failed LLM
+ *    generation. The UI shows "Reconnecting…" (NOT a saved "..." message), and
+ *    recovery re-runs the LLM with backoff. The stale result is NEVER committed,
+ *    NEVER given a new message ID, and NEVER returned as empty text.
  *
- * No infinite retry loop: a failed result is discarded, not repeatedly
- * regenerated as the same active candidate.
+ * No infinite retry loop: attempts are bounded. No empty/"" terminal state:
+ * the corrector either returns a valid non-duplicate or throws to the existing
+ * fallback path. It never returns currentText = ''.
  */
 
 import { isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from './duplicateResponseGuard';
@@ -39,6 +47,8 @@ import { callLLMWithRetry } from './llmUtils';
  * @param {function} opts.parseAndExtract - closure that parses an LLM raw response
  *   into { responseObj, msgType, responseText, sequenceItems, fallbackNarratives }
  * @returns {Promise<{responseObj, msgType, responseText, sequenceItems, fallbackNarratives}>}
+ *   Never returns responseText = ''. On total stale-duplicate exhaustion, throws
+ *   so Chat's existing catch/fallback/recovery lifecycle handles the failed turn.
  */
 export async function correctDuplicateResponse({
   responseText, responseObj, msgType, sequenceItems, fallbackNarratives,
@@ -46,6 +56,7 @@ export async function correctDuplicateResponse({
 }) {
   let duplicateRetries = 0;
   const MAX_DUPLICATE_RETRIES = 3;
+  const MAX_FORCED_FRESH_ATTEMPTS = 3;
   let currentText = responseText;
   let currentObj = responseObj;
   let currentType = msgType;
@@ -66,17 +77,24 @@ export async function correctDuplicateResponse({
     duplicateRetries++;
   }
 
-  // ── STALE-DUPLICATE DISCARD + FORCED-FRESH CALL ─────────────────────────
+  // ── FORCED-FRESH ATTEMPTS (bounded) ─────────────────────────────────────
   // The stale duplicate survived all anti-repeat retries → it is DEAD for
-  // active-response purposes. Discard it. Make one forced-fresh call anchored
-  // to the user's CURRENT message with a hard prohibition on reusing any prior
-  // response. This is a fresh attempt with a fundamentally different instruction.
-  if (currentText && isExactDuplicateResponse(currentText, previousCharTexts)) {
-    console.error(`[DUPLICATE_GUARD] Stale duplicate survived ${duplicateRetries} retries. Discarding stale result — no active-response authority for completed historical response.`);
+  // active-response purposes. Discard it. Make up to MAX_FORCED_FRESH_ATTEMPTS
+  // fresh calls anchored to the user's CURRENT message with a hard prohibition
+  // on reusing any prior response. Each stale result is discarded before the
+  // next attempt. If any attempt produces a non-duplicate, return it so the
+  // existing Chat lifecycle commits the valid current-turn response.
+  let forcedFreshAttempts = 0;
+  while (currentText && isExactDuplicateResponse(currentText, previousCharTexts) && forcedFreshAttempts < MAX_FORCED_FRESH_ATTEMPTS) {
+    if (forcedFreshAttempts === 0) {
+      console.error(`[DUPLICATE_GUARD] Stale duplicate survived ${duplicateRetries} anti-repeat retries. Discarding stale result — initiating forced-fresh attempts.`);
+    } else {
+      console.error(`[DUPLICATE_GUARD] Forced-fresh attempt ${forcedFreshAttempts} still produced stale duplicate. Discarding — trying again.`);
+    }
     const userSnippet = (userText || '').substring(0, 300).replace(/\s+/g, ' ').trim();
     const forcedFreshSuffix =
       `\n\n═══════════════════════════════════════════════════\n` +
-      `⚠️ CRITICAL — STALE RESPONSE REJECTED\n` +
+      `⚠️ CRITICAL — STALE RESPONSE REJECTED (attempt ${forcedFreshAttempts + 1}/${MAX_FORCED_FRESH_ATTEMPTS})\n` +
       `Your generated response was an EXACT DUPLICATE of a message you already sent earlier in this conversation. That response is REJECTED and discarded.\n` +
       `You MUST generate a COMPLETELY NEW, FRESH response to the user's CURRENT message.\n` +
       `User's current message: "${userSnippet}"\n` +
@@ -92,23 +110,32 @@ export async function correctDuplicateResponse({
     currentText = parsed.responseText;
     currentSeq = parsed.sequenceItems;
     currentFb = parsed.fallbackNarratives;
-
-    // If the forced-fresh call STILL produced a stale duplicate, discard it
-    // entirely. The stale result must never receive a new message ID or be
-    // committed as an active response. This is an extreme edge case — the
-    // forced-fresh instruction is strong enough that a non-duplicate is
-    // virtually always produced, giving the user a valid current-turn response.
-    if (currentText && isExactDuplicateResponse(currentText, previousCharTexts)) {
-      console.error(`[DUPLICATE_GUARD] Stale duplicate persisted after forced-fresh call. DISCARDING — stale response will not be committed or receive a new message ID.`);
-      currentText = '';
-      currentSeq = null;
-      currentFb = [];
-    }
+    forcedFreshAttempts++;
   }
 
-  if (duplicateRetries > 0) {
+  // ── TOTAL EXHAUSTION → THROW TO EXISTING FALLBACK/RECOVERY LIFECYCLE ─────
+  // All bounded attempts (anti-repeat + forced-fresh) produced stale duplicates.
+  // The stale result is permanently discarded. Rather than returning empty text
+  // (which Chat would commit as "..." — an invalid terminal state), THROW so
+  // Chat's existing catch block triggers handleFallbackResponse →
+  // triggerRecoveryBackground — the SAME lifecycle used for any failed LLM
+  // generation. The UI shows "Reconnecting…" (NOT a saved "..." message), and
+  // recovery re-runs the LLM with exponential backoff. The stale result is never
+  // committed, never given a new message ID, and never returned as empty text.
+  if (currentText && isExactDuplicateResponse(currentText, previousCharTexts)) {
+    console.error(
+      `[DUPLICATE_GUARD] All ${duplicateRetries + forcedFreshAttempts} attempts produced stale duplicates. ` +
+      `Throwing to existing fallback/recovery lifecycle — stale result permanently discarded, no empty terminal.`
+    );
+    throw new Error('DUPLICATE_RESPONSE_EXHAUSTED: all bounded generation attempts produced stale duplicates');
+  }
+
+  if ((duplicateRetries + forcedFreshAttempts) > 0) {
     const stillDup = isExactDuplicateResponse(currentText || '', previousCharTexts);
-    console.log(`[DUPLICATE_GUARD] Correction complete after ${duplicateRetries} retry/retries. Duplicate resolved: ${!stillDup}`);
+    console.log(
+      `[DUPLICATE_GUARD] Correction complete after ${duplicateRetries} anti-repeat + ${forcedFreshAttempts} forced-fresh attempts. ` +
+      `Duplicate resolved: ${!stillDup}`
+    );
   }
 
   return {
