@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, useLocation, useParams, useSearchParams, Navigate } from 'react-router-dom';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
@@ -55,7 +55,6 @@ import EditCharacterPublicRelations from './pages/EditCharacterPublicRelations';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
 import { ForegroundPriorityProvider } from '@/lib/ForegroundPriorityContext';
-import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
 /**
