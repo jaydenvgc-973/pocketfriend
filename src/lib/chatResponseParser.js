@@ -66,9 +66,15 @@ export function parseCharacterResponse(raw) {
     catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [], sequence: null }; }
   }
 
-  // 5. No usable content extracted — return empty so the existing recovery pathway handles it.
-  // Do not strip structural syntax and return the remainder as visible dialogue — that leaks
-  // raw JSON field names into the chat bubble when structured parsing fails.
+  // 5. Last resort: plain text — LLM sometimes returns plain dialogue despite the JSON
+  // instruction. Without this fallback, every non-JSON response returns empty and the
+  // character goes silent. Steps 1-4 already handle all valid JSON, so this only fires
+  // for genuine plain text or unparseable output.
+  const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
+  if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
+    return { message_type: "text_only", text_content: stripped, image_generation_prompts: [], sequence: null };
+  }
+
   return { message_type: "text_only", text_content: "", image_generation_prompts: [], sequence: null };
 }
 
