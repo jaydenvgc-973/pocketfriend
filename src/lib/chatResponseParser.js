@@ -67,8 +67,14 @@ export function parseCharacterResponse(raw) {
   }
 
   // 5. Last resort: plain text
+  // CRITICAL: If the stripped text still contains JSON field patterns (message_type, text_content,
+  // sequence, share_location, etc.), it means the raw LLM output was a JSON object that failed
+  // to parse in steps 1-4. Returning this stripped structure as text_content would render raw
+  // JSON field names in the chat bubble (the Vick regression). Detect the pattern and return
+  // empty text_content instead — the recovery flow handles the empty response.
   const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
-  if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
+  const looksLikeJsonStructure = /"(?:message_type|text_content|sequence|share_location|location_share_note|image_generation_prompt|scheduled_events)"\s*:/.test(stripped);
+  if (stripped.length > 10 && /[a-zA-Z]/.test(stripped) && !looksLikeJsonStructure) {
     return { message_type: "text_only", text_content: stripped, image_generation_prompts: [], sequence: null };
   }
 
