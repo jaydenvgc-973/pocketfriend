@@ -144,20 +144,43 @@ Deno.serve(async (req) => {
     }
 
     // ── PARSE RESPONSE: extract text from LLM ──────────────────────────────
-    let responseText;
-    if (typeof recoveredResponse === 'string') {
-      responseText = recoveredResponse.trim();
-    } else if (recoveredResponse?.text_content) {
-      responseText = recoveredResponse.text_content.trim();
-    } else if (recoveredResponse?.message_type) {
-      // JSON response from LLM
-      const parsed = typeof recoveredResponse === 'string'
-        ? JSON.parse(recoveredResponse)
-        : recoveredResponse;
-      responseText = parsed?.text_content || '';
-    } else {
-      responseText = String(recoveredResponse).trim();
-    }
+    // InvokeLLM (without response_json_schema) returns a STRING. The prompt
+    // requests structured JSON, so the string is typically a JSON object with
+    // text_content and sequence. Apply the same extraction as the established
+    // Chat parseCharacterResponse: try JSON.parse → extract text_content (or
+    // sequence dialogue); if parse fails, the string is genuine plain-text
+    // dialogue (step 5 plain-text fallback). This prevents the raw structured
+    // object from being committed as the message content.
+    const extractDialogueFromLLM = (raw: any): string => {
+      if (typeof raw === 'string') {
+        let parsed: any = null;
+        try { parsed = JSON.parse(raw); } catch { /* not JSON — plain text */ }
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          if (Array.isArray(parsed.sequence)) {
+            const dialogue = parsed.sequence
+              .filter((s: any) => s && s.type === 'dialogue' && typeof s.text === 'string' && s.text.trim())
+              .map((s: any) => s.text.trim())
+              .join('\n').trim();
+            return dialogue || (parsed.text_content || '').trim();
+          }
+          return (parsed.text_content || parsed.text || '').trim();
+        }
+        return raw.trim();
+      }
+      if (raw && typeof raw === 'object') {
+        if (Array.isArray(raw.sequence)) {
+          const dialogue = raw.sequence
+            .filter((s: any) => s && s.type === 'dialogue' && typeof s.text === 'string' && s.text.trim())
+            .map((s: any) => s.text.trim())
+            .join('\n').trim();
+          return dialogue || (raw.text_content || '').trim();
+        }
+        return (raw.text_content || raw.text || '').trim();
+      }
+      return String(raw).trim();
+    };
+
+    let responseText = extractDialogueFromLLM(recoveredResponse);
 
     if (!responseText) {
       console.warn('[triggerRecoveryBackground] Recovered response is empty');
@@ -254,14 +277,9 @@ Deno.serve(async (req) => {
         const retryResponse = await base44.integrations.Core.InvokeLLM({
           prompt: prompt + escalation,
         });
-        if (typeof retryResponse === 'string') {
-          retryText = retryResponse.trim();
-        } else if (retryResponse?.text_content) {
-          retryText = retryResponse.text_content.trim();
-        } else {
-          const p = typeof retryResponse === 'string' ? JSON.parse(retryResponse) : retryResponse;
-          retryText = p?.text_content || String(retryResponse).trim();
-        }
+        // Apply the same established extraction — prevents raw structured
+        // JSON from being committed as the retry response content.
+        retryText = extractDialogueFromLLM(retryResponse);
       } catch (llmErr) {
         console.error(`[triggerRecoveryBackground] Retry attempt ${recoveryAttempt + 1} LLM failed: ${llmErr.message}`);
       }
