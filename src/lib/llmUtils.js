@@ -33,7 +33,7 @@ export const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetr
       if (!isRetryable || retryCount === maxRetries) throw err;
       // Rate limits get a longer backoff (10s, 20s, 30s) — network errors use shorter (2s, 4s, 8s)
       const delayMs = isRateLimit
-        ? (retryCount + 1) * 10000
+        ? (retryCount + 1) * 3000
         : Math.pow(2, retryCount + 1) * 1000;
       console.warn(`[LLM_RETRY] ${isRateLimit ? 'rate-limit' : 'network'} | attempt ${retryCount + 1}/${maxRetries} | waiting ${delayMs / 1000}s`);
       await new Promise(r => setTimeout(r, delayMs));
