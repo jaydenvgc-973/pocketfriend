@@ -70,8 +70,14 @@ export function parseCharacterResponse(raw) {
   // instruction. Without this fallback, every non-JSON response returns empty and the
   // character goes silent. Steps 1-4 already handle all valid JSON, so this only fires
   // for genuine plain text or unparseable output.
+  //
+  // Step 5 is the legitimate plain-text fallback — it accepts genuine plain-text dialogue
+  // only. If the stripped text is a failed structured response (JSON-like object/array
+  // that steps 1-4 could not parse), return empty text_content so the caller routes to
+  // the existing generation failure/recovery pathway instead of committing raw structure
+  // as character dialogue.
   const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
-  if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
+  if (stripped.length > 10 && /[a-zA-Z]/.test(stripped) && !stripped.startsWith("{") && !stripped.startsWith("[")) {
     return { message_type: "text_only", text_content: stripped, image_generation_prompts: [], sequence: null };
   }
 

@@ -98,7 +98,6 @@ import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
 import { enforceSubjectNamesInPrompt } from "@/lib/subjectNameEnforcer";
 import { buildPreviousCharacterTexts, isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from "@/lib/duplicateResponseGuard";
-import { correctDuplicateResponse } from "@/lib/duplicateGuardCorrector";
 
 
 export default function Chat({ chatTypeOverride } = {}) {
@@ -1472,9 +1471,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         const hImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(mType);
 
         let rText = hText ? (rObj.text_content?.trim() || "") : "";
-        if (rText.startsWith("{") || rText.startsWith("```") || rText.startsWith("[IMAGE]") || rText.startsWith("[CHARACTER]") || rText.startsWith("[USER]") || rText.startsWith("[JOINT]")) {
-          rText = "";
-        }
         let seqItems = Array.isArray(rObj.sequence) ? rObj.sequence : null;
         let fbNarratives = [];
         if (seqItems?.length > 0) {
@@ -1513,22 +1509,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       responseText = _initial.responseText;
       sequenceItems = _initial.sequenceItems;
       fallbackNarratives = _initial.fallbackNarratives;
-
-      // ── DUPLICATE RESPONSE GUARD — PRE-COMMIT ─────────────────────────────
-      // An exact duplicate of a previously completed character response is a
-      // generation failure. A completed historical response has ZERO active-
-      // response authority — if detected, it is discarded and cannot proceed to
-      // commit, receive a new message ID, or be recycled. See duplicateGuardCorrector.
-      const previousCharTexts = buildPreviousCharacterTexts(messagesRef.current);
-      const _corrected = await correctDuplicateResponse({
-        responseText, responseObj, msgType, sequenceItems, fallbackNarratives,
-        previousCharTexts, fullPrompt, userText: text, parseAndExtract,
-      });
-      responseObj = _corrected.responseObj;
-      msgType = _corrected.msgType;
-      responseText = _corrected.responseText;
-      sequenceItems = _corrected.sequenceItems;
-      fallbackNarratives = _corrected.fallbackNarratives;
 
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
@@ -1631,6 +1611,37 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // and fires performWebLookup — so the same character can initiate genuine
       // research through ANY surface (Chat, Text, World Phone, Gathering Room,
       // Scene, Proactive, Group Chat, Narrative), not just Chat.
+
+      // ── STRUCTURED EXTRACTION FAILURE → EXISTING RECOVERY PATHWAY ──────────
+      // When the parser could not extract text_content from the LLM response
+      // (steps 1-4 failed to parse, step 5 determined it was a failed structured
+      // response not genuine plain text), responseText is empty for a text-bearing
+      // message type. Route to the existing generation failure/recovery pathway
+      // (handleFallbackResponse) instead of committing a placeholder ("...") or
+      // raw structured payload as character dialogue. The recovery pathway
+      // re-attempts generation through triggerRecoveryBackground with the full
+      // prompt and source message idempotency — no new mechanism is created.
+      const _hasSeqDialogue = sequenceItems?.some(s => s.type === 'dialogue' && s.text?.trim());
+      if (hasText && !responseText?.trim() && !_hasSeqDialogue) {
+        releaseFgTask();
+        if (isMountedRef.current) setIsTyping(false);
+        if (isMountedRef.current) {
+          await handleFallbackResponse({
+            characterId,
+            conversationId: conversationIdRef.current || conversationId,
+            currentUser,
+            base44,
+            character,
+            setRecoveringState: setIsRecovering,
+            errorReason: 'llm_failure',
+            errorStage: 'response_parsing',
+            originalPrompt: fullPrompt,
+            sourceMessageId: userMsg?.id,
+            channel: isPhone ? 'phone' : 'direct',
+          });
+        }
+        return;
+      }
 
       if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
         imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
