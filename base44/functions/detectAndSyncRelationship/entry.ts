@@ -222,6 +222,18 @@ Only include entries with confidence >= 0.6. If no confident matches, return emp
         continue;
       }
 
+      // CAREGIVER BOUNDARY: A sitter (is_sitter===true) is a temporary caregiver
+      // for a CHILD who needs supervision while the responsible adult is away.
+      // The sitter is NOT a relationship partner for an adult — not family, not
+      // friend, not acquaintance. Do not create fictional_relationships between
+      // an adult and a sitter. The sitter is there for the child, not for the
+      // adult. This prevents the caregiver from becoming attached to the adult
+      // and leaking into the adult's unrelated context and images.
+      if (matchedChar.is_sitter === true || char.is_sitter === true) {
+        console.log(`[detectAndSyncRelationship] SKIP sitter-adult relationship: ${char.name} ↔ ${matchedChar.name}`);
+        continue;
+      }
+
       const depth = det.interaction_depth || 'established';
 
       // ── RULE: co-location alone ("none") writes nothing ────────────────────
