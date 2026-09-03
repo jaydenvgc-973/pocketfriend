@@ -283,12 +283,15 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   const promptLower = prompt.toLowerCase();
 
   // Filter to active characters only, excluding sender.
+  // exclude_from_roster characters (e.g. spawned babysitters) are excluded from
+  // the image subject roster — they are not legitimate image participants.
   const activeRoster = allChars.filter(c =>
     c.name &&
     c.id !== senderCharacterId &&
     c.status !== 'deleted' &&
     c.status !== 'soft_deleted' &&
-    c.status !== 'merged'
+    c.status !== 'merged' &&
+    c.exclude_from_roster !== true
   );
 
   // Sort by name length descending — prefer more specific/longer matches first
@@ -407,14 +410,13 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, r
   const hasJointTag = /^\[JOINT\]/i.test(imagePrompt.trim());
   if (hasJointTag) {
     log.push(`[SubjectResolver] [JOINT] tag detected — sender is confirmed visual subject`);
-    // [JOINT] is the LLM's EXPLICIT multi-subject signal. The visual-presence gate is RELAXED
-    // here: any named character (full name or unique first name) in the prompt is a co-subject.
-    // Requiring additional "and/with/next-to" phrasing ON TOP of [JOINT] drops co-subjects when
-    // the prompt uses comma lists or other phrasings — leaving only the sender locked while the
-    // named co-subject stays plain prompt text and renders as a generic person. The [JOINT] tag
-    // is the authority that the named characters are in the scene; the gate is redundant here.
+    // [JOINT] means the sender is in the image. It does NOT mean every name in the
+    // prompt is a visual subject — the LLM may mention a person as a conversation
+    // topic. The visual-presence gate is applied the same as non-JOINT prompts: a
+    // named character is only a co-subject when the prompt explicitly places them
+    // in the scene (and/with/next-to/explicit position).
     const { subjects: jointSubjects, ambiguous: jointAmbiguous, log: jointLog } = resolveSubjectCharactersFromPrompt(
-      imagePrompt, allChars, senderCharacterId, { relaxPresenceGate: true }
+      imagePrompt, allChars, senderCharacterId
     );
     log.push(...jointLog);
     log.push(`[SubjectResolver] [JOINT] co-subjects found: [${jointSubjects.map(c => c.name).join(', ')}]`);
