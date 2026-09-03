@@ -1012,6 +1012,16 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   for (const other of allCharacters) {
     if (other.id === character.id) continue;
     if (other.status === 'deleted') continue;
+    // CAREGIVER EXCLUSION: Characters with is_sitter===true are contextual childcare
+    // providers, not household members or companions. They must NOT be reported as
+    // co-present household members — doing so causes the LLM to treat the caregiver
+    // as a permanent companion and insert them into unrelated image prompts
+    // (beaches, vacations, scenes unrelated to the childcare circumstance).
+    // The caregiver's presence is managed by ensureChildCaregiverPresence based on
+    // actual childcare need. The character does not need to interact with the
+    // caregiver in conversation — the caregiver is there for the children, not for
+    // the character. The user can still explicitly request a caregiver in an image.
+    if (other.is_sitter === true) continue;
 
     const otherHome = other.current_home_location_id;
     const otherCurrent = other.resolved_current_location_id;
