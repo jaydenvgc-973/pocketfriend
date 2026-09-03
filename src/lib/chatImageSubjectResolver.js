@@ -283,12 +283,28 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   const promptLower = prompt.toLowerCase();
 
   // Filter to active characters only, excluding sender.
+  // CAREGIVER BOUNDARY: A caregiver (is_sitter, babysitter occupation, or
+  // "babysitter" in name) is a temporary supervisor for a CHILD, not a visual
+  // subject for an adult's image. Skip caregivers when resolving visual
+  // subjects — the caregiver remains associated with the child's supervision
+  // need and does not become attached to the adult's image context. This
+  // prevents a caregiver whose name starts with a word that matches the
+  // adult's last name (e.g. "Thompson Home - 221 E 26th st Babysitter" vs
+  // "Ethan Thompson") from being matched via first-name matching and injected
+  // into the adult's [JOINT] image prompt by enforceSubjectNamesInPrompt.
+  const _isCaregiver = (c) =>
+    c.is_sitter === true ||
+    (c.occupation || '').toLowerCase().includes('babysitter') ||
+    (c.occupation || '').toLowerCase().includes('caregiver') ||
+    (c.name || '').toLowerCase().includes('babysitter');
+
   const activeRoster = allChars.filter(c =>
     c.name &&
     c.id !== senderCharacterId &&
     c.status !== 'deleted' &&
     c.status !== 'soft_deleted' &&
-    c.status !== 'merged'
+    c.status !== 'merged' &&
+    !_isCaregiver(c)
   );
 
   // Sort by name length descending — prefer more specific/longer matches first
