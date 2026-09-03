@@ -283,28 +283,12 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   const promptLower = prompt.toLowerCase();
 
   // Filter to active characters only, excluding sender.
-  // CAREGIVER BOUNDARY: A caregiver (is_sitter, babysitter occupation, or
-  // "babysitter" in name) is a temporary supervisor for a CHILD, not a visual
-  // subject for an adult's image. Skip caregivers when resolving visual
-  // subjects — the caregiver remains associated with the child's supervision
-  // need and does not become attached to the adult's image context. This
-  // prevents a caregiver whose name starts with a word that matches the
-  // adult's last name (e.g. "Thompson Home - 221 E 26th st Babysitter" vs
-  // "Ethan Thompson") from being matched via first-name matching and injected
-  // into the adult's [JOINT] image prompt by enforceSubjectNamesInPrompt.
-  const _isCaregiver = (c) =>
-    c.is_sitter === true ||
-    (c.occupation || '').toLowerCase().includes('babysitter') ||
-    (c.occupation || '').toLowerCase().includes('caregiver') ||
-    (c.name || '').toLowerCase().includes('babysitter');
-
   const activeRoster = allChars.filter(c =>
     c.name &&
     c.id !== senderCharacterId &&
     c.status !== 'deleted' &&
     c.status !== 'soft_deleted' &&
-    c.status !== 'merged' &&
-    !_isCaregiver(c)
+    c.status !== 'merged'
   );
 
   // Sort by name length descending — prefer more specific/longer matches first
@@ -335,13 +319,41 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
     }
   }
 
+  // ── FIRST-NAME DISAMBIGUATION ──────────────────────────────────────────────
+  // A first-name token that only appears inside an already-resolved full name
+  // (or the sender's full name) is NOT an independent reference to another
+  // character. Without this guard, a shared word — e.g. "Thompson" from
+  // "Ethan Thompson" — resolves an unrelated character whose name happens to
+  // start with that same word (e.g. "Thompson Home - 221 E 26th st Babysitter"),
+  // even though the word in the prompt belongs to a different person's full
+  // name and was never an independent mention of the unrelated character.
+  // A shared surname token, first-word overlap, or other incidental word
+  // coincidence is not authority to add another character as an image subject.
+  const senderChar = allChars.find(c => c.id === senderCharacterId);
+  const resolvedFullNames = [
+    ...(senderChar?.name ? [senderChar.name.toLowerCase()] : []),
+    ...subjects.map(s => s.name.toLowerCase()),
+  ].filter(Boolean);
+
+  let promptWithoutResolvedNames = promptLower;
+  for (const fullName of resolvedFullNames) {
+    promptWithoutResolvedNames = promptWithoutResolvedNames.split(fullName).join('');
+  }
+
   // Phase 2: First-name match (only if unique, only if ≥4 chars, not already matched)
   // Also gated by visual-presence signal.
+  // DISAMBIGUATION: the first-name token must appear in the prompt OUTSIDE of
+  // any already-resolved full name; otherwise it is a word borrowed from a
+  // different character's name, not an independent reference.
   for (const c of sortedRoster) {
     if (matchedIds.has(c.id)) continue;
     const firstName = c.name.split(/\s+/)[0].toLowerCase();
     if (firstName.length < 4) continue;
     if (!promptLower.includes(firstName)) continue;
+    if (!promptWithoutResolvedNames.includes(firstName)) {
+      log.push(`[SubjectResolver] First-name match "${firstName}" SKIPPED — token only appears inside an already-resolved full name, not an independent reference`);
+      continue;
+    }
 
     const count = firstNameCount[firstName] || 0;
     if (count > 1) {
