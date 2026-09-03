@@ -1644,7 +1644,7 @@ Deno.serve(async (req) => {
               if (c.id === characterId) return false; // skip self
               if (!c.resolved_current_location_id) return false;
               if (c.resolved_current_location_id !== charLocationId) return false;
-              if (c.is_sitter === true) return false; // caregiver — contextual, not a companion
+              // Exclude sleeping, passed_out, traveling, incarcerated characters
               const ps = c.resolved_presence_status;
               if (ps === 'sleeping' || ps === 'napping' || ps === 'passed_out') return false;
               if (c.is_jailed) return false;

@@ -1012,31 +1012,29 @@ export function buildHouseholdCoPresenceContext(character, allCharacters = []) {
   for (const other of allCharacters) {
     if (other.id === character.id) continue;
     if (other.status === 'deleted') continue;
-    // CAREGIVER EXCLUSION: Characters with is_sitter===true are contextual childcare
-    // providers, not household members or companions. They must NOT be reported as
-    // co-present household members — doing so causes the LLM to treat the caregiver
-    // as a permanent companion and insert them into unrelated image prompts
-    // (beaches, vacations, scenes unrelated to the childcare circumstance).
-    // The caregiver's presence is managed by ensureChildCaregiverPresence based on
-    // actual childcare need. The character does not need to interact with the
-    // caregiver in conversation — the caregiver is there for the children, not for
-    // the character. The user can still explicitly request a caregiver in an image.
-    if (other.is_sitter === true) continue;
 
     const otherHome = other.current_home_location_id;
     const otherCurrent = other.resolved_current_location_id;
     const otherName = other.display_name || other.name;
     if (!otherName) continue;
 
-    // Co-present: same CURRENT location right now
+    // Co-present: same CURRENT location right now — truthful physical presence.
+    // A sitter can be at the same place as an adult without becoming that adult's
+    // companion; this reports physical proximity only, not attachment.
     if (charCurrentLocId && otherCurrent && charCurrentLocId === otherCurrent) {
       coPresent.push({ name: otherName, reason: 'same_location_now', status: other.resolved_presence_status || 'here' });
       continue;
     }
 
-    // Co-present: both resolved to home and same home
+    // Co-present: both resolved to home and same home.
     // GUARDED by charIsActuallyHome — only report if the speaking character is actually at home.
-    if (charIsActuallyHome && charHomeId && otherHome && charHomeId === otherHome) {
+    // CAREGIVER EXCLUSION: A sitter (is_sitter===true) is a temporary caregiver for a
+    // CHILD who needs supervision while the responsible adult is away. The sitter is
+    // NOT a household member of an adult and must not be reported as "home with" an
+    // adult — that attaches the caregiver to the adult and lets it leak into unrelated
+    // adult context and images. The sitter is there for the child, not for the adult.
+    // The sitter can still surface via "same_location_now" above when physically present.
+    if (charIsActuallyHome && charHomeId && otherHome && charHomeId === otherHome && other.is_sitter !== true) {
       const otherAtHome = !otherCurrent || otherCurrent === otherHome;
       if (otherAtHome) {
         coPresent.push({ name: otherName, reason: 'same_household_home', status: 'home' });
