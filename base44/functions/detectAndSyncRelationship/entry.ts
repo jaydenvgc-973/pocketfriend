@@ -48,17 +48,12 @@ Deno.serve(async (req) => {
 
     // ── LOAD ALL ACCOUNT CHARACTERS (for resolution) ──────────────────────────
     const allChars = await base44.entities.Character.filter({ owner_email: ownerEmail }, null, 200).catch(() => []);
-    // Exclude the current character, deleted/merged, and system-spawned sitters.
-    // Sitters are spawned by ensureChildCaregiverPresence for childcare supervision —
-    // they are not legitimate relationship targets. Detecting a relationship with a
-    // sitter injects it into the character's fictional_relationships, which leaks the
-    // sitter into LLM context and image prompts where it does not belong.
+    // Exclude the current character and deleted/merged
     const candidates = allChars.filter(c =>
       c.id !== character_id &&
       c.status !== 'deleted' &&
       c.status !== 'soft_deleted' &&
-      c.status !== 'merged' &&
-      c.is_sitter !== true
+      c.status !== 'merged'
     );
 
     if (candidates.length === 0) {
