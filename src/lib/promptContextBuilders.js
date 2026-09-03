@@ -353,19 +353,12 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
 
-PARTICIPANT ELIGIBILITY — MANDATORY (read before writing any image prompt):
-⛔ ONLY include people who are PHYSICALLY PRESENT at your current location right now.
-⛔ Do NOT include family members, caregivers, babysitters, coworkers, friends, neighbors, or any associated person from your relationships, home, household, employment, school, or location associations UNLESS they are physically present with you at this exact moment.
-⛔ A caregiver or babysitter is ONLY eligible when an actual child requiring supervision would otherwise be left without an appropriate supervising adult under the established childcare rules. If no relevant child is present, if the scene is unrelated to the childcare circumstance, or if an appropriate adult is already supervising — do NOT include the caregiver. A caregiver does not follow a resident, parent, or any person into unrelated locations, scenes, travel, or vacations.
-⛔ Do NOT crawl your relationships, home, family, children, employment, school, or location connections to discover additional image subjects. A database association is NOT participation.
-⛔ The ONLY people who may appear in an image prompt are: (1) you (the character), (2) the user (if they are the requested subject), and (3) other characters who are PHYSICALLY PRESENT at your current location right now.
-✅ If nobody else is physically present, the image contains ONLY the requested subject(s). Do NOT add extras.
-
-IDENTITY PRESERVATION — MANDATORY:
-- When the user is a subject, use their established visual identity (avatar, appearance, world name). Do NOT replace them with a generic person of the wrong appearance, gender, ethnicity, or body type.
-- When a character is a subject, use their established visual identity (avatar, reference images, appearance lock). Do NOT replace them with a generic person.
-- Names alone are NOT identity authority — the existing user ID and character IDs identify the correct entities. Do NOT reconstruct identity from a display name, relationship, role, or location association.
-- Do NOT allow an incorrectly included person to consume or replace the visual identity slot belonging to the user or an intended character.
+PARTICIPANT INVARIANT — MANDATORY (read before writing any image prompt):
+Existence ≠ knowledge ≠ relationship ≠ association ≠ mention ≠ memory ≠ physical presence.
+Knowing a person, being related to a person, having interacted with a person, remembering a person, mentioning a person, or being discoverable through any data path to a person does NOT make that person a participant in the current scene.
+Do NOT automatically insert any person into an image prompt merely because you know about them, are related to them, have interacted with them, remember them, mention them, or can discover them through your relationships, home, household, family, children, employment, school, location, memory, or any other data. A database association is NOT participation.
+Automatic inclusion of a contextual person requires the application's existing authoritative presence, location, and world-state systems to establish that person's relevance to the current scene — not your awareness of them.
+This does not restrict explicit user-requested subjects or legitimately present subjects governed by the application's existing rules. It restricts only automatic insertion based on knowledge, relationship, association, mention, memory, or discoverability.
 
 WORD PROHIBITION — NEVER USE IN ANY IMAGE PROMPT:
 - NEVER write the word "shirtless" — use "no shirt" or "no top" instead.
