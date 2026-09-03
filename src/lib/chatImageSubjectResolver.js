@@ -283,12 +283,25 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   const promptLower = prompt.toLowerCase();
 
   // Filter to active characters only, excluding sender.
+  // CAREGIVERS ARE NOT IMAGE SUBJECTS: A caregiver (is_sitter, babysitter
+  // occupation, or "babysitter" in name) exists for contextual childcare
+  // coverage — not imagery. The caregiver has no avatar and is not intended
+  // to participate in generated images. Naming, mentioning, or resolving
+  // the caregiver contextually does not make the caregiver an image subject.
+  // Only an actual person-character may be resolved as a visual subject.
+  const _isCaregiver = (c) =>
+    c.is_sitter === true ||
+    (c.occupation || '').toLowerCase().includes('babysitter') ||
+    (c.occupation || '').toLowerCase().includes('caregiver') ||
+    (c.name || '').toLowerCase().includes('babysitter');
+
   const activeRoster = allChars.filter(c =>
     c.name &&
     c.id !== senderCharacterId &&
     c.status !== 'deleted' &&
     c.status !== 'soft_deleted' &&
-    c.status !== 'merged'
+    c.status !== 'merged' &&
+    !_isCaregiver(c)
   );
 
   // Sort by name length descending — prefer more specific/longer matches first
