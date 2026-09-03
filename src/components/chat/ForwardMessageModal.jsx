@@ -46,16 +46,33 @@ export default function ForwardMessageModal({ message, onClose }) {
         const char = characters.find(c => c.id === charId);
         if (!char) continue;
 
-        // Find or create direct conversation
-        const convos = await base44.entities.Conversation.filter({ type: "direct", character_ids: [charId] });
-        const direct = convos.filter(c => c.character_ids?.length === 1 && c.character_ids[0] === charId);
+        // Find or create direct conversation.
+        // CRITICAL: Match the CHAT IDENTITY GUARD used by useChatLoadConvo (the loading path).
+        // Exclude story_event, world_phone, bilateral (shared_conversation_key), and
+        // char-to-char conversations. Without these exclusions, the forwarded message is
+        // written to a conversation the Chat page will never load, so the recipient never
+        // sees it. Also scope by owner_email so we find the user's own conversation.
+        const me = await base44.auth.me().catch(() => null);
+        const ownerEmail = me?.email || null;
+        const convoFilter = { type: "direct", character_ids: [charId] };
+        if (ownerEmail) convoFilter.owner_email = ownerEmail;
+        const convos = await base44.entities.Conversation.filter(convoFilter, "-last_message_date", 100);
+        const direct = convos.filter(c => {
+          const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
+          if (ids.length !== 1 || ids[0] !== charId) return false;
+          if (c.shared_conversation_key) return false;
+          if (c.channel === 'world_phone' || c.channel === 'story_event') return false;
+          return true;
+        });
         let convoId = direct[0]?.id;
         if (!convoId) {
-          const newConvo = await base44.entities.Conversation.create({
+          const createPayload = {
             title: `direct with ${char.name}`,
             type: "direct",
             character_ids: [charId],
-          });
+          };
+          if (ownerEmail) createPayload.owner_email = ownerEmail;
+          const newConvo = await base44.entities.Conversation.create(createPayload);
           convoId = newConvo.id;
         }
 
