@@ -924,21 +924,20 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         worldPhoneRetrieval: buildWorldPhoneRetrievalContext({ characterId, character, userMessage: text, allCharacters: queryClient.getQueryData(["characters", currentUser?.email]) || [], base44 }).catch(() => null),
       };
 
-      // For employment prompt block (critical for schedule accuracy), fetch locations with shorter timeout
-      let employmentLocations = [];
-      if (needsLocationFetch) {
-        try {
-          employmentLocations = await Promise.race([
+      // LATENCY FIX: Start employmentLocations + familyGraph in parallel with optional context.
+      // Previously sequential — now they overlap with the 2-3s optional context window.
+      const employmentLocationsPromise = needsLocationFetch
+        ? Promise.race([
             getLocations(async () => {
               const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
               return allLocRes?.data?.locations || [];
             }),
             new Promise(resolve => setTimeout(() => resolve([]), 3000)) // 3s timeout
-          ]);
-        } catch {
-          employmentLocations = [];
-        }
-      }
+          ]).catch(() => [])
+        : Promise.resolve([]);
+
+      const familyGraphPromise = base44.functions.invoke('resolveCharacterFamilyGraph', { characterId })
+        .catch(() => null);
 
       // Extract optional context with immediate non-blocking fallbacks
       // These promises are already running in parallel — we do NOT await them
@@ -1017,7 +1016,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
 
       // LIVE family graph — fetched every send, never cached. Evicts canonical cache on resolve.
       try {
-        const famRes = await base44.functions.invoke('resolveCharacterFamilyGraph', { characterId });
+        const famRes = await familyGraphPromise;
         const famBlock = famRes?.data?.promptBlock || '';
         if (famBlock) {
           liveFamilyGraphBlock = famBlock;
@@ -1356,7 +1355,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      // Employment context with locations (employment-scoped, not full fetch)
+      const employmentLocations = await employmentLocationsPromise;
       const employmentPresenceSeparation = buildEmploymentPromptBlock(character, employmentLocations);
 
       // Build location share context for the prompt
