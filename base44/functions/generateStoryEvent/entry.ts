@@ -538,7 +538,7 @@ Deno.serve(async (req) => {
       ...(userBundle ? [
         ``,
         `USER PARTICIPANT (the authenticated user — include them in the narrative and imagery, but do NOT create memories FOR them):`,
-        `- ${userBundle.display_name} [User — not a character]`,
+        `- ${userBundle.display_name} [User — not a character] (User ID: ${userBundle.user_id})`,
         userBundle.gender ? `  Gender: ${userBundle.gender}` : '',
         userBundle.is_focus ? `  ★ FOCUS participant — give them greater narrative attention` : '',
         `  NOTE: This person is the USER, not a character. Include them in the narrative and image descriptions, but do NOT include them in the memories array or emotional_outcomes array. Only create memories for CHARACTER participants.`,
@@ -585,7 +585,7 @@ Deno.serve(async (req) => {
       `    { "character_id": "the_exact_id", "character_name": "Name", "emotion": "happy|proud|relieved|excited|comfortable|calm|trusting|anxious|sad|disappointed|frustrated|embarrassed|reflective|grateful|hopeful|tense|hurt|content", "intensity": "mild|moderate|strong", "reason": "Brief explanation tied to the narrative" }`,
       `  ],`,
       `  "relationship_changes": [`,
-      `    { "source_character_id": "the_exact_id", "target_character_id": "the_exact_id", "source_name": "Name", "target_name": "Name", "dimension": "friendship|trust|familiarity|attraction|respect|tension", "change": "increased|decreased", "amount": 1-10, "reason": "Brief explanation tied to the narrative" }`,
+      `    { "source_character_id": "the_exact_id", "target_character_id": "the_exact_id_or_user_id", "source_name": "Name", "target_name": "Name", "dimension": "friendship|trust|familiarity|attraction|respect|tension|romantic|chosen_family", "change": "increased|decreased", "amount": 1-10, "reason": "Brief explanation tied to the narrative" }`,
       `  ],`,
       `  "memories": [`,
       `    { "character_id": "the_exact_id", "character_name": "Name", "memory_text": "What this character remembers about the event — personal, specific, from their perspective. Include: the event title, venue, who they saw there, what they did, interactions they had, and how they felt. A few sentences.", "memory_summary": "Short summary for retrieval (one sentence)", "importance_score": 1-10, "emotional_tone": "positive|negative|neutral|mixed" }`,
@@ -604,7 +604,7 @@ Deno.serve(async (req) => {
       `- Focus characters get richer memories with higher importance scores.`,
       `- EVERY CHARACTER participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
       `- The USER participant is NOT a character. Do NOT include them in the memories array, emotional_outcomes array, or any memory-related output. Only create memories for CHARACTER participants.`,
-      `- Relationship changes can be created between CHARACTER participants who interact meaningfully. The user is not a target of relationship changes.`,
+      `- Relationship changes can be created between CHARACTER participants who interact meaningfully. A character's relationship toward the USER can also change — when it does, use the user's User ID as target_character_id and the user's display name as target_name.`,
       `- Image prompts must reference the venue: ${venueName}.`,
       `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, clothing, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
       userImageRuleLine,
@@ -913,16 +913,50 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 3: UPDATE RELATIONSHIP SCORES ────────────────────────────────────
+    // Two pathways, matching the existing relationship architecture:
+    //   CHARACTER → CHARACTER: writes to fictional_relationships[] (unchanged)
+    //   CHARACTER → USER: writes to top-level Character relationship fields
+    //     (user_respect_level, friendship_level, trust_level, romantic_level,
+    //     attraction_level, chosen_family_level) — the SAME fields used by
+    //     updateRelationshipLevels for normal character/user interaction.
     const relChanges = generated.relationship_changes || [];
+    const userIdForRelTarget = userBundle?.user_id || null;
+
     for (const rc of relChanges) {
       if (!rc.source_character_id || !rc.target_character_id || !rc.dimension) continue;
       const sourceChar = charById[rc.source_character_id];
       if (!sourceChar) continue;
 
       try {
+        const amount = Math.min(10, Math.max(1, rc.amount || 3));
+
+        // ── CHARACTER → USER: top-level Character relationship fields ──
+        if (userIdForRelTarget && rc.target_character_id === userIdForRelTarget) {
+          const userDimensionFieldMap = {
+            friendship: 'friendship_level',
+            trust: 'trust_level',
+            attraction: 'attraction_level',
+            respect: 'user_respect_level',
+            romantic: 'romantic_level',
+            chosen_family: 'chosen_family_level',
+          };
+          const userField = userDimensionFieldMap[rc.dimension];
+          if (!userField) continue; // familiarity/tension have no character→user equivalent
+
+          const currentVal = sourceChar[userField] ?? 50;
+          const newVal = rc.change === 'increased'
+            ? Math.min(100, currentVal + amount)
+            : Math.max(0, currentVal - amount);
+          sourceChar[userField] = newVal; // update in-memory for subsequent changes
+          await base44.asServiceRole.entities.Character.update(rc.source_character_id, {
+            [userField]: newVal,
+          });
+          continue;
+        }
+
+        // ── CHARACTER → CHARACTER: fictional_relationships[] (existing, unchanged) ──
         const existingRels = sourceChar.fictional_relationships || [];
         const relIdx = existingRels.findIndex(r => r.related_character_id === rc.target_character_id);
-        const amount = Math.min(10, Math.max(1, rc.amount || 3));
 
         const dimensionFieldMap = {
           friendship: 'friendship_level',
