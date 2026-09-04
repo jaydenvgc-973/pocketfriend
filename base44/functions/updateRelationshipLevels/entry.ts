@@ -268,10 +268,16 @@ function checkOrientationShift(orientation, attractionLevel, charGender, targetG
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    const body = await req.json().catch(() => ({}));
+    const { characterId, userMessage, characterReply, recentMessages, emojiReaction, reactedMessageContent, reactedMessageSenderType, playingAsCharacterId, ownerEmail: bodyOwnerEmail } = body;
 
-    const { characterId, userMessage, characterReply, recentMessages, emojiReaction, reactedMessageContent, reactedMessageSenderType, playingAsCharacterId } = await req.json();
+    const user = await base44.auth.me().catch(() => null);
+    // Service-role fallback: when called from another backend function (e.g. generateStoryEvent),
+    // base44.auth.me() returns null. Use ownerEmail from the request body instead.
+    // Normal frontend calls still use base44.auth.me() — this fallback does not alter them.
+    const effectiveEmail = user?.email || bodyOwnerEmail || null;
+    if (!effectiveEmail) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     if (!characterId) return Response.json({ error: 'Missing required fields' }, { status: 400 });
     if (!userMessage && !emojiReaction) return Response.json({ error: 'Missing required fields' }, { status: 400 });
 
@@ -279,18 +285,18 @@ Deno.serve(async (req) => {
     // owner_email is the authoritative ownership field — created_by is legacy-only fallback
     let chars = await base44.asServiceRole.entities.Character.filter({
       id: characterId,
-      owner_email: user.email
+      owner_email: effectiveEmail
     });
     // Legacy fallback: older characters may have owner_email missing — try created_by
     if (!chars || chars.length === 0) {
       chars = await base44.asServiceRole.entities.Character.filter({
         id: characterId,
-        created_by: user.email
+        created_by: effectiveEmail
       });
     }
     const character = chars?.[0];
     if (!character) {
-      console.warn(`[updateRelationshipLevels] Character ${characterId} not found or not owned by ${user.email}`);
+      console.warn(`[updateRelationshipLevels] Character ${characterId} not found or not owned by ${effectiveEmail}`);
       return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
     }
 
@@ -304,9 +310,9 @@ Deno.serve(async (req) => {
     if (playingAsCharacterId) {
       // VALIDATION: playingAsCharacter must belong to current user
       // owner_email is authoritative; legacy fallback to created_by
-      let playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, owner_email: user.email });
+      let playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, owner_email: effectiveEmail });
       if (!playingChars || playingChars.length === 0) {
-        playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, created_by: user.email });
+        playingChars = await base44.asServiceRole.entities.Character.filter({ id: playingAsCharacterId, created_by: effectiveEmail });
       }
       playingAsCharacter = playingChars?.[0] || null;
       if (playingAsCharacter) {
@@ -736,12 +742,12 @@ Respond with ONLY valid JSON:
 
     // VALIDATION: Ensure character still exists before updating
     // owner_email is authoritative; fall back to created_by for legacy characters
-    let validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: user.email });
+    let validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: effectiveEmail });
     if (!validateChar || validateChar.length === 0) {
-      validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: user.email });
+      validateChar = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: effectiveEmail });
     }
     if (!validateChar || validateChar.length === 0) {
-      console.error(`[updateRelationshipLevels] Character ${characterId} disappeared during processing (owned by ${user.email})`);
+      console.error(`[updateRelationshipLevels] Character ${characterId} disappeared during processing (owned by ${effectiveEmail})`);
       return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
     }
     await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
