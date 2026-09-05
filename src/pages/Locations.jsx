@@ -89,7 +89,11 @@ const CATEGORIES = [
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
   const isShared = location.scope === 'shared' || location.location_type === 'shared';
   const isAdmin = currentUser?.role === 'admin';
-  const canEdit = !isShared || isAdmin;
+  // OWNERSHIP-AWARE PERMISSIONS: Sharing does NOT transfer ownership.
+  // The owner can always manage their own location (edit, delete, unshare).
+  // Admin can manage any location. Other users cannot manage someone else's location.
+  const isOwner = location.owner_email === currentUser?.email;
+  const canEdit = isOwner || isAdmin;
   const [expanded, setExpanded] = useState(false);
 
   const handleUniformSave = async (updatedLocation) => {
@@ -225,7 +229,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {isShared && !isAdmin && (
+          {isShared && (
             <span className="text-[9px] text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded-full font-medium">🔗 Shared</span>
           )}
           {canEdit && (
@@ -253,9 +257,9 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             className="border-t border-border overflow-hidden"
           >
             <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} onResidentsChanged={onLocationUpdate} />
-                    {isShared && !isAdmin && (
+                    {isShared && !isOwner && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                        <p className="text-xs text-amber-400">🔒 This is a shared location. Only admins can edit it. Your characters can visit but cannot be permanently assigned here.</p>
+                        <p className="text-xs text-amber-400">🔒 This is a shared location owned by another account. Your characters can visit but cannot be permanently assigned here.</p>
                       </div>
                     )}
                     <div className="px-4 pb-4 space-y-3">
@@ -757,7 +761,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         <div className="flex items-center justify-between px-3 py-2.5 rounded-xl border border-border bg-card">
           <div>
             <p className="text-sm text-foreground font-medium">🔗 Shared</p>
-            <p className="text-xs text-muted-foreground">Visible to all users (admin-controlled)</p>
+            <p className="text-xs text-muted-foreground">Visible to all users for travel</p>
           </div>
           <button
             onClick={() => update("is_shared", !form.is_shared)}
@@ -766,9 +770,22 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.is_shared ? "translate-x-5" : "translate-x-0"}`} />
           </button>
         </div>
-        {form.is_shared && currentUser?.role !== 'admin' && (
-          <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">⚠️ Shared locations are admin-controlled. Once created, only admins can edit them.</p>
-        )}
+        {form.is_shared && currentUser?.role !== 'admin' && (() => {
+          // Check if user already has another shared location
+          const otherShared = locations.filter(l =>
+            (l.scope === 'shared' || l.location_type === 'shared') &&
+            l.owner_email === currentUser?.email &&
+            l.id !== editingLocation?.id
+          );
+          if (otherShared.length > 0) {
+            return (
+              <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">
+                ⚠️ You already have a shared location ("{otherShared[0].name}"). You must unshare it before sharing another location.
+              </p>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {form.location_type === "character_specific" && (
@@ -874,7 +891,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               zone={zone} 
               onUpdateImages={(urls) => updateZoneImages(i, urls)} 
               onDelete={() => removeZone(i)} 
-              readOnly={form.location_type === 'shared' && currentUser?.role !== 'admin'}
+              readOnly={false}
               locationName={form.name}
               category={form.category}
               subtype={form.subtype}
@@ -885,7 +902,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       </div>
 
       {/* ── RESIDENTS ── */}
-      {(form.category === 'home' || form.category === 'hotel' || form.category === 'shelter' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && form.location_type !== 'shared' && (
+      {(form.category === 'home' || form.category === 'hotel' || form.category === 'shelter' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && (
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives/stays here?</label>
@@ -1111,7 +1128,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── WORKERS ── */}
-      {form.location_type !== 'shared' && (form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
 
@@ -1552,6 +1569,22 @@ export default function Locations() {
     let locationId;
     const isAdmin = currentUser?.role === 'admin';
     const scopeValue = formData.is_shared ? 'shared' : 'account_global';
+
+    // ── SHARING LIMIT ENFORCEMENT ──────────────────────────────────────────
+    // Admin may share any number of admin-owned locations.
+    // Regular users may share only ONE of their own locations at a time.
+    // If the user already has a different shared location, block this share.
+    if (formData.is_shared && !isAdmin) {
+      const existingShared = locations.filter(l =>
+        (l.scope === 'shared' || l.location_type === 'shared') &&
+        l.owner_email === currentUser?.email &&
+        l.id !== editingLocationId
+      );
+      if (existingShared.length > 0) {
+        alert(`You already have a shared location ("${existingShared[0].name}"). You must unshare it before sharing another location.`);
+        return;
+      }
+    }
     
     // ── AUTO-SET CONFINEMENT FLAGS ────────────────────────────────────────────
     // If the category is jail_prison, automatically set is_confinement_facility
@@ -1828,11 +1861,11 @@ export default function Locations() {
   const handleDelete = async (id) => {
     const loc = locations.find(l => l.id === id);
     if (!loc) return;
-    const isShared = loc.scope === 'shared' || loc.location_type === 'shared';
-    if (isShared && currentUser?.role !== 'admin') { alert('Shared locations can only be deleted by admins.'); return; }
+    // OWNERSHIP-AWARE DELETE: The owner can delete their own location (shared or not).
+    // Admin can delete any location. Other users cannot delete someone else's location.
     const isOwner = loc.owner_email === currentUser?.email;
-    const canDelete = isOwner || loc.location_type === 'global';
-    if (!canDelete) { alert(`You can only delete locations you created.`); return; }
+    const isAdmin = currentUser?.role === 'admin';
+    if (!isOwner && !isAdmin) { alert(`You can only delete locations you own.`); return; }
     if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
     await base44.entities.LocationReference.delete(id);
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });

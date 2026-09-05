@@ -66,6 +66,12 @@ Deno.serve(async (req) => {
         resolved_current_location_name: destination_location_name,
         resolved_location_type: resolvedLocType,
         resolved_presence_status: 'visiting',
+        // CRITICAL: Set resolved_source_reason so the location resolver's Layer 3.5D
+        // (social visit) recognizes this as a system-placed visit. Without this,
+        // the resolver may fall through to home fallback, causing the character's
+        // dialogue/context to say they are at home even though they are at the
+        // shared/destination location.
+        resolved_source_reason: 'user_travel',
         resolved_last_updated_at: now.toISOString(),
         arrived_at: now.toISOString(),
         travel_destination_location_id: null,

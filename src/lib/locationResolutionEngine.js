@@ -1184,9 +1184,16 @@ export function getCharacterLivePresence(character, locationMap = {}) {
 export function buildLiveLocationContext(character, locationMap = {}, imageMode = false) {
   if (!character) return '';
 
-  const presence = character.resolved_presence_status;
-  const locId = character.resolved_current_location_id;
-  const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
+  // CRITICAL: Use the live resolver to get the authoritative current location,
+  // NOT the stale DB fields. The resolver recomputes from schedule, sleep,
+  // travel, and visit state — ensuring the LLM context matches what the user
+  // sees on the Travel/Home pages. Without this, a character who traveled to
+  // a shared location but whose DB fields haven't been refreshed would get
+  // stale "home" context in the LLM prompt.
+  const resolved = resolveCharacterLocation(character, locationMap);
+  const presence = resolved.resolved_presence_status;
+  const locId = resolved.resolved_current_location_id;
+  const locName = resolved.resolved_current_location_name || (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
