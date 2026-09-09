@@ -1606,9 +1606,11 @@ export default function Locations() {
     const enrichedFields = {
       scope: scopeValue,
       location_type: formData.is_shared ? 'shared' : formData.location_type,
-      created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
       ...confinementData,
     };
+    // created_by_role is set ONLY at creation time — never overwritten on update.
+    // This preserves the original creator's role stamp when an admin moderates
+    // (e.g. unshares) a location owned by a regular user. Ownership stays canonical.
 
     // ── PRESERVE UI SCHEDULE TRUTH ──────────────────────────────────────────
     // The Locations page shows 09:00–17:00 Mon-Fri as the starting defaults for new workers.
@@ -1638,6 +1640,7 @@ export default function Locations() {
       const enriched = {
         ...saveData,
         ...enrichedFields,
+        created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
         owner_email: currentUser?.email,
         owner_user_id: currentUser?.id,
       };

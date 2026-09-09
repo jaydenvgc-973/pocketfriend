@@ -60,13 +60,18 @@ Deno.serve(async (req) => {
       ).catch(() => []);
     }
 
-    // ── QUERY 2: Admin-shared locations (scoped by scope + created_by_role) ───
-    // These are the ONLY cross-account visible locations — admin-created and explicitly shared.
+    // ── QUERY 2: ALL shared locations (scoped by scope only) ───────────────────
+    // Every location explicitly marked Shared is cross-account visible per the Shared
+    // Location system — regardless of which account owns it or the creator's role.
+    // This includes Shared locations owned by regular users, which the admin must see
+    // to moderate. The RLS read rule already permits scope==='shared' to any user;
+    // this query simply retrieves them all. Non-shared private locations from other
+    // accounts are NEVER fetched here (Query 1 is owner_email-scoped only).
     // Non-blocking: if rate-limited, skip shared locations rather than crashing.
     const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
-      { scope: 'shared', created_by_role: 'admin' },
+      { scope: 'shared' },
       '-created_date',
-      100
+      200
     ).catch(e => {
       console.warn(`[fetchAllLocationsForUser] Query 2 (shared locations) failed — skipping: ${e.message}`);
       return [];
@@ -181,7 +186,7 @@ Deno.serve(async (req) => {
       totalCount: charSpecificInCombined.length,
       summary: {
         ownedByAccount: charSpecificInCombined.filter(l => l.owner_email === user.email).length,
-        adminShared: charSpecificInCombined.filter(l => l.created_by_role === 'admin' && l.scope === 'shared').length,
+        shared: charSpecificInCombined.filter(l => l.scope === 'shared').length,
         characterLinked: charSpecificInCombined.filter(l => charLinkedLocationIds.has(l.id)).length,
         queriesUsed: missingLinkedIds.length > 0 ? 4 : 3,
         broadListUsed: false,
