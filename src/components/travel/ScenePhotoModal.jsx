@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { X, Sparkles, Send, Check, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildPhotoGenerationPrompt, extractPhotoAvatarUrls, validatePhotoGenerationInput, logPhotoGenerationState } from "@/lib/scenePhotoIdentityLock";
+import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 
 export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage }) {
   // Build the full selectable participant list from the canonical scene list (same source as Who's here)
@@ -132,35 +133,16 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
       const char = allCharacters.find(c => c.id === charId);
       if (!char) continue;
 
-      // Find or create direct conversation for this character.
-      // CRITICAL: Match the CHAT IDENTITY GUARD used by useChatLoadConvo (the loading path).
-      // Exclude story_event, world_phone, bilateral (shared_conversation_key), and
-      // char-to-char conversations. Without these exclusions, the message is written to a
-      // conversation the Chat page will never load (it filters those out), so the recipient
-      // never sees the image. Also scope by owner_email so we find the user's own conversation.
-      const convos = await base44.entities.Conversation.filter({
-        owner_email: currentUser.email,
-        type: "direct",
-        character_ids: [charId],
-      }, "-last_message_date", 100);
-      const directConvos = convos.filter(c => {
-        const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
-        if (ids.length !== 1 || ids[0] !== charId) return false;
-        if (c.shared_conversation_key) return false;
-        if (c.channel === 'world_phone' || c.channel === 'story_event') return false;
-        return true;
+      // CANONICAL RESOLVER: Use the single authoritative conversation-identity
+      // resolver shared with Chat loading and forwarding. This guarantees the
+      // image is written to the same conversation the Chat page will load —
+      // no inline duplicate filters, no divergence.
+      const convoId = await resolveOrCreateConversation({
+        characterId: charId,
+        characterName: char.name,
+        chatType: "direct",
+        ownerEmail: currentUser.email,
       });
-
-      let convoId = directConvos[0]?.id;
-      if (!convoId) {
-        const newConvo = await base44.entities.Conversation.create({
-          title: `Chat with ${char.name}`,
-          type: "direct",
-          character_ids: [charId],
-          owner_email: currentUser.email,
-        });
-        convoId = newConvo.id;
-      }
 
       // Create image message in chat
       await base44.entities.Message.create({

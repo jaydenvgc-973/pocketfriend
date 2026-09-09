@@ -772,7 +772,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
         {form.is_shared && currentUser?.role !== 'admin' && (() => {
           // Check if user already has another shared location
-          const otherShared = locations.filter(l =>
+          const otherShared = allLocations.filter(l =>
             (l.scope === 'shared' || l.location_type === 'shared') &&
             l.owner_email === currentUser?.email &&
             l.id !== editingLocation?.id

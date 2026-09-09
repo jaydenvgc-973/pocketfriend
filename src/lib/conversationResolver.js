@@ -31,12 +31,16 @@ export async function resolveOrCreateConversation({ characterId, characterName, 
   );
 
   // Apply full duplicate-detection criteria
+  // This is the CANONICAL filter — the single authoritative definition of a
+  // normal Character ↔ User direct conversation. Chat loading, Scene image
+  // delivery, and message forwarding all resolve through this same filter.
   const direct = (existing || []).filter(c => {
     const ids = Array.isArray(c.character_ids) ? c.character_ids : [];
     const isExactSingleTarget = ids.length === 1 && ids[0] === characterId;
     const isWorldPhone = c.channel === 'world_phone';
+    const isStoryEvent = c.channel === 'story_event';
     const hasSharedKey = !!c.shared_conversation_key;
-    return isExactSingleTarget && !hasSharedKey && !isWorldPhone;
+    return isExactSingleTarget && !hasSharedKey && !isWorldPhone && !isStoryEvent;
   });
 
   if (direct.length > 0) {
