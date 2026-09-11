@@ -1612,13 +1612,35 @@ Deno.serve(async (req) => {
       // This was the primary source of 429 storms — firing a 40-record query on every single chat message.
       // Only run if both the character and user have a verified location AND they could potentially match.
       let charactersPresentHere = [];
-      if (charLocationId && !character.is_jailed && userPresentHere) {
+      if (charLocationId && !character.is_jailed) {
         try {
-          const otherChars = await base44.asServiceRole.entities.Character.filter(
-            { owner_email: resolvedEmail, status: 'active' },
-            null,
-            40
-          ).catch(() => []);
+          // Check if character is at a shared location (cross-account visibility boundary)
+          let isAtSharedLocation = false;
+          try {
+            const locRec = await base44.asServiceRole.entities.LocationReference.filter({ id: charLocationId }, null, 1).catch(() => []);
+            const loc = locRec?.[0];
+            isAtSharedLocation = !!(loc && (loc.scope === 'shared' || loc.location_type === 'shared'));
+          } catch (_) {}
+          // Source 1: owner-scoped characters (only if user present — avoids 429 storms)
+          let ownerScopedChars = [];
+          if (userPresentHere) {
+            ownerScopedChars = await base44.asServiceRole.entities.Character.filter(
+              { owner_email: resolvedEmail, status: 'active' }, null, 40
+            ).catch(() => []);
+          }
+          // Source 2: cross-account characters at shared location
+          let crossAccountChars = [];
+          if (isAtSharedLocation) {
+            crossAccountChars = await base44.asServiceRole.entities.Character.filter(
+              { resolved_current_location_id: charLocationId, status: 'active' }, null, 40
+            ).catch(() => []);
+          }
+          // Merge and dedupe by ID
+          const allCharsMap = new Map();
+          for (const c of [...ownerScopedChars, ...crossAccountChars]) {
+            if (c && c.id && !allCharsMap.has(c.id)) allCharsMap.set(c.id, c);
+          }
+          const otherChars = [...allCharsMap.values()];
 
           // Build a lookup set of character IDs the speaking character already knows
           // Source of truth: fictional_relationships with related_character_id set
