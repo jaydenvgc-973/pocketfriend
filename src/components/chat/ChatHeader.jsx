@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Heart } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
 import { base44 } from "@/api/base44Client";
 import { useActionNarrationMode } from "@/hooks/useActionNarrationMode";
 import AlarmTool from "@/components/chat/AlarmTool";
+import LifeNeedsPopover from "@/components/chat/LifeNeedsPopover";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
 
 export default function ChatHeader({
@@ -30,6 +31,7 @@ export default function ChatHeader({
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
   const [showAlarm, setShowAlarm] = useState(false);
+  const [showLifeNeeds, setShowLifeNeeds] = useState(false);
 
   const { triggerActionNarration, isGenerating: isGeneratingActionNarration } = useActionNarrationMode({
     character, characterId, conversationId, messages: messages || [], setMessages, userSettings,
@@ -107,6 +109,16 @@ export default function ChatHeader({
           return <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>;
         })() : <p className="text-xs text-muted-foreground">{isPhone ? 'Texting' : 'Talking'}</p>}
       </div>
+      {character && (
+        <button
+          onClick={() => setShowLifeNeeds(true)}
+          className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+          title="Life Needs"
+          aria-label="Life Needs"
+        >
+          <Heart className="w-5 h-5" />
+        </button>
+      )}
       <ChatActionsMenu
         visible={{
           alarm: !!character,
@@ -147,6 +159,11 @@ export default function ChatHeader({
         currentUser={userSettings}
       />
       </div>
+      <LifeNeedsPopover
+        isOpen={showLifeNeeds}
+        onClose={() => setShowLifeNeeds(false)}
+        character={character}
+      />
     </>
   );
 }
