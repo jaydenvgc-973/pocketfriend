@@ -637,7 +637,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
-    location_type: editingLocation?.location_type === "shared" ? "global" : (editingLocation?.location_type || "global"),
+    // PRESERVE canonical Location Type. Do NOT infer Global for corrupted "shared" records.
+    // If location_type was corrupted to "shared" by older code, the form shows it as-is
+    // (no type button active) — signaling corruption. The user must explicitly choose
+    // a valid type to fix it. We never silently convert "shared" → "global"; that would
+    // fabricate a type we cannot prove (it could have been Global, Character, or Destination).
+    location_type: editingLocation?.location_type || "global",
+    // READ-ONLY compatibility: recognize legacy records that stored sharing in location_type.
+    // This is read compatibility only — it never drives a write of location_type.
     is_shared: editingLocation?.location_type === "shared" || editingLocation?.scope === "shared" || false,
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
@@ -728,9 +735,23 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     const ownerChar = !form.owner_is_npc && form.owner_character_id
       ? (form.owner_character_id === currentUser?.id ? { name: worldName } : characters.find(c => c.id === form.owner_character_id))
       : null;
+    // ── LOCATION TYPE WRITE RULE (NON-NEGOTIABLE) ──────────────────────────
+    // Sharing and Location Type are independent dimensions. A share/unshare
+    // operation must NOT write location_type — it mutates `scope` only, preserving
+    // the canonical Location Type already on the record. Only write location_type
+    // for NEW locations (user's initial choice) or when the user EXPLICITLY changed
+    // the type button. This prevents the regression where toggling sharing
+    // destroyed Destination (and Character) types by overwriting them to "shared"
+    // then "global".
+    const isNewLocation = !editingLocation;
+    const originalType = editingLocation?.location_type ?? null;
+    const typeExplicitlyChanged = !isNewLocation && form.location_type !== originalType;
+    const shouldWriteLocationType = isNewLocation || typeExplicitlyChanged;
+    // Strip location_type from the form spread; re-add it ONLY when authorized above.
+    const { location_type: _strippedType, ...formRest } = form;
     onSave({
-      ...form,
-      location_type: effectiveType,
+      ...formRest,
+      ...(shouldWriteLocationType ? { location_type: effectiveType } : {}),
       keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
       character_name: charObj?.name || "",
       owner_character_name: ownerChar?.name || form.owner_character_name || "",
@@ -1575,8 +1596,12 @@ export default function Locations() {
     // Regular users may share only ONE of their own locations at a time.
     // If the user already has a different shared location, block this share.
     if (formData.is_shared && !isAdmin) {
+      // Sharing authority is `scope === 'shared'` ONLY. Do NOT use location_type as a
+      // fallback — that conflates sharing with Location Type and causes false positives
+      // from corrupted records (location_type='shared' but scope!='shared'). A record
+      // is Shared iff its scope is 'shared', regardless of what its location_type says.
       const existingShared = locations.filter(l =>
-        (l.scope === 'shared' || l.location_type === 'shared') &&
+        l.scope === 'shared' &&
         l.owner_email === currentUser?.email &&
         l.id !== editingLocationId
       );

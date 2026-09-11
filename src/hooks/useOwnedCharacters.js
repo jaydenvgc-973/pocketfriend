@@ -142,9 +142,19 @@ export function useOwnedCharacters(
       return res?.data || { npcs, sharedLocationEmployees: [], sharedLocationVisitors: [] };
     },
     enabled: !!userId,
-    staleTime: 15 * 60 * 1000,  // 15 min — NPCs don't change frequently
+    // CANONICAL REVALIDATION: staleTime: 0 + refetchOnMount: 'always' ensures the
+    // canonical fetchNPCsForUser fires on EVERY mount. The initialData from
+    // localStorage is a PROVISIONAL bridge only — it prevents a blank render while
+    // the canonical fetch is in flight. When the canonical fetch completes, its
+    // result REPLACES the cached provisional state. Characters no longer present
+    // at a shared location disappear; characters still legitimately present remain.
+    // Previously, staleTime: 15min + refetchOnMount: false froze the cached
+    // sharedLocationEmployees/Visitors for 15 minutes without revalidation —
+    // a character who left a shared location stayed visible. That is prohibited:
+    // cache may bridge rendering, it must not decide who is physically present.
+    staleTime: 0,
     gcTime: 60 * 60 * 1000,     // 1 hour cache — prevents re-fetch on every recovery
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
       if (failureCount >= 2) return false;
