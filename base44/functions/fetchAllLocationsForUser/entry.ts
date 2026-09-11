@@ -5,7 +5,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *
  * QUERY STRATEGY (scoped-first, no broad service-role list):
  *   Query 1: owner_email === currentUser.email  →  all user-owned locations
- *   Query 2: scope === 'shared', created_by_role === 'admin'  →  all admin-shared locations
+ *   Query 2: scope === 'shared'  →  ALL shared locations (any owner, any role)
+ *   Both queries have a dual-pass: asServiceRole first, user-scoped fallback.
  *   These two queries replace the former LocationReference.list('-created_date', 500)
  *   which was a global cross-account read that burned the entire 500-record budget
  *   regardless of how many locations the user actually has.
@@ -24,6 +25,7 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    console.log(`[fetchAllLocationsForUser] Caller: email=${user.email} role=${user.role} id=${user.id}`);
 
     // ── QUERY 1: User-owned locations (scoped by owner_email) ─────────────────
     // Use owner_email-scoped filter — avoids rate limits from broad global list.
@@ -67,15 +69,53 @@ Deno.serve(async (req) => {
     // to moderate. The RLS read rule already permits scope==='shared' to any user;
     // this query simply retrieves them all. Non-shared private locations from other
     // accounts are NEVER fetched here (Query 1 is owner_email-scoped only).
-    // Non-blocking: if rate-limited, skip shared locations rather than crashing.
-    const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
-      { scope: 'shared' },
-      '-created_date',
-      200
-    ).catch(e => {
-      console.warn(`[fetchAllLocationsForUser] Query 2 (shared locations) failed — skipping: ${e.message}`);
-      return [];
+    //
+    // DUAL-PASS with fallback: asServiceRole first (bypasses RLS, catches legacy
+    // records), then user-scoped fallback (RLS allows scope==='shared' for any user).
+    // The fallback is CRITICAL: if asServiceRole fails (rate limit, permissions,
+    // transient error), the user-scoped query still returns shared locations —
+    // including regular-user-owned Shared locations that are NOT in Query 1.
+    // Without the fallback, a Query 2 failure silently drops ALL shared locations
+    // not owned by the current user, causing regular-user Shared locations to
+    // disappear from the admin view while admin-owned Shared locations survive
+    // (they're in Query 1 via owner_email).
+    let sharedLocations = [];
+    let query2Source = 'none';
+    try {
+      const pass1 = await base44.asServiceRole.entities.LocationReference.filter(
+        { scope: 'shared' },
+        '-created_date',
+        200
+      );
+      if (pass1 && pass1.length > 0) {
+        sharedLocations = pass1;
+        query2Source = 'service-role';
+      }
+    } catch (e) {
+      console.warn(`[fetchAllLocationsForUser] Query 2 pass 1 (service-role) failed: ${e.message}`);
+    }
+    if (sharedLocations.length === 0) {
+      try {
+        const pass2 = await base44.entities.LocationReference.filter(
+          { scope: 'shared' },
+          '-created_date',
+          200
+        );
+        if (pass2 && pass2.length > 0) {
+          sharedLocations = pass2;
+          query2Source = 'user-scoped';
+        }
+      } catch (e) {
+        console.warn(`[fetchAllLocationsForUser] Query 2 pass 2 (user-scoped) failed: ${e.message}`);
+      }
+    }
+    // Log shared location ownership distribution for diagnostics
+    const sharedByOwner = {};
+    sharedLocations.forEach(l => {
+      const owner = l.owner_email || 'unknown';
+      sharedByOwner[owner] = (sharedByOwner[owner] || 0) + 1;
     });
+    console.log(`[fetchAllLocationsForUser] Query 2 fetched ${sharedLocations.length} shared locations (source: ${query2Source})`, JSON.stringify(sharedByOwner));
 
     // ── QUERY 3: User's characters — REMOVED ────────────────────────────────────────
     // CRITICAL INSIGHT: Query 1 (owner_email filter) returns ALL user-owned locations,
@@ -179,6 +219,15 @@ Deno.serve(async (req) => {
     // Empty results are normal for accounts with no locations created yet
     // (Query 3 character fetch removed — no way to double-check without it)
     // Trust Query 1+2 as the source of truth for location ownership
+
+    // Final diagnostics: log the exact composition of the result
+    const finalShared = charSpecificInCombined.filter(l => l.scope === 'shared' || l.location_type === 'shared');
+    const finalSharedByOwner = {};
+    finalShared.forEach(l => {
+      const owner = l.owner_email || 'unknown';
+      finalSharedByOwner[owner] = (finalSharedByOwner[owner] || 0) + 1;
+    });
+    console.log(`[fetchAllLocationsForUser] FINAL: ${charSpecificInCombined.length} locations (${finalShared.length} shared)`, JSON.stringify(finalSharedByOwner));
 
     return Response.json({
       success: true,
