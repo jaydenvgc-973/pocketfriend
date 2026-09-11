@@ -37,6 +37,7 @@ export function useSceneCharacters(currentUser) {
       return {
         npcFictitious: (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious'),
         sharedLocationEmployees: res?.data?.sharedLocationEmployees || [],
+        sharedLocationVisitors: res?.data?.sharedLocationVisitors || [],
       };
     },
     enabled: enabledById,
@@ -44,6 +45,7 @@ export function useSceneCharacters(currentUser) {
   });
   const backendNpcFictitious = backendNpcData?.npcFictitious || [];
   const sharedLocationEmployees = backendNpcData?.sharedLocationEmployees || [];
+  const sharedLocationVisitors = backendNpcData?.sharedLocationVisitors || [];
 
   const { data: rlsNpcFictitious = [] } = useQuery({
     queryKey: ["npcFictitiousRls", currentUser?.email],
@@ -99,13 +101,18 @@ export function useSceneCharacters(currentUser) {
       seenShared.add(c.id);
       return true;
     });
-    return [...activeChars, ...npcFictitious, ...npcFamily, ...sharedEmployees].filter(c =>
+    const sharedVisitors = sharedLocationVisitors.filter(c => {
+      if (seenShared.has(c.id)) return false;
+      seenShared.add(c.id);
+      return true;
+    });
+    return [...activeChars, ...npcFictitious, ...npcFamily, ...sharedEmployees, ...sharedVisitors].filter(c =>
       c.is_test_character !== true &&
       c.diagnostic_only !== true &&
       c.exclude_from_default_scene_queries !== true
     );
-  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees]);
+  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors]);
 
   // Return all source arrays so Scene can track dependency-per-query, not just final count
-  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees };
+  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors };
 }

@@ -1605,7 +1605,11 @@ export default function Locations() {
     
     const enrichedFields = {
       scope: scopeValue,
-      location_type: formData.is_shared ? 'shared' : formData.location_type,
+      // location_type is NOT overwritten here. The canonical Location Type
+      // (global, character_specific, destination) is preserved across share/unshare.
+      // The `scope` field is the sole sharing authority. Previously, sharing overwrote
+      // location_type to 'shared', destroying Destination. Unsharing then converted
+      // 'shared' back to 'global' (form init line 640), permanently losing Destination.
       ...confinementData,
     };
     // created_by_role is set ONLY at creation time — never overwritten on update.

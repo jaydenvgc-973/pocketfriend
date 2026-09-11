@@ -71,6 +71,7 @@ export default function Travel() {
     npcFamilyMembers,
     travelCompanions,
     sharedLocationEmployees,
+    sharedLocationVisitors,
     isInitialLoading: isLoadingActive,
     isRefreshing: isLoadingNpc,
   } = useOwnedCharacters(currentUser);
@@ -162,6 +163,7 @@ export default function Travel() {
     npcFamilyMembers,
     allCharacters: allCharactersForFamilyScan,
     sharedLocationEmployees,
+    sharedLocationVisitors,
     locations: locationsData,
   }), [
     currentUser?.id,
@@ -173,6 +175,7 @@ export default function Travel() {
     npcCharacters.length,
     npcFamilyMembers.length,
     sharedLocationEmployees.length,
+    sharedLocationVisitors.length,
     locationsData.length,
   ]);
 

@@ -114,7 +114,14 @@ export function useOwnedCharacters(
     initialData: () => {
       if (!email) return undefined;
       const lfc = lfcRead(email, 'npc-characters');
-      return lfc?.data?.length > 0 ? lfc.data : undefined;
+      if (!lfc?.data) return undefined;
+      // Handle both legacy array shape and current object shape.
+      // Legacy: lfc.data = [npc1, npc2, ...]  (cross-account arrays lost)
+      // Current: lfc.data = { npcs, sharedLocationEmployees, sharedLocationVisitors }
+      const data = lfc.data;
+      if (Array.isArray(data)) return data.length > 0 ? data : undefined;
+      if (data.npcs?.length > 0 || data.sharedLocationEmployees?.length > 0 || data.sharedLocationVisitors?.length > 0) return data;
+      return undefined;
     },
     initialDataUpdatedAt: () => {
       if (!email) return undefined;
@@ -125,8 +132,14 @@ export function useOwnedCharacters(
       if (!userId) return [];
       const res = await base44.functions.invoke("fetchNPCsForUser", {});
       const npcs = res?.data?.npcs || [];
-      if (npcs.length > 0 && email) lfcWrite(email, 'npc-characters', npcs);
-      return res?.data || { npcs, sharedLocationEmployees: [] };
+      // Write the FULL response object (including sharedLocationEmployees and
+      // sharedLocationVisitors) to localStorage — not just the npcs array.
+      // Previously, only npcs was saved. On refresh, initialData read back an
+      // array, and the Array.isArray check on line 148-149 caused
+      // sharedLocationEmployees and sharedLocationVisitors to become [].
+      // This made cross-account characters disappear after every page refresh.
+      if (email && res?.data) lfcWrite(email, 'npc-characters', res.data);
+      return res?.data || { npcs, sharedLocationEmployees: [], sharedLocationVisitors: [] };
     },
     enabled: !!userId,
     staleTime: 15 * 60 * 1000,  // 15 min — NPCs don't change frequently
@@ -146,6 +159,7 @@ export function useOwnedCharacters(
   // that expect backendNpcs as an array.
   const backendNpcs = Array.isArray(backendNpcData) ? backendNpcData : (backendNpcData?.npcs || []);
   const sharedLocationEmployees = Array.isArray(backendNpcData) ? [] : (backendNpcData?.sharedLocationEmployees || []);
+  const sharedLocationVisitors = Array.isArray(backendNpcData) ? [] : (backendNpcData?.sharedLocationVisitors || []);
 
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
   // sharedLocationEmployees are admin-owned characters from admin-owned Shared
@@ -337,6 +351,7 @@ export function useOwnedCharacters(
     npcRegular,
     travelCompanions,
     sharedLocationEmployees,
+    sharedLocationVisitors,
     isInitialLoading,
     isRefreshing,
     isFinancialLoading,

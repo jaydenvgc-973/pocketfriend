@@ -43,6 +43,7 @@ export function resolveTravelPresenceEntities({
   allCharacters = [],
   locations = [],
   sharedLocationEmployees = [],
+  sharedLocationVisitors = [],
 }) {
   const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
   const normalized = [];
@@ -53,7 +54,7 @@ export function resolveTravelPresenceEntities({
     console.log(`[travelPresenceResolver] ${msg}`);
   };
 
-  debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, shared_emps=${sharedLocationEmployees.length}, locs=${locations.length}`);
+  debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, shared_emps=${sharedLocationEmployees.length}, shared_visitors=${sharedLocationVisitors.length}, locs=${locations.length}`);
 
   // 0. Include USER as a presence entity when they are not Away
   // Source of truth: UserSettings.user_presence_status + user_current_location_id
@@ -161,6 +162,25 @@ export function resolveTravelPresenceEntities({
       is_shared_location_employee: true,
     };
     debugLog(`+ shared_location_employee: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
+  });
+
+  // 6. Include cross-account visitors at shared locations
+  // These are characters from OTHER accounts whose resolved_current_location_id
+  // matches a shared location. They are NOT workers — they are visiting or
+  // temporarily present. The shared location is the cross-account visibility
+  // boundary. Ownership is preserved completely; these are the canonical records
+  // made visible through legitimate shared-location presence.
+  sharedLocationVisitors.forEach(char => {
+    if (seenIds.has(char.id)) return;
+    seenIds.add(char.id);
+    const normalized_entity = {
+      ...normalizeCharacterToPresenceEntity(char, locationMap),
+      source_type: 'shared_location_visitor',
+      effective_presence_type: char.character_type || 'active_created_character',
+      is_shared_location_visitor: true,
+    };
+    debugLog(`+ shared_location_visitor: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
     normalized.push(normalized_entity);
   });
 

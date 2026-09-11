@@ -24,7 +24,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { lfcWrite } from "@/lib/localFirstCache.js";
+import { lfcWrite, lfcRead } from "@/lib/localFirstCache.js";
 
 /**
  * @param {string|null|undefined} ownerEmail  — from base44.auth.me().email
@@ -36,6 +36,23 @@ export function useStableLocationReferences(ownerEmail) {
 
   const { data: locationsData = [], isLoading, isError } = useQuery({
     queryKey: ["locationReferences", ownerEmail],
+
+    // Seed from localStorage so shared locations survive hard refresh.
+    // Previously, this hook had NO initialData. On hard refresh, the React Query
+    // cache was destroyed and locationsData = [] until the refetch completed.
+    // If the refetch was slow or failed (rate limit from simultaneous queries),
+    // shared locations stayed missing. The lfcWrite below already wrote a backup;
+    // this initialData reads it back so the UI renders immediately on refresh.
+    initialData: () => {
+      if (!ownerEmail) return undefined;
+      const lfc = lfcRead(ownerEmail, 'locations');
+      return lfc?.data?.length > 0 ? lfc.data : undefined;
+    },
+    initialDataUpdatedAt: () => {
+      if (!ownerEmail) return undefined;
+      const lfc = lfcRead(ownerEmail, 'locations');
+      return lfc?.loaded_at ?? undefined;
+    },
 
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
@@ -56,7 +73,7 @@ export function useStableLocationReferences(ownerEmail) {
         'summary:', JSON.stringify(res?.data?.summary)
       );
 
-      // Write-through to LFC (backup only — never read back as initialData)
+      // Write-through to LFC (backup — now read back as initialData on refresh)
       if (ownerEmail) lfcWrite(ownerEmail, 'locations', locs);
       return locs;
     },
