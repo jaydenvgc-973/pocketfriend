@@ -172,15 +172,23 @@ export function useOwnedCharacters(
   const sharedLocationVisitors = Array.isArray(backendNpcData) ? [] : (backendNpcData?.sharedLocationVisitors || []);
 
   // ── Merge + dedupe by id ─────────────────────────────────────────────────────
-  // sharedLocationEmployees are admin-owned characters from admin-owned Shared
-  // locations. They are included here so the presence resolver can show them at
-  // those shared locations. They are NOT owned by this user — ownership is
-  // preserved completely. They are only visible through legitimate shared-
-  // location presence (resolved by resolveTravelPresenceEntities →
-  // getPresenceAtLocation, which checks resolved_current_location_id match).
+  // OWNERSHIP ISOLATION: allCharacters contains ONLY characters owned by the
+  // current user (rlsCharacters + backendNpcs). sharedLocationEmployees and
+  // sharedLocationVisitors are cross-account characters owned by OTHER users
+  // (admin-owned characters employed at / visiting admin-owned Shared
+  // locations). They are NOT included here — they must never appear in
+  // travelCompanions or any derived slice that feeds character selection or
+  // control UI (Travel companion selector, Chat, Scene controls, etc.).
+  //
+  // They are returned as separate arrays (sharedLocationEmployees,
+  // sharedLocationVisitors) for PRESENCE-RESOLUTION ONLY — showing them at
+  // shared locations on the Travel map via resolveTravelPresenceEntities,
+  // which receives them as explicit separate parameters. Shared presence does
+  // not transfer ownership. Seeing a character at a shared location is not the
+  // same as owning or controlling that character.
   const allCharacters = (() => {
     const seen = new Set();
-    return [...rlsCharacters, ...backendNpcs, ...sharedLocationEmployees].filter(c => {
+    return [...rlsCharacters, ...backendNpcs].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
