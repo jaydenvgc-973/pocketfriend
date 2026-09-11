@@ -50,9 +50,19 @@ export function useStableLocationReferences(ownerEmail) {
     },
 
     enabled: !!ownerEmail,
-    staleTime: 0,                 // Always refetch on mount — ensures newly visible locations appear immediately
+    staleTime: 0,                 // Always stale — ensures newly visible locations appear immediately
     gcTime:    30 * 60 * 1000,
-    refetchOnMount: true,
+    // 'always' is REQUIRED: other components (CommunityEventsStrip, Moments, Scene)
+    // share this exact query key but set staleTime: 10min + refetchOnMount: false.
+    // With plain `true`, refetchOnMount only fires if the query is stale AT MOUNT TIME.
+    // If the Home page created the query with a 10-minute staleTime, the query is
+    // "fresh" when Travel/Locations mounts, and `refetchOnMount: true` is a no-op —
+    // the stale cache (which may predate a backend fix that added shared locations)
+    // is shown indefinitely via placeholderData(prev=>prev). `refetchOnMount: 'always'`
+    // forces a refetch on every mount regardless of inherited staleTime, so the
+    // latest backend data — including regular-user-owned Shared locations —
+    // always replaces any stale cache.
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
     refetchOnReconnect: true,
     retry: 2,
