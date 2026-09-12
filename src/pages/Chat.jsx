@@ -184,7 +184,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   const awarenessTimerRef = useRef(null);
   // Session cache for system_prompt_url content — prevents re-fetching on every message send.
   // Keyed as "characterId::url" so prompt leakage between characters is impossible.
-  const systemPromptCacheRef = useRef({});
+  const systemPromptCacheRef = useRef({}); const createImageMessageRef = useRef(null);
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -1957,7 +1957,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         userIsVisualSubject: userIsVisualSubjectDetected,
       }), delayMs);
       return imgMsg;
-    };
+    }; createImageMessageRef.current = createImageMessage;
 
     const createTextMessage = async (textContent, { sourceMessageId = null, lockId = null } = {}) => {
       if (!textContent?.trim()) return null;
@@ -2264,6 +2264,13 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
         onHousingChangeToggle={() => setShowHousingModal(true)}
         onLocationShareToggle={() => setShowLocationShare(true)}
+        onInstantImage={async (imagePrompt) => {
+          // Instant Image: the hook already generated a visual scene description via InvokeLLM.
+          // Hand it to the existing createImageMessage pipeline via ref — no new generator, no new path.
+          if (imagePrompt && createImageMessageRef.current) {
+            await createImageMessageRef.current(imagePrompt, 300);
+          }
+        }}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (

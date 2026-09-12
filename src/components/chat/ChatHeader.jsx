@@ -6,6 +6,7 @@ import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
 import { base44 } from "@/api/base44Client";
 import { useActionNarrationMode } from "@/hooks/useActionNarrationMode";
+import { useInstantImage } from "@/hooks/useInstantImage";
 import AlarmTool from "@/components/chat/AlarmTool";
 import LifeNeedsPopover from "@/components/chat/LifeNeedsPopover";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
@@ -28,6 +29,7 @@ export default function ChatHeader({
   onShoppingToggle,
   onHousingChangeToggle,
   onLocationShareToggle,
+  onInstantImage,
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
   const [showAlarm, setShowAlarm] = useState(false);
@@ -35,6 +37,14 @@ export default function ChatHeader({
 
   const { triggerActionNarration, isGenerating: isGeneratingActionNarration } = useActionNarrationMode({
     character, characterId, conversationId, messages: messages || [], setMessages, userSettings,
+  });
+
+  // Instant Image — one-tap image of the current scene, no manual prompt.
+  // Generates a visual scene description via InvokeLLM, then hands it to the
+  // existing createImageMessage pipeline in Chat.jsx (onInstantImage callback).
+  const { triggerInstantImage, isGenerating: isGeneratingInstantImage } = useInstantImage({
+    character, characterId, conversationId, messages: messages || [], userSettings,
+    onImagePromptReady: onInstantImage,
   });
 
   // Right Now — instant user-controlled narrative based on current state.
@@ -134,6 +144,7 @@ export default function ChatHeader({
           right_now: !!character && !!conversationId,
           housing_change: !!character,
           location_share: !!character && !!conversationId,
+          instant_image: !!character && !!conversationId,
         }}
         onSelect={(id) => {
           if (id === "media") onMediaGalleryToggle();
@@ -146,6 +157,7 @@ export default function ChatHeader({
           if (id === "troubleshoot") onTroubleshootingToggle();
           if (id === "housing_change") onHousingChangeToggle?.();
           if (id === "location_share") onLocationShareToggle?.();
+          if (id === "instant_image") triggerInstantImage();
           if (id === "alarm") setShowAlarm(true);
           if (id === "right_now") handleRightNow();
           if (id === "action_narration") triggerActionNarration();

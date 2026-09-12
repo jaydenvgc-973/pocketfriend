@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio, PersonStanding, Home, Navigation, AlarmClock } from "lucide-react";
+import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio, PersonStanding, Home, Navigation, AlarmClock, Camera } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 const topLevelItems = [
@@ -13,6 +13,7 @@ const topLevelItems = [
 ];
 
 const appsDrawerItems = [
+  { id: "instant_image",  icon: Camera,       label: "Instant Image" },
   { id: "media",          icon: Image,        label: "Media Gallery" },
   { id: "money",          icon: DollarSign,   label: "Send Money" },
   { id: "contacts",       icon: Globe,        label: "World Contacts" },
