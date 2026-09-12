@@ -43,6 +43,7 @@ import MemoryReelCreator from './pages/MemoryReelCreator';
 import MediaGallery from './pages/MediaGallery';
 import Locations from './pages/Locations';
 import TheWeekly from './pages/TheWeekly';
+import SettingsErrorBoundary from '@/components/SettingsErrorBoundary';
 
 
 import Finance from './pages/Finance';
@@ -128,27 +129,27 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />
-      <Route path="/settings" element={<Settings />} />
+      <Route path="/settings" element={<SettingsErrorBoundary pageTitle="Settings"><Settings /></SettingsErrorBoundary>} />
       <Route path="/profile/:characterId" element={<CharacterProfile />} />
       <Route path="/edit-default" element={<EditDefaultCharacter />} />
-      <Route path="/edit-character-story" element={<EditCharacterStory />} />
-      <Route path="/edit-character-photos" element={<EditCharacterPhotos />} />
-      <Route path="/edit-character-emotions" element={<EditCharacterEmotions />} />
+      <Route path="/edit-character-story" element={<SettingsErrorBoundary pageTitle="Edit Character Stories"><EditCharacterStory /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-photos" element={<SettingsErrorBoundary pageTitle="Edit Character Photos"><EditCharacterPhotos /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-emotions" element={<SettingsErrorBoundary pageTitle="Edit Character Emotions"><EditCharacterEmotions /></SettingsErrorBoundary>} />
       <Route path="/moments" element={<Moments />} />
       <Route path="/memory-reel" element={<MemoryReelCreator />} />
       <Route path="/media-gallery" element={<MediaGallery />} />
-      <Route path="/locations" element={<Locations />} />
+      <Route path="/locations" element={<SettingsErrorBoundary pageTitle="Location References"><Locations /></SettingsErrorBoundary>} />
       <Route path="/the-weekly" element={<TheWeekly />} />
 
 
-      <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
-      <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
-      <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
-      <Route path="/edit-character-public-relations" element={<EditCharacterPublicRelations />} />
-      <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
-      <Route path="/edit-character-needs" element={<EditCharacterNeeds />} />
+      <Route path="/edit-character-relationships" element={<SettingsErrorBoundary pageTitle="Edit Relationship Levels"><EditCharacterRelationships /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-traits" element={<SettingsErrorBoundary pageTitle="Edit Traits & Quirks"><EditCharacterTraits /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-religion" element={<SettingsErrorBoundary pageTitle="Edit Religion"><EditCharacterReligion /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-public-relations" element={<SettingsErrorBoundary pageTitle="Edit Public Relations"><EditCharacterPublicRelations /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-profile" element={<SettingsErrorBoundary pageTitle="Edit Occupation & Education"><EditCharacterProfile /></SettingsErrorBoundary>} />
+      <Route path="/edit-character-needs" element={<SettingsErrorBoundary pageTitle="Edit Character Needs"><EditCharacterNeeds /></SettingsErrorBoundary>} />
       <Route path="/my-profile" element={<MyProfile />} />
-      <Route path="/finance" element={<Finance />} />
+      <Route path="/finance" element={<SettingsErrorBoundary pageTitle="Finance & Accounts"><Finance /></SettingsErrorBoundary>} />
       <Route path="/diagnostic" element={<DiagnosticChecklist />} />
       <Route path="/admin-verification" element={<AdminVerification />} />
       <Route path="/vick-diagnostic-proof" element={<VickDiagnosticProof />} />
