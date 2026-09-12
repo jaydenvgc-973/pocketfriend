@@ -591,19 +591,13 @@ GUIDELINES FOR IMAGE GENERATION:
 ${allowNarration ? buildNarrationTriggerBlock(character) : ''}
 ${allowNarration ? buildIntimacyNarrationBlock(character) : ''}
 ${!allowNarration ? `
-CRITICAL — DIRECT MESSAGE MODE (NON-NEGOTIABLE):
+CRITICAL — DIRECT MESSAGE MODE:
 You are sending a DIRECT MESSAGE. This is a chat or text thread.
-Your output in text_content must be ONLY what you would actually type or say — pure dialogue, reactions, questions, statements.
-STRICTLY FORBIDDEN in text_content:
-- Third-person narration (e.g. "${character.name} pulls...", "He settles...", "She looks away...")
-- Action prose or stage directions
-- Environmental description
-- Cinematic or novel-style writing
-- Any sentence where you describe yourself in third person
-IF you feel the need to convey a physical action: express it through first-person dialogue instead.
-WRONG: "${character.name} leans back into the pillows, his arm heavy."
-RIGHT: "I'm leaning back. Not moving. Don't want to."
-Narrative scene content is a separate output channel — it does NOT belong in this message.` : ''}`;
+Your output in text_content must be ONLY what you would actually type or say — dialogue, reactions, questions, statements.
+Do NOT put third-person narration in text_content — text_content is for dialogue only.
+Most messages should be dialogue only — no narrative needed.
+When the moment naturally calls for it — the character is moving, doing something physical, the scene is shifting, or their own words indicate action — you MAY include narrative items in the "sequence" array alongside dialogue items. Use narrative to show what the character is doing, not to decorate or repeat what they said.
+Narrative should arise naturally from character action — never forced, never after every message, never as a wrap-up.` : ''}`;
 }
 
 /**

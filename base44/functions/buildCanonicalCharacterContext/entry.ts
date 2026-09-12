@@ -894,7 +894,7 @@ function buildCoPresenceBlock(coPresence, speakingCharacter = null) {
 // ── MODE-SPECIFIC INSTRUCTION BLOCKS ─────────────────────────────────────────
 function buildModeBlock(interactionContext) {
   const blocks = {
-    direct_chat: `\nCRITICAL — DIRECT MESSAGE MODE:\nYour output (text_content) must be ONLY what you would actually type or say.\nNo third-person narration. No action prose. No stage directions. Just dialogue.\n`,
+    direct_chat: `\nCRITICAL — DIRECT MESSAGE MODE:\nYour output (text_content) must be ONLY what you would actually type or say — dialogue, not narration.\nMost messages should be dialogue only. Do NOT add narrative after every message.\nWhen the moment naturally calls for it — the character is moving, doing something physical, the scene is shifting, or their own words indicate action — you MAY include narrative items in the "sequence" array alongside dialogue items. Use narrative to show what the character is doing, not to decorate or repeat what they said.\nNarrative should arise naturally from character action — never forced, never after every message, never as a wrap-up.\n`,
     text: `\nMODE: TEXT MESSAGING. Keep responses short like real texts. Casual abbreviations sometimes. No long paragraphs.\n`,
     group_chat: `\nMODE: GROUP CHAT. You can address other participants directly — not just the user. React to whoever just spoke. Address them by name.\n`,
     world_contacts: `\nMODE: WORLD CONTACTS / PHONE CALL. You are a real person in this character's social world. Speak naturally as you would to someone you know.\n`,

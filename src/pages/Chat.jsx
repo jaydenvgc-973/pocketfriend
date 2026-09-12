@@ -1210,12 +1210,12 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
             systemPrompt = await promptResponse.text();
             systemPromptCacheRef.current[cacheKey] = systemPrompt;
           } catch {
-            systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
+            systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: true, outfitHint, worldName: userDisplayName });
           }
         }
       } else {
         // Pass canonical prompt as the identity base; buildSystemPrompt adds frontend-only layers
-        systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
+        systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: true, outfitHint, worldName: userDisplayName });
       }
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
