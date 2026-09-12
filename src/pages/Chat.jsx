@@ -671,6 +671,59 @@ export default function Chat({ chatTypeOverride } = {}) {
       return imgMsg;
     };
 
+  // handleInstantImage — Instant Image button handler at component scope.
+  // Reads the last ~6 messages, asks the existing InvokeLLM to describe the
+  // current scene as a visual image prompt, then hands it to createImageMessage.
+  // No prompt argument comes from the app drawer; the button IS the trigger.
+  const handleInstantImage = async () => {
+    const recentMessages = (messagesRef.current || messages || [])
+      .slice(-6);
+
+    const recentContext = recentMessages
+      .map(msg =>
+        msg.content ||
+        msg.text ||
+        msg.narrative ||
+        msg.message ||
+        ""
+      )
+      .filter(Boolean)
+      .join("\n");
+
+    if (!recentContext.trim()) return;
+
+    const sceneResult = await base44.integrations.Core.InvokeLLM({
+      prompt: `Create a concise image-generation description of what is happening RIGHT NOW in this conversation.
+
+Use only the recent conversation below.
+
+Determine:
+- what the character is physically doing right now
+- where the current scene is taking place
+- who is visibly present
+- the immediate action already happening
+- an action that is clearly about to happen only if the conversation already establishes it
+
+Do not continue the story.
+Do not invent another event.
+Do not explain your answer.
+Return only the visual scene description.
+
+RECENT CONVERSATION:
+${recentContext}`
+    });
+
+    const scenePrompt =
+      sceneResult?.response ||
+      sceneResult?.text ||
+      sceneResult?.content ||
+      sceneResult;
+
+    if (!scenePrompt || typeof scenePrompt !== "string") return;
+
+    await createImageMessage(scenePrompt.trim(), 300);
+  };
+
   const sendMessage = async (text, userImageUrl, prevGeneration) => {
     if (!character) return;
     if (isGloballyRateLimited()) { setSendError("You're sending too quickly — please wait a moment and try again."); return; }
@@ -2246,11 +2299,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
         onHousingChangeToggle={() => setShowHousingModal(true)}
         onLocationShareToggle={() => setShowLocationShare(true)}
-        onInstantImage={async (imagePrompt) => {
-          if (imagePrompt) {
-            await createImageMessage(imagePrompt, 300);
-          }
-        }}
+        onInstantImage={handleInstantImage}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
