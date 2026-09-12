@@ -672,108 +672,145 @@ export default function Chat({ chatTypeOverride } = {}) {
     };
 
   // handleInstantImage — Instant Image button handler at component scope.
-  // Resolves the scene from the character's CURRENT STATE (location, activity,
-  // latest narrative) as the authority — NOT from chat dialogue. Dialogue is
-  // secondary context for mood/expression only. Hands the resulting scene
-  // prompt to the existing createImageMessage pipeline.
+  // Uses the already-loaded character current state + latest current-action
+  // narrative as authority, with recent dialogue as secondary context only.
+  // Calls the existing InvokeLLM once to produce a concise visual prompt, then
+  // hands it to the existing createImageMessage pipeline. No extra location
+  // lookups, no new resolvers.
   const handleInstantImage = async () => {
-    if (!character) return;
+    try {
+      if (!character?.name) return;
 
-    // ── 1. Resolve current location (name + zone) from the character's actual state ──
-    let currentLocationName = character.resolved_current_location_name || null;
-    let currentZoneName = null;
-    const locId = character.resolved_current_location_id;
-    if (locId) {
-      try {
-        const loc = await base44.entities.LocationReference.get(locId);
-        if (loc?.name) currentLocationName = loc.name;
-        if (loc?.zones?.length > 0) {
-          const zoneWithImages = loc.zones.find(z => z.image_urls?.length > 0);
-          currentZoneName = (zoneWithImages || loc.zones[0])?.zone_name || null;
-        }
-      } catch { /* fall back to character field */ }
+      const allMessages = messagesRef.current || messages || [];
+
+      const latestNarrative = [...allMessages]
+        .reverse()
+        .find(
+          msg =>
+            msg?.is_narrative === true &&
+            typeof msg?.content === "string" &&
+            msg.content.trim()
+        );
+
+      const recentDialogue = allMessages
+        .filter(
+          msg =>
+            !msg?.is_narrative &&
+            typeof msg?.content === "string" &&
+            msg.content.trim()
+        )
+        .slice(-4)
+        .map(msg => {
+          const speaker =
+            msg.sender_type === "user"
+              ? "User"
+              : (msg.character_name || character.name);
+
+          return `${speaker}: ${msg.content}`;
+        })
+        .join("\n");
+
+      const genderValue =
+        typeof character.gender === "string"
+          ? character.gender.trim()
+          : null;
+
+      const genderRule = genderValue
+        ? `Stored character gender: ${genderValue}. Respect the stored value.`
+        : `Character gender is unset/null. Do NOT assign or infer a gender.
+           Do not use "woman", "man", "female", "male", she/her, or he/him.
+           Use ${character.name} or gender-neutral language/them if necessary.`;
+
+      const sceneState = [
+        `CURRENT CHARACTER / PRIMARY SUBJECT: ${character.name}`,
+        character.resolved_current_location_name
+          ? `CURRENT LOCATION: ${character.resolved_current_location_name}`
+          : null,
+        character.current_activity
+          ? `CURRENT ACTIVITY: ${character.current_activity}`
+          : null,
+        character.current_situation
+          ? `CURRENT SITUATION: ${character.current_situation}`
+          : null,
+        character.daily_micro_narration
+          ? `CURRENT MICRO NARRATION: ${character.daily_micro_narration}`
+          : null,
+        latestNarrative?.content
+          ? `LATEST CURRENT-ACTION NARRATIVE: ${latestNarrative.content}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const sceneResult =
+        await base44.integrations.Core.InvokeLLM({
+          prompt: `
+Create ONE concise image-generation description of what is happening
+RIGHT NOW with the current character.
+
+This is an Instant Image of the character's ALREADY-EXISTING current scene.
+Do not create a new scenario and do not progress the story.
+
+AUTHORITY:
+
+${sceneState}
+
+${genderRule}
+
+RULES:
+
+The current character is the default primary image subject.
+
+The character's stored current location is where the image takes place.
+
+The current activity, current situation, and latest current-action narrative
+describe what is happening now.
+
+Recent Chat/Text dialogue is SECONDARY information only. It may help with
+expression or mood, but it must NOT relocate the character.
+
+The user saying where the USER is does not move the character there.
+
+Mentioning a husband, wife, child, friend, coworker, or anyone else does not
+make that person physically present in the character's scene.
+
+Do not add another person unless the established current scene actually says
+that person is physically present.
+
+Do not invent someone entering, approaching, smiling, touching, walking over,
+sitting down, or beginning another action.
+
+Do not invent a room or location when the character already has a current
+location.
+
+Do not describe or reinterpret the character's identity, face, body, or
+wardrobe. The existing image system already handles those authorities.
+
+Capture the current moment only.
+
+RECENT DIALOGUE — SECONDARY CONTEXT ONLY:
+${recentDialogue || "No additional dialogue context needed."}
+
+Return ONLY the concise image prompt.
+`
+        });
+
+      const scenePrompt =
+        typeof sceneResult === "string"
+          ? sceneResult
+          : sceneResult?.response ||
+            sceneResult?.text ||
+            sceneResult?.content;
+
+      if (!scenePrompt?.trim()) {
+        console.error("[Instant Image] Scene prompt was empty");
+        return;
+      }
+
+      await createImageMessage(scenePrompt.trim(), 300);
+    } catch (err) {
+      console.error("[Instant Image] Failed:", err);
     }
-
-    // ── 2. Current action / scene state from character record ──
-    const currentActivity = character.current_activity || null;
-    const currentSituation = character.current_situation || null;
-    const dailyMicroNarration = character.daily_micro_narration || null;
-
-    // ── 3. Latest established narrative (represents current action) ──
-    const allMsgs = messagesRef.current || messages || [];
-    const latestNarrative = [...allMsgs].reverse().find(m => m.is_narrative && m.content?.trim());
-
-    // ── 4. Recent dialogue (SECONDARY — mood/expression only) ──
-    const recentDialogue = allMsgs
-      .filter(m => !m.is_narrative && m.content?.trim())
-      .slice(-4)
-      .map(m => `${m.sender_type === 'user' ? 'User' : (m.character_name || character.name)}: "${(m.content || '').substring(0, 120)}"`)
-      .join('\n');
-
-    // ── 5. Gender handling — never infer from dialogue or name ──
-    const charGender = character.gender;
-    const hasGender = charGender && String(charGender).trim() !== '' && String(charGender).toLowerCase() !== 'null';
-    const genderInstruction = hasGender
-      ? `The character's gender is "${charGender}". Respect it. Use appropriate pronouns.`
-      : `The character's gender is UNSET (null). Do NOT infer or assign a gender. Do NOT use "a woman", "a man", "female", "male", or gendered pronouns. Use the character's name and gender-neutral language (they/them) when a pronoun is unavoidable.`;
-
-    // ── 6. Build scene context block (authority) ──
-    const sceneContext = [
-      `CHARACTER (primary subject): ${character.name}`,
-      currentLocationName ? `CURRENT LOCATION: ${currentLocationName}` : null,
-      currentZoneName ? `CURRENT AREA/ZONE: ${currentZoneName}` : null,
-      character.resolved_presence_status ? `PRESENCE STATUS: ${character.resolved_presence_status}` : null,
-      currentActivity ? `CURRENT ACTIVITY: ${currentActivity}` : null,
-      currentSituation ? `CURRENT SITUATION: ${currentSituation}` : null,
-      dailyMicroNarration ? `MICRO NARRATION: ${dailyMicroNarration}` : null,
-      latestNarrative?.content ? `LATEST NARRATIVE (current action): ${latestNarrative.content.substring(0, 300)}` : null,
-    ].filter(Boolean).join('\n');
-
-    const dialogueContext = recentDialogue
-      ? `\n\nRECENT DIALOGUE (secondary — mood/expression only; do NOT use to relocate the character or add people):\n${recentDialogue}`
-      : '';
-
-    // ── 7. Ask InvokeLLM to produce a concise visual scene prompt ──
-    const sceneResult = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are a visual scene director for a photorealistic image generator.
-
-Your ONLY job: describe what a camera would see RIGHT NOW in the character's current scene, based on the established character state below.
-
-The character is the PRIMARY and ONLY subject unless the scene state explicitly establishes someone else is physically present right now.
-
-AUTHORITY ORDER (use in this priority):
-1. Character's actual current location and zone — this is WHERE the scene is
-2. Character's current activity / scene state — this is WHAT the character is doing
-3. Latest narrative — represents the current action
-4. Character's existing identity, appearance, and wardrobe — already handled by the image system; do NOT describe
-5. Recent dialogue — SECONDARY context for mood, expression, or immediately relevant details only
-
-${genderInstruction}
-
-STRICT RULES:
-1. Describe ONLY what is happening NOW at the character's current location. Do NOT relocate the character.
-2. Do NOT invent future actions, entrances, or people approaching.
-3. Do NOT add people who are not established as physically present in the current scene. If the user mentions someone in dialogue, that does NOT mean they are physically present with the character.
-4. Do NOT describe clothing, facial features, or identity — the image system resolves those separately from reference photos.
-5. Write in second person to the image generator: "A photo of ${character.name} [doing X] at [location/zone]..."
-6. Keep it grounded and specific. No artistic flourishes, no "cinematic", no "8k".
-7. Output ONLY the image prompt text. No labels, no JSON, no explanation.
-
-CURRENT SCENE STATE:
-${sceneContext}${dialogueContext}
-
-Write the image prompt now:`
-    });
-
-    const scenePrompt =
-      sceneResult?.response ||
-      sceneResult?.text ||
-      sceneResult?.content ||
-      sceneResult;
-
-    if (!scenePrompt || typeof scenePrompt !== "string") return;
-
-    await createImageMessage(scenePrompt.trim(), 300);
   };
 
   const sendMessage = async (text, userImageUrl, prevGeneration) => {
