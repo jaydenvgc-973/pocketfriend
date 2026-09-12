@@ -63,10 +63,12 @@ export function buildActionNarrationPrompt(character, recentMessages = [], step 
   const lastCharText = lastCharMsg?.content?.substring(0, 200) || null;
 
   const continuationInstruction = lastNarrationText
-    ? `PREVIOUS NARRATION (continue directly — do NOT restart, do NOT repeat):
+    ? `PREVIOUS NARRATION (for context — do NOT repeat):
 "${lastNarrationText.substring(0, 280)}"
 
-This is step ${step + 1}. A moment has passed. ${name}'s reaction to the conversation continues to play out physically. Continue from the established state — do not restart or restate. Carry forward the existing emotional momentum and advance the moment.`
+This is step ${step + 1}. A moment has passed. ${name}'s reaction to the conversation continues to play out physically. Continue from the established state. Carry forward the existing emotional momentum and advance the moment.
+
+CRITICAL: Your narration MUST begin with a complete first sentence. Never begin mid-word, mid-phrase, or mid-sentence. The first character of your output must be the start of a real word.`
     : `This is the first narration step. Show ${name}'s immediate physical/emotional reaction to the last message they received. Establish the present moment and treat this action as the start of something that will progress.`;
 
   return `You are a literary narrator writing in close third-person.
