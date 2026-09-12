@@ -184,7 +184,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   const awarenessTimerRef = useRef(null);
   // Session cache for system_prompt_url content — prevents re-fetching on every message send.
   // Keyed as "characterId::url" so prompt leakage between characters is impossible.
-  const systemPromptCacheRef = useRef({}); const createImageMessageRef = useRef(null);
+  const systemPromptCacheRef = useRef({});
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -470,6 +470,206 @@ export default function Chat({ chatTypeOverride } = {}) {
     window.addEventListener('chat:checkApprovals', handler);
     return () => window.removeEventListener('chat:checkApprovals', handler);
   }, [checkForApprovalEvents]);
+
+  // createImageMessage — moved to component scope so Instant Image works without a prior send.
+  const createImageMessage = async (imageGenPrompt, delayMs = 500, context = {}) => {
+    const { userMsg = null, emotionalState = character?.emotional_state || 'calm' } = context;
+    const convoId = conversationIdRef.current || conversationId;
+    const resolvedCurrentUser = resolveAuthenticatedUser(currentUser, userSettings);
+    const userRefImages = resolvedCurrentUser?.visual_reference_images || [];
+    const charRefs = (character.reference_image_urls || []).filter(Boolean);
+      const navigatedAway = !isMountedRef.current;
+
+      // ── SUBJECT-AWARE CHARACTER RESOLUTION ──────────────────────────────────
+      // Resolve which characters are VISUAL SUBJECTS of the image prompt.
+      // This is the critical step that was regressed: the system must determine
+      // whether a named character is actually a subject of the image (not just mentioned),
+      // and bind their identity bundle before generation — not just pass a name as text.
+      //
+      // Cases:
+      //   "Send me a pic of Character B"        → B is primary subject, sender excluded
+      //   "Send me a pic of B and C together"   → B and C are co-subjects, sender excluded
+      //   "Send me a selfie"                    → Sender is subject
+      //   "Send me a pic of the room"           → Inanimate scene, no character injection
+      //
+      // The resolver uses intent-aware patterns, not just name scanning.
+      const allCachedCharsForSubjects = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+
+      let resolvedCharacterId = characterId; // default: sender is subject
+      let resolvedAdditionalCharacterIds = [];
+      let resolvedSubjectType = 'character';
+      let resolvedCharRefs = charRefs; // default: sender's refs
+      const finalImageGenPrompt = imageGenPrompt;
+      let subjectResult = null; // hoisted so it's accessible after try-catch for userIsVisualSubject
+
+      try {
+        // ── USER-PARTICIPANT RESOLUTION ─────────────────────────────────────────
+        // Pass resolvedCurrentUser (User entity + UserSettings bundle) so resolveImageSubjects
+        // can detect the authenticated user as a visual subject by scanning the LLM prompt for
+        // their world name / full name / aliases. Without this, userIsVisualSubject is always
+        // false and the backend identity-resolution gate never fires on initial generation,
+        // producing images that don't preserve the user's identity. This activates the SAME
+        // authoritative User entity + UserSettings resolution the "Doesn't look like them"
+        // regeneration path uses — no duplicate identity storage, no parallel system.
+        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser);
+        // Log all resolution steps for diagnostics
+        (subjectResult.log || []).forEach(entry => console.log(entry));
+
+        // ── BLOCK: unresolved named subject ──────────────────────────────────
+        // The prompt requested a specific named person but they were not found on the roster.
+        // DO NOT default to sender — that produces a false image.
+        if (subjectResult.resolutionState === 'unresolved_named') {
+          console.error(`[Chat] ⛔ Image generation BLOCKED — unresolved named subject. Reason: ${subjectResult.blockReason}`);
+          return null; // abort image creation entirely
+        }
+
+        // ── BLOCK: ambiguous named subject ────────────────────────────────────
+        // Multiple characters share the requested name — cannot determine the correct subject.
+        if (subjectResult.resolutionState === 'ambiguous_named') {
+          console.error(`[Chat] ⛔ Image generation BLOCKED — ambiguous subject. Names: [${subjectResult.ambiguousNames.join(', ')}]. Reason: ${subjectResult.blockReason}`);
+          return null; // abort image creation entirely
+        }
+
+        if (subjectResult.resolutionState === 'inanimate') {
+          // Room/object/place — no character identity injection
+          resolvedCharacterId = null;
+          resolvedCharRefs = [];
+          resolvedSubjectType = 'character';
+          resolvedAdditionalCharacterIds = [];
+          console.log(`[Chat] Image subject: INANIMATE SCENE — no character identity injected`);
+
+        } else if (subjectResult.resolutionState === 'resolved' && !subjectResult.includeSender && subjectResult.primarySubjectId !== characterId) {
+          // A named third-party character is the primary subject — sender NOT in image
+          const primarySubjectChar = allCachedCharsForSubjects.find(c => c.id === subjectResult.primarySubjectId);
+          resolvedCharacterId = subjectResult.primarySubjectId;
+          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
+          resolvedSubjectType = 'character';
+          resolvedCharRefs = (primarySubjectChar?.reference_image_urls || []).filter(Boolean);
+          console.log(`[Chat] Image subject: THIRD-PARTY primary="${primarySubjectChar?.name || subjectResult.primarySubjectId}" | additional=[${resolvedAdditionalCharacterIds.join(',')}]`);
+
+        } else if (subjectResult.resolutionState === 'resolved' && subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {
+          // Sender + named co-subjects (joint image)
+          resolvedCharacterId = characterId;
+          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
+          resolvedSubjectType = 'character';
+          resolvedCharRefs = charRefs;
+          console.log(`[Chat] Image subject: JOINT sender + co-subjects=[${resolvedAdditionalCharacterIds.join(',')}]`);
+
+        } else {
+          // Sender is sole subject (selfie / default — resolutionState === 'sender_self')
+          resolvedCharacterId = characterId;
+          resolvedAdditionalCharacterIds = [];
+          resolvedSubjectType = 'character';
+          resolvedCharRefs = charRefs;
+          console.log(`[Chat] Image subject: SENDER ONLY`);
+        }
+      } catch (subjectErr) {
+        console.warn('[Chat] Subject resolution failed (non-blocking), defaulting to sender:', subjectErr?.message);
+        resolvedCharacterId = characterId;
+        resolvedCharRefs = charRefs;
+        resolvedAdditionalCharacterIds = [];
+      }
+
+      // ── USER VISUAL SUBJECT UPGRADE ─────────────────────────────────────────
+      // When resolveImageSubjects detected the authenticated user's world name / full name /
+      // aliases in the LLM-generated prompt, the user is a visual subject. Upgrade subjectType
+      // so the backend identity-resolution gate (effectiveUserSubject) fires on the INITIAL
+      // generation — the same authoritative User entity + UserSettings resolution the
+      // "Doesn't look like them" regeneration path uses. No duplicate identity storage.
+      //   user only (no character in image)  → 'user'
+      //   user + one or more characters      → 'joint'
+      //   no user present                    → 'character' (unchanged)
+      const userIsVisualSubjectDetected = !!(subjectResult?.userIsVisualSubject);
+      if (userIsVisualSubjectDetected) {
+        if (subjectResult?.resolutionState === 'user_participant') {
+          // User is the SOLE visual subject — clear any sender default so the backend does not
+          // inject a character identity that is not in the requested image.
+          resolvedCharacterId = null;
+          resolvedCharRefs = [];
+          resolvedAdditionalCharacterIds = [];
+          resolvedSubjectType = 'user';
+          console.log(`[Chat] USER VISUAL SUBJECT: sole subject → subjectType="user" (char cleared)`);
+        } else {
+          // User + character(s) in the image
+          resolvedSubjectType = 'joint';
+          console.log(`[Chat] USER VISUAL SUBJECT: joint with character → subjectType="joint" | char=${resolvedCharacterId || 'sender'}`);
+        }
+      }
+
+      // ── ENFORCE SUBJECT NAMES IN PROMPT ────────────────────────────────────
+      // Resolve names for the primary and additional subjects to validate prompt naming.
+      const _primarySubjectChar = resolvedCharacterId
+        ? (resolvedCharacterId === characterId ? character : allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId))
+        : null;
+      const _primarySubjectName = _primarySubjectChar?.name || null;
+      const _additionalSubjectNames = resolvedAdditionalCharacterIds
+        .map(id => allCachedCharsForSubjects.find(c => c.id === id)?.name)
+        .filter(Boolean);
+      const validatedPrompt = enforceSubjectNamesInPrompt(finalImageGenPrompt, _primarySubjectName, _additionalSubjectNames);
+
+      console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${validatedPrompt.substring(0, 80)}"`);
+
+      let imgMsg;
+      try {
+        imgMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          sender_character_id: characterId,
+          receiver_character_id: null,
+          content: "",
+          emotional_state: emotionalState,
+          is_read: navigatedAway ? false : true,
+          timestamp: new Date().toISOString(),
+          channel: isPhone ? 'phone' : 'direct',
+          source_message_id: userMsg?.id || null,
+          reply_to_message_id: userMsg?.id || null,
+          generation_lock_id: null,
+          generation_context: {
+            prompt: validatedPrompt,
+            character_id: resolvedCharacterId,
+            character_reference_images: resolvedCharRefs,
+          },
+        });
+      } catch (err) {
+        console.error('[createImageMessage] Network error saving image message:', err.message);
+        return null;
+      }
+      if (!imgMsg?.id) return null;
+      if (!navigatedAway) {
+        setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
+      }
+      const targetMsgId = imgMsg.id;
+      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${validatedPrompt.substring(0, 80)}"`);
+      const primarySubjectChar = resolvedCharacterId && resolvedCharacterId !== characterId
+        ? allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId)
+        : null;
+      const primarySubjectName = resolvedCharacterId === characterId
+        ? character.name
+        : (primarySubjectChar?.name || null);
+
+      setTimeout(() => dispatchImageGeneration({
+        targetMsgId,
+        imageGenPrompt: validatedPrompt,
+        charRefs: resolvedCharRefs,
+        userRefImages,
+        useUserRefs: userIsVisualSubjectDetected && userRefImages.length > 0,
+        character,
+        userSettings,
+        currentUser,
+        subjectType: resolvedSubjectType,
+        characterId: resolvedCharacterId,
+        characterName: primarySubjectName,
+        isMountedRef,
+        setMessages,
+        convoId,
+        queryClient,
+        additionalCharacterIds: resolvedAdditionalCharacterIds,
+        userIsVisualSubject: userIsVisualSubjectDetected,
+      }), delayMs);
+      return imgMsg;
+    };
 
   const sendMessage = async (text, userImageUrl, prevGeneration) => {
     if (!character) return;
@@ -1739,225 +1939,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       console.log(`[SUBJECT-TYPE] World name "${worldNameLower}" detected in prompt → subjectType=user`);
     }
 
-    // Resolve user identity through the unified resolver — single source of truth.
-    // Reads User entity + UserSettings; returns ordered visual_reference_images with
-    // correct priority (uploaded refs > generated avatars).
-    const resolvedCurrentUser = resolveAuthenticatedUser(currentUser, userSettings);
-    const userRefImages = resolvedCurrentUser?.visual_reference_images || [];
-    const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-    const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
-    // enforceSubjectNamesInPrompt is imported from lib/subjectNameEnforcer.js
-    const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
-      const navigatedAway = !isMountedRef.current;
-
-      // ── SUBJECT-AWARE CHARACTER RESOLUTION ──────────────────────────────────
-      // Resolve which characters are VISUAL SUBJECTS of the image prompt.
-      // This is the critical step that was regressed: the system must determine
-      // whether a named character is actually a subject of the image (not just mentioned),
-      // and bind their identity bundle before generation — not just pass a name as text.
-      //
-      // Cases:
-      //   "Send me a pic of Character B"        → B is primary subject, sender excluded
-      //   "Send me a pic of B and C together"   → B and C are co-subjects, sender excluded
-      //   "Send me a selfie"                    → Sender is subject
-      //   "Send me a pic of the room"           → Inanimate scene, no character injection
-      //
-      // The resolver uses intent-aware patterns, not just name scanning.
-      const allCachedCharsForSubjects = queryClient.getQueryData(["characters", currentUser?.email]) || [];
-
-      let resolvedCharacterId = characterId; // default: sender is subject
-      let resolvedAdditionalCharacterIds = [];
-      let resolvedSubjectType = 'character';
-      let resolvedCharRefs = charRefs; // default: sender's refs
-      const finalImageGenPrompt = imageGenPrompt;
-      let subjectResult = null; // hoisted so it's accessible after try-catch for userIsVisualSubject
-
-      try {
-        // ── USER-PARTICIPANT RESOLUTION ─────────────────────────────────────────
-        // Pass resolvedCurrentUser (User entity + UserSettings bundle) so resolveImageSubjects
-        // can detect the authenticated user as a visual subject by scanning the LLM prompt for
-        // their world name / full name / aliases. Without this, userIsVisualSubject is always
-        // false and the backend identity-resolution gate never fires on initial generation,
-        // producing images that don't preserve the user's identity. This activates the SAME
-        // authoritative User entity + UserSettings resolution the "Doesn't look like them"
-        // regeneration path uses — no duplicate identity storage, no parallel system.
-        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser);
-        // Log all resolution steps for diagnostics
-        (subjectResult.log || []).forEach(entry => console.log(entry));
-
-        // ── BLOCK: unresolved named subject ──────────────────────────────────
-        // The prompt requested a specific named person but they were not found on the roster.
-        // DO NOT default to sender — that produces a false image.
-        if (subjectResult.resolutionState === 'unresolved_named') {
-          console.error(`[Chat] ⛔ Image generation BLOCKED — unresolved named subject. Reason: ${subjectResult.blockReason}`);
-          return null; // abort image creation entirely
-        }
-
-        // ── BLOCK: ambiguous named subject ────────────────────────────────────
-        // Multiple characters share the requested name — cannot determine the correct subject.
-        if (subjectResult.resolutionState === 'ambiguous_named') {
-          console.error(`[Chat] ⛔ Image generation BLOCKED — ambiguous subject. Names: [${subjectResult.ambiguousNames.join(', ')}]. Reason: ${subjectResult.blockReason}`);
-          return null; // abort image creation entirely
-        }
-
-        if (subjectResult.resolutionState === 'inanimate') {
-          // Room/object/place — no character identity injection
-          resolvedCharacterId = null;
-          resolvedCharRefs = [];
-          resolvedSubjectType = 'character';
-          resolvedAdditionalCharacterIds = [];
-          console.log(`[Chat] Image subject: INANIMATE SCENE — no character identity injected`);
-
-        } else if (subjectResult.resolutionState === 'resolved' && !subjectResult.includeSender && subjectResult.primarySubjectId !== characterId) {
-          // A named third-party character is the primary subject — sender NOT in image
-          const primarySubjectChar = allCachedCharsForSubjects.find(c => c.id === subjectResult.primarySubjectId);
-          resolvedCharacterId = subjectResult.primarySubjectId;
-          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
-          resolvedSubjectType = 'character';
-          resolvedCharRefs = (primarySubjectChar?.reference_image_urls || []).filter(Boolean);
-          console.log(`[Chat] Image subject: THIRD-PARTY primary="${primarySubjectChar?.name || subjectResult.primarySubjectId}" | additional=[${resolvedAdditionalCharacterIds.join(',')}]`);
-
-        } else if (subjectResult.resolutionState === 'resolved' && subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {
-          // Sender + named co-subjects (joint image)
-          resolvedCharacterId = characterId;
-          resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
-          resolvedSubjectType = 'character';
-          resolvedCharRefs = charRefs;
-          console.log(`[Chat] Image subject: JOINT sender + co-subjects=[${resolvedAdditionalCharacterIds.join(',')}]`);
-
-        } else {
-          // Sender is sole subject (selfie / default — resolutionState === 'sender_self')
-          resolvedCharacterId = characterId;
-          resolvedAdditionalCharacterIds = [];
-          resolvedSubjectType = 'character';
-          resolvedCharRefs = charRefs;
-          console.log(`[Chat] Image subject: SENDER ONLY`);
-        }
-      } catch (subjectErr) {
-        console.warn('[Chat] Subject resolution failed (non-blocking), defaulting to sender:', subjectErr?.message);
-        resolvedCharacterId = characterId;
-        resolvedCharRefs = charRefs;
-        resolvedAdditionalCharacterIds = [];
-      }
-
-      // ── USER VISUAL SUBJECT UPGRADE ─────────────────────────────────────────
-      // When resolveImageSubjects detected the authenticated user's world name / full name /
-      // aliases in the LLM-generated prompt, the user is a visual subject. Upgrade subjectType
-      // so the backend identity-resolution gate (effectiveUserSubject) fires on the INITIAL
-      // generation — the same authoritative User entity + UserSettings resolution the
-      // "Doesn't look like them" regeneration path uses. No duplicate identity storage.
-      //   user only (no character in image)  → 'user'
-      //   user + one or more characters      → 'joint'
-      //   no user present                    → 'character' (unchanged)
-      const userIsVisualSubjectDetected = !!(subjectResult?.userIsVisualSubject);
-      if (userIsVisualSubjectDetected) {
-        if (subjectResult?.resolutionState === 'user_participant') {
-          // User is the SOLE visual subject — clear any sender default so the backend does not
-          // inject a character identity that is not in the requested image.
-          resolvedCharacterId = null;
-          resolvedCharRefs = [];
-          resolvedAdditionalCharacterIds = [];
-          resolvedSubjectType = 'user';
-          console.log(`[Chat] USER VISUAL SUBJECT: sole subject → subjectType="user" (char cleared)`);
-        } else {
-          // User + character(s) in the image
-          resolvedSubjectType = 'joint';
-          console.log(`[Chat] USER VISUAL SUBJECT: joint with character → subjectType="joint" | char=${resolvedCharacterId || 'sender'}`);
-        }
-      }
-
-      // ── ENFORCE SUBJECT NAMES IN PROMPT ────────────────────────────────────
-      // Resolve names for the primary and additional subjects to validate prompt naming.
-      const _primarySubjectChar = resolvedCharacterId
-        ? (resolvedCharacterId === characterId ? character : allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId))
-        : null;
-      const _primarySubjectName = _primarySubjectChar?.name || null;
-      const _additionalSubjectNames = resolvedAdditionalCharacterIds
-        .map(id => allCachedCharsForSubjects.find(c => c.id === id)?.name)
-        .filter(Boolean);
-      const validatedPrompt = enforceSubjectNamesInPrompt(finalImageGenPrompt, _primarySubjectName, _additionalSubjectNames);
-
-      console.log(`[Chat] Image dispatch: sender="${character.name}" (${characterId}) | refs=${resolvedCharRefs.length} | prompt="${validatedPrompt.substring(0, 80)}"`);
-
-      let imgMsg;
-      try {
-        imgMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          sender_character_id: characterId,
-          receiver_character_id: null,
-          content: "",
-          emotional_state: emotionalState,
-          is_read: navigatedAway ? false : true,
-          timestamp: new Date().toISOString(),
-          channel: isPhone ? 'phone' : 'direct',
-          // ── IDEMPOTENCY FIELDS ───────────────────────────────────────────────
-          source_message_id: userMsg?.id || null,
-          reply_to_message_id: userMsg?.id || null,
-          generation_lock_id: null,  // image generation doesn't use generation lock
-          generation_context: {
-            prompt: validatedPrompt,
-            character_id: resolvedCharacterId,
-            character_reference_images: resolvedCharRefs,
-          },
-        });
-      } catch (err) {
-        console.error('[createImageMessage] Network error saving image message:', err.message);
-        return null;
-      }
-      if (!imgMsg?.id) return null;
-      if (!navigatedAway) {
-        setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
-      }
-      const targetMsgId = imgMsg.id;
-      console.log(`[Chat] Image msg created: ${targetMsgId} | sender=${character.name} | focal_char=${resolvedCharacterId || 'none'} | prompt="${validatedPrompt.substring(0, 80)}"`);
-      // Resolve primary subject name for dispatch (may differ from sender when B is the subject).
-      // When sender IS the primary subject (sender_self or joint with sender), characterName
-      // should be the sender's name so the backend can reliably identify the character record.
-      const primarySubjectChar = resolvedCharacterId && resolvedCharacterId !== characterId
-        ? allCachedCharsForSubjects.find(c => c.id === resolvedCharacterId)
-        : null;
-      // If sender is primary subject, use sender's name; if third-party char, use their name; if none, null.
-      const primarySubjectName = resolvedCharacterId === characterId
-        ? character.name
-        : (primarySubjectChar?.name || null);
-
-      setTimeout(() => dispatchImageGeneration({
-        targetMsgId,
-        imageGenPrompt: validatedPrompt,
-        charRefs: resolvedCharRefs,
-        userRefImages,
-        // Forward the authoritative user avatar/profile/reference image bundle (from
-        // resolveAuthenticatedUser → User entity visual_reference_images) BEFORE the first
-        // generation whenever the user is a visual subject. The backend uses these as the
-        // caller-bundle fallback and stores them in generation_context.user_reference_images
-        // for regeneration. Previously hardcoded false — which discarded the already-loaded
-        // User entity reference images and forced the user to use "Doesn't look like them".
-        useUserRefs: userIsVisualSubjectDetected && userRefImages.length > 0,
-        character,
-        userSettings,
-        currentUser,
-        subjectType: resolvedSubjectType,
-        // resolvedCharacterId is the PRIMARY visual subject — may be a named third-party char,
-        // not necessarily the sender. When null, the backend treats it as an inanimate/no-char scene.
-        characterId: resolvedCharacterId,
-        characterName: primarySubjectName,
-        isMountedRef,
-        setMessages,
-        convoId,
-        queryClient,
-        additionalCharacterIds: resolvedAdditionalCharacterIds,
-        // USER-PARTICIPANT FLAG: true when resolveImageSubjects detected the user's world name
-        // in the prompt (any position). Backend uses this to trigger full user identity resolution
-        // (User entity + UserSettings) even when subjectType is not explicitly 'user'/'joint'.
-        // CRITICAL: never pass rel.photo_url or rel.avatar_url as the user's canonical avatar.
-        userIsVisualSubject: userIsVisualSubjectDetected,
-      }), delayMs);
-      return imgMsg;
-    }; createImageMessageRef.current = createImageMessage;
 
     const createTextMessage = async (textContent, { sourceMessageId = null, lockId = null } = {}) => {
       if (!textContent?.trim()) return null;
@@ -2058,8 +2040,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         else await createNarrativeMessage(item.text);
       }
       if (msgType === 'text_then_image' && imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 800);
-        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800);
+        await createImageMessage(imagePrompts[0], 800, { userMsg, emotionalState });
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800, { userMsg, emotionalState });
       }
     } else if (msgType === "text_only") {
       primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
@@ -2068,9 +2050,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
     } else if (msgType === "image_only") {
       if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 300);
+        await createImageMessage(imagePrompts[0], 300, { userMsg, emotionalState });
         for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 300 + i * 800);
+          await createImageMessage(imagePrompts[i], 300 + i * 800, { userMsg, emotionalState });
         }
       } else {
         primaryTextMsg = await createTextMessage(responseText || "...", idempotencyOpts);
@@ -2079,16 +2061,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     } else if (msgType === "text_then_image") {
       primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
       if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 800);
-        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800);
+        await createImageMessage(imagePrompts[0], 800, { userMsg, emotionalState });
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 800 + i * 800, { userMsg, emotionalState });
       }
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
       for (const n of fallbackNarratives) await createNarrativeMessage(n);
 
     } else if (msgType === "image_then_text") {
       if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 300);
-        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 300 + i * 800);
+        await createImageMessage(imagePrompts[0], 300, { userMsg, emotionalState });
+        for (let i = 1; i < imagePrompts.length; i++) await createImageMessage(imagePrompts[i], 300 + i * 800, { userMsg, emotionalState });
       }
       await new Promise(r => setTimeout(r, 600));
       primaryTextMsg = await createTextMessage(responseText || "", idempotencyOpts);
@@ -2265,10 +2247,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onHousingChangeToggle={() => setShowHousingModal(true)}
         onLocationShareToggle={() => setShowLocationShare(true)}
         onInstantImage={async (imagePrompt) => {
-          // Instant Image: the hook already generated a visual scene description via InvokeLLM.
-          // Hand it to the existing createImageMessage pipeline via ref — no new generator, no new path.
-          if (imagePrompt && createImageMessageRef.current) {
-            await createImageMessageRef.current(imagePrompt, 300);
+          if (imagePrompt) {
+            await createImageMessage(imagePrompt, 300);
           }
         }}
       />
