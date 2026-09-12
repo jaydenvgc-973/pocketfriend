@@ -600,7 +600,7 @@ STRICTLY FORBIDDEN in text_content:
 - Environmental description
 - Cinematic or novel-style writing
 - Any sentence where you describe yourself in third person
-IF you feel the need to convey a physical action: express it through first-person dialogue instead.
+IF you feel the need to convey a physical action: put it in the sequence array as a { "type": "narrative" } item — do not put it in text_content.
 WRONG: "${character.name} leans back into the pillows, his arm heavy."
 RIGHT: "I'm leaning back. Not moving. Don't want to."
 Narrative scene content is a separate output channel — it does NOT belong in this message.` : ''}`;
