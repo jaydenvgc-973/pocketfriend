@@ -89,8 +89,10 @@ export default function Settings() {
   // Merge: regular characters + npc_fictitious from backend, deduplicated
   const allCharacters = (() => {
     const seen = new Set();
-    return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
-      if (seen.has(c.id)) return false;
+    const safeRegular = Array.isArray(regularCharacters) ? regularCharacters : [];
+    const safeNpc = Array.isArray(npcFictitiousFromBackend) ? npcFictitiousFromBackend : [];
+    return [...safeRegular, ...safeNpc].filter(c => {
+      if (!c || seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
     });
