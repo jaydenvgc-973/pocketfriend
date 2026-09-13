@@ -29,7 +29,7 @@ import { ArrowLeft, RefreshCw } from "lucide-react";
 export default class SettingsErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, errorInfo: null, showDetails: false };
   }
 
   static getDerivedStateFromError(error) {
@@ -38,10 +38,15 @@ export default class SettingsErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("[SettingsErrorBoundary] Render error caught:", error, errorInfo);
+    this.setState({ errorInfo });
   }
 
   handleRetry = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, errorInfo: null, showDetails: false });
+  };
+
+  toggleDetails = () => {
+    this.setState(prev => ({ showDetails: !prev.showDetails }));
   };
 
   render() {
@@ -65,7 +70,7 @@ export default class SettingsErrorBoundary extends React.Component {
                   Something went wrong loading this page
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  A dependency failed to load. Your data is safe — try again.
+                  {this.state.error?.message || "An unexpected error occurred."}
                 </p>
               </div>
               <button
@@ -75,6 +80,18 @@ export default class SettingsErrorBoundary extends React.Component {
                 <RefreshCw className="w-4 h-4" />
                 Try again
               </button>
+              <button
+                onClick={this.toggleDetails}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+              >
+                {this.state.showDetails ? "Hide details" : "Show error details"}
+              </button>
+              {this.state.showDetails && (
+                <pre className="text-left text-[10px] text-destructive/80 bg-secondary/60 border border-border rounded-xl p-3 max-w-md overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+{this.state.error?.stack || String(this.state.error)}
+{this.state.errorInfo?.componentStack ? `\n\nComponent stack:${this.state.errorInfo.componentStack}` : ''}
+                </pre>
+              )}
               <Link
                 to="/home"
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors pt-2"

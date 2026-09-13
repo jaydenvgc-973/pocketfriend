@@ -8,7 +8,6 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import CharacterTraitsStep, { CHARACTER_TRAITS } from "@/components/character/CharacterTraitsStep";
 import SettingsQuirksStep from "@/components/settings/SettingsQuirksStep";
-import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
 import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 
