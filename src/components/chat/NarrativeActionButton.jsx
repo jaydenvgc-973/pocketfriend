@@ -310,8 +310,6 @@ Advance the moment. Do not rewrite the same beat with different adjectives.
 ════════════════════════════════════════════════════════════
 ROMANTIC STYLE MOTIF POOL (draw from naturally — do NOT label which technique is in use):
 ${buildStyleMotifContext()}
-
-${buildExtendedNarrativeExampleContext()}
 ════════════════════════════════════════════════════════════
 `
         : "";
