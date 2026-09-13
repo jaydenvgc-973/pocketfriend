@@ -60,7 +60,7 @@ export default function EditCharacterTraits() {
     setSaved(true);
   };
 
-  const quirksChanged = JSON.stringify(localQuirks) !== JSON.stringify(selectedChar.quirks || []);
+  const quirksChanged = JSON.stringify(localQuirks) !== JSON.stringify(selectedChar?.quirks || []);
   const hasChanges = selectedChar && (
     CHARACTER_TRAITS.some(t => !!localTraits[t.key] !== !!selectedChar[t.key]) || quirksChanged
   );
