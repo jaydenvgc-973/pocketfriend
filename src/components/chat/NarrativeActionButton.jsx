@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
+import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -309,6 +310,8 @@ Advance the moment. Do not rewrite the same beat with different adjectives.
 ════════════════════════════════════════════════════════════
 ROMANTIC STYLE MOTIF POOL (draw from naturally — do NOT label which technique is in use):
 ${buildStyleMotifContext()}
+
+${buildExtendedNarrativeExampleContext()}
 ════════════════════════════════════════════════════════════
 `
         : "";
