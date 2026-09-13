@@ -76,7 +76,11 @@ export default function Settings() {
     queryFn: async () => {
       if (!user?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
+      // Established contract: npcs is an array. Normalize at the source so the
+      // consumer never receives a non-iterable value (the `|| []` guard alone does
+      // not catch truthy non-arrays such as an object returned in error/legacy paths).
+      const npcs = res?.data?.npcs;
+      return Array.isArray(npcs) ? npcs : [];
     },
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000,
@@ -89,10 +93,8 @@ export default function Settings() {
   // Merge: regular characters + npc_fictitious from backend, deduplicated
   const allCharacters = (() => {
     const seen = new Set();
-    const safeRegular = Array.isArray(regularCharacters) ? regularCharacters : [];
-    const safeNpc = Array.isArray(npcFictitiousFromBackend) ? npcFictitiousFromBackend : [];
-    return [...safeRegular, ...safeNpc].filter(c => {
-      if (!c || seen.has(c.id)) return false;
+    return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
+      if (seen.has(c.id)) return false;
       seen.add(c.id);
       return true;
     });
