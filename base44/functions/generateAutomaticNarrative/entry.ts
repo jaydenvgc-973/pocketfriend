@@ -696,6 +696,48 @@ A sparse, accurate narrative is always correct.
 A rich, invented narrative is always a failure.
 ════════════════════════════════════
 
+════════════════════════════════════════════════════════════
+NARRATIVE ENGINE GUIDANCE — ADDITIVE RULES
+These rules ADD to the existing rules above. They do NOT replace them.
+════════════════════════════════════════════════════════════
+EMOTIONAL INTENSITY LADDER — Emotions exist across a range. Use four levels:
+Level 1 — Subtle: Emotion is present but does not dominate behavior. Small changes in attention, expression, tone, pacing.
+Level 2 — Clear/Moderate: Emotion clearly influences behavior. May become quieter, more talkative, seek reassurance, become visibly tense. Normal functioning intact.
+Level 3 — Strong: Emotion significantly affects the moment. May have difficulty settling, disengage, raise voice, become tearful. Still should not cross into unrelated extreme behaviors.
+Level 4 — Acute: Emotion temporarily overwhelms ordinary regulation. REQUIRES direct evidence from dialogue, behavior, state, or events. Do not infer Level 4 from a common emotional word.
+
+ALWAYS BEGIN WITH THE LOWEST INTENSITY THAT FULLY FITS THE EVIDENCE. Increase only when there is actual support. Intensity may remain stable, rise, decrease, spike, fluctuate, or resolve.
+
+ANXIETY IS NOT AUTOMATICALLY PANIC OR CRISIS — worry, distraction, restlessness, seeking reassurance do not automatically mean shaking, frantic breathing, collapse, or breakdown.
+CONFUSION IS NOT DELUSION — not understanding information is not hallucination or loss of reality.
+ANGER IS NOT AUTOMATICALLY VIOLENCE — annoyance, irritation, frustration, anger do not automatically mean punching walls, destroying property, attacking people.
+MENTAL OVERLOAD IS NOT COGNITIVE COLLAPSE — stress, racing thoughts, competing responsibilities are not psychosis or disorganization.
+SADNESS DOES NOT REQUIRE SOBBING. FEAR DOES NOT REQUIRE PANIC. EMBARRASSMENT DOES NOT REQUIRE HUMILIATION. JEALOUSY DOES NOT REQUIRE AGGRESSION. ATTRACTION DOES NOT REQUIRE SEXUAL ESCALATION. GUILT DOES NOT REQUIRE SELF-LOATHING.
+EMOTION DOES NOT ALWAYS REQUIRE VISIBLE PHYSICAL SYMPTOMS — characters can simply feel what they feel without dramatic physical demonstration.
+
+PROGRESSION DOES NOT MEAN ESCALATION — continuing the story can include calming down, sitting quietly, eating, changing rooms, laughing, answering a question, accepting or refusing reassurance, ordinary activity, silence, returning to a topic, or making a decision. Do not invent drama to prove the story is progressing.
+
+PREVIOUS NARRATIVES REMAIN REAL SCENE HISTORY — if a previous narrative established movement, activity, emotional state, or physical positioning, respect it. But do not recursively exaggerate previous emotional language. Reevaluate using everything that has happened since.
+
+NEW DIALOGUE CAN CHANGE DIRECTION — if an earlier narrative described worry but later messages show reassurance, reduce intensity. If new information worsens the situation, intensity may increase. Track emotional direction, not merely labels.
+
+PHYSICAL AND SPATIAL CONTINUITY — respect current location, zone, room, positioning, movement, objects, and activity. Do not treat a location as one interchangeable space. If the character moved from couch to kitchen, the next narrative starts from the kitchen. If they are in a hospital patient room, do not place them in the lobby.
+
+USER PRESENCE — if the current scene has established that the user is physically with the character, the narrative must account for their presence. Do not make the user disappear. This applies to Right Now and all narrative generation.
+
+RIGHT NOW CONTINUITY — Right Now does not create a fresh standalone vignette. It describes or progresses the character's existing current situation. It must inherit Action history, automatic narrative history, user-entered narrative history, and the current scene state.
+
+BEHAVIORAL VARIETY — do not rely on the same gestures repeatedly (forehead touching, face in neck, jaw tightening, clenched fists, trembling, sighing, gripping objects, breath hitching). Vary physical actions, conversational behavior, movement, use of environment, and emotional expression. Repetition is acceptable only when it is an established character habit or intentionally meaningful.
+
+ROMANTIC VARIETY — do not use the same romantic gestures as automatic shorthand. Vary behavior according to relationship, personalities, emotional tone, physical intensity, recent gestures, environment, and intent. Emotional intimacy and physical intensity are separate dimensions. Intimacy does not require constant touching.
+
+SPECIAL-PURPOSE NARRATIVES — the scheduled work narrative establishes CURRENT STATE, not a transition. Use "is at work" or "is working" — not "went to work" or "arrived at work." The notification timing is not the moment of arrival. Once work state is established, later narratives must continue from that work state.
+
+NEVER ESCALATE ONLY BECAUSE ANOTHER NARRATIVE WAS REQUESTED — if the scene is calm, multiple narratives can continue the calm without inventing an argument, crisis, confession, panic, romance, or dramatic interruption.
+
+CORE RULE — Continue what is actually happening. Preserve what already happened. Read what the characters are saying. Respect location, zone, activity, relationships, user presence, people present, and physical positioning. Interpret emotion according to evidence and intensity. Allow scenes to escalate or calm naturally. Use varied human behavior. Make the story continue.
+════════════════════════════════════════════════════════════
+
 CRITICAL RULES:
 1. NEVER contradict the situation block above — it is the ground truth.
 2. Write in present tense, third-person using the LOCKED pronouns above.

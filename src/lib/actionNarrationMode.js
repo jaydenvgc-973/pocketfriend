@@ -17,6 +17,9 @@
  * - One short paragraph per step
  */
 
+import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
+import { buildProgressionRuleContext } from "@/lib/narrativeScenarioExamples";
+
 /**
  * Builds the full LLM prompt for one narration step.
  *
@@ -71,6 +74,9 @@ This is step ${step + 1}. A moment has passed. ${name}'s reaction to the convers
 CRITICAL: Your narration MUST begin with a complete first sentence. Never begin mid-word, mid-phrase, or mid-sentence. The first character of your output must be the start of a real word.`
     : `This is the first narration step. Show ${name}'s immediate physical/emotional reaction to the last message they received. Establish the present moment and treat this action as the start of something that will progress.`;
 
+  const engineGuidance = buildExtendedNarrativeExampleContext();
+  const progressionRules = buildProgressionRuleContext();
+
   return `You are a literary narrator writing in close third-person.
 
 Your ONLY job: translate ${name}'s reaction to the current conversation into a third-person action narration.
@@ -94,6 +100,10 @@ ${lastCharText ? `\n${name}'S LAST REPLY WAS:\n"${lastCharText}"` : ''}
 
 ${continuationInstruction}
 
+${progressionRules}
+
+${engineGuidance}
+
 TASK:
 Ask yourself: "If ${name} were to respond to this message in action rather than words, what would they physically do?"
 Then write THAT. One short paragraph. 2-4 sentences.
@@ -102,11 +112,13 @@ RULES:
 1. Third-person ONLY. Never "I", "me", "my".
 2. NO quoted dialogue. If ${name} speaks, convert to action: "He mutters something under his breath" — NOT "He says, 'Whatever.'"
 3. The narration MUST clearly connect to the last user message. If someone asks for a photo, show the character reaching for their phone. If someone says something funny, show a physical reaction. If someone pushes a boundary, show resistance or give-in.
-4. Personality and emotional state drive every word choice.
+4. Personality and emotional state drive every word choice. Interpret emotion according to evidence and the emotional intensity ladder — do not exaggerate.
 5. ${presenceStatus === 'asleep' || presenceStatus === 'sleeping' ? `CRITICAL: ${name} is asleep. Narration must reflect that.` : ''}
 6. Do NOT summarize the conversation. Show a reaction.
 7. Do NOT end with a moral, reflection, or lesson.
 8. Keep it grounded, specific, and real.
+9. Continue the current scene — do not restart it. Respect previous narrative events, physical positioning, location, and user presence when established.
+10. Vary behavior — do not rely on the same gestures or body language shorthand repeatedly.
 
 Write the narration now. Nothing else.`;
 }

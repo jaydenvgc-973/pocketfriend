@@ -314,6 +314,9 @@ ${buildStyleMotifContext()}
 `
         : "";
 
+      // Engine guidance + A–CN example library — additive, applies to ALL intents
+      const engineGuidanceBlock = buildExtendedNarrativeExampleContext();
+
       // Intent action descriptions
       const intentDescriptions = {
         action: contextTier === "high"
@@ -361,6 +364,8 @@ Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction
 ${userPresenceBlock}
 ${narrativeContinuityBlock}
 ${progressionBlock}${motifBlock}
+
+${engineGuidanceBlock}
 
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}${actionMemory}
