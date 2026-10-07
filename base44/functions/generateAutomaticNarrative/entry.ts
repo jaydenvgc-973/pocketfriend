@@ -81,28 +81,72 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── RESOLVE LOCATION — single source of truth ─────────────────────────
-    const locationId =
-      character.resolved_current_location_id ||
-      character.current_home_location_id ||
-      null;
+    // ── RESOLVE LOCATION — authoritative state is the single source of truth ──
+    // A null resolved_current_location_id does NOT mean "location unknown." The
+    // character may be in a valid rabbit-hole or other destination that has no
+    // ordinary LocationReference record. Home is a fallback ONLY when the
+    // authoritative presence is genuinely "home" (or when no stronger state exists).
+    // Active non-home states (at_work, at_school, incarcerated, hospitalized,
+    // traveling, rabbit_hole, etc.) must NOT collapse to the home LocationReference
+    // just because the destination lacks a physical location_id.
+    const _presenceStatusEarly = character.resolved_presence_status || 'home';
+    const _resolvedLocationType = character.resolved_location_type || null;
+    const _activeNonHomeStates = [
+      'at_work', 'at_school', 'visiting', 'traveling',
+      'incarcerated', 'house_arrest', 'confined', 'hospitalized',
+      'rabbit_hole', 'under_supervision', 'temporary_housing',
+    ];
+    const _isActiveNonHome = _activeNonHomeStates.includes(_presenceStatusEarly);
+
+    // Authoritative location name from state — covers rabbit holes and named
+    // destinations that have no ordinary LocationReference.
+    const _stateLocationName = character.resolved_current_location_name || null;
+
+    // Determine which location_id to fetch (if any):
+    // - resolved_current_location_id when present (normal Location destination)
+    // - current_home_location_id ONLY when presence is genuinely home / unspecified
+    // - null for active non-home states without a physical id (rabbit hole)
+    let locationId = null;
+    if (character.resolved_current_location_id) {
+      locationId = character.resolved_current_location_id;
+    } else if (!_isActiveNonHome) {
+      locationId = character.current_home_location_id || null;
+    }
+
+    // Derive a category from resolved_location_type for rabbit holes / active
+    // states that have no ordinary LocationReference to read category from.
+    const _categoryFromType = {
+      home: 'home', work: 'workplace', school: 'school',
+      incarcerated: 'jail_prison', house_arrest: 'jail_prison',
+      halfway_house: 'jail_prison', hospitalized: 'medical',
+      traveling: 'transportation', rabbit_hole: 'generic',
+      visit: 'generic', supervision_home: 'home', recovery_nap: 'home',
+      temporary_housing: 'home',
+    }[_resolvedLocationType] || 'generic';
 
     let location = null;
-    let resolvedLocationName = 'home';
+    let resolvedLocationName = _stateLocationName || 'home';
     let resolvedZoneName = null;
-    let locationCategory = 'home';
+    let locationCategory = _isActiveNonHome && !character.resolved_current_location_id
+      ? _categoryFromType
+      : 'home';
     let locationDescription = '';
 
     if (locationId) {
       const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1);
       location = locList?.[0];
       if (location) {
-        resolvedLocationName = location.name;
+        // When the state name is set (rabbit hole / named destination), it is the
+        // authority — do not overwrite it with the fetched Location's name.
+        if (!_stateLocationName) {
+          resolvedLocationName = location.name;
+        }
         locationCategory = location.category || 'generic';
         locationDescription = location.description || '';
-        if (location.zones && location.zones.length > 0) {
-          resolvedZoneName = location.zones[0].zone_name;
-        }
+        // DO NOT pick the first zone. "No zone is better than a false zone."
+        // The current zone must come from current-state evidence, not the first
+        // listed zone on the Location. We have no per-character current-zone
+        // field, so resolvedZoneName stays null unless real evidence exists.
       }
     }
 
@@ -124,10 +168,29 @@ Deno.serve(async (req) => {
       hour >= 20 && hour < 23 ? 'night' :
       'late_night';
 
-    // Sleep state — use schedule fields
-    const wakeHour = character.wake_up_time ? parseInt(character.wake_up_time.split(':')[0]) : 7;
-    const sleepHour = character.sleep_start_time ? parseInt(character.sleep_start_time.split(':')[0]) : 23;
-    const isAsleep = hour >= sleepHour || hour < wakeHour;
+    // Sleep state — AUTHORITATIVE PRESENCE OUTRANKS SCHEDULE.
+    // resolved_presence_status directly tells us if the character is sleeping
+    // (sleeping, napping, passed_out). Active states (at_work, at_school,
+    // incarcerated, hospitalized, traveling, rabbit_hole, etc.) mean the
+    // character is awake regardless of what the sleep schedule says. The schedule
+    // is a fallback ONLY when presence is home / unspecified.
+    const _sleepingPresenceStates = ['sleeping', 'napping', 'passed_out'];
+    const _activeAwakeStates = [
+      'at_work', 'at_school', 'visiting', 'traveling',
+      'incarcerated', 'house_arrest', 'confined', 'hospitalized',
+      'rabbit_hole', 'under_supervision', 'temporary_housing',
+    ];
+    let isAsleep;
+    if (_sleepingPresenceStates.includes(_presenceStatusEarly)) {
+      isAsleep = true;
+    } else if (_activeAwakeStates.includes(_presenceStatusEarly)) {
+      isAsleep = false;
+    } else {
+      // Home or unspecified — fall back to schedule-based sleep derivation
+      const wakeHour = character.wake_up_time ? parseInt(character.wake_up_time.split(':')[0]) : 7;
+      const sleepHour = character.sleep_start_time ? parseInt(character.sleep_start_time.split(':')[0]) : 23;
+      isAsleep = hour >= sleepHour || hour < wakeHour;
+    }
     const sleepState = isAsleep ? 'asleep' : 'awake';
 
     // Work state — AUTHORITATIVE PRESENCE IS THE DECIDING FACTOR.
