@@ -152,6 +152,38 @@ Deno.serve(async (req) => {
 
     console.log(`[generateAutomaticNarrative] Location: ${resolvedLocationName} (${locationId || 'none'})`);
 
+    // ── USER PRESENCE — consume state the app already tracks ────────────────
+    // UserSettings holds the user's current location and presence status.
+    // If the user is physically co-present with the character, the narrative must
+    // account for that. If the user is remote/away, do not invent physical presence.
+    let userPresenceLine = '';
+    try {
+      const settingsList = await base44.asServiceRole.entities.UserSettings.filter(
+        { owner_email: ownerEmail }, null, 1
+      ).catch(() => []);
+      const settings = settingsList?.[0];
+      if (settings) {
+        const userLocId = settings.user_current_location_id || null;
+        const userPresence = settings.user_presence_status || 'away';
+        const userWorldName = settings.fictional_world_name || 'the user';
+        const charLocId = character.resolved_current_location_id || null;
+        const userIsCoPresent = !!(
+          userPresence === 'present' &&
+          userLocId && charLocId &&
+          userLocId === charLocId
+        );
+        if (userIsCoPresent) {
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is physically co-present with ${character.name} at this location right now. The narrative may include their shared physical presence, interaction, or proximity. Do NOT make the user disappear from the established scene.`;
+        } else if (userPresence === 'present' && userLocId) {
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is present in the app world at a different location. This is a remote/text interaction — do NOT invent physical co-presence with ${character.name}.`;
+        } else {
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is not physically present with ${character.name} right now (away/remote). Do NOT invent physical co-presence.`;
+        }
+      }
+    } catch (presenceErr) {
+      console.warn(`[generateAutomaticNarrative] User presence check skipped (non-blocking): ${presenceErr.message}`);
+    }
+
     // ── DETERMINE STATE — precise and enforced ────────────────────────────
     const nowET = new Date(NOW.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
@@ -231,8 +263,8 @@ Deno.serve(async (req) => {
     const isTraveling = false;
     const travelDestination = null;
 
-    // Presence
-    const presenceStatus = character.resolved_presence_status || 'home';
+    // Presence — already resolved above as _presenceStatusEarly (authoritative)
+    const presenceStatus = _presenceStatusEarly;
 
     // ── DEDUPLICATION: Same-instance check ─────────────────────────────────
     // Before generating a new narrative, verify that something actually changed
@@ -357,13 +389,20 @@ Deno.serve(async (req) => {
     const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const dayName = nowET.toLocaleDateString('en-US', { weekday: 'long' });
 
+    // Current activity — descriptive state the app already tracks. This is
+    // current evidence of what the character is doing and must be preserved.
+    const currentActivity = character.current_activity || null;
+    const activityLine = currentActivity
+      ? `\n- CURRENT ACTIVITY: ${currentActivity} — continue from this activity unless the scene naturally changes it. Do NOT silently reroll or reset it.`
+      : '';
+
     // Derive the dominant constraint
     let situationBlock = '';
     if (isAsleep) {
       situationBlock = `SITUATION: ${character.name} is ASLEEP right now.
 - Do NOT depict them awake, moving, speaking, or doing anything active.
 - Narrative must reflect sleep: physical rest, breathing, stillness, possible dreams, subconscious.
-- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}`;
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}${activityLine}`;
     } else if (isAtWork) {
       situationBlock = `SITUATION: ${character.name} is AT WORK right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
@@ -371,13 +410,51 @@ Deno.serve(async (req) => {
 - Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
 - Do NOT depict them at home, relaxing, or away from work.
 - WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${character.name} as currently AT WORK (e.g., "${character.name} is at work at ${resolvedLocationName}." / "${character.name} is working at ${resolvedLocationName}."). Do NOT use transition wording ("went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
-- WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.`;
+- WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.${activityLine}`;
+    } else if (presenceStatus === 'at_school') {
+      situationBlock = `SITUATION: ${character.name} is AT SCHOOL right now.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Narrative must reflect school activities, classes, studying, campus environment, or student life.
+- Do NOT depict them at home, at work, or away from school.
+- This is a CURRENT STATE, not a transition. Describe ${character.name} as currently AT SCHOOL. Do NOT use transition wording ("went to school", "headed to class", "arrived at school").${activityLine}`;
+    } else if (presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined') {
+      situationBlock = `SITUATION: ${character.name} is INCARCERATED / CONFINED right now.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Narrative must reflect the confinement reality: cell, facility, restricted movement, institutional environment.
+- Do NOT depict them at home, at work, in public, or free to move around normally.
+- This is a CURRENT STATE, not a transition.${activityLine}`;
+    } else if (presenceStatus === 'hospitalized') {
+      situationBlock = `SITUATION: ${character.name} is HOSPITALIZED / RECEIVING CARE right now.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Narrative must reflect the medical setting: patient room, treatment, care environment, medical staff.
+- Do NOT depict them at home, at work, or in a non-medical setting.
+- Do NOT reset to a hospital lobby or entrance — continue from the established care area.
+- This is a CURRENT STATE, not a transition.${activityLine}`;
+    } else if (presenceStatus === 'traveling') {
+      situationBlock = `SITUATION: ${character.name} is TRAVELING right now.
+- Destination: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Narrative must reflect the travel/destination context.
+- Do NOT depict them at home unless newer information establishes arrival.
+- This is a CURRENT STATE, not a transition.${activityLine}`;
+    } else if (presenceStatus === 'rabbit_hole') {
+      situationBlock = `SITUATION: ${character.name} is at ${resolvedLocationName} right now (rabbit-hole destination).
+- This destination may not have ordinary explorable rooms or zones — describe activity appropriate to this destination without inventing a fake room entity.
+- Do NOT replace this destination with the character's home or borrow a room from an unrelated Location.
+- Do NOT manufacture a home living room, bedroom, lobby, or generic office just because the normal location system expects one.
+- Continue from the established activity and context for this destination.${activityLine}`;
+    } else if (_isActiveNonHome) {
+      situationBlock = `SITUATION: ${character.name} is AWAKE and at ${resolvedLocationName} right now.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Category: ${locationCategory}
+${locationDescription ? `- Environment: ${locationDescription}` : ''}
+- This is an active non-home state (${presenceStatus}). Do NOT depict them at home or reset to a default room.
+- Narrative must reflect what they'd realistically be doing here at this time.${activityLine}`;
     } else {
       situationBlock = `SITUATION: ${character.name} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Category: ${locationCategory}
 ${locationDescription ? `- Environment: ${locationDescription}` : ''}
-- Narrative must reflect what they'd realistically be doing here at this time.`;
+- Narrative must reflect what they'd realistically be doing here at this time.${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -592,7 +669,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
-${situationBlock}
+${situationBlock}${userPresenceLine}
 ${needsLine}${quirkLine}${householdActivityBlock}${healthActivityBlock}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
