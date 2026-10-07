@@ -1,56 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// ── NARRATIVE ENGINE GUIDANCE (additive — injected into the existing prompt) ──
-// Mirrors src/lib/narrativeEngineGuidance.js. Additive interpretive rules +
-// teaching examples. Does NOT replace existing rules, examples, or character
-// authority. Kept inline because backend functions cannot import from src/.
-const NARRATIVE_ENGINE_GUIDANCE = `
-NARRATIVE ENGINE GUIDANCE — ADDITIVE INTERPRETIVE RULES (do NOT replace existing rules/examples; add to them):
-
-EMOTIONAL INTENSITY LADDER — calibrate, do not exaggerate:
-Level 1 (Subtle): emotion present but does not dominate behavior; small changes in attention, expression, tone, pacing; normal functioning intact.
-Level 2 (Clear/Moderate): emotion clearly influencing behavior — quieter/more talkative, seeking reassurance, visibly tense, distracted, changed tone or activity; still functional.
-Level 3 (Strong): emotion significantly affecting the moment — difficulty settling, temporary disengagement, raised voice, tearfulness, needing space, obvious physical tension; still coherent.
-Level 4 (Acute): emotion temporarily overwhelming ordinary regulation — REQUIRES direct evidence from dialogue, behavior, state, or events. Do NOT infer from a common emotional word alone.
-- Begin with the lowest level that fully fits the evidence. Do NOT automatically increase intensity because another narrative was requested.
-- Anxiety ≠ panic/breakdown. Confusion ≠ delusion. Anger ≠ violence. Mental overload ≠ cognitive collapse. Sadness ≠ uncontrollable sobbing. Fear ≠ panic. Jealousy ≠ aggression. Attraction ≠ sexual escalation. Stress ≠ inability to function. Guilt ≠ self-loathing. Vulnerability ≠ instability.
-- Emotion does NOT always require visible physical symptoms. Someone can be anxious while sitting normally, angry while speaking calmly, sad without crying, attracted without touching. Do not attach diagnoses or psychological labels.
-
-SHARED SCENE CONTINUITY — all narrative entry methods share one scene:
-- Previous narratives are REAL scene history. If a narrative said the character stood up, entered a room, started cooking, kissed someone, became upset, accepted comfort, left a location, or started working — that event happened. The next narrative respects it unless something later changes it.
-- BUT previous narrative LANGUAGE must not recursively exaggerate itself. Reevaluate the character's current emotional state using everything that happened SINCE, not merely the previous paragraph's label.
-- DIALOGUE CAN CHANGE DIRECTION. If an earlier narrative established anxiety but later messages show reassurance/relief/humor/resolution — reduce intensity. Track emotional DIRECTION, not merely labels.
-- PROGRESSION ≠ ESCALATION. Continuing the story can include de-escalation, reassurance, resolution, continued disagreement, hesitation, humor, subject change, activity change, moving, staying, a decision, changing one's mind, physical affection, withdrawing, accepting/rejecting comfort, ordinary activity, silence. Do not make every narrative more dramatic than the last.
-- Do not invent a crisis/confession/panic/romance/violence simply because another narrative was requested.
-
-PHYSICAL + SPATIAL CONTINUITY:
-- Characters do NOT teleport when a new narrative is generated. Preserve current room, zone, physical distance, posture, movement, object use, current activity. If in a hospital patient room, do not return them to the lobby. If in bed, do not suddenly place them standing elsewhere without movement.
-- State changes are visible to the next narrative: if they ate, hunger is addressed; if they showered, hygiene occurred; if they fell asleep, they are asleep; if they began work, they are at work.
-
-USER PRESENCE — persists when established:
-- If the scene already established the user is physically with the character, continue from that shared scene. Do NOT make the user disappear because Right Now or another narrative was requested. Include/account for the user when presence is established.
-- Remote (text/phone) interaction: the user is NOT physically present. Do not describe the user as in the same space.
-
-RIGHT NOW — describe the actual current moment, not a fresh vignette:
-- Continue/represent the character's EXISTING current situation using current location, zone, activity, work/sleep/travel/hospital/home state, emotional state + supported intensity, recent narratives, recent dialogue, recent Actions, people present, user presence, established physical positioning, unresolved events.
-- Right Now inherits Action and automatic-narrative history. After Let Them Act produced movement, continue from there. After an automatic narrative established a state, continue from there.
-- After a special-purpose work status established the character is at work, Right Now knows they are at work and continues from that work state.
-
-SPECIAL-PURPOSE WORK STATUS WORDING:
-- The scheduled work narrative establishes CURRENT STATE, not the moment of transition. Use present-state wording: "[Character] is at work at [Workplace]." or "[Character] is working at [Workplace]."
-- Do NOT use transition wording that implies the notification timestamp is the moment the character left for or arrived at work: avoid "[Character] went to work at...", "[Character] headed to work...", "[Character] left for work...". A delayed notification does NOT imply late arrival.
-- Once work status is established, later narratives understand the character is currently at work, the workplace is their current location, the relevant work zone applies, and their activity should make sense for that environment.
-
-ROMANTIC + INTIMATE VARIETY (when romance is contextually appropriate):
-- Emotional intensity and Physical intensity are SEPARATE dimensions. High emotional intimacy does NOT require strong physical contact. Do not automatically make physical contact more sexual just because emotional intimacy is high.
-- Do NOT rely on a few repeated gestures (forehead touching, face buried in neck, resting head on shoulder, sighing into skin, repetitive face touching) as automatic shorthand for intimacy. Those remain available but are only some options among many. Vary the actual physical behavior, not just the adjectives.
-- Romance does NOT have to erase other emotions. A kiss does NOT automatically resolve an argument. Flirt may fail. Comfort may be rejected.
-
-BEHAVIORAL VARIETY:
-- Do not solve repetition by rewriting the same action with different adjectives. Characters should actually DO different things — different physical actions, conversational behavior, movement, environmental use, affectionate behavior, emotional expression, pacing, practical activity, silence, initiation, response.
-- Characters should use their surroundings (lower the TV volume, move cups aside, open a window, pull a blanket over, set bags on the counter).
-`;
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -572,8 +521,6 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     // healthActivityBlock is computed above (near HEALTH_ACTIVITY_INSPIRATION).
 
     const narrativePrompt = `${canonicalSystemPrompt}
-
-${NARRATIVE_ENGINE_GUIDANCE}
 
 ════════════════════════════════════
 AUTOMATIC NARRATIVE TASK — PRESENT MOMENT

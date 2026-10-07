@@ -2,9 +2,6 @@
  * actionNarrationMode.js
  *
  * Builds the LLM prompt for Character-Led Progressive Action Narration.
- * Narrative engine guidance (intensity ladder, continuity, user presence,
- * romantic variety) is injected via buildNarrativeEngineGuidanceContext —
- * additive to the existing rules here.
  *
  * This is NOT preset action categories. This is:
  * "What the character would say about themselves, converted into third-person narrative form."
@@ -19,8 +16,6 @@
  * - Respects sleep/work/travel/location truth — no teleporting
  * - One short paragraph per step
  */
-
-import { buildNarrativeEngineGuidanceContext } from "@/lib/narrativeEngineGuidance";
 
 /**
  * Builds the full LLM prompt for one narration step.
@@ -77,8 +72,6 @@ CRITICAL: Your narration MUST begin with a complete first sentence. Never begin 
     : `This is the first narration step. Show ${name}'s immediate physical/emotional reaction to the last message they received. Establish the present moment and treat this action as the start of something that will progress.`;
 
   return `You are a literary narrator writing in close third-person.
-
-${buildNarrativeEngineGuidanceContext({ includeExamples: true })}
 
 Your ONLY job: translate ${name}'s reaction to the current conversation into a third-person action narration.
 

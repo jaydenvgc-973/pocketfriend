@@ -4,7 +4,6 @@ import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
-import { buildNarrativeEngineGuidanceContext } from "@/lib/narrativeEngineGuidance";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -350,7 +349,6 @@ ${buildStyleMotifContext()}
       };
 
       const prompt = `${hardBoundary}${confinementBlock}
-${buildNarrativeEngineGuidanceContext({ includeExamples: true })}
 
 You are writing a SHORT third-person narrative scene (2-4 sentences) for ${character.name}.
 
