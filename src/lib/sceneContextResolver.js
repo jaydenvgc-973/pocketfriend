@@ -215,6 +215,30 @@ export function determineRenderReadiness(locationMode, locationLabel, activity, 
 }
 
 /**
+ * Resolve residential unit context for a character at a location.
+ * Returns { unitId, unitName, occupantIds } or null if no unit assigned.
+ *
+ * @param {object} character - Full character record
+ * @param {object} locationMap - Map of locationId → LocationReference
+ * @returns {{unitId: string, unitName: string, occupantIds: string[]} | null}
+ */
+export function resolveResidentialUnitContext(character, locationMap = {}) {
+  if (!character) return null;
+  const locId = character.resolved_current_location_id || character.current_home_location_id;
+  if (!locId || !locationMap[locId]) return null;
+  const location = locationMap[locId];
+  const units = Array.isArray(location.residential_units) ? location.residential_units : [];
+  if (units.length === 0) return null;
+  const unit = units.find(u => (u.occupant_character_ids || []).includes(character.id));
+  if (!unit) return null;
+  return {
+    unitId: unit.unit_id,
+    unitName: unit.unit_name,
+    occupantIds: unit.occupant_character_ids || [],
+  };
+}
+
+/**
  * Build the full scene context object from character state + latest message.
  * This is the object that image generation MUST receive.
  */
@@ -252,6 +276,9 @@ export function buildSceneContext(character, latestMessage = '', locationMap = {
 
   const mustNotFallbackToHome = isRabbitHole || (character.resolved_presence_status === 'at_work') || (character.resolved_presence_status === 'at_school');
 
+  // Resolve residential unit context — which unit the character lives in
+  const residentialUnit = resolveResidentialUnitContext(character, locationMap);
+
   return {
     character_id: character.id,
     location_mode: locationMode,
@@ -267,5 +294,8 @@ export function buildSceneContext(character, latestMessage = '', locationMap = {
     use_saved_location_images: !isRabbitHole,
     must_not_fallback_to_home: mustNotFallbackToHome,
     presence_status: character.resolved_presence_status,
+    residential_unit_id: residentialUnit?.unitId || null,
+    residential_unit_name: residentialUnit?.unitName || null,
+    residential_unit_occupant_ids: residentialUnit?.occupantIds || [],
   };
 }

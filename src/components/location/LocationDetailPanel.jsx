@@ -4,6 +4,8 @@ import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
+import ResidentialUnitManager from "./ResidentialUnitManager";
+import { getResidentialUnits, buildHouseholdSummaries, getUnassignedResidentIds } from "@/lib/residentialUnitResolver";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -68,12 +70,25 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
     });
 
   const allResidentCount = activeResidents.length + npcResidents.length;
-  const householdSize = location.grocery_household_size || allResidentCount || 1;
-  const grocerySpend = location.grocery_average_spend || Math.round(householdSize * 150);
+  const units = getResidentialUnits(location);
+  const hasUnits = units.length > 0;
+  const householdSummaries = hasUnits ? buildHouseholdSummaries(location, characters, currentUserId, currentUserEmail) : [];
+  const unassignedIds = hasUnits ? getUnassignedResidentIds(location) : [];
 
-  const rentSplit = allResidentCount > 1
-    ? ((location.rent_or_housing_cost || 0) / allResidentCount).toFixed(0)
-    : null;
+  // When units exist, household size and grocery are per-unit, not building-wide
+  const householdSize = hasUnits
+    ? Math.max(...householdSummaries.map(h => h.householdSize), 1)
+    : (location.grocery_household_size || allResidentCount || 1);
+  const grocerySpend = hasUnits
+    ? householdSummaries.reduce((sum, h) => sum + h.groceryEstimate, 0)
+    : (location.grocery_average_spend || Math.round(householdSize * 150));
+
+  // Per-resident rent: when units exist, show per-unit; otherwise building-wide
+  const rentSplit = hasUnits
+    ? null // Per-unit rent is shown in the unit manager
+    : (allResidentCount > 1
+      ? ((location.rent_or_housing_cost || 0) / allResidentCount).toFixed(0)
+      : null);
 
   const totalHousingCost = (location.rent_or_housing_cost || 0) + totalUtilities;
 
@@ -189,12 +204,29 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                   <span className="text-[10px] text-muted-foreground/60 ml-auto capitalize">{npc.relationship_type || 'family'}</span>
                 </div>
               ))}
-              <DetailRow label="Household Size" value={householdSize} />
+              <DetailRow label={hasUnits ? "Building Residents" : "Household Size"} value={hasUnits ? allResidentCount : householdSize} />
+              {hasUnits && <DetailRow label="Total Households" value={units.length} />}
               <DetailRow label="Est. Grocery Need" value={`$${grocerySpend}/mo`} />
-            </>
-          )}
-        </>
-      )}
+              </>
+              )}
+
+              {/* Residential Unit / Household Manager */}
+              <ResidentialUnitManager
+              location={location}
+              characters={characters}
+              currentUserId={currentUserId}
+              currentUserEmail={currentUserEmail}
+              onChange={async (updates) => {
+              try {
+                await base44.entities.LocationReference.update(location.id, updates);
+                onResidentsChanged?.();
+              } catch (err) {
+                console.error('[ResidentialUnitManager] Failed to save:', err.message);
+              }
+              }}
+              />
+              </>
+              )}
 
       {(cat === 'workplace' || cat === 'business' || cat === 'food_drink' || cat === 'social' || cat === 'medical' || cat === 'government') && (
         <>

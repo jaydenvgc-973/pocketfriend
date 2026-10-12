@@ -631,6 +631,96 @@
         ]
       }
     },
+    "residential_units": {
+      "type": "array",
+      "default": [],
+      "description": "User-configured residential units (apartments, suites, etc.) within this parent location. Each unit represents a distinct living space with its own household. Residents not assigned to any unit remain building residents without a household grouping. Units reuse existing zone images from the parent location's residential environment \u2014 no image duplication required.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "unit_id": {
+            "type": "string",
+            "description": "Stable unique ID for this unit (UUID or slug)"
+          },
+          "unit_name": {
+            "type": "string",
+            "description": "User-defined unit identifier (e.g. 'Apartment 1', 'Unit 4B', 'Suite 210')"
+          },
+          "environment_id": {
+            "type": "string",
+            "description": "ID of the associated Residential environment from the location's environments array. Optional \u2014 units may exist without an explicit environment link."
+          },
+          "floor": {
+            "type": "string",
+            "description": "Optional floor identifier"
+          },
+          "unit_number": {
+            "type": "string",
+            "description": "Optional unit number"
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional unit-specific description"
+          },
+          "occupant_character_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Canonical character IDs assigned as occupants of this unit. These characters form a household."
+          },
+          "occupant_character_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Display names of unit occupants (denormalized for display)"
+          },
+          "rent": {
+            "type": "number",
+            "description": "Optional unit-specific monthly rent. When set, this overrides the parent location's rent_or_housing_cost for this household's calculations."
+          },
+          "utilities": {
+            "type": "object",
+            "properties": {
+              "electricity": {
+                "type": "number"
+              },
+              "water": {
+                "type": "number"
+              },
+              "gas": {
+                "type": "number"
+              },
+              "internet": {
+                "type": "number"
+              },
+              "other": {
+                "type": "number"
+              }
+            },
+            "description": "Optional unit-specific monthly utilities. When set, overrides the parent location's utility_costs for this household."
+          },
+          "zone_image_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "description": "Optional per-zone image overrides. Maps zone_name to an array of image URLs. When present for a zone, these images are used instead of the parent location's zone images for this unit. Absent = reuse parent location's zone images (default)."
+          }
+        },
+        "required": [
+          "unit_id",
+          "unit_name"
+        ]
+      }
+    },
     "resident_family_members": {
       "type": "array",
       "default": [],
