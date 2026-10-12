@@ -71,9 +71,16 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
   const householdSize = location.grocery_household_size || allResidentCount || 1;
   const grocerySpend = location.grocery_average_spend || Math.round(householdSize * 150);
 
-  const rentSplit = allResidentCount > 1
+  const hasApartments = (location.residential_units || []).length > 0;
+  // For Building venue type (apartments exist), rent is allocated per-apartment.
+  // The building-wide Per-Resident Rent line is suppressed and replaced by
+  // per-apartment allocations in the Apartments section below.
+  const rentSplit = !hasApartments && allResidentCount > 1
     ? ((location.rent_or_housing_cost || 0) / allResidentCount).toFixed(0)
     : null;
+  const aptRentAmount = location.rent_or_housing_cost || 0;
+  const aptCostSplitMethod = location.cost_split_method || 'even';
+  const aptResidentCostSplit = location.resident_cost_split || {};
 
   const totalHousingCost = (location.rent_or_housing_cost || 0) + totalUtilities;
 
@@ -127,7 +134,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
       {(cat === 'home' || cat === 'generic') && (
         <>
           <SectionHeader icon={Home} label="Housing" />
-          <DetailRow label="Rent" value={location.rent_or_housing_cost ? `$${location.rent_or_housing_cost}/mo` : null} highlight />
+          <DetailRow label={hasApartments ? "Rent / Apartment" : "Rent"} value={location.rent_or_housing_cost ? `$${location.rent_or_housing_cost}/mo` : null} highlight />
           <DetailRow label="Bedrooms" value={location.bedroom_count} />
           <DetailRow label="Utilities" value={totalUtilities > 0 ? `$${totalUtilities}/mo` : null} />
           <DetailRow label="Total Housing Cost" value={totalHousingCost > 0 ? `$${totalHousingCost}/mo` : null} highlight />
@@ -204,20 +211,36 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                     const char = characters.find(c => c.id === id);
                     return char ? { id: char.id, name: char.name, avatar_url: char.avatar_url } : null;
                   }).filter(Boolean);
+                  const occupantCount = occupants.length;
                   return (
                     <div key={unit.unit_id} className="bg-secondary/30 rounded-lg p-2">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="text-xs font-medium text-foreground">{unit.unit_name}</span>
-                        <span className="text-[10px] text-muted-foreground ml-auto">{occupants.length} {occupants.length === 1 ? 'resident' : 'residents'}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{occupantCount} {occupantCount === 1 ? 'resident' : 'residents'}</span>
                       </div>
-                      {occupants.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          {occupants.map(o => (
-                            <div key={o.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-card border border-border">
-                              {o.avatar_url && <img src={o.avatar_url} alt={o.name} className="w-3.5 h-3.5 rounded-full object-cover" />}
-                              <span className="text-[10px] text-foreground">{o.name}</span>
-                            </div>
-                          ))}
+                      {aptRentAmount > 0 && (
+                        <div className="text-[10px] text-muted-foreground mb-1">
+                          Rent: ${aptRentAmount}/mo{occupantCount > 1 ? ` · ${aptCostSplitMethod} split` : ''}
+                        </div>
+                      )}
+                      {occupantCount > 0 ? (
+                        <div className="space-y-0.5">
+                          {occupants.map(o => {
+                            const share = aptCostSplitMethod === 'custom' && aptResidentCostSplit[o.id] != null
+                              ? Math.round((aptResidentCostSplit[o.id]) * 100) / 100
+                              : occupantCount > 0
+                                ? Math.round((aptRentAmount / occupantCount) * 100) / 100
+                                : aptRentAmount;
+                            return (
+                              <div key={o.id} className="flex items-center gap-1.5">
+                                {o.avatar_url
+                                  ? <img src={o.avatar_url} alt={o.name} className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                                  : <div className="w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-[8px] font-bold text-primary">{o.name?.[0]?.toUpperCase()}</div>}
+                                <span className="text-xs text-foreground flex-1 truncate">{o.name}</span>
+                                {aptRentAmount > 0 && <span className="text-[10px] text-green-400 font-medium flex-shrink-0">${share}/mo</span>}
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="text-[10px] text-muted-foreground italic">No residents assigned</p>
