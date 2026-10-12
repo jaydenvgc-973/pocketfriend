@@ -1,4 +1,4 @@
-import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight, Shirt } from "lucide-react";
+import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight, Shirt, Building } from "lucide-react";
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
@@ -191,6 +191,61 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
               ))}
               <DetailRow label="Household Size" value={householdSize} />
               <DetailRow label="Est. Grocery Need" value={`$${grocerySpend}/mo`} />
+            </>
+          )}
+
+          {/* Read-only Apartments display (Building venue type) */}
+          {(location.residential_units || []).length > 0 && (
+            <>
+              <SectionHeader icon={Building} label="Apartments" />
+              <div className="space-y-1.5">
+                {(location.residential_units || []).map(unit => {
+                  const occupants = (unit.occupant_character_ids || []).map(id => {
+                    const char = characters.find(c => c.id === id);
+                    return char ? { id: char.id, name: char.name, avatar_url: char.avatar_url } : null;
+                  }).filter(Boolean);
+                  return (
+                    <div key={unit.unit_id} className="bg-secondary/30 rounded-lg p-2">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-xs font-medium text-foreground">{unit.unit_name}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto">{occupants.length} {occupants.length === 1 ? 'resident' : 'residents'}</span>
+                      </div>
+                      {occupants.length > 0 ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {occupants.map(o => (
+                            <div key={o.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-card border border-border">
+                              {o.avatar_url && <img src={o.avatar_url} alt={o.name} className="w-3.5 h-3.5 rounded-full object-cover" />}
+                              <span className="text-[10px] text-foreground">{o.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground italic">No residents assigned</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Show unassigned residents if any */}
+              {(() => {
+                const assignedIds = new Set();
+                (location.residential_units || []).forEach(u => (u.occupant_character_ids || []).forEach(id => assignedIds.add(id)));
+                const unassigned = activeResidents.filter(r => !assignedIds.has(r.id));
+                if (unassigned.length === 0) return null;
+                return (
+                  <div className="mt-1.5">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Unassigned</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {unassigned.map(r => (
+                        <div key={r.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-secondary/40 border border-border">
+                          {r.avatarUrl && <img src={r.avatarUrl} alt={r.name} className="w-3.5 h-3.5 rounded-full object-cover" />}
+                          <span className="text-[10px] text-muted-foreground">{r.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
         </>

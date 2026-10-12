@@ -116,7 +116,7 @@
     "source_shared_location_id": {
       "type": "string"
     },
-    "geo_mode": {
+    "geo-mode": {
       "type": "string",
       "enum": [
         "real_world",
@@ -660,6 +660,37 @@
       "type": "object",
       "additionalProperties": {
         "type": "string"
+      }
+    },
+    "residential_units": {
+      "type": "array",
+      "default": [],
+      "description": "User-configured apartments within a Building venue type. Each apartment identifies a distinct living space with its own household. Residents assigned to an apartment remain residents of the parent building. Residents not assigned to any apartment remain unassigned building residents.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "unit_id": {
+            "type": "string",
+            "description": "Stable unique ID for this apartment (UUID or slug)"
+          },
+          "unit_name": {
+            "type": "string",
+            "description": "User-defined apartment name or number (e.g. 'Apartment 1', 'Unit 4B')"
+          },
+          "occupant_character_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Canonical character IDs assigned as occupants of this apartment. These characters form a household within the building."
+          }
+        },
+        "required": [
+          "unit_id",
+          "unit_name"
+        ]
       }
     },
     "worker_character_ids": {

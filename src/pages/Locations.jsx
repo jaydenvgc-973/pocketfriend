@@ -26,6 +26,7 @@ import SchoolEnrollmentSection from "@/components/location/SchoolEnrollmentSecti
 import ReligiousMemberSection from "@/components/location/ReligiousMemberSection";
 import { Link } from "react-router-dom";
 import EnvironmentManager from "@/components/location/EnvironmentManager";
+import ApartmentManager from "@/components/location/ApartmentManager";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
@@ -326,7 +327,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
 }
 
 const SUBTYPE_OPTIONS = {
-  home: ["apartment", "house", "condo", "studio"],
+  home: ["apartment", "house", "condo", "studio", "building"],
   hotel: ["budget_motel", "standard_hotel", "boutique_hotel", "extended_stay", "hostel"],
   shelter: ["emergency_shelter", "transitional_shelter", "womens_shelter", "family_shelter", "overflow_shelter"],
   food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub"],
@@ -683,6 +684,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     residents: editingLocation?.residents || [],
     religious_members: editingLocation?.religious_members || [],
     environments: editingLocation?.environments || [],
+    residential_units: editingLocation?.residential_units || [],
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -1146,6 +1148,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             );
           })()}
         </div>
+      )}
+
+      {/* ── APARTMENTS (Building venue type only) ── */}
+      {form.category === 'home' && form.subtype.includes('building') && (
+        <ApartmentManager
+          residentialUnits={form.residential_units}
+          residentCharacterIds={form.resident_character_ids}
+          allCharacters={allCharacters}
+          onChange={(units) => update("residential_units", units)}
+        />
       )}
 
       {/* ── WORKERS ── */}
