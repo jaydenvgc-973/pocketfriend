@@ -683,7 +683,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     residents: editingLocation?.residents || [],
     religious_members: editingLocation?.religious_members || [],
     environments: editingLocation?.environments || [],
-    residential_units: editingLocation?.residential_units || [],
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
