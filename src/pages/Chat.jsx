@@ -1056,10 +1056,9 @@ Return ONLY the concise image prompt.
     let sequenceItems = null; // LLM-provided dialogue/narrative sequence (hoisted for post-try usage)
     let fallbackNarratives = []; // regex-stripped narration lines preserved as narratives
     try {
-      if (!isMountedRef.current) {
-        console.warn('[sendMessage] Component unmounted, aborting message send');
-        return;
-      }
+      // Response generation continues even if the component unmounts (user navigated away).
+      // The character's response is saved to the DB regardless of page navigation.
+      // isMountedRef only guards UI state updates (setMessages, setIsTyping), not DB writes.
 
       // Await the previous generation's completion so its committed character
       // response is in messagesRef before this generation builds its context.
@@ -1966,21 +1965,21 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (hasText && !responseText?.trim() && !_hasSeqDialogue) {
         releaseFgTask();
         if (isMountedRef.current) setIsTyping(false);
-        if (isMountedRef.current) {
-          await handleFallbackResponse({
-            characterId,
-            conversationId: conversationIdRef.current || conversationId,
-            currentUser,
-            base44,
-            character,
-            setRecoveringState: setIsRecovering,
-            errorReason: 'llm_failure',
-            errorStage: 'response_parsing',
-            originalPrompt: fullPrompt,
-            sourceMessageId: userMsg?.id,
-            channel: isPhone ? 'phone' : 'direct',
-          });
-        }
+        // Recovery fires even when the component unmounted (user navigated away)
+        // so the character's response is still generated and saved to the DB.
+        await handleFallbackResponse({
+          characterId,
+          conversationId: conversationIdRef.current || conversationId,
+          currentUser,
+          base44,
+          character,
+          setRecoveringState: setIsRecovering,
+          errorReason: 'llm_failure',
+          errorStage: 'response_parsing',
+          originalPrompt: fullPrompt,
+          sourceMessageId: userMsg?.id,
+          channel: isPhone ? 'phone' : 'direct',
+        });
         return;
       }
 
@@ -2027,8 +2026,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
     } catch (err) {
       releaseFgTask(); // release on error — background systems can resume
-      if (!isMountedRef.current) return;
-      setIsTyping(false);
+      if (isMountedRef.current) setIsTyping(false);
 
       // handleFallbackResponse imported statically at top of file
 
@@ -2041,21 +2039,21 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // handleFallbackResponse always returns should_save=false.
       // Recovery triggers automatically in background with exponential backoff.
       // UI shows "Reconnecting…" via isRecovering state — NOT a saved Message.
-      if (isMountedRef.current) {
-        await handleFallbackResponse({
-          characterId,
-          conversationId: conversationIdRef.current || conversationId,
-          currentUser,
-          base44,
-          character,
-          setRecoveringState: setIsRecovering,
-          errorReason: isRateLimit ? 'rate_limit' : msg.includes('timeout') ? 'timeout' : 'llm_failure',
-          errorStage: 'response_generation',
-          originalPrompt: fullPrompt, // REQUIRED: pass the full prompt for recovery
-          sourceMessageId: userMsg?.id, // REQUIRED: user message for idempotency
-          channel: isPhone ? 'phone' : 'direct',
-        });
-      }
+      // Recovery fires even when the component unmounted (user navigated away)
+      // so the character's response is still generated and saved to the DB.
+      await handleFallbackResponse({
+        characterId,
+        conversationId: conversationIdRef.current || conversationId,
+        currentUser,
+        base44,
+        character,
+        setRecoveringState: setIsRecovering,
+        errorReason: isRateLimit ? 'rate_limit' : msg.includes('timeout') ? 'timeout' : 'llm_failure',
+        errorStage: 'response_generation',
+        originalPrompt: fullPrompt, // REQUIRED: pass the full prompt for recovery
+        sourceMessageId: userMsg?.id, // REQUIRED: user message for idempotency
+        channel: isPhone ? 'phone' : 'direct',
+      });
       return;
     }
 
