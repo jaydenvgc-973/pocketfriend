@@ -582,7 +582,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, chatHistory, userPresenceLocationId, userPresenceStatus, userWorldName } = await req.json();
+    const { characterId, chatHistory, userPresenceLocationId, userPresenceStatus, userWorldName, userNarrativeSeed } = await req.json();
     if (!characterId || !chatHistory) {
       return Response.json({ error: 'characterId and chatHistory are required' }, { status: 400 });
     }
@@ -1057,6 +1057,33 @@ ${narrativeContinuityBlock}
 
 OUTPUT REJECTION CONDITIONS:
 Reject if: narrative does not match confirmed location, ignores schedule, restarts a scene, contradicts recent events, or ignores time of day.
+${userNarrativeSeed ? `
+════════════════════════════════════
+ADD STORY EVENT — USER NARRATIVE SEED — HIGHEST NARRATIVE AUTHORITY
+════════════════════════════════════
+The user has entered the following narrative seed for this Add Story Event:
+"${userNarrativeSeed}"
+
+This text is the PRIMARY narrative instruction. You MUST expand it into a coherent narrative.
+• Do NOT ignore the user's text. Do NOT replace it with a random or unrelated event.
+• Do NOT decide the character should be asleep, at home, relaxing, or somewhere else unless the user's own text or current continuity supports that.
+• The typed material is the narrative seed — expand it using the context above (character identity, current location, current state, recent messages, recent narratives, relationships, people present, user presence).
+• The user's text MAY intentionally change the scene. If the user types a transition (e.g., "finishes the shift and heads home"), expand that transition — do NOT force the character to remain in the previous state.
+• Do NOT invent additional unrelated transitions the user did not request.
+• The generated narrative must clearly be an EXPANSION of the entered information, not a replacement. Context enriches the seed — it does not erase it.
+════════════════════════════════════` : `
+════════════════════════════════════
+ADD STORY EVENT — BLANK SEED — GENERATE FROM CURRENT STATE
+════════════════════════════════════
+The user left the Add Story Event field blank and clicked Generate.
+This is a valid request. Generate an appropriate narrative from the current context.
+• Do NOT default to home. Do NOT default to sleep. Do NOT default to the first room of the character's home.
+• Do NOT invent an unrelated activity.
+• Use the current character and scene information above: current location, current zone, presence state, work/school/prison/hospital/travel state, sleep/awake state, recent activity, recent messages, recent narratives, current mood, people present, user presence, current needs, schedule state, current time.
+• A null physical location_id does NOT mean the character is home. If the authoritative state says at_work, at_school, rabbit_hole, traveling, etc., preserve that state.
+• Stronger current evidence outranks generic defaults. Do not use "home" or "sleep" as generic defaults when current state information is incomplete.
+• No specific zone is better than a false zone. Do not use the first room/zone listed for a location as though it were the character's current zone unless continuity establishes it.
+════════════════════════════════════`}
 
 Chat History:
 ${formattedChatHistory}
@@ -1068,7 +1095,26 @@ ${recentNarratives.length > 0 ? beatBlock : ''}
 Narrative:`;
 
     // ── Step 8: Pre-generation sleep gate ────────────────────────────────────
-    const finalPrompt = isAsleep ? prompt + SLEEP_GATE_SUFFIX : prompt;
+    // When the user provides a narrative seed, their text may intentionally change the scene
+    // (e.g., "gets out of bed and starts getting dressed"). The hard sleep gate would block
+    // these user-initiated transitions. Use a softer instruction that respects the user's text
+    // as the primary authority while still acknowledging the sleep state.
+    let finalPrompt;
+    if (isAsleep && userNarrativeSeed) {
+      finalPrompt = prompt + `
+════════════════════════════════════
+SLEEP STATE — USER SEED PRIORITY
+════════════════════════════════════
+The character is currently asleep. However, the user's Add Story Event text is the primary narrative authority.
+• If the user's text explicitly introduces waking, movement, or activity (e.g., "gets out of bed", "wakes up", "starts getting dressed"), EXPAND that transition — the user has intentionally changed the scene.
+• If the user's text does NOT introduce waking or activity, respect the sleep state and generate a sleeping narrative compatible with the user's text.
+• Do NOT force sleep if the user's text clearly establishes waking. Do NOT force waking if the user's text is compatible with sleep.
+════════════════════════════════════`;
+    } else if (isAsleep) {
+      finalPrompt = prompt + SLEEP_GATE_SUFFIX;
+    } else {
+      finalPrompt = prompt;
+    }
 
     let response = await base44.integrations.Core.InvokeLLM({
       prompt: finalPrompt,
@@ -1076,7 +1122,9 @@ Narrative:`;
     });
 
     // ── Step 9: Post-generation sleep validator ───────────────────────────────
-    if (isAsleep && response) {
+    // Skip the validator when a user narrative seed is present — the user's text may
+    // intentionally introduce waking/activity, which is a valid user-initiated scene change.
+    if (isAsleep && response && !userNarrativeSeed) {
       const respLower = response.toLowerCase();
       const hasViolation = SLEEP_VIOLATION_TERMS.some(term => respLower.includes(term));
       if (hasViolation) {

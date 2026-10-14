@@ -22,6 +22,7 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
         userPresenceLocationId: userSettings?.user_current_location_id || null,
         userPresenceStatus: userSettings?.user_presence_status || 'away',
         userWorldName: userSettings?.fictional_world_name || null,
+        userNarrativeSeed: narrativeText.trim() || null,
       });
       if (res?.data?.success && res.data.narrative) {
         setNarrativeText(res.data.narrative);

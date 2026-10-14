@@ -1759,8 +1759,8 @@ async function emitObligatedTransitionNarrative(base44, character, committed_res
   // 1. Work arrival: old != at_work → new == at_work (location type must be work or rabbit_hole)
   if (oldStatus !== 'at_work' && newStatus === 'at_work' && (newLocType === 'work' || newLocType === 'rabbit_hole')) {
     narrativeText = newLocName && newLocName !== 'Work'
-      ? `${charName} has gone to work at ${newLocName}.`
-      : `${charName} has gone to work.`;
+      ? `${charName} is at work at ${newLocName}.`
+      : `${charName} is at work.`;
   }
   // 2. Work return: old == at_work → new == home (reason must indicate work_end)
   else if (oldStatus === 'at_work' && newStatus === 'home' && (newReason === 'work_end' || newReason.includes('work_end'))) {
