@@ -544,29 +544,44 @@ const SLEEP_GATE_SUFFIX = `
 THIS CHARACTER IS ASLEEP. This is a locked state — do NOT wake them.
 The character is NOT awake, NOT working, NOT eating, NOT conversing, NOT leaving the bed.
 
+THREE DIFFERENT CONCEPTS — DO NOT CONFUSE THEM:
+A. NATURAL SLEEP MOVEMENT (ALLOWED): rolling over, shifting position, adjusting against bedding, pulling a blanket closer, moving an arm or leg, turning the head, snoring, breathing changes, small involuntary movements, twitching, relaxing more deeply, a head dropping slightly if they fell asleep sitting up, reacting physically to a dream while remaining asleep, dream-related facial expressions.
+   → These do NOT mean the character is awake.
+   → These do NOT mean the character changed locations.
+   → These do NOT mean the sleep state ended.
+   → These do NOT require a wake transition.
+B. CONSCIOUS AWAKE ACTION (PROHIBITED while asleep): using a phone, checking messages, working, eating, drinking, having a conversation, deliberately interacting with objects.
+C. LOCATION MOVEMENT (PROHIBITED while asleep): standing up, walking, changing rooms, leaving the house, going to work, traveling, relocating.
+   → An asleep character cannot perform B or C unless the narrative first establishes waking.
+
 ALLOWED — NATURAL SLEEP BEHAVIOR (non-exhaustive):
   ✓ Stillness, breathing, physical rest
   ✓ Shifting beneath blankets, rolling over, adjusting position
   ✓ Reaching instinctively for someone beside them without fully waking
   ✓ Reacting slightly to a sound without fully waking, then settling again
   ✓ Partially waking and settling again
-  ✓ Breathing changes, small involuntary movements
-  ✓ Pulling a blanket closer, turning face into pillow
+  ✓ Breathing changes, small involuntary movements, twitching
+  ✓ Pulling a blanket closer, turning face into pillow, snoring
   ✓ Dreams — dream imagery, emotional impressions, half-formed thoughts framed as sleep
   ✓ Environmental atmosphere (light quality, temperature, sound) around the sleeping character
   ✓ Another present character's quiet interaction when continuity supports it
 
+DREAM LOCATION RULE: A dream may contain other imagery or places. That does NOT mean the character's real-world location changed. Dream locations do NOT overwrite physical-world location. The character remains where they fell asleep.
+
+LOCATION CONTINUITY: The character remains at the location where they fell asleep (bed, couch, chair, rabbit-hole context, etc.) unless something actually changes that state. Natural sleep movement happens INSIDE that existing location and physical context.
+
 HARD BLOCKED — THESE INVALIDATE THE NARRATIVE:
   ✗ Eating, drinking, coffee, tea, water
-  ✗ Getting out of bed, standing up, walking, leaving the room
+  ✗ Getting out of bed, standing up, walking, leaving the room, changing locations
   ✗ Having a conversation or responding to anyone
   ✗ Using phone, checking messages, scrolling
   ✗ Working, doing tasks, handling responsibilities
-  ✗ Any WAKEFUL activity — the character is asleep, not paused
+  ✗ Any CONSCIOUS AWAKE activity or LOCATION MOVEMENT — the character is asleep, not paused
 
 Sleep is a state. It is NOT synonymous with "motionless object."
-Natural sleep behavior — shifting, dreaming, settling — is valid and expected.
+Natural sleep movement — shifting, dreaming, settling — is valid and expected.
 Do NOT force absolute motionlessness. Do NOT prohibit dreams.
+Do NOT confuse natural sleep movement with location movement or waking.
 ════════════════════════════════════`;
 
 const SLEEP_VIOLATION_TERMS = [
