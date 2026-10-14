@@ -701,7 +701,17 @@ Deno.serve(async (req) => {
     // ── Step 4: Resolve current location (from canonical character record) ────
     const resolvedLocationName = char.resolved_current_location_name || null;
     const resolvedPresenceStatus = char.resolved_presence_status || null;
-    const resolvedLocationId = char.resolved_current_location_id || char.current_home_location_id || null;
+    const resolvedLocationType = char.resolved_location_type || null;
+
+    // "rabbit_hole" is a VALID location identifier — do NOT fall back to home.
+    // When resolved_location_type is "rabbit_hole", resolved_current_location_id is
+    // typically the literal string "rabbit_hole" and the actual destination name is
+    // in resolved_current_location_name. Falling back to current_home_location_id
+    // would erase the rabbit-hole destination and substitute home — a direct failure.
+    const isRabbitHole = resolvedLocationType === 'rabbit_hole' || char.resolved_current_location_id === 'rabbit_hole';
+    const resolvedLocationId = isRabbitHole
+      ? (char.resolved_current_location_id || 'rabbit_hole')
+      : (char.resolved_current_location_id || char.current_home_location_id || null);
 
     // ── CANONICAL ROOM/ZONE AUTHORITY — fetch the actual LocationReference record ──
     // This is the fix for room fabrication: the narrative LLM previously received only
@@ -710,8 +720,14 @@ Deno.serve(async (req) => {
     // from generic assumptions (e.g. placing a desk in the living room when an Office
     // zone already exists). We now load the canonical zone list and inject it as an
     // authoritative constraint — the narrative must use existing rooms, not invent them.
+    //
+    // RABBIT-HOLE EXCLUSION: "rabbit_hole" is not a conventional LocationReference ID.
+    // Attempting a LocationReference lookup with id="rabbit_hole" will fail, and we
+    // must NOT fall back to the home location's zones. Rabbit holes do not need the
+    // same room/zone structure as ordinary Locations. If no specific sub-zone is
+    // established, remain at the rabbit-hole destination level.
     let canonicalZoneBlock = '';
-    if (resolvedLocationId) {
+    if (resolvedLocationId && !isRabbitHole) {
       try {
         const locList = await base44.asServiceRole.entities.LocationReference.filter(
           { id: resolvedLocationId }, null, 1
@@ -817,9 +833,11 @@ Use them. Render them. Do not redesign them.
       }
     }
 
-    const locationContext = resolvedLocationName
-      ? `Current location: ${resolvedLocationName}`
-      : 'Current location: unknown';
+    const locationContext = isRabbitHole
+      ? `Current location: ${resolvedLocationName || 'rabbit-hole destination'} (rabbit-hole — use this destination name, NOT "rabbit_hole", NOT home)`
+      : (resolvedLocationName
+        ? `Current location: ${resolvedLocationName}`
+        : 'Current location: unknown');
     const sleepContext = isAsleep
       ? `Sleep status: ASLEEP (${timeOfDayDesc} — ${timeStr})`
       : `Sleep status: AWAKE`;
@@ -1122,9 +1140,10 @@ AGENCY RULES:
 • The generator does not need to create drama, but it DOES need to generate life.
 
 LOCATION RULES:
-• A null physical location_id does NOT mean the character is home. If the authoritative state says at_work, at_school, rabbit_hole, traveling, etc., preserve that state.
-• Rabbit-hole locations ARE real current locations. If the system says the character is at a rabbit hole, the character IS at that rabbit hole — do NOT replace it with home, the first room of the home, or sleep. A null location_id plus an active rabbit-hole state does NOT equal home.
-• No specific zone is better than a false zone. Do not use the first room/zone listed for a location unless continuity establishes it. Do not substitute a home zone for a rabbit hole.
+• "rabbit_hole" IS a valid location identifier — it is NOT null, NOT missing, NOT invalid, and NOT a failed lookup. When location_id is "rabbit_hole", the character is at the rabbit-hole destination named in the current location context above. Use that destination name — do NOT print "rabbit_hole", do NOT use home, do NOT use the last physical Location, do NOT use "unknown".
+• Rabbit-hole locations ARE real current locations. If the system says the character is at a rabbit hole, the character IS at that rabbit hole — do NOT replace it with home, the first room of the home, or sleep. A rabbit-hole state does NOT equal home.
+• Do NOT fall back to the previous physical Location record just because the rabbit hole has no conventional LocationReference file.
+• No specific zone is better than a false zone. Do not use the first room/zone listed for a location unless continuity establishes it. Do not substitute a home room for a rabbit-hole destination. If the exact sub-area of the rabbit hole is not established, remain at the destination level.
 • Do NOT default to home. Do NOT default to sleep. Do NOT default to the first room of the character's home.
 • Stronger current evidence outranks generic defaults.
 
