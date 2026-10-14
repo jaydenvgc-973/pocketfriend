@@ -539,28 +539,34 @@ PRONOUNS: {PRONOUNS}
 const SLEEP_GATE_SUFFIX = `
 
 ════════════════════════════════════
-⛔ SLEEP STATE HARD GATE — HIGHEST PRIORITY — OVERRIDES ALL OTHER INSTRUCTIONS
+⛔ SLEEP STATE — CHARACTER IS ASLEEP — RESPECT SLEEP, ALLOW NATURAL SLEEP BEHAVIOR
 ════════════════════════════════════
-THIS CHARACTER IS ASLEEP. This is a locked state.
+THIS CHARACTER IS ASLEEP. This is a locked state — do NOT wake them.
+The character is NOT awake, NOT working, NOT eating, NOT conversing, NOT leaving the bed.
 
-ALLOWED (EXHAUSTIVE LIST):
-  ✓ Describing the room, ambient environment (light quality, temperature, sound)
+ALLOWED — NATURAL SLEEP BEHAVIOR (non-exhaustive):
   ✓ Stillness, breathing, physical rest
-  ✓ Dreams or half-conscious impressions (1 clause max, clearly framed as sleep)
-  ✓ Environmental atmosphere matching the current daypart
+  ✓ Shifting beneath blankets, rolling over, adjusting position
+  ✓ Reaching instinctively for someone beside them without fully waking
+  ✓ Reacting slightly to a sound without fully waking, then settling again
+  ✓ Partially waking and settling again
+  ✓ Breathing changes, small involuntary movements
+  ✓ Pulling a blanket closer, turning face into pillow
+  ✓ Dreams — dream imagery, emotional impressions, half-formed thoughts framed as sleep
+  ✓ Environmental atmosphere (light quality, temperature, sound) around the sleeping character
+  ✓ Another present character's quiet interaction when continuity supports it
 
-HARD BLOCKED — ANY OF THESE INVALIDATES THE NARRATIVE:
+HARD BLOCKED — THESE INVALIDATE THE NARRATIVE:
   ✗ Eating, drinking, coffee, tea, water
-  ✗ Moving between rooms or leaving the bed
-  ✗ Looking out windows intentionally
-  ✗ Picking up or interacting with any object
+  ✗ Getting out of bed, standing up, walking, leaving the room
   ✗ Having a conversation or responding to anyone
-  ✗ Any physical activity whatsoever
-  ✗ Thinking about future plans as if awake and deciding
+  ✗ Using phone, checking messages, scrolling
+  ✗ Working, doing tasks, handling responsibilities
+  ✗ Any WAKEFUL activity — the character is asleep, not paused
 
-IF YOU CANNOT WRITE A VALID NARRATIVE WITHIN THESE CONSTRAINTS,
-write one sentence describing the ambient environment and the character's stillness.
-That is always valid.
+Sleep is a state. It is NOT synonymous with "motionless object."
+Natural sleep behavior — shifting, dreaming, settling — is valid and expected.
+Do NOT force absolute motionlessness. Do NOT prohibit dreams.
 ════════════════════════════════════`;
 
 const SLEEP_VIOLATION_TERMS = [
@@ -568,7 +574,7 @@ const SLEEP_VIOLATION_TERMS = [
   'window','looks out','looked out','gazes out','stares out',
   'gets up','got up','stands up','stood up','sits up','sat up',
   'walks to','walked to','steps into','stepped into','moves to','moved to',
-  'bathroom','stretches','stretching','shower','brushes',
+  'bathroom','shower','brushes',
   'phone','checks','scrolls','opens','picks up',
   'leaves','heads out','goes to','went to',
   'eats','eating','food','breakfast','snack',
@@ -1073,16 +1079,44 @@ This text is the PRIMARY narrative instruction. You MUST expand it into a cohere
 • The generated narrative must clearly be an EXPANSION of the entered information, not a replacement. Context enriches the seed — it does not erase it.
 ════════════════════════════════════` : `
 ════════════════════════════════════
-ADD STORY EVENT — BLANK SEED — GENERATE FROM CURRENT STATE
+ADD STORY EVENT — BLANK SEED — CHARACTER AGENCY — GENERATE A LIVING BEAT
 ════════════════════════════════════
 The user left the Add Story Event field blank and clicked Generate.
-This is a valid request. Generate an appropriate narrative from the current context.
-• Do NOT default to home. Do NOT default to sleep. Do NOT default to the first room of the character's home.
-• Do NOT invent an unrelated activity.
-• Use the current character and scene information above: current location, current zone, presence state, work/school/prison/hospital/travel state, sleep/awake state, recent activity, recent messages, recent narratives, current mood, people present, user presence, current needs, schedule state, current time.
+This does NOT mean the character does nothing. The user has delegated the event choice to the character/narrative system.
+
+BLANK INPUT = CHARACTER AGENCY, NOT CHARACTER INACTIVITY.
+The character is a person with agency, not a ragdoll waiting for the user to animate them.
+
+Generate a believable narrative beat showing what this person would naturally be doing, thinking about, reacting to, pursuing, handling, deciding, or experiencing right now — using ALL of the following:
+• Personality, traits, quirks, habits, goals, desires, motivations, interests
+• Current mood and emotional direction
+• Current needs (hunger, energy, social, hygiene, etc.)
+• Current activity (continue from it — do NOT freeze or restart)
+• Current location, current zone, presence state
+• Current work/school/travel/hospital/prison/rabbit-hole state
+• Recent conversations and recent messages (the character may continue functioning while thinking about or reacting to what was recently discussed)
+• Previous narratives (continue naturally from established activity — do NOT restart, freeze, or discard)
+• Relationships and people currently present
+• User physical presence when established
+• Current time and relevant schedule/world information
+
+AGENCY RULES:
+• "Do not invent an unrelated activity" means do not contradict the character, scene, location, recent conversation, current state, or continuity. It does NOT mean "do not choose any activity."
+• When no exact task is established, you ARE allowed and expected to infer a plausible activity from existing character/world context.
+• Continuity prevents contradictions. Continuity does NOT eliminate character agency.
+• The generator does not need to create drama, but it DOES need to generate life.
+
+LOCATION RULES:
 • A null physical location_id does NOT mean the character is home. If the authoritative state says at_work, at_school, rabbit_hole, traveling, etc., preserve that state.
-• Stronger current evidence outranks generic defaults. Do not use "home" or "sleep" as generic defaults when current state information is incomplete.
-• No specific zone is better than a false zone. Do not use the first room/zone listed for a location as though it were the character's current zone unless continuity establishes it.
+• Rabbit-hole locations ARE real current locations. If the system says the character is at a rabbit hole, the character IS at that rabbit hole — do NOT replace it with home, the first room of the home, or sleep. A null location_id plus an active rabbit-hole state does NOT equal home.
+• No specific zone is better than a false zone. Do not use the first room/zone listed for a location unless continuity establishes it. Do not substitute a home zone for a rabbit hole.
+• Do NOT default to home. Do NOT default to sleep. Do NOT default to the first room of the character's home.
+• Stronger current evidence outranks generic defaults.
+
+SLEEP RULES:
+• Sleep must be based on ACTUAL current state — not stale schedule, incorrect home fallback, time-of-day assumption, or outdated presence value.
+• Active work state, active travel, recent awake conversation, current task, recent narrative showing activity, or current interaction with another person are STRONGER awake evidence that overrides weak sleep assumptions.
+• If the character is genuinely asleep (established by strongest current information), generate a sleeping narrative — but sleep still has narrative possibilities (shifting, dreaming, settling, environmental details). Sleep is not synonymous with motionless.
 ════════════════════════════════════`}
 
 Chat History:
@@ -1130,10 +1164,12 @@ The character is currently asleep. However, the user's Add Story Event text is t
       if (hasViolation) {
         console.warn(`[generateNarrative] Sleep violation detected — regenerating`);
         response = await base44.integrations.Core.InvokeLLM({
-          prompt: `${characterName} is fully asleep at ${timeStr} (${timeOfDayDesc}).
-Write 1-2 sentences describing ONLY the ambient environment of the room and the character's physical stillness.
-No movement. No objects. No actions. No dialogue. Just the room and the quiet.
-Current time: ${timeStr}. Location: ${resolvedLocationName || 'home'}.
+          prompt: `${characterName} is asleep at ${timeStr} (${timeOfDayDesc}).
+Write 1-2 sentences describing ${characterName} sleeping${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.
+Natural sleep behavior is valid: shifting beneath blankets, rolling over, breathing changes, settling, dreaming, half-conscious impressions, environmental atmosphere.
+Do NOT depict awake activity (eating, drinking, conversation, getting out of bed, using phone, working).
+Do NOT require absolute motionlessness — natural sleep movement and dreams are allowed.
+Current time: ${timeStr}.${resolvedLocationName ? ` Location: ${resolvedLocationName}.` : ''}
 
 Narrative:`,
           model: 'gemini_3_flash',
