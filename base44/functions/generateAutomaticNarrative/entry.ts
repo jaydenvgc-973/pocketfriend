@@ -409,7 +409,7 @@ Deno.serve(async (req) => {
 - Occupation: ${character.occupation || 'their job'}
 - Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
 - Do NOT depict them at home, relaxing, or away from work.
-- WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${character.name} as currently AT WORK (e.g., "${character.name} is at work at ${resolvedLocationName}." / "${character.name} is working at ${resolvedLocationName}."). Do NOT use transition wording ("went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
+- WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${character.name} as currently AT WORK (e.g., "${character.name} is at work at ${resolvedLocationName}." / "${character.name} is working at ${resolvedLocationName}."). Do NOT use transition wording ("has gone to work", "gone to work", "went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
 - WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.${activityLine}`;
     } else if (presenceStatus === 'at_school') {
       situationBlock = `SITUATION: ${character.name} is AT SCHOOL right now.
@@ -871,7 +871,7 @@ BEHAVIORAL VARIETY — do not rely on the same gestures repeatedly (forehead tou
 
 ROMANTIC VARIETY — do not use the same romantic gestures as automatic shorthand. Vary behavior according to relationship, personalities, emotional tone, physical intensity, recent gestures, environment, and intent. Emotional intimacy and physical intensity are separate dimensions. Intimacy does not require constant touching.
 
-SPECIAL-PURPOSE NARRATIVES — the scheduled work narrative establishes CURRENT STATE, not a transition. Use "is at work" or "is working" — not "went to work" or "arrived at work." The notification timing is not the moment of arrival. Once work state is established, later narratives must continue from that work state.
+SPECIAL-PURPOSE NARRATIVES — the scheduled work narrative establishes CURRENT STATE, not a transition. Use "is at work" or "is working" — not "has gone to work", "gone to work", "went to work", "headed to work", "left for work", or "arrived at work." The notification timing is not the moment of arrival. Once work state is established, later narratives must continue from that work state.
 
 NEVER ESCALATE ONLY BECAUSE ANOTHER NARRATIVE WAS REQUESTED — if the scene is calm, multiple narratives can continue the calm without inventing an argument, crisis, confession, panic, romance, or dramatic interruption.
 
@@ -943,7 +943,20 @@ If no actions occur, return empty action_effects array.`;
 
     let narrativeText = narrativeRes?.narrative_text?.trim() ||
       `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
-    // Whitespace normalization only — no lexical replacement.
+    // Whitespace normalization + work-status wording correction.
+    // The prompt instructs current-state wording ("is at work") but the LLM
+    // sometimes still generates transition wording ("has gone to work").
+    // Correct only the work-status transition phrases to current-state wording.
+    // This does NOT change scheduling, triggers, location, or any other logic.
+    if (isAtWork) {
+      narrativeText = narrativeText
+        .replace(/\bhas gone to work\b/gi, 'is at work')
+        .replace(/\bgone to work\b/gi, 'at work')
+        .replace(/\bwent to work\b/gi, 'is at work')
+        .replace(/\bheaded to work\b/gi, 'is at work')
+        .replace(/\bleft for work\b/gi, 'is at work')
+        .replace(/\barrived at work\b/gi, 'is at work');
+    }
     narrativeText = narrativeText
       .replace(/\s{2,}/g, ' ')
       .trim();
