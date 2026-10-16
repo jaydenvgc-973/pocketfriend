@@ -904,6 +904,24 @@ function LocationShareCard({ locationShare, characterName, onLocationSignal, cha
 
 function ReactionAddButton({ messageId, isUser, onReact }) {
   const [open, setOpen] = useState(false);
+  const pickerRef = useRef(null);
+  const [popupShift, setPopupShift] = useState(0);
+
+  // Clamp popup within viewport after it opens — prevents overflow near screen edges
+  useEffect(() => {
+    if (open && pickerRef.current) {
+      requestAnimationFrame(() => {
+        const rect = pickerRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        let shift = 0;
+        if (rect.left < 8) shift = 8 - rect.left;
+        else if (rect.right > viewportWidth - 8) shift = (viewportWidth - 8) - rect.right;
+        setPopupShift(shift);
+      });
+    } else {
+      setPopupShift(0);
+    }
+  }, [open]);
 
   return (
     <div className="relative">
@@ -917,30 +935,40 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
 
       {open && (
         <div
-          className={`absolute top-6 z-50 bg-card border border-border rounded-2xl shadow-xl ${
+          ref={pickerRef}
+          className={`absolute top-6 z-50 bg-card border border-border rounded-2xl shadow-xl p-3 ${
             isUser ? "left-0" : "right-0"
           }`}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            gap: '8px',
-            padding: '12px',
-            width: '288px',
-          }}
+          style={{ transform: `translateX(${popupShift}px)` }}
         >
-          {REACTION_EMOJIS.map(emoji => (
-            <button
-              key={emoji}
-              className="flex items-center justify-center hover:scale-125 transition-transform"
-              style={{ fontSize: '24px', lineHeight: '1' }}
-              onClick={() => {
-                onReact(messageId, emoji);
-                setOpen(false);
+          <div
+            className="overflow-x-auto overflow-y-hidden scrollbar-hide"
+            style={{ maxWidth: '120px' }}
+          >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateRows: 'repeat(4, auto)',
+                gridAutoFlow: 'column',
+                gridAutoColumns: '24px',
+                gap: '8px',
               }}
             >
-              {emoji}
-            </button>
-          ))}
+              {REACTION_EMOJIS.map(emoji => (
+                <button
+                  key={emoji}
+                  className="flex items-center justify-center hover:scale-125 transition-transform"
+                  style={{ fontSize: '24px', lineHeight: '1' }}
+                  onClick={() => {
+                    onReact(messageId, emoji);
+                    setOpen(false);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
