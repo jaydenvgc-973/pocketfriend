@@ -937,31 +937,39 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
       {open && (
         <div
           ref={pickerRef}
-          className={`absolute top-6 z-50 bg-card border border-border rounded-2xl shadow-xl ${
+          className={`absolute top-6 z-50 bg-card border border-border rounded-2xl shadow-xl p-3 ${
             isUser ? "left-0" : "right-0"
           }`}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, 1fr)',
-            gap: '8px',
-            padding: '12px',
-            width: '288px',
-            transform: `translateX(${popupShift}px)`,
-          }}
+          style={{ transform: `translateX(${popupShift}px)` }}
         >
-          {REACTION_EMOJIS.map(emoji => (
-            <button
-              key={emoji}
-              className="flex items-center justify-center hover:scale-125 transition-transform"
-              style={{ fontSize: '24px', lineHeight: '1' }}
-              onClick={() => {
-                onReact(messageId, emoji);
-                setOpen(false);
+          <div
+            className="overflow-x-auto overflow-y-hidden scrollbar-hide"
+            style={{ maxWidth: '168px' }}
+          >
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateRows: 'repeat(4, auto)',
+                gridAutoFlow: 'column',
+                gridAutoColumns: '36px',
+                gap: '8px',
               }}
             >
-              {emoji}
-            </button>
-          ))}
+              {REACTION_EMOJIS.map(emoji => (
+                <button
+                  key={emoji}
+                  className="flex items-center justify-center hover:scale-125 transition-transform"
+                  style={{ fontSize: '24px', lineHeight: '1', width: '36px', height: '36px' }}
+                  onClick={() => {
+                    onReact(messageId, emoji);
+                    setOpen(false);
+                  }}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
