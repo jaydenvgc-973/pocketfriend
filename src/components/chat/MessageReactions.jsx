@@ -30,6 +30,8 @@ const REACTION_MEANINGS = {
 export default function MessageReactions({ message, onReact }) {
   const [showPicker, setShowPicker] = useState(false);
   const pickerRef = useRef(null);
+  const [popupShift, setPopupShift] = useState(0);
+  const [popupFlip, setPopupFlip] = useState(false);
 
   // One-per-actor rule: display max one user reaction + one character reaction
   const userReaction = (message.reactions || []).find(r => r.reactor_type === "user");
@@ -47,6 +49,26 @@ export default function MessageReactions({ message, onReact }) {
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
+
+  // Clamp popup within viewport after it opens — prevents overflow near screen edges
+  useEffect(() => {
+    if (showPicker && pickerRef.current) {
+      requestAnimationFrame(() => {
+        const rect = pickerRef.current.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        let shift = 0;
+        if (rect.left < 8) shift = 8 - rect.left;
+        else if (rect.right > viewportWidth - 8) shift = (viewportWidth - 8) - rect.right;
+        setPopupShift(shift);
+        // If popup would extend above the viewport top, flip it below the button
+        setPopupFlip(rect.top < 8);
+      });
+    } else {
+      setPopupShift(0);
+      setPopupFlip(false);
+    }
+  }, [showPicker]);
 
   const handleReactionClick = (emoji) => {
     onReact(message.id, emoji);
@@ -90,39 +112,47 @@ export default function MessageReactions({ message, onReact }) {
         +
       </button>
 
-      {/* Emoji picker */}
+      {/* Emoji picker — 4 columns × 4 rows visible, horizontal scroll for additional choices */}
       <AnimatePresence>
         {showPicker && (
           <motion.div
             ref={pickerRef}
-            initial={{ scale: 0.8, opacity: 0, y: 4 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            exit={{ scale: 0.8, opacity: 0, y: 4 }}
-            className={`absolute bottom-6 z-20 bg-card border border-border rounded-2xl shadow-xl ${
-              message.sender_type === "user" ? "right-0" : "left-0"
-            }`}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(6, 1fr)',
-              gap: '8px',
-              padding: '12px',
-              width: '320px',
-            }}
+            initial={{ scale: 0.8, opacity: 0, y: 4, x: 0 }}
+            animate={{ scale: 1, opacity: 1, y: 0, x: popupShift }}
+            exit={{ scale: 0.8, opacity: 0, y: 4, x: popupShift }}
+            className={`absolute z-20 bg-card border border-border rounded-2xl shadow-xl p-3 ${
+              popupFlip ? 'top-6' : 'bottom-6'
+            } ${message.sender_type === "user" ? "right-0" : "left-0"}`}
           >
-            {REACTION_EMOJIS.map(emoji => (
-              <button
-                key={emoji}
-                className="flex items-center justify-center hover:scale-125 transition-transform text-foreground"
-                style={{ fontSize: '28px', lineHeight: '1' }}
-                title={REACTION_MEANINGS[emoji]}
-                onClick={() => {
-                  onReact(message.id, emoji);
-                  setShowPicker(false);
+            <div
+              className="overflow-x-auto overflow-y-hidden scrollbar-hide"
+              style={{ maxWidth: '136px' }}
+            >
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateRows: 'repeat(4, auto)',
+                  gridAutoFlow: 'column',
+                  gridAutoColumns: '28px',
+                  gap: '8px',
                 }}
               >
-                {emoji}
-              </button>
-            ))}
+                {REACTION_EMOJIS.map(emoji => (
+                  <button
+                    key={emoji}
+                    className="flex items-center justify-center hover:scale-125 transition-transform text-foreground"
+                    style={{ fontSize: '28px', lineHeight: '1' }}
+                    title={REACTION_MEANINGS[emoji]}
+                    onClick={() => {
+                      onReact(message.id, emoji);
+                      setShowPicker(false);
+                    }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

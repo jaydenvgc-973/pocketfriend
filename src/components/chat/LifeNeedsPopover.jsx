@@ -57,9 +57,9 @@ export default function LifeNeedsPopover({ isOpen, onClose, character }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[90vw] max-w-sm bg-card border border-border rounded-2xl p-5 shadow-xl"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[calc(100vw-2rem)] max-w-sm max-h-[85vh] bg-card border border-border rounded-2xl shadow-xl flex flex-col overflow-hidden"
           >
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between p-5 pb-3 flex-shrink-0">
               <div className="min-w-0">
                 <h3 className="text-sm font-bold text-foreground">Life Needs</h3>
                 <p className="text-xs text-muted-foreground truncate">{character?.name || ''}</p>
@@ -72,7 +72,7 @@ export default function LifeNeedsPopover({ isOpen, onClose, character }) {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="space-y-2.5">
+            <div className="px-5 pb-5 overflow-y-auto space-y-2.5">
               {LIFE_NEEDS.map(({ label, key, emoji }) => {
                 const rawValue = character?.[key] ?? null;
                 const value = (key === 'energy_value' && liveEnergyOverride !== null) ? liveEnergyOverride : rawValue;
