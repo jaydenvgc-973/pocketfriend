@@ -53,11 +53,11 @@ export default function LifeNeedsPopover({ isOpen, onClose, character }) {
             className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm"
           />
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[61] w-[calc(100vw-2rem)] max-w-sm max-h-[85vh] bg-card border border-border rounded-2xl shadow-xl flex flex-col overflow-hidden"
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+            className="fixed bottom-0 left-0 right-0 z-[61] max-h-[80vh] bg-card border-t border-border rounded-t-2xl shadow-xl flex flex-col overflow-hidden"
           >
             <div className="flex items-center justify-between p-5 pb-3 flex-shrink-0">
               <div className="min-w-0">
