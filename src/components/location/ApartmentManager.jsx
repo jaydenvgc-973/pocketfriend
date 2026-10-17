@@ -20,6 +20,11 @@ export default function ApartmentManager({
   residentCharacterIds = [],
   allCharacters = [],
   onChange,
+  sectionLabel = "Apartments",
+  unitSingular = "apartment",
+  contextNoun = "building",
+  addPlaceholder = "e.g. Apartment 1, Unit 4B...",
+  emptyHint = "Add residents to the building first, then create apartments to organize them.",
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -121,9 +126,9 @@ export default function ApartmentManager({
   return (
     <div className="space-y-3 p-3 rounded-xl bg-secondary/30 border border-border">
       <div>
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Apartments</p>
+        <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{sectionLabel}</p>
         <p className="text-[10px] text-muted-foreground mt-0.5">
-          Organize building residents into individual apartments. Residents remain building residents regardless of apartment assignment.
+          Organize {contextNoun} residents into individual {unitSingular}s. Residents remain {contextNoun} residents regardless of {unitSingular} assignment.
         </p>
       </div>
 
@@ -170,7 +175,7 @@ export default function ApartmentManager({
                       </button>
                       <button
                         onClick={() => handleDeleteUnit(unit.unit_id)}
-                        title="Remove apartment (residents stay in building)"
+                        title={`Remove ${unitSingular} (residents stay in ${contextNoun})`}
                         className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -200,7 +205,7 @@ export default function ApartmentManager({
                                 if (e.target.value) handleMoveResident(unit.unit_id, charId, e.target.value);
                               }}
                               className="text-[10px] bg-transparent text-muted-foreground border-0 outline-none opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
-                              title="Move to another apartment"
+                              title={`Move to another ${unitSingular}`}
                             >
                               <option value="" disabled>Move to…</option>
                               {units.filter(u => u.unit_id !== unit.unit_id).map(u => (
@@ -210,7 +215,7 @@ export default function ApartmentManager({
                           )}
                           <button
                             onClick={() => handleRemoveFromUnit(unit.unit_id, charId)}
-                            title="Remove from apartment (stays in building)"
+                            title={`Remove from ${unitSingular} (stays in ${contextNoun})`}
                             className="p-0.5 text-muted-foreground hover:text-destructive transition-colors rounded-lg opacity-0 group-hover:opacity-100"
                           >
                             <X className="w-3 h-3" />
@@ -278,7 +283,7 @@ export default function ApartmentManager({
           value={newUnitName}
           onChange={e => setNewUnitName(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleAddUnit()}
-          placeholder="e.g. Apartment 1, Unit 4B..."
+          placeholder={addPlaceholder}
           className="flex-1 h-8 px-2.5 rounded-lg bg-card border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
         />
         <button
@@ -312,7 +317,7 @@ export default function ApartmentManager({
 
       {units.length === 0 && unassignedIds.length === 0 && (
         <p className="text-[10px] text-muted-foreground italic text-center py-1">
-          Add residents to the building first, then create apartments to organize them.
+          {emptyHint}
         </p>
       )}
     </div>

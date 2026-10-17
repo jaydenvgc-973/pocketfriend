@@ -1150,13 +1150,20 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── APARTMENTS (Building venue type only) ── */}
-      {form.category === 'home' && form.subtype.includes('building') && (
+      {/* ── APARTMENTS / ROOMS (Building venue type + all Hotel venue types) ── */}
+      {((form.category === 'home' && form.subtype.includes('building')) || form.category === 'hotel') && (
         <ApartmentManager
           residentialUnits={form.residential_units}
           residentCharacterIds={form.resident_character_ids}
           allCharacters={allCharacters}
           onChange={(units) => update("residential_units", units)}
+          {...(form.category === 'hotel' ? {
+            sectionLabel: "Rooms / Units",
+            unitSingular: "room",
+            contextNoun: "hotel",
+            addPlaceholder: "e.g. Room 101, Unit 4B...",
+            emptyHint: "Add residents to the hotel first, then create rooms to organize them.",
+          } : {})}
         />
       )}
 

@@ -204,7 +204,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           {/* Read-only Apartments display (Building venue type) */}
           {(location.residential_units || []).length > 0 && (
             <>
-              <SectionHeader icon={Building} label="Apartments" />
+              <SectionHeader icon={Building} label={location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
               <div className="space-y-1.5">
                 {(location.residential_units || []).map(unit => {
                   const occupants = (unit.occupant_character_ids || []).map(id => {
