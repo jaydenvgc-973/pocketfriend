@@ -88,7 +88,7 @@ const CATEGORIES = [
 ];
 
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
-  const isShared = location.scope === 'shared' || location.location_type === 'shared';
+  const isShared = location.scope === 'shared';
   const isAdmin = currentUser?.role === 'admin';
   // OWNERSHIP-AWARE PERMISSIONS: Sharing does NOT transfer ownership.
   // The owner can always manage their own location (edit, delete, unshare).
@@ -646,7 +646,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     location_type: editingLocation?.location_type || "global",
     // READ-ONLY compatibility: recognize legacy records that stored sharing in location_type.
     // This is read compatibility only — it never drives a write of location_type.
-    is_shared: editingLocation?.location_type === "shared" || editingLocation?.scope === "shared" || false,
+    is_shared: editingLocation?.scope === "shared" || false,
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
     subtype: Array.isArray(editingLocation?.subtype) ? editingLocation.subtype : (editingLocation?.subtype ? [editingLocation.subtype] : []),
@@ -796,7 +796,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         {form.is_shared && currentUser?.role !== 'admin' && (() => {
           // Check if user already has another shared location
           const otherShared = allLocations.filter(l =>
-            (l.scope === 'shared' || l.location_type === 'shared') &&
+            l.scope === 'shared' &&
             l.owner_email === currentUser?.email &&
             l.id !== editingLocation?.id
           );
