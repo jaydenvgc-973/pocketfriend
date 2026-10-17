@@ -62,13 +62,50 @@ export default function NarrativeActionButton({
     setLoading(true);
 
     try {
-      // Build conversation context — include more history for continuity
-      const recentContext = recentMessages.slice(-15).map(m =>
+      // ── CONTEXT RETRIEVAL — THREE MOST RECENT ENTRIES ARE AUTHORITATIVE ──────
+      // The three most recent chronological conversation entries (messages OR
+      // narratives, regardless of which Action category generated them) establish
+      // the immediate conversational context. The selected Action determines the
+      // TYPE of narrative to generate, NOT which previous conversation to
+      // continue from. Older history must never override the latest conversation.
+
+      // Recent window — the current conversation slice
+      const recentWindow = recentMessages.slice(-15);
+
+      const recentContext = recentWindow.map(m =>
         `${m.sender_type === "user" ? "User" : character.name}: ${m.content || "(image)"}`
       ).join("\n");
 
-      // Extract ALL recent narrative blocks for continuity (not just 3 for anti-repetition)
-      const allRecentNarratives = recentMessages
+      // THREE MOST RECENT CHRONOLOGICAL ENTRIES — the immediate conversation state.
+      // These may be ordinary text messages, character responses, user messages,
+      // or previously generated narratives. They are interpreted together in
+      // their actual conversational order regardless of type or category.
+      const threeMostRecent = recentWindow.slice(-3);
+
+      const currentMomentBlock = threeMostRecent.length > 0
+        ? `\n\n════════════════════════════════════
+CURRENT MOMENT — THREE MOST RECENT ENTRIES (AUTHORITATIVE — CONTINUE FROM HERE)
+These are the three most recent chronological conversation entries on this page.
+They may be messages, character responses, or narratives from ANY Action category.
+The new narrative MUST begin from the state these entries establish RIGHT NOW.
+
+DO NOT continue from any older scene, narrative, or situation.
+DO NOT retrieve an earlier same-category narrative and resume that scene.
+DO NOT ignore these entries in favor of older history.
+════════════════════════════════════
+${threeMostRecent.map((m, i) => {
+  const label = m.sender_type === "user" ? "User" : character.name;
+  const typeTag = m.is_narrative ? " [narrative]" : "";
+  return `ENTRY ${i + 1}${typeTag}: ${label}: "${(m.content || "(image)").substring(0, 250)}"`;
+}).join("\n")}
+════════════════════════════════════`
+        : "";
+
+      // Extract recent narrative blocks ONLY from the current conversation window.
+      // Previously this pulled from the full recentMessages array, which could
+      // include narratives from days ago — causing the LLM to resume an outdated
+      // scene instead of the current conversation. Now restricted to recentWindow.
+      const allRecentNarratives = recentWindow
         .filter(m => m.is_narrative && m.sender_type === "character" && m.content?.trim())
         .slice(-6);
       
@@ -79,9 +116,11 @@ export default function NarrativeActionButton({
       
       const narrativeContinuityBlock = allRecentNarratives.length > 0
         ? `\n\n════════════════════════════════════
-NARRATIVE CONTINUITY — ALREADY ESTABLISHED (read before generating)
-These narrative beats already happened. DO NOT repeat or contradict them.
-Continue FROM the emotional/physical state they left the scene in.
+NARRATIVE CONTINUITY — BEATS FROM THE CURRENT CONVERSATION (read before generating)
+These narrative beats already happened WITHIN the current conversation window.
+DO NOT repeat or contradict them. Continue FROM the emotional/physical state
+they left the scene in. If the CURRENT MOMENT entries above conflict with these
+beats, the CURRENT MOMENT entries take priority — they are more recent.
 ════════════════════════════════════
 ${allRecentNarratives.map((m, i) => `BEAT ${i + 1}:\n"${m.content}"`).join("\n\n")}
 
@@ -92,6 +131,8 @@ CONTINUATION RULES:
 • If the last beat established tension — maintain or escalate it, do not suddenly reset to calm.
 • If the last beat established calm — do not suddenly inject unearned drama.
 • If the last beat ended with a physical action — begin from AFTER that action resolves.
+• These beats are from the CURRENT conversation only. Do NOT retrieve or resume
+  scenes from older conversations, earlier days, or different locations.
 ════════════════════════════════════`
         : "";
 
@@ -299,6 +340,34 @@ Continue from the established state. Do not restart, restate, or reset.
 Carry forward the existing emotional momentum unless this action naturally changes it.
 Fold this interaction into the current emotional/physical state — do not erase what came before.
 Advance the moment. Do not rewrite the same beat with different adjectives.
+
+CONTINUITY — THE SELECTED ACTION CHANGES DIRECTION, NOT REALITY:
+• The selected Action changes the emotional or behavioral DIRECTION of the interaction.
+• It does NOT restart the scene, change the location, erase the preceding interaction,
+  reset the character's emotional condition, or authorize unrelated events.
+• The character remains where they are, in the physical position and circumstances
+  established by the CURRENT MOMENT entries, unless a believable progression explains
+  movement or change.
+• Time progresses naturally. Characters may move, change activities, react, and
+  experience developments — but those developments must follow the established
+  sequence and the amount of time that has reasonably elapsed.
+
+REPEATED SELECTIONS DEVELOP THE INTERACTION:
+• When an Action is selected repeatedly during an ongoing interaction, each narrative
+  must account for what happened in the immediately preceding messages and narratives.
+• Repeated selection may naturally develop or intensify the interaction depending on
+  the current emotional momentum, character responses, and circumstances.
+• This does NOT mean every repeated selection automatically increases intensity.
+  Characters retain their personalities, emotional states, and ability to respond.
+• Do NOT restart the interaction with introductory gestures each time.
+• Do NOT mechanically escalate without considering context.
+
+ONE CONTINUOUS CONTEXT ACROSS ALL CATEGORIES:
+• All six Action options share the same current conversation timeline.
+• A narrative generated by one Action is immediate context for the next selected Action,
+  regardless of category.
+• Switching categories changes the TYPE of interaction while preserving narrative
+  continuity — it does not create a separate reality.
 ════════════════════════════════════════════════════════════
 
 ════════════════════════════════════════════════════════════
@@ -317,20 +386,23 @@ ${buildStyleMotifContext()}
       // Engine guidance + A–CN example library — additive, applies to ALL intents
       const engineGuidanceBlock = buildExtendedNarrativeExampleContext();
 
-      // Intent action descriptions
+      // Intent action descriptions — each must produce RECOGNIZABLE behavior.
+      // The selected Action changes the emotional/behavioral DIRECTION of the
+      // interaction. It does NOT restart the scene, change the location, erase
+      // the preceding interaction, or reset the character's emotional condition.
       const intentDescriptions = {
         action: contextTier === "high"
-          ? "a natural context-driven action following HIGH emotional momentum (passionate/romantic buildup)"
+          ? "LET THEM ACT — the character independently chooses what to do based on personality, current mood, circumstances, and the ongoing conversation. Follow HIGH emotional momentum naturally. The character has agency — they may flirt, confront, comfort, withdraw, or continue an activity. Do NOT default to a generic neutral action."
           : contextTier === "medium"
-          ? "a natural context-driven action following MEDIUM emotional momentum (warmth or flirtation building)"
-          : "a natural context-driven action with LOW emotional momentum — small gesture, light presence, no escalation",
-        comfort: "a warm, emotionally supportive moment — grounding hug, hand on shoulder, sitting close, protective presence. Comfort is NOT flirtation. Do not escalate into romance.",
+          ? "LET THEM ACT — the character independently chooses what to do based on personality, current mood, circumstances, and the ongoing conversation. Follow MEDIUM emotional momentum. The character has agency — do NOT force a predetermined emotional category."
+          : "LET THEM ACT — the character independently chooses what to do based on personality, current mood, circumstances, and the ongoing conversation. LOW emotional momentum — small gesture, light presence. The character has agency — do NOT default to a generic neutral action.",
+        comfort: "COMFORT ME — generate a genuinely comforting narrative appropriate to the present situation. Comfort through tenderness, supportive dialogue, reassurance, affection, attentive behavior, or physical closeness where appropriate. Express comfort through actual character BEHAVIOR, not by claiming the character is comforting. Comfort is NOT flirtation. Do not escalate into romance.",
         flirt: romanticOk
-          ? "a playful or romantically charged moment — teasing, light touch, lingering eye contact, subtle tension. Brief kiss only if relationship and attraction support it."
-          : "playful warm energy — fun and light but NOT physical. No kissing or romantic touch.",
-        confront: "CONFLICT — tension, confrontation, emotional pressure. NOT romance. Actions: stepping into space, blocking movement, grabbing arm non-romantically, sharp tone. Absolutely NO kissing, romantic touching, or sensual metaphor.",
-        spend_time: "a relaxed, low-intensity shared presence — casual interaction, sitting together, walking. Do NOT escalate. This is not flirtation, conflict, or intense emotion.",
-        check_in: "an attentive, emotionally aware moment — noticing their mood, asking quietly, soft tone. Observational, not action-heavy. Do NOT escalate physically.",
+          ? "FLIRT — generate recognizable flirtation. Playful dialogue, teasing, suggestive humor, meaningful glances, attraction, romantic tension, affectionate gestures. Intensity reflects the current conversation and relationship. Subtle, moderate, or intense — but it MUST actually be flirtatious."
+          : "FLIRT — playful warm energy — fun and light but NOT physical. No kissing or romantic touch. Still recognizable flirtation through tone, teasing, and playful energy.",
+        confront: "CONFRONT — introduce or develop meaningful confrontation related to the current circumstances. Disagreement, frustration, emotional challenges, difficult questions, interpersonal tension, resistance. NOT romance. NOT shouting automatically — expression depends on personality and situation. Actions: stepping into space, blocking movement, sharp tone, controlled aggression. Absolutely NO kissing, romantic touching, or sensual metaphor.",
+        spend_time: "SPEND TIME — generate a narrative where the character meaningfully spends time with the user or engages in shared presence. Conversation, companionship, quiet moments, shared activities, attentiveness. Do NOT leave the current scene, begin an unrelated activity alone, or force a dramatic event. Develop the current interaction into a recognizable moment of companionship.",
+        check_in: "CHECK IN — generate a meaningful check-in relating to the current conversation, circumstances, or emotional condition. The character demonstrates interest in how the user is doing, feeling, or coping. Gentle, casual, serious, affectionate, or concerned depending on personality and context. Do NOT ask a question that ignores information already provided in the conversation. Do NOT restart the same inquiry if already asked.",
       };
 
       // Context tier instruction
@@ -362,12 +434,13 @@ Location: ${location}
 Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 ${userPresenceBlock}
+${currentMomentBlock}
 ${narrativeContinuityBlock}
 ${progressionBlock}${motifBlock}
 
 ${engineGuidanceBlock}
 
-RECENT CONVERSATION:
+RECENT CONVERSATION (current window — for reference only; the CURRENT MOMENT block above is authoritative):
 ${recentContext || "(no recent messages)"}${actionMemory}
 
 ════════════════════════════════════
