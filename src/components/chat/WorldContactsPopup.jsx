@@ -299,9 +299,17 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       // exactly these two characters. Story-event spaces and multi-participant
       // conversations must never be adopted as a 1:1 thread — adopting one is
       // how every contact ended up displaying the same cross-character messages.
-      const isGroupSpace = (c) =>
-        c.channel === 'story_event' ||
-        (typeof c.title === 'string' && c.title.startsWith('story_event::'));
+      // A space is a group space only when MORE than these two characters are in
+      // it. A thread that merely carries a story-event title (it was created
+      // during an event) is still this pair's own conversation when its
+      // participant list is exactly these two — excluding it by title blanked
+      // real existing threads.
+      const isGroupSpace = (c) => {
+        const pids = (Array.isArray(c.participant_character_ids) ? c.participant_character_ids : []).filter(Boolean);
+        if (pids.length > 0) return pids.length > 2;
+        return c.channel === 'story_event' ||
+          (typeof c.title === 'string' && c.title.startsWith('story_event::'));
+      };
 
       const isThisPairOnly = (c) => {
         if (isGroupSpace(c)) return false;
@@ -391,7 +399,16 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         // WORLD PHONE BOUNDARY GUARD: filter out canon_excluded contamination records
         // and any narrative records that lack bilateral IDs before rendering.
         // Reverse to chronological (oldest-first) order for display.
-        const history = filterWorldPhoneHistory(rawHistory).reverse();
+        // PAIR SCOPE: a thread can be shared with a wider story-event space, so
+        // render only the messages that belong to these two people — never a
+        // third party's. A message with no participant identity is kept.
+        const inThisPair = (m) => {
+          const set = new Set([m.sender_character_id, m.receiver_character_id,
+            ...(Array.isArray(m.participant_character_ids) ? m.participant_character_ids : [])].filter(Boolean));
+          if (set.size === 0) return true;
+          return set.has(character.id) && set.has(contactId);
+        };
+        const history = filterWorldPhoneHistory(rawHistory).filter(inThisPair).reverse();
 
         // Diagnostic: log per-message sender info
         console.log(`[WorldPhone] Loaded ${rawHistory.length} raw messages, ${history.length} after boundary filter for convo ${found.id}`);
@@ -649,6 +666,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
       if (event.data?.conversation_id !== convoId) return;
       if (event.type === "create") {
         const d = event.data;
+        // Pair scope — never surface a third party's message in this 1:1 thread.
+        const otherId = selectedContactRef.current?.related_character_id;
+        if (otherId) {
+          const set = new Set([d.sender_character_id, d.receiver_character_id,
+            ...(Array.isArray(d.participant_character_ids) ? d.participant_character_ids : [])].filter(Boolean));
+          if (set.size > 0 && !(set.has(character.id) && set.has(otherId))) return;
+        }
         // DIRECTION: sender_character_id is authoritative; character_id is legacy fallback
         const isSent = d.sender_character_id === character.id ||
           (!d.sender_character_id && d.character_id === character.id);
