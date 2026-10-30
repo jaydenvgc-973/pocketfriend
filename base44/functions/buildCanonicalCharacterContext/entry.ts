@@ -595,8 +595,8 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
 
   // Work — persistent profile facts. During an active Story Event these remain true
   // (the character still has this job) but do NOT describe the current lived situation.
-  if (character.occupation) lines.push(`OCCUPATION: ${character.occupation}${hasActiveStoryEvent ? ' (persistent profile fact — your ordinary job; your current activities and circumstances come from the active Story Event above).' : '.'}`);
-  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name}${hasActiveStoryEvent ? ' (ordinary workplace; your current location and experience come from the active Story Event above).' : '.'}`);
+  if (character.occupation) lines.push(`OCCUPATION: ${character.occupation} — identity and history only, never a location${hasActiveStoryEvent ? '; your current activities come from the active Story Event above' : '; CURRENT LOCATION outranks it'}.`);
+  if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name} — never speak or act as if they are there unless CURRENT LOCATION says so${hasActiveStoryEvent ? '; the Story Event venue governs' : ''}.`);
 
   // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived ──────────
   // There is no default attitude toward work. The character's experience of

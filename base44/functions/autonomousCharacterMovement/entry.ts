@@ -1875,6 +1875,8 @@ Deno.serve(async (req) => {
           }
 
           if (workDispatchDone) continue;
+          // SHIFT END → existing work authority sends them home
+          if (char.resolved_presence_status === 'at_work') { try { await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', { characterId: char.id, system_mode: true }); } catch { /* retried next cycle */ } continue; }
 
           // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
           // Only for enrolled students with an assigned education_location_id.

@@ -149,9 +149,6 @@ Deno.serve(async (req) => {
 
     // --- Single character mode (requires session auth to scope to owned character) ---
     if (characterId) {
-      const user = await base44.auth.me();
-      if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
       // OWNERSHIP CHECK: Must match owner_email
       const char = await base44.asServiceRole.entities.Character.filter({ id: characterId });
       if (!char || char.length === 0) {
@@ -159,9 +156,16 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
-      // OWNERSHIP BOUNDARY: owner_email must match session user
-      if (!character.owner_email || character.owner_email !== user.email) {
-        return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
+      // SYSTEM MODE: internal automations act on one character without a user
+      // session — the same work the global (no-id) mode already performs for
+      // every character without a session. User calls keep the ownership check.
+      const systemMode = body?.system_mode === true;
+      if (!systemMode) {
+        const user = await base44.auth.me();
+        if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+        if (!character.owner_email || character.owner_email !== user.email) {
+          return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
+        }
       }
 
       const resolvedLocId = character.resolved_current_location_id;
