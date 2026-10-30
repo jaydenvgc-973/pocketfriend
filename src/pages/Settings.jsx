@@ -31,6 +31,7 @@ import SupportAssistant from "@/components/settings/SupportAssistant.jsx";
 import AdminIssueReportViewer from "@/components/settings/AdminIssueReportViewer";
 import HomeAnchorsEditor from "@/components/settings/HomeAnchorsEditor";
 import RecoverySignalGlossary from "@/components/settings/RecoverySignalGlossary";
+import SectionIsolate from "@/components/sections/SectionIsolate";
 import SleepDebtCleanupPanel from "@/components/settings/SleepDebtCleanupPanel";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -52,7 +53,13 @@ export default function Settings() {
   const [dupeScanError, setDupeScanError] = useState(null);
   const [dupeScanTrace, setDupeScanTrace] = useState(null);
 
-  const { settings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
+  const { settings: loadedSettings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
+  // UserSettings resolves as null until the cached or fetched record arrives (and a
+  // cold cache yields null). This page and its child panels read settings fields
+  // directly during that window, so a null value threw while rendering and the
+  // error boundary replaced the whole page. Render against an empty object instead —
+  // behavior is identical once the real record arrives.
+  const settings = loadedSettings || {};
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
@@ -305,11 +312,13 @@ export default function Settings() {
             </div>
           )}
         </div>
-        <SettingsTextFields
-          settings={settings}
-          onSave={(data) => mutation.mutate(data)}
-          firstCharacterId={characters.find(c => c.character_type === 'active_created_character' && c.status === 'active')?.id || null}
-        />
+        <SectionIsolate name="SettingsTextFields">
+          <SettingsTextFields
+            settings={settings}
+            onSave={(data) => mutation.mutate(data)}
+            firstCharacterId={characters.find(c => c.character_type === 'active_created_character' && c.status === 'active')?.id || null}
+          />
+        </SectionIsolate>
         <div className="pt-4 border-t border-border">
           <UserPhotoUploader
             referenceImages={user.reference_image_urls || []}
@@ -317,7 +326,9 @@ export default function Settings() {
             selectedAvatar={user.selected_avatar_url || null}
           />
         </div>
-        <VoiceAudioSettings settings={settings} onUpdate={(field, value) => mutation.mutate({ [field]: value })} isSaving={mutation.isPending} />
+        <SectionIsolate name="VoiceAudioSettings">
+          <VoiceAudioSettings settings={settings} onUpdate={(field, value) => mutation.mutate({ [field]: value })} isSaving={mutation.isPending} />
+        </SectionIsolate>
         <div className="space-y-4 pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Per-Character Nicknames & Voice</p>
           <p className="text-xs text-muted-foreground">Set a nickname and voice for each character.</p>
@@ -503,28 +514,28 @@ export default function Settings() {
             )}
           </div>
         </div>
-        <StorageBackup />
-        <CommonQuestions />
+        <SectionIsolate name="StorageBackup"><StorageBackup /></SectionIsolate>
+        <SectionIsolate name="CommonQuestions"><CommonQuestions /></SectionIsolate>
 
         {/* Recovery Signal Glossary — explains disguised system error messages */}
         <div className="pt-4 border-t border-border space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Message Recovery Signals</p>
-          <RecoverySignalGlossary />
+          <SectionIsolate name="RecoverySignalGlossary"><RecoverySignalGlossary /></SectionIsolate>
         </div>
 
         {/* Support Assistant — available to all users, scoped to their owner_email */}
         <div className="pt-4 border-t border-border space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Account Help & Repair</p>
-          <SupportAssistant user={user} />
+          <SectionIsolate name="SupportAssistant"><SupportAssistant user={user} /></SectionIsolate>
         </div>
 
         {/* Admin only — Console + Issue Reports */}
         {isAdmin && (
           <div className="pt-4 border-t border-border space-y-4">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Admin Console</p>
-            <AdminConsole />
+            <SectionIsolate name="AdminConsole"><AdminConsole /></SectionIsolate>
             <div className="pt-4 border-t border-border">
-              <AdminIssueReportViewer />
+              <SectionIsolate name="AdminIssueReportViewer"><AdminIssueReportViewer /></SectionIsolate>
             </div>
           </div>
         )}
@@ -532,7 +543,7 @@ export default function Settings() {
         <div className="pt-4 border-t border-border space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sleep Debt Cleanup</p>
           <div className="bg-card border border-border rounded-xl p-4">
-            <SleepDebtCleanupPanel />
+            <SectionIsolate name="SleepDebtCleanupPanel"><SleepDebtCleanupPanel /></SectionIsolate>
           </div>
         </div>
 
@@ -553,7 +564,7 @@ export default function Settings() {
             </div>
           </button>
           
-          <GenericLocationFixer />
+          <SectionIsolate name="GenericLocationFixer"><GenericLocationFixer /></SectionIsolate>
           
           {/* Suggested duplicates — always fetches fresh Character records before scanning */}
           <button
@@ -667,30 +678,32 @@ export default function Settings() {
 
           {showDiagnostic && (
              <div className="mb-6 bg-secondary/30 border border-border rounded-xl p-4">
-               <DiagnosticReportViewer />
+               <SectionIsolate name="DiagnosticReportViewer"><DiagnosticReportViewer /></SectionIsolate>
              </div>
            )}
 
           {/* Narrative Diagnostic */}
           <div className="mb-3 bg-card border border-border rounded-xl p-4">
-            <NarrativeDiagnosticPanel />
+            <SectionIsolate name="NarrativeDiagnosticPanel"><NarrativeDiagnosticPanel /></SectionIsolate>
           </div>
 
           <div className="mb-3">
-            <EditCharacterType characters={characters} currentUser={user} />
+            <SectionIsolate name="EditCharacterType"><EditCharacterType characters={characters} currentUser={user} /></SectionIsolate>
           </div>
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Home Anchor Characters</p>
           <div className="mb-4 bg-card border border-border rounded-2xl p-4">
-            <HomeAnchorsEditor
-              userSettings={settings}
-              activeCharacters={characters.filter(c => c.character_type === 'active_created_character')}
-            />
+            <SectionIsolate name="HomeAnchorsEditor">
+              <HomeAnchorsEditor
+                userSettings={settings}
+                activeCharacters={characters.filter(c => c.character_type === 'active_created_character')}
+              />
+            </SectionIsolate>
           </div>
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
           <div className="mb-4 bg-card border border-border rounded-2xl p-4">
-            <ManageCharacterList characters={characters} currentUser={user} />
+            <SectionIsolate name="ManageCharacterList"><ManageCharacterList characters={characters} currentUser={user} /></SectionIsolate>
           </div>
           <Link to="/finance" className="mb-6 block">
             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-green-500/30 hover:border-green-500/60 transition-colors text-left">

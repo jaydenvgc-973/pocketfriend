@@ -115,7 +115,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
                             <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full flex-shrink-0 object-cover" />
                           ) : (
                             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                              <span className="text-xs font-semibold text-primary">{itemName[0].toUpperCase()}</span>
+                              <span className="text-xs font-semibold text-primary">{(itemName?.[0] || "?").toUpperCase()}</span>
                             </div>
                           )
                         ) : (

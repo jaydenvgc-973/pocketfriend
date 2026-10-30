@@ -51,7 +51,7 @@ function CharacterRow({ char }) {
           )}
           {char.checks && (
             <div className="space-y-0.5 text-[11px]">
-              {Object.entries(char.checks).map(([key, val]) => (
+              {Object.entries(char.checks || {}).map(([key, val]) => (
                 <div key={key} className={`flex items-center gap-1.5 ${val ? 'text-muted-foreground' : 'text-destructive'}`}>
                   {val ? <CheckCircle2 className="w-3 h-3 text-emerald-400" /> : <XCircle className="w-3 h-3" />}
                   {key.replace(/([A-Z])/g, ' $1').toLowerCase()}
