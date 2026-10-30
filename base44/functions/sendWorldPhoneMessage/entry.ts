@@ -797,23 +797,38 @@ This must be a real message — not a command, not a description, not a meta-ins
       return true;
     });
 
+    // ── 1:1 THREAD GUARD ──────────────────────────────────────────────────────
+    // A conversation is eligible as THIS pair's thread only when it belongs to
+    // exactly these two characters. Story-event spaces and multi-participant
+    // conversations are never adopted — a shared/group conversation adopted as
+    // a 1:1 thread is how one pair's messages leak into every other contact's
+    // conversation (and how a story-event space got relabeled world_phone).
+    const isGroupSpace = (c) =>
+      c.channel === 'story_event' ||
+      (typeof c.title === 'string' && c.title.startsWith('story_event::'));
+
+    const isThisPairOnly = (c) => {
+      if (isGroupSpace(c)) return false;
+      const pids = Array.isArray(c.participant_character_ids)
+        ? c.participant_character_ids.filter(Boolean)
+        : [];
+      if (pids.length > 0) {
+        return pids.length === 2 && participantIds.every(id => pids.includes(id));
+      }
+      const cids = Array.isArray(c.character_ids) ? c.character_ids.filter(Boolean) : [];
+      return cids.length === 2 && participantIds.every(id => cids.includes(id));
+    };
+
     const existingConvo =
-      allCandidates.find(c => c.shared_conversation_key === canonicalKey) ||
-      allCandidates.find(c =>
-        Array.isArray(c.participant_character_ids) &&
-        participantIds.every(id => c.participant_character_ids.includes(id))
-      ) ||
-      allCandidates.find(c =>
-        Array.isArray(c.character_ids) &&
-        participantIds.every(id => c.character_ids.includes(id))
-      );
+      allCandidates.find(c => c.shared_conversation_key === canonicalKey && isThisPairOnly(c)) ||
+      allCandidates.find(c => isThisPairOnly(c));
 
     if (existingConvo) {
       conversationId = existingConvo.id;
       const needsUpgrade = existingConvo.shared_conversation_key !== canonicalKey ||
         !Array.isArray(existingConvo.participant_character_ids) ||
         !participantIds.every(id => existingConvo.participant_character_ids?.includes(id));
-      if (needsUpgrade) {
+      if (needsUpgrade && isThisPairOnly(existingConvo)) {
         const currentCharIds = Array.isArray(existingConvo.character_ids) ? existingConvo.character_ids : [sender_character_id];
         const mergedCharIds = [...new Set([...currentCharIds, recipient.id])];
         await base44.asServiceRole.entities.Conversation.update(conversationId, {

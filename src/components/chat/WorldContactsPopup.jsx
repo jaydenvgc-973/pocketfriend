@@ -294,26 +294,41 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         return true;
       });
 
-      // Ordered resolution: canonical key → legacy bilateral key → participant_character_ids both present → legacy title
+      // ── 1:1 THREAD GUARD ──────────────────────────────────────────────────
+      // This contact's thread may only be a conversation that belongs to
+      // exactly these two characters. Story-event spaces and multi-participant
+      // conversations must never be adopted as a 1:1 thread — adopting one is
+      // how every contact ended up displaying the same cross-character messages.
+      const isGroupSpace = (c) =>
+        c.channel === 'story_event' ||
+        (typeof c.title === 'string' && c.title.startsWith('story_event::'));
+
+      const isThisPairOnly = (c) => {
+        if (isGroupSpace(c)) return false;
+        const pids = Array.isArray(c.participant_character_ids)
+          ? c.participant_character_ids.filter(Boolean)
+          : [];
+        if (pids.length > 0) {
+          return pids.length === 2 && [character.id, contactId].every(id => pids.includes(id));
+        }
+        const cids = Array.isArray(c.character_ids) ? c.character_ids.filter(Boolean) : [];
+        return cids.length === 2 && [character.id, contactId].every(id => cids.includes(id));
+      };
+
+      // Ordered resolution: canonical key → legacy bilateral key → exact 1:1 pair → legacy title
       let found =
-        allCandidates.find(c => c.shared_conversation_key === canonicalKey) ||
-        allCandidates.find(c => c.shared_conversation_key === legacyBilateralKey) ||
-        (contactId && allCandidates.find(c =>
-          Array.isArray(c.participant_character_ids) &&
-          [character.id, contactId].every(id => c.participant_character_ids.includes(id))
-        )) ||
-        (contactId && allCandidates.find(c =>
-          Array.isArray(c.character_ids) &&
-          [character.id, contactId].every(id => c.character_ids.includes(id))
-        )) ||
-        allCandidates.find(c => c.title === stableTitle) ||
-        allCandidates.find(c => c.title === legacyTitle);
+        (allCandidates.find(c => c.shared_conversation_key === canonicalKey && isThisPairOnly(c))) ||
+        (allCandidates.find(c => c.shared_conversation_key === legacyBilateralKey && isThisPairOnly(c))) ||
+        (contactId && allCandidates.find(c => isThisPairOnly(c))) ||
+        allCandidates.find(c => c.title === stableTitle && isThisPairOnly(c)) ||
+        allCandidates.find(c => c.title === legacyTitle && isThisPairOnly(c));
 
       // Duplicate detection
       const duplicates = contactId ? allCandidates.filter(c =>
-        (c.shared_conversation_key === canonicalKey || c.shared_conversation_key === legacyBilateralKey) ||
-        (Array.isArray(c.participant_character_ids) && [character.id, contactId].every(id => c.participant_character_ids.includes(id))) ||
-        (Array.isArray(c.character_ids) && [character.id, contactId].every(id => c.character_ids.includes(id)))
+        isThisPairOnly(c) && (
+          c.shared_conversation_key === canonicalKey ||
+          c.shared_conversation_key === legacyBilateralKey
+        )
       ) : [];
 
       console.log(
@@ -694,7 +709,12 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
         base44.entities.Conversation.filter({ shared_conversation_key: canonicalKey }, "-updated_date", 5).catch(() => []),
         legacyBilateralKey ? base44.entities.Conversation.filter({ shared_conversation_key: legacyBilateralKey }, "-updated_date", 5).catch(() => []) : Promise.resolve([]),
       ]);
-      const existing = [...byCanonical, ...byLegacy][0];
+      // Never reuse a story-event space as this pair's 1:1 thread, even if a
+      // legacy write stamped the pair's key onto it.
+      const existing = [...byCanonical, ...byLegacy].find(c =>
+        c.channel !== 'story_event' &&
+        !(typeof c.title === 'string' && c.title.startsWith('story_event::'))
+      );
       if (existing) {
         console.log(`[WorldPhone] ensureConversation: found existing | id=${existing.id} | key=${existing.shared_conversation_key}`);
         // Upgrade to canonical if using legacy key
