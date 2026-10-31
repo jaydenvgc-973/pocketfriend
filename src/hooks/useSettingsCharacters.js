@@ -23,15 +23,23 @@ export function useSettingsCharacters(currentUser, moduleType) {
   });
 
   // NPC fictitious via backend (catches service-created records not visible via RLS)
-  const { data: npcFictitiousRaw = [], isLoading: npcLoading } = useQuery({
+  const { data: npcCharactersData = [], isLoading: npcLoading } = useQuery({
     queryKey: ["npc-characters", currentUser?.id],
     queryFn: async () => {
-      if (!currentUser?.id) return [];
+      if (!currentUser?.id) return { npcs: [] };
       const res = await base44.functions.invoke("fetchNPCsForUser", {});
-      return res?.data?.npcs || [];
+      // Canonical shape for this shared cache key (see useOwnedCharacters).
+      return res?.data || { npcs: [] };
     },
     enabled: !!currentUser?.id,
   });
+
+  // This key is shared with useOwnedCharacters, whose cached value is an object
+  // ({ npcs, sharedLocationEmployees, sharedLocationVisitors }). Accept both shapes
+  // so a populated cache can never hand this hook a non-iterable value.
+  const npcFictitiousRaw = Array.isArray(npcCharactersData)
+    ? npcCharactersData
+    : (npcCharactersData?.npcs || []);
 
   // Merge, deduplicate
   const allCharacters = useMemo(() => {

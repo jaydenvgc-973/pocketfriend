@@ -45,15 +45,21 @@ export default function ProfileAnalytics({ userSettings }) {
     enabled: !!currentUser?.email,
   });
 
-  const { data: npcFictitiousRaw = [] } = useQuery({
+  const { data: npcCharactersData = [] } = useQuery({
     queryKey: ["npc-characters", currentUser?.id],
     queryFn: async () => {
-      if (!currentUser?.id) return [];
+      if (!currentUser?.id) return { npcs: [] };
       const res = await base44.functions.invoke("fetchNPCsForUser", {});
-      return res?.data?.npcs || [];
+      // Canonical shape for this shared cache key (see useOwnedCharacters).
+      return res?.data || { npcs: [] };
     },
     enabled: !!currentUser?.id,
   });
+
+  // Shared key: cached value may be the canonical object or the legacy array.
+  const npcFictitiousRaw = Array.isArray(npcCharactersData)
+    ? npcCharactersData
+    : (npcCharactersData?.npcs || []);
 
   const allCharacters = useMemo(() => {
     const seen = new Set();

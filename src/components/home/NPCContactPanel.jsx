@@ -31,13 +31,14 @@ export default function NPCContactPanel() {
     gcTime: 30 * 60 * 1000,
   });
 
-  const { data: npcBackendResult = [] } = useQuery({
+  const { data: npcCharactersData = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.id],
     queryFn: async () => {
-      if (!currentUser?.id) return [];
+      if (!currentUser?.id) return { npcs: [] };
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      const npcs = res?.data?.npcs;
-      return Array.isArray(npcs) ? npcs : [];
+      // Canonical shape for this shared cache key (see useOwnedCharacters) — an
+      // array here made the shape depend on which page mounted first.
+      return res?.data || { npcs: [] };
     },
     enabled: !!currentUser?.id,
     staleTime: 15 * 60 * 1000,  // match useOwnedCharacters — prevents duplicate fetches
@@ -52,6 +53,11 @@ export default function NPCContactPanel() {
     retryDelay: (attempt) => Math.min(5000 * 2 ** attempt, 30000),
     placeholderData: (prev) => prev, // CRITICAL: never show empty on 429 — hold last known good
   });
+
+  // Shared key: cached value may be the canonical object or the legacy array.
+  const npcBackendResult = Array.isArray(npcCharactersData)
+    ? npcCharactersData
+    : (npcCharactersData?.npcs || []);
 
   // Merge and deduplicate
   const allNPCs = (() => {

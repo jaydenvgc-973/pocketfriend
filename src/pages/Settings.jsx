@@ -78,16 +78,17 @@ export default function Settings() {
 
   // Fetch NPC characters via service-role backend function (bypasses RLS)
   // Includes npc_fictitious, npc_family_member, npc_regular
-  const { data: npcFictitiousFromBackend = [] } = useQuery({
+  const { data: npcCharactersData = [] } = useQuery({
     queryKey: ["npc-characters", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      // Established contract: npcs is an array. Normalize at the source so the
-      // consumer never receives a non-iterable value (the `|| []` guard alone does
-      // not catch truthy non-arrays such as an object returned in error/legacy paths).
-      const npcs = res?.data?.npcs;
-      return Array.isArray(npcs) ? npcs : [];
+      // This query key is SHARED with useOwnedCharacters, whose canonical cached value
+      // is an object: { npcs, sharedLocationEmployees, sharedLocationVisitors }.
+      // Returning an array here made the cached shape depend on which page mounted
+      // first — coming from Home left an object in the cache and spreading it threw
+      // "not iterable", replacing the entire page. Write the same canonical shape.
+      return res?.data || { npcs: [] };
     },
     enabled: !!user?.id,
     staleTime: 2 * 60 * 1000,
@@ -96,6 +97,12 @@ export default function Settings() {
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     placeholderData: (prev) => prev,
   });
+
+  // The shared cache may hold the canonical object or the legacy array shape.
+  // Normalize both before spreading — a truthy non-array is what threw here.
+  const npcFictitiousFromBackend = Array.isArray(npcCharactersData)
+    ? npcCharactersData
+    : (npcCharactersData?.npcs || []);
 
   // Merge: regular characters + npc_fictitious from backend, deduplicated
   const allCharacters = (() => {
