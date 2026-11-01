@@ -2511,7 +2511,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         />
       ) : (
         <>
-          <ChatInput onSend={sendMessageChained} draftKey={`${chatType}:${characterId}`} disabled={isLoadingConvo && !conversationId} />
+          <ChatInput onSend={sendMessageChained} draftKey={`${chatType}:${characterId}`} disabled={isLoadingConvo && !conversationId} characterId={character?.id} characterName={character?.name} conversationId={conversationId} isPhone={isPhone} />
           {isVickChat && <VickCharacterSpeechToggle enabled={characterSpeechMode} onToggle={toggleCharacterSpeechMode} />}
         </>
       )}

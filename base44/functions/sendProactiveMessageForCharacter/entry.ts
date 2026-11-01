@@ -310,8 +310,16 @@ Deno.serve(async (req) => {
     const base44 = createClientFromRequest(req);
 
     const body = await req.json();
-    const { characterId, forceCommitmentId } = body;
+    const { characterId, forceCommitmentId, onDemand, conversationId: requestedConversationId, channel } = body;
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
+
+    // The user pressing the on-demand button has already decided that the character
+    // may speak. That request uses this exact same generation path (canonical context,
+    // recent conversation, narratives, location, persistence) but skips the gates that
+    // exist only to stop UNPROMPTED outreach: pressure threshold, timing, random
+    // reduction, daily cap and the once-per-hour window.
+    const manualRequest = onDemand === true;
+    const requestedChannel = channel === 'phone' ? 'phone' : 'direct';
 
     // Auth: attempt user identity; if not available (automation/function context), proceed
     // with service role. All entity operations use asServiceRole explicitly regardless.
@@ -338,15 +346,29 @@ Deno.serve(async (req) => {
     const sr = base44.asServiceRole;
 
     // ── FIND ACTIVE CONVERSATION ─────────────────────────────────────────────
-    const convos = await sr.entities.Conversation.filter({
-      type: 'direct',
-      owner_email: char.owner_email,
-      character_ids: [char.id],
-    }).catch(() => []);
-
+    // On-demand requests belong to the conversation the user is actually looking at
+    // (Chat = 'direct', Text = 'phone'). Scheduled outreach stays scoped to 'direct'.
     let conversationId = null;
-    if (convos.length > 0) {
-      conversationId = convos[0].id;
+
+    if (manualRequest && requestedConversationId) {
+      const requested = await sr.entities.Conversation.filter({ id: requestedConversationId }, null, 1).catch(() => []);
+      const candidate = requested?.[0];
+      const ownedByCharacter = Array.isArray(candidate?.character_ids) && candidate.character_ids.includes(char.id);
+      if (candidate && ownedByCharacter && candidate.channel !== 'world_phone') {
+        conversationId = candidate.id;
+      }
+    }
+
+    if (!conversationId) {
+      const convos = await sr.entities.Conversation.filter({
+        type: manualRequest ? requestedChannel : 'direct',
+        owner_email: char.owner_email,
+        character_ids: [char.id],
+      }).catch(() => []);
+
+      if (convos.length > 0) {
+        conversationId = convos[0].id;
+      }
     }
 
     // ── FETCH RECENT MESSAGES ────────────────────────────────────────────────
@@ -421,7 +443,7 @@ Deno.serve(async (req) => {
     //   60+ = high urgency, bypass some timing gates
     //   80+ = critical (pending commitment), bypass work-hour gate
     const INITIATE_THRESHOLD = 25;
-    if (pressure < INITIATE_THRESHOLD && !pendingCommitment) {
+    if (!manualRequest && pressure < INITIATE_THRESHOLD && !pendingCommitment) {
       return Response.json({
         success: false,
         reason: 'insufficient_relationship_pressure',
@@ -432,7 +454,7 @@ Deno.serve(async (req) => {
 
     // Timing gate — bypass for critical pressure (commitments, 80+)
     const highUrgency = pressure >= 80 || !!pendingCommitment;
-    if (!highUrgency && !shouldMessageNow(char, rootFriendship)) {
+    if (!manualRequest && !highUrgency && !shouldMessageNow(char, rootFriendship)) {
       return Response.json({
         success: false,
         reason: 'not_the_right_time',
@@ -440,7 +462,7 @@ Deno.serve(async (req) => {
       });
     }
     // For pressure 25-39: apply random reduction to avoid over-messaging
-    if (pressure < 40 && !pendingCommitment) {
+    if (!manualRequest && pressure < 40 && !pendingCommitment) {
       const probability = (pressure - 25) / 75; // 0 at 25 pressure, 0.2 at 40 pressure
       if (Math.random() > probability) {
         return Response.json({ success: false, reason: 'random_pressure_gate', pressure });
@@ -448,7 +470,7 @@ Deno.serve(async (req) => {
     }
 
     // ── DAILY CAP CHECK ──────────────────────────────────────────────────────
-    if (conversationId) {
+    if (!manualRequest && conversationId) {
       const todayMessages = recentMessages.filter(m =>
         m.sender_type === 'character' && m.character_id === char.id &&
         (m.created_date || '').startsWith(today)
@@ -461,9 +483,12 @@ Deno.serve(async (req) => {
 
     // ── IDEMPOTENCY KEY ──────────────────────────────────────────────────────
     const timeBucket = now.toISOString().substring(0, 13);
-    const idempotencyKey = `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
+    // Each on-demand press is its own event, not a once-per-hour window.
+    const idempotencyKey = manualRequest
+      ? `ondemand::${char.owner_email}::${char.id}::${requestedChannel}::${now.getTime()}`
+      : `proactive::${char.owner_email}::${char.id}::direct::${timeBucket}`;
 
-    if (conversationId) {
+    if (!manualRequest && conversationId) {
       const existingThisHour = await sr.entities.Message.filter({
         conversation_id: conversationId,
         sender_type: 'character',
@@ -506,7 +531,38 @@ Deno.serve(async (req) => {
     let reachOutContext = '';
     let messageIntent = 'general check-in';
 
-    if (pendingCommitment) {
+    const presenceLabel = char.resolved_current_location_name
+      ? `${char.resolved_current_location_name}${char.resolved_presence_status ? ` (${String(char.resolved_presence_status).replace(/_/g, ' ')})` : ''}`
+      : null;
+
+    if (manualRequest) {
+      // ── ON-DEMAND INITIATION ──────────────────────────────────────────────
+      // Same context already used for ordinary replies: the live conversation tail,
+      // the character's recent narrative moments, and where they actually are now.
+      const conversationTail = recentMessages
+        .filter(m => m.conversation_id === conversationId && !m.is_narrative)
+        .sort((a, b) => new Date(a.timestamp || a.created_date) - new Date(b.timestamp || b.created_date))
+        .slice(-12);
+
+      const transcript = conversationTail
+        .map(m => `${m.sender_type === 'character' ? char.name : 'them'}: ${(m.content || '').substring(0, 300)}`)
+        .join('\n');
+
+      const recentNarratives = await sr.entities.CharacterAutomaticNarrative
+        .filter({ character_id: char.id }, '-timestamp', 3)
+        .catch(() => []);
+
+      reachOutContext = `You are speaking up on your own — they have NOT written to you first. Nothing needs replying to; you simply have something to say.
+${transcript
+  ? `WHAT YOU TWO WERE JUST SAYING (oldest first, most recent last):\n${transcript}\nContinue from this. Add a thought, pick the thread back up, ask something, or say what is actually on your mind. Do not restart a topic the conversation has already moved past.`
+  : `There is no conversation between you yet, so you are starting one.`}
+${recentNarratives.length > 0
+  ? `WHAT HAS ACTUALLY BEEN HAPPENING TO YOU LATELY (most recent first):\n${recentNarratives.map(n => `- ${n.narrative_text}`).join('\n')}\nThese already happened. Do not contradict them, and do not describe them as still in progress if they have finished.`
+  : ''}
+WHERE YOU ACTUALLY ARE RIGHT NOW: ${presenceLabel || 'an unspecified place'}.
+WHAT YOU WERE DOING: ${char.current_activity || 'nothing in particular'}.`;
+      messageIntent = 'user_invited_initiation';
+    } else if (pendingCommitment) {
       // Commitment follow-through — highest priority
       if (pendingCommitment.commitment_type === 'third_party_relay') {
         reachOutContext = `You previously said you would pass a message along to the person you're talking to. The original message to relay was: "${pendingCommitment.third_party_message || pendingCommitment.commitment_text}". Follow through on this — mention it naturally, as if you remembered and followed through.`;
@@ -576,7 +632,14 @@ RULES:
 - Be authentic to the reason you're reaching out.
 - Do NOT start with your own name or a label.
 - Max 2-3 sentences. Often 1 is better.
-- Do NOT announce that you're following up unless it flows naturally.`;
+- Do NOT announce that you're following up unless it flows naturally.
+${manualRequest ? `
+SPEAK-FIRST RULES:
+- You are starting this message. Do not thank them for writing, do not answer a question they did not ask.
+- Time has moved on since the last exchange. Anything that would naturally have finished by now is over. Do not describe a moment that has already passed as though it is still happening.
+- You are currently at: ${presenceLabel || 'your current location'}. Do not speak as though you are anywhere else. Do not talk about showering, waking up, being home, arriving somewhere, or any activity that belongs to a different place unless it has genuinely already happened there.
+- If what you were doing before has ended, let it have ended. Do not freeze the day at an earlier moment.
+- Stay in your own voice and your own way of talking. Do not sound like an assistant.` : ''}`;
 
     let messageContent;
     try {
@@ -597,7 +660,7 @@ RULES:
     if (!conversationId) {
       const newConvo = await sr.entities.Conversation.create({
         title: char.name,
-        type: 'direct',
+        type: manualRequest ? requestedChannel : 'direct',
         character_ids: [char.id],
         owner_email: char.owner_email,
       });
@@ -621,7 +684,7 @@ RULES:
       content: messageContent,
       emotional_state: char.emotional_state || 'calm',
       timestamp: now.toISOString(),
-      channel: 'direct',
+      channel: manualRequest ? requestedChannel : 'direct',
       is_read: false,
       idempotency_key: idempotencyKey,
       source_message_id: null,

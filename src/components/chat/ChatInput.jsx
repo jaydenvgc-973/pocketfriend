@@ -3,8 +3,17 @@ import { Send, Mic, MicOff, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { base44 } from "@/api/base44Client";
+import CharacterInitiatedMessageButton from "@/components/chat/CharacterInitiatedMessageButton";
 
-export default function ChatInput({ onSend, draftKey = "chat_draft_default", disabled = false }) {
+export default function ChatInput({
+  onSend,
+  draftKey = "chat_draft_default",
+  disabled = false,
+  characterId = null,
+  conversationId = null,
+  characterName = null,
+  isPhone = false,
+}) {
   const storageKey = `chat_draft_${draftKey}`;
   const [text, setText] = useState(() => localStorage.getItem(storageKey) || "");
   const [isRecording, setIsRecording] = useState(false);
@@ -85,6 +94,15 @@ export default function ChatInput({ onSend, draftKey = "chat_draft_default", dis
       )}
       <div className="flex items-end gap-2 bg-secondary rounded-2xl p-2">
         <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageSelect} className="hidden" />
+        {characterId && (
+          <CharacterInitiatedMessageButton
+            characterId={characterId}
+            conversationId={conversationId}
+            characterName={characterName}
+            isPhone={isPhone}
+            disabled={disabled}
+          />
+        )}
         <Button
           variant="ghost"
           size="icon"
