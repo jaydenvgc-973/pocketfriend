@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 
 // Human-readable phrasing of the character's authoritative presence state.
 // Used only to describe where the character already is — never to write it.
@@ -178,8 +179,11 @@ Write a corrected sleep-only narrative (1-2 sentences). The environment must ref
       // Read from the existing location history — never a later location, so a
       // message written before the character moved is corrected against where
       // they actually were when it was written.
-      let locId = character?.resolved_current_location_id || null;
-      let locName = character?.resolved_current_location_name || null;
+      // Same pathway as the character card: the live resolver supplies the real
+      // location, so an active rabbit hole is never replaced by a stored record.
+      const liveLoc = character ? resolveCharacterLocation(character, {}) : null;
+      let locId = liveLoc?.resolved_current_location_id || character?.resolved_current_location_id || null;
+      let locName = liveLoc?.resolved_current_location_name || character?.resolved_current_location_name || null;
       let locationSource = "current_authoritative";
       let signalPresence = null;
       let rabbitHoleAtMoment = false;
@@ -301,7 +305,6 @@ Where: ${locName}${presencePhrase ? `\nPresence: ${presencePhrase}` : ""}${locat
       if (character?.communication_style) identityLines.push(`Communication style: ${character.communication_style}`);
       if (character?.emotional_state) identityLines.push(`Emotional state: ${character.emotional_state}`);
       if (character?.personality_traits?.length) identityLines.push(`Traits: ${character.personality_traits.join(", ")}`);
-      if (character?.current_activity) identityLines.push(`What they were in the middle of: ${character.current_activity}`);
 
       const rawCorrected = await base44.integrations.Core.InvokeLLM({
         prompt: `The character's message below was written as though they were somewhere they were not. Rewrite that same message so it is naturally grounded in where the character actually was at that moment in the conversation.

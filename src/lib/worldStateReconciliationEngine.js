@@ -25,8 +25,10 @@
  */
 
 // Under One Truth, consumers read committed canonical state directly.
-// resolveCharacterLocation import removed — consumers must not independently
-// re-derive canonical presence or location.
+// EXCEPTION — RABBIT HOLE: a rabbit hole is the character's real location but is
+// never written into the committed snapshot, so the same live resolver the Home
+// character card uses supplies it here. Nothing else is re-derived.
+import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
 
 /**
  * MAIN RECONCILIATION: Resolve complete world state for a character response
@@ -77,6 +79,21 @@ export function reconcileWorldStateForResponse(
     resolved_presence_status: character.resolved_presence_status || null,
     resolved_source_reason: character.resolved_source_reason || null,
   };
+
+  // ── RABBIT HOLE AUTHORITY (same pathway as the character card) ──────────────
+  // While a character is inside a rabbit hole, that place is their actual current
+  // location. The committed snapshot still holds the previous place, so the live
+  // resolver wins here until the committed fields catch up. No other state is
+  // re-derived — linked locations keep reading the committed record unchanged.
+  const liveResolvedLocation = resolveCharacterLocation(character, locationMap);
+  if (liveResolvedLocation.resolved_current_location_id === 'rabbit_hole' ||
+      liveResolvedLocation.resolved_location_type === 'rabbit_hole') {
+    charLocation.resolved_current_location_id = liveResolvedLocation.resolved_current_location_id;
+    charLocation.resolved_current_location_name = liveResolvedLocation.resolved_current_location_name;
+    charLocation.resolved_location_type = liveResolvedLocation.resolved_location_type;
+    charLocation.resolved_presence_status = liveResolvedLocation.resolved_presence_status;
+    charLocation.resolved_source_reason = liveResolvedLocation.resolved_source_reason;
+  }
 
   // ── STEP 2: Resolve user's current location ──────────────────────────────────
   const userLocationResult = resolveUserLocation(userSettings, locationMap);

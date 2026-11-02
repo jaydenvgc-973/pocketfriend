@@ -7,6 +7,7 @@ import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
 import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
 import { buildArcContextBlock } from "@/lib/arcEngine";
 import { buildOutfitPromptText, resolveOutfitForDate } from "@/lib/outfitRotationEngine";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -360,7 +361,19 @@ export function buildSystemPrompt(canonicalPromptOrCharacter, characterOrOptions
 
   // If canonical prompt was provided, use it as the identity base.
   // Otherwise fall back to inline identity (legacy path / service unavailable).
-  const identityBase = canonicalPrompt || buildLegacyIdentityPrompt(character, userNameLabel, memories);
+  let identityBase = canonicalPrompt || buildLegacyIdentityPrompt(character, userNameLabel, memories);
+
+  // ── ONE LOCATION TRUTH — RABBIT HOLE (same pathway as the character card) ──
+  // The cached canonical section can still carry the place the character was in
+  // when it was built. While a rabbit hole is their real current location, the
+  // CURRENT LOCATION line is replaced so the prompt never states two places.
+  const _liveLoc = resolveCharacterLocation(character, {});
+  if (_liveLoc.resolved_current_location_id === 'rabbit_hole' || _liveLoc.resolved_location_type === 'rabbit_hole') {
+    const _rhLine = `CURRENT LOCATION: ${_liveLoc.resolved_current_location_name}${_liveLoc.resolved_presence_status ? ` (${String(_liveLoc.resolved_presence_status).replace(/_/g, ' ')})` : ''}.`;
+    identityBase = /^CURRENT LOCATION:.*$/m.test(identityBase)
+      ? identityBase.replace(/^CURRENT LOCATION:.*$/gm, _rhLine)
+      : `${identityBase}\n\n${_rhLine}`;
+  }
 
   // ── VICK SERVICIO EXCEPTION — CRITICAL ────────────────────────────────────
   // The ABSOLUTE IMMERSION LAW forbids acknowledging app systems, which directly

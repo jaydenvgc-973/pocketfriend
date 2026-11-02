@@ -12,7 +12,7 @@ import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
-import { getCharacterLivePresence, buildLiveLocationContext } from "@/lib/locationResolutionEngine";
+import { getCharacterLivePresence, buildLiveLocationContext, resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 
 import SendMoneyModal from "@/components/chat/SendMoneyModal";
@@ -1049,8 +1049,8 @@ Return ONLY the concise image prompt.
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
-    let charLocationName = character.resolved_current_location_name || null;
-    let charLocationId = character.resolved_current_location_id || null;
+    let charLocationName = resolveCharacterLocation(character, {}).resolved_current_location_name || character.resolved_current_location_name || null;
+    let charLocationId = resolveCharacterLocation(character, {}).resolved_current_location_id || character.resolved_current_location_id || null;
     let fullPrompt = ""; // hoisted so catch block can access it for retry
     let vickDiagnosticResults = null; // populated only for Vick when diagnostic intent detected
     let sequenceItems = null; // LLM-provided dialogue/narrative sequence (hoisted for post-try usage)

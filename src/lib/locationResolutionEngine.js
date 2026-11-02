@@ -1197,6 +1197,11 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
+  // ONE LOCATION TRUTH: what the resolver returns IS where the character is.
+  // A stored resolved_* field, an earlier message, or an earlier narrative that
+  // describes another place is outdated and must not be continued.
+  const authorityClause = ' This is the only valid location for right now. If any other part of this prompt, an earlier message, or an earlier narrative describes a different place, that description is outdated: do not continue it, do not describe actions that belong to that other place, and do not announce this location.';
+
   // ── IMAGE MODE: Check for unsupported zone image formats ──────────────────────
   // If zone has ONLY AVIF/HEIC (no fallback JPEGs), log diagnostic but do NOT fail silently.
   if (imageMode && locId) {
@@ -1234,7 +1239,17 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   // ── HOME ──────────────────────────────────────────────────────────────────
   if (presence === 'home') {
     if (imageMode) return `[LOCATION LOCKED: character is at home — use residential interior context${locName ? ` matching ${locName}` : ''}]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT HOME${locName ? ` (${locName})` : ''}. You are NOT at work, a bar, club, or any other venue. Any work or outing context is PAST TENSE only.`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT HOME${locName ? ` (${locName})` : ''}. You are NOT at work, a bar, club, or any other venue. Any work or outing context is PAST TENSE only.${authorityClause}`;
+  }
+
+  // ── RABBIT HOLE — A REAL, AUTHORITATIVE LOCATION ─────────────────────────
+  // A rabbit hole is the character's actual physical location within the world,
+  // not an overlay or optional context. It outranks any stored home/work record
+  // and any earlier message or narrative that described a previous place.
+  if (locId === 'rabbit_hole' || resolved.resolved_location_type === 'rabbit_hole' || presence === 'rabbit_hole') {
+    const rhName = locName || character.occupation_location_name || 'a place outside the mapped world';
+    if (imageMode) return `[LOCATION LOCKED: character is at ${rhName} — use that environment as background]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at ${rhName}${presence === 'at_work' ? ' — this is where you work and you are on shift' : ''}. This is your real physical location right now.${authorityClause}`;
   }
 
   // ── AT WORK ───────────────────────────────────────────────────────────────
@@ -1292,7 +1307,7 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
     }
 
     if (imageMode) return `[LOCATION LOCKED: character is at work at ${locName || 'their workplace'} — use that work environment as background]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${locName || 'your workplace'}. All location references must match this environment.${shiftPhaseNote}`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${locName || 'your workplace'}. All location references must match this environment.${shiftPhaseNote}${authorityClause}`;
   }
 
   // ── AT SCHOOL ─────────────────────────────────────────────────────────────
@@ -1308,7 +1323,7 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   // ── VISITING / UNKNOWN ────────────────────────────────────────────────────
   if (locName) {
     if (imageMode) return `[LOCATION LOCKED: character is at ${locName}]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at ${locName}.`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at ${locName}.${authorityClause}`;
   }
 
   return '';
