@@ -1,3 +1,5 @@
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
+
 /**
  * coPresenceResolver.js
  *
@@ -106,9 +108,14 @@ export function resolveCoPresence(character, userSettings, userDisplayName = nul
   const userLocName  = userSettings?.user_current_location_name || null;
   const userPresence = userSettings?.user_presence_status       || 'away';
 
-  const charLocId          = character?.resolved_current_location_id   || null;
-  const charLocName        = character?.resolved_current_location_name || null;
-  const charPresenceStatus = character?.resolved_presence_status       || null;
+  // Same authoritative pathway as the character card and Chat geolocation tag.
+  // The stored resolved_* fields can lag the schedule (still naming the previous
+  // place), and a stale pair of fields would report co-presence with the user at
+  // a place the character has already left.
+  const liveCharLocation   = resolveCharacterLocation(character || {}, {});
+  const charLocId          = liveCharLocation.resolved_current_location_id   || character?.resolved_current_location_id   || null;
+  const charLocName        = liveCharLocation.resolved_current_location_name || character?.resolved_current_location_name || null;
+  const charPresenceStatus = liveCharLocation.resolved_presence_status       || character?.resolved_presence_status       || null;
 
   // States that block co-presence awareness even if location IDs match
   let blockReason = null;

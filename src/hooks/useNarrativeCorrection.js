@@ -322,46 +322,78 @@ Where: ${locName}${presencePhrase ? `\nPresence: ${presencePhrase}` : ""}${locat
           : `${m.sender_type === "user" ? "User" : (character?.name || "Character")}: ${m.content}`)
         .join("\n");
 
-      // ── Character identity (unchanged by this correction) ──────────────────
+      // ── The user turn this response was answering ──────────────────────────
+      // The replacement is generated fresh from the user's turn. The invalid
+      // response is never used as the scene, activity, or starting point.
+      const priorMessages = failedIndex > 0 ? messages.slice(0, failedIndex) : messages.slice(0, messages.length - 1);
+      const answeredTurn = [...priorMessages].reverse().find(m => m.sender_type === "user" && !m.is_narrative);
+      const answeredTurnText = answeredTurn?.content?.trim() || "(the user's previous message)";
+
+      // ── Character identity + what their actual work is ─────────────────────
       const identityLines = [];
       if (character?.name) identityLines.push(`Name: ${character.name}`);
       if (character?.personality_summary) identityLines.push(`Personality: ${character.personality_summary}`);
       if (character?.communication_style) identityLines.push(`Communication style: ${character.communication_style}`);
       if (character?.emotional_state) identityLines.push(`Emotional state: ${character.emotional_state}`);
       if (character?.personality_traits?.length) identityLines.push(`Traits: ${character.personality_traits.join(", ")}`);
+      if (character?.occupation) identityLines.push(`Occupation: ${character.occupation}`);
+      if (character?.occupation_location_name) identityLines.push(`Workplace: ${character.occupation_location_name}`);
+      const jobTitle = character?.work_details?.job_title || character?.work_details?.position;
+      if (jobTitle) identityLines.push(`Job title: ${jobTitle}`);
+      const workDuties = character?.work_details?.description || character?.work_details?.responsibilities;
+      if (workDuties) identityLines.push(`What the work actually is: ${String(workDuties).substring(0, 400)}`);
 
       const rawCorrected = await base44.integrations.Core.InvokeLLM({
-        prompt: `The character's message below was written as though they were somewhere they were not. Rewrite that same message so it is naturally grounded in where the character actually was at that moment in the conversation.
-
-The correction is not a location announcement. The reader should simply experience the character as someone who was already there.
+        prompt: `${msg.is_narrative
+          ? `A narrative was written as though the character was somewhere they were not. Write that narrative again for the same moment, set in the place the character actually was.
 
 ${locationBlock}
 
-TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}). The rewrite must fit this time, not the current time.
+TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}).
 
-CHARACTER (identity must remain intact):
+CHARACTER:
 ${identityLines.join("\n")}
 
-CONVERSATION IMMEDIATELY BEFORE THIS MESSAGE:
+CONVERSATION IMMEDIATELY BEFORE THIS MOMENT:
 ${contextLog || "(start of the conversation)"}
 
-THE MESSAGE TO REWRITE:
+THE NARRATIVE BEING REPLACED (its setting and activities are wrong — do not carry them over):
 "${msg.content}"
 
 REQUIREMENTS:
-- Keep the same intent, subject, reaction and emotional register, but write it fresh from where they actually were. Do not paraphrase the original line by line.
-- Anything that cannot exist or happen where the character was must be gone from the rewrite, not reworded.
-- Every action, object, sound, interruption and surrounding the message touches must be something that exists or happens where the character actually was.
-- Keep the character's voice, vocabulary, rhythm and mannerisms exactly as established.
-- ${msg.is_narrative
-        ? "This message is a narrative description, not spoken dialogue. Keep it third-person narration of what the character was doing, in the same length and register as the original."
-        : "Match the original format: spoken dialogue stays spoken dialogue, action beats stay action beats. Keep roughly the same length."}
-- Do not announce, name or explain the location. Do not mention a correction, a mistake, or anything technical.
-- Do not invent travel, arrivals, departures, or a scene change. The character has been where they are.
-- Remove anything that belongs to a different place (a desk at work, their own bed, their apartment, a workplace they left).
-- Never use em dashes, en dashes, or spaced hyphens.
+- Write a new third-person narrative of the same moment, roughly the same length and register.
+- Every action, object, sound and surrounding must belong to where the character actually was. Nothing from another place survives, even reworded.
+- Do not describe cooking, kitchen appliances, their own bed, their apartment, or a home routine unless that is where they actually were.
+- Keep the character's established mannerisms and emotional state.
+- Do not announce, name or explain the location. Do not mention a correction or a mistake.
+- Never use em dashes or en dashes.
 
-Write only the rewritten message body. No quotes, no labels, no preamble:`,
+Write only the narrative:`
+          : `A character sent a message describing themselves doing something at a place they were not. That message is discarded. Write the reply again, from scratch, answering the user's message from where the character actually was at that moment.
+
+${locationBlock}
+
+TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}).
+
+CHARACTER:
+${identityLines.join("\n")}
+
+CONVERSATION IMMEDIATELY BEFORE (context only):
+${contextLog || "(start of the conversation)"}
+
+THE USER MESSAGE THIS REPLY ANSWERS:
+"${answeredTurnText}"
+
+REQUIREMENTS:
+- Write a completely new reply to that user message. Do not refer to, continue or preserve anything from the discarded message.
+- Speak and act only from where the character actually was. Every action, object, sound and interruption must belong there.
+- Keep the character's voice, vocabulary, rhythm and mannerisms.
+- This is SPOKEN DIALOGUE in the character's own words, not third-person narration.
+- Their real occupation and workplace shape what they would naturally talk about, without announcing where they are.
+- Do not announce, name or explain the location. Do not mention a correction, a mistake, or anything technical.
+- Never use em dashes or en dashes.
+
+Write only the character's message:`}`,
       });
 
       const correctedText = filterDashes((rawCorrected || "").trim());

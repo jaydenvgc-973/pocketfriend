@@ -67,33 +67,24 @@ export function reconcileWorldStateForResponse(
     return createFailedReconciliation('No character provided');
   }
 
-  // ── STEP 1: Read committed canonical state (One Truth) ──────────────────────
-  // Under One Truth, consumers read the committed resolved_presence_status and
-  // resolved_current_location_id directly from the Character object. They do NOT
-  // independently re-derive a different canonical presence via resolveCharacterLocation.
-  // Shift phase, co-presence, and elapsed-time context remain legitimate.
-  const charLocation = {
-    resolved_current_location_id: character.resolved_current_location_id || null,
-    resolved_current_location_name: character.resolved_current_location_name || null,
-    resolved_location_type: character.resolved_location_type || null,
-    resolved_presence_status: character.resolved_presence_status || null,
-    resolved_source_reason: character.resolved_source_reason || null,
-  };
-
-  // ── RABBIT HOLE AUTHORITY (same pathway as the character card) ──────────────
-  // While a character is inside a rabbit hole, that place is their actual current
-  // location. The committed snapshot still holds the previous place, so the live
-  // resolver wins here until the committed fields catch up. No other state is
-  // re-derived — linked locations keep reading the committed record unchanged.
+  // ── STEP 1: Authoritative location — the SAME pathway as the character card ──
+  // The homepage character card and the Chat geolocation tag both read the live
+  // resolver. Generated text must read the same value, or the prompt states one
+  // place while the user sees another. The stored resolved_* fields are only a
+  // fallback for records the resolver cannot resolve.
   const liveResolvedLocation = resolveCharacterLocation(character, locationMap);
-  if (liveResolvedLocation.resolved_current_location_id === 'rabbit_hole' ||
-      liveResolvedLocation.resolved_location_type === 'rabbit_hole') {
-    charLocation.resolved_current_location_id = liveResolvedLocation.resolved_current_location_id;
-    charLocation.resolved_current_location_name = liveResolvedLocation.resolved_current_location_name;
-    charLocation.resolved_location_type = liveResolvedLocation.resolved_location_type;
-    charLocation.resolved_presence_status = liveResolvedLocation.resolved_presence_status;
-    charLocation.resolved_source_reason = liveResolvedLocation.resolved_source_reason;
-  }
+  const charLocation = {
+    resolved_current_location_id:
+      liveResolvedLocation.resolved_current_location_id ?? character.resolved_current_location_id ?? null,
+    resolved_current_location_name:
+      liveResolvedLocation.resolved_current_location_name ?? character.resolved_current_location_name ?? null,
+    resolved_location_type:
+      liveResolvedLocation.resolved_location_type ?? character.resolved_location_type ?? null,
+    resolved_presence_status:
+      liveResolvedLocation.resolved_presence_status ?? character.resolved_presence_status ?? null,
+    resolved_source_reason:
+      liveResolvedLocation.resolved_source_reason ?? character.resolved_source_reason ?? null,
+  };
 
   // ── STEP 2: Resolve user's current location ──────────────────────────────────
   const userLocationResult = resolveUserLocation(userSettings, locationMap);
