@@ -363,16 +363,48 @@ export function buildSystemPrompt(canonicalPromptOrCharacter, characterOrOptions
   // Otherwise fall back to inline identity (legacy path / service unavailable).
   let identityBase = canonicalPrompt || buildLegacyIdentityPrompt(character, userNameLabel, memories);
 
-  // ── ONE LOCATION TRUTH — RABBIT HOLE (same pathway as the character card) ──
-  // The cached canonical section can still carry the place the character was in
-  // when it was built. While a rabbit hole is their real current location, the
-  // CURRENT LOCATION line is replaced so the prompt never states two places.
+  // ── ONE LOCATION TRUTH (same pathway as the character card + geolocation dots) ──
+  // The cached canonical section carries the place the character was in when it was
+  // built: CURRENT LOCATION, "Your Current Location", CO-PRESENCE, and life narration
+  // labelled as happening right now. Those contradict the live location, so the prompt
+  // stated two places and the model followed the stale one. Every location-bearing line
+  // is reconciled to the live resolver here, and narration is demoted to background.
   const _liveLoc = resolveCharacterLocation(character, {});
-  if (_liveLoc.resolved_current_location_id === 'rabbit_hole' || _liveLoc.resolved_location_type === 'rabbit_hole') {
-    const _rhLine = `CURRENT LOCATION: ${_liveLoc.resolved_current_location_name}${_liveLoc.resolved_presence_status ? ` (${String(_liveLoc.resolved_presence_status).replace(/_/g, ' ')})` : ''}.`;
+  const _liveName = _liveLoc.resolved_current_location_name || null;
+  const _storedName = character?.resolved_current_location_name || null;
+  if (_liveName) {
+    const _presenceLabel = _liveLoc.resolved_presence_status
+      ? ` (${String(_liveLoc.resolved_presence_status).replace(/_/g, ' ')})`
+      : '';
+
     identityBase = /^CURRENT LOCATION:.*$/m.test(identityBase)
-      ? identityBase.replace(/^CURRENT LOCATION:.*$/gm, _rhLine)
-      : `${identityBase}\n\n${_rhLine}`;
+      ? identityBase.replace(/^CURRENT LOCATION:.*$/gm, `CURRENT LOCATION: ${_liveName}${_presenceLabel}.`)
+      : `${identityBase}\n\nCURRENT LOCATION: ${_liveName}${_presenceLabel}.`;
+
+    // Other phrasings of the same fact, from other canonical blocks.
+    identityBase = identityBase
+      .replace(/^Your Current Location:.*$/gmi, `Your Current Location: ${_liveName}`)
+      .replace(/^Your current location:.*$/gmi, `Your current location: ${_liveName}`);
+
+    // A co-presence claim recorded at the old place would put the character back there.
+    if (_storedName && _storedName !== _liveName) {
+      identityBase = identityBase
+        .replace(/^CO-PRESENCE: The user is physically present with you right now at .*$/gmi,
+          `CO-PRESENCE: You are not with the user right now. You are at ${_liveName}; they are somewhere else.`)
+        .replace(/^.*The user is physically present at your current location \(.*\).*$/gmi,
+          `The user is not at your current location. You are at ${_liveName}.`)
+        .replace(/^.*The user is physically present with you right now at .*$/gmi,
+          `The user is not with you right now. You are at ${_liveName}.`);
+    }
+
+    // Life narration is background. It must never read as a present-tense physical claim.
+    identityBase = identityBase
+      .replace(/^RIGHT NOW IN YOUR LIFE:/gm, 'LIFE CONTEXT (background — does NOT state where you physically are now):')
+      .replace(/^ACTIVE LIFE SITUATION:/gm, 'LIFE CONTEXT (background — does NOT state where you physically are now):')
+      .replace(/^WHAT YOU'RE DOING RIGHT NOW:/gm, 'WHAT YOU WERE LAST DOING (background — CURRENT LOCATION is where you are now):')
+      .replace(/^YOUR CURRENT LIFE:/gm, 'YOUR LIFE (background context):');
+
+    identityBase = `${identityBase}\n\nPHYSICAL LOCATION — AUTHORITATIVE (supersedes every other line in this prompt):\nYou are at: ${_liveName}${_presenceLabel}.\nThis is where you physically are right now. Wherever any other line, memory, life event, or earlier turn of this conversation places you, this line is correct. The room, the things you can see and hear, and everything you can physically do come from this place. Do not announce it, explain it, or describe the surroundings for its own sake.`;
   }
 
   // ── VICK SERVICIO EXCEPTION — CRITICAL ────────────────────────────────────

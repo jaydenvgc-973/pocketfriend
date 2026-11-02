@@ -23,6 +23,22 @@ const PRESENCE_PHRASES = {
   rabbit_hole: "at this place",
 };
 
+// Authoritative location used by every correction in this hook. Same resolver the
+// character card and geolocation indicator read, so a correction can never infer a
+// place from the conversation, the user's whereabouts, or an earlier narrative.
+function authoritativeLocationBlock(character) {
+  const live = character ? resolveCharacterLocation(character, {}) : null;
+  const name = live?.resolved_current_location_name || character?.resolved_current_location_name || null;
+  const status = live?.resolved_presence_status || character?.resolved_presence_status || null;
+  const isRabbitHole = live?.resolved_current_location_id === 'rabbit_hole' ||
+    live?.resolved_location_type === 'rabbit_hole' ||
+    character?.resolved_presence_status === 'rabbit_hole' ||
+    character?.resolved_location_type === 'rabbit_hole';
+  if (!name) return '';
+  return `WHERE THE CHARACTER ACTUALLY IS (authoritative — the conversation, the user's location, earlier narratives and old location records cannot override it):
+Location: ${name}${status && PRESENCE_PHRASES[status] ? `\nPresence: ${PRESENCE_PHRASES[status]}` : ''}${isRabbitHole ? '\nThis is a custom off-screen place. It is their real location. Never replace it with home, work, or a scheduled destination.' : ''}`;
+}
+
 /**
  * Handles narrative correction flows triggered from the delete modal.
  *
@@ -63,17 +79,25 @@ export function useNarrativeCorrection({ characterId, conversationId, messages, 
       });
 
       const correctedText = await base44.integrations.Core.InvokeLLM({
-        prompt: `The previous narrative was illogical or poorly constructed. Regenerate with improved realism and flow.
-Keep the same general context but fix logic and narrative quality. Do not repeat the same issue.
+        prompt: `The previous response was illogical or poorly constructed. Write it again, correctly.
 
-IMPORTANT: This message was originally written at ${timeLabel}. The corrected version must reflect that same time — not the current time.
+${authoritativeLocationBlock(character)}
 
-Original narrative: "${msg.content}"
+TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern. The rewrite must fit that time, not the current time.
 
-Recent conversation:
+THE ORIGINAL RESPONSE (intent only — do not paraphrase it or reuse its wording):
+"${msg.content}"
+
+RECENT CONVERSATION:
 ${recentContext}
 
-Write a corrected narrative message (1-2 sentences, natural and grounded):`,
+${msg.is_narrative
+        ? "THIS IS A NARRATIVE. Keep it a narrative: same third-person descriptive perspective and roughly the same length. Do not turn it into spoken dialogue."
+        : "THIS IS A CHARACTER MESSAGE (spoken words). Keep it spoken words in the character's own voice, roughly the same length. Do not turn it into third-person narration or a scene description."}
+
+Every room, object, sound, appliance, food and action in the replacement must be something that exists or happens where the character actually is. If the original contained something belonging to a different place, it must be gone, not reworded.
+
+Write only the rewritten ${msg.is_narrative ? "narrative" : "message"}:`,
       });
 
       await regenerateInPlace(msg, correctedText);
@@ -325,7 +349,8 @@ THE MESSAGE TO REWRITE:
 "${msg.content}"
 
 REQUIREMENTS:
-- Keep the same intent, subject, reaction and emotional register. This is the same message, grounded in the right place.
+- Keep the same intent, subject, reaction and emotional register, but write it fresh from where they actually were. Do not paraphrase the original line by line.
+- Anything that cannot exist or happen where the character was must be gone from the rewrite, not reworded.
 - Every action, object, sound, interruption and surrounding the message touches must be something that exists or happens where the character actually was.
 - Keep the character's voice, vocabulary, rhythm and mannerisms exactly as established.
 - ${msg.is_narrative
@@ -342,10 +367,62 @@ Write only the rewritten message body. No quotes, no labels, no preamble:`,
       const correctedText = filterDashes((rawCorrected || "").trim());
       if (!correctedText) return;
 
+      // ── VERIFY THE ACTUAL OUTPUT ────────────────────────────────────────────
+      // Changing wording while keeping an impossible physical setting is a failed
+      // correction, so the rewritten text is checked against the real place. Any
+      // impossible detail is named and removed in one repair pass.
+      let finalText = correctedText;
+      const placeLine = `${locName || "an unmapped location"}${presencePhrase ? ` (${presencePhrase})` : ""}${locationDetail ? `\n${locationDetail}` : ""}`;
+      try {
+        const audit = await base44.integrations.Core.InvokeLLM({
+          prompt: `Check whether a rewritten message is physically possible where the character actually is.
+
+WHERE THE CHARACTER IS: ${placeLine}
+
+REWRITTEN MESSAGE:
+"${correctedText}"
+
+Does it describe or imply the character doing something, or being near something, that cannot exist at that place? Ordinary everyday objects that exist anywhere, and other rooms of the same building, are fine. Only details impossible in this specific place count.
+
+Return JSON: { "compatible": true | false, "problems": ["the specific impossible detail, quoted"] }`,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              compatible: { type: "boolean" },
+              problems: { type: "array", items: { type: "string" } },
+            },
+            required: ["compatible"],
+          },
+        });
+
+        if (audit && audit.compatible === false) {
+          const problems = Array.isArray(audit.problems) ? audit.problems : [];
+          const repaired = await base44.integrations.Core.InvokeLLM({
+            prompt: `Rewrite this ${msg.is_narrative ? "narrative" : "character message"} so nothing in it is impossible where the character actually is.
+
+${locationBlock}
+
+IMPOSSIBLE DETAILS IN THE CURRENT VERSION:
+${problems.length ? problems.map(p => `- ${p}`).join("\n") : "- physical details that do not exist here"}
+
+CURRENT VERSION:
+"${correctedText}"
+
+Keep the character's voice, the same intent and roughly the same length. ${msg.is_narrative ? "Keep it a narrative." : "Keep it spoken words, not narration."} Do not mention the correction or name the location. Never use em dashes or en dashes.
+
+Write only the rewritten text:`,
+          });
+          const repairedText = filterDashes((repaired || "").trim());
+          if (repairedText) finalText = repairedText;
+        }
+      } catch {
+        // Verification is best-effort; the grounded rewrite above still stands.
+      }
+
       // Overwrite in place: original id, timestamp and timeline position preserved.
       // The old location reference no longer exists in thread context.
-      await regenerateInPlace(msg, correctedText);
-      console.log(`[INCORRECT_LOCATION_CORRECTION] msg=${msg.id} | location_source=${locationSource} | location=${locName || "unknown"}`);
+      await regenerateInPlace(msg, finalText);
+      console.log(`[INCORRECT_LOCATION_CORRECTION] msg=${msg.id} | location_source=${locationSource} | location=${locName || "unknown"} | verified=${finalText === correctedText ? "first_pass" : "repaired"}`);
     } finally {
       setIsRegeneratingNarrative(false);
     }
