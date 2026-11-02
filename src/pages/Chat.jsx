@@ -284,7 +284,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   // Computed after character query — safe, never crashes on undefined
   const isVickChat = !!character && isVickServicioCharacter(character);
 
-  const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative, handleRepeatedMessage } = useNarrativeCorrection({
+  const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative, handleRepeatedMessage, handleIncorrectLocation } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages, character,
   });
 
@@ -2550,7 +2550,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onCancel={() => setDeleteTarget(null)}
         onNonsense={() => { const t = deleteTarget; setDeleteTarget(null); handleNonsenseNarrative(t); }}
         onSleepViolation={() => { const t = deleteTarget; setDeleteTarget(null); handleSleepViolationNarrative(t); }}
-        onRepeatedMessage={() => { const t = deleteTarget; setDeleteTarget(null); handleRepeatedMessage(t); }}
+        onRepeatedMessage={() => { const t = deleteTarget; setDeleteTarget(null); handleRepeatedMessage(t); }} onIncorrectLocation={() => { const t = deleteTarget; setDeleteTarget(null); handleIncorrectLocation(t); }}
         onArchive={handleArchiveMessage}
         isRegenerating={isRegeneratingNarrative}
       />

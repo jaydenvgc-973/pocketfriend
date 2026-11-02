@@ -1,9 +1,12 @@
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, EyeOff, X, RefreshCw, Moon, Archive, Copy } from "lucide-react";
+import { Brain, EyeOff, X, RefreshCw, Moon, Archive, Copy, MapPin } from "lucide-react";
 
-export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, onArchive, onRepeatedMessage, isRegenerating }) {
+export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, onArchive, onRepeatedMessage, onIncorrectLocation, isRegenerating }) {
   if (!isOpen || !message) return null;
+
+  // The Incorrect location option applies only to character-generated messages.
+  const isCharacterMessage = message.sender_type === "character" && !message.typed_by_user && !message.user_operated;
 
   const preview = message.content?.trim()
     ? `"${message.content.substring(0, 80)}${message.content.length > 80 ? "…" : ""}"`
@@ -109,6 +112,22 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
                   <p className="text-xs text-muted-foreground">Waking actions while asleep</p>
                 </div>
               </button>
+
+              {isCharacterMessage && (
+                <button
+                  onClick={onIncorrectLocation}
+                  disabled={isRegenerating}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-teal-500/10 border border-teal-500/30 hover:bg-teal-500/20 transition-colors text-left disabled:opacity-60"
+                >
+                  <div className="w-8 h-8 rounded-full bg-teal-500/20 flex items-center justify-center flex-shrink-0">
+                    <MapPin className="w-4 h-4 text-teal-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Incorrect location</p>
+                    <p className="text-xs text-muted-foreground">Message implies the character is somewhere else</p>
+                  </div>
+                </button>
+              )}
 
               <button
                 onClick={onArchive}

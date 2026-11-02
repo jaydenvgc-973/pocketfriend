@@ -1,5 +1,26 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
+import { filterDashes } from "@/lib/dashFilter";
+
+// Human-readable phrasing of the character's authoritative presence state.
+// Used only to describe where the character already is — never to write it.
+const PRESENCE_PHRASES = {
+  home: "at home",
+  at_work: "at work",
+  at_school: "at school",
+  visiting: "visiting this place",
+  traveling: "here",
+  under_supervision: "here under supervision",
+  sleeping: "here, asleep",
+  napping: "here, napping",
+  passed_out: "here, unconscious from exhaustion",
+  temporary_housing: "in temporary housing",
+  incarcerated: "in custody at this facility",
+  house_arrest: "under house arrest at this residence",
+  confined: "confined at this facility",
+  hospitalized: "in the hospital",
+  rabbit_hole: "at this place",
+};
 
 /**
  * Handles narrative correction flows triggered from the delete modal.
@@ -116,6 +137,152 @@ Write a corrected sleep-only narrative (1-2 sentences). The environment must ref
       });
 
       await regenerateInPlace(msg, correctedText);
+    } finally {
+      setIsRegeneratingNarrative(false);
+    }
+  };
+
+  // ── INCORRECT LOCATION CORRECTION ─────────────────────────────────────────
+  // User-selected action: "Incorrect location"
+  // The message stated or implied a physical location that contradicts the
+  // character's authoritative location. The message is rewritten so its dialogue,
+  // actions and implied surroundings naturally belong to where the character
+  // actually was.
+  //
+  // LOCATION AUTHORITY: the existing authoritative fields on the character
+  // (resolved_current_location_id / resolved_current_location_name /
+  // resolved_presence_status / resolved_location_type). Only when the character
+  // has moved since the message was written is the existing LocationHistory
+  // record covering that moment used. No location record is created or changed.
+  const handleIncorrectLocation = async (msg) => {
+    if (!msg) return;
+    setIsRegeneratingNarrative(true);
+    try {
+      const failedIndex = messages.findIndex(m => m.id === msg.id);
+      const originalTime = msg.timestamp || msg.created_date || new Date().toISOString();
+      const originalMs = new Date(originalTime).getTime();
+
+      // ── Time at the ORIGINAL message (Eastern) ─────────────────────────────
+      const originalET = new Date(new Date(originalTime).toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const hourET = originalET.getHours();
+      const timeLabel = `${hourET % 12 || 12}:${String(originalET.getMinutes()).padStart(2, "0")} ${hourET >= 12 ? "PM" : "AM"}`;
+      let daypart = "night";
+      if (hourET < 4) daypart = "deep night";
+      else if (hourET < 6) daypart = "pre-dawn";
+      else if (hourET < 8) daypart = "early morning";
+      else if (hourET < 12) daypart = "morning";
+      else if (hourET < 17) daypart = "afternoon";
+      else if (hourET < 20) daypart = "evening";
+
+      // ── Authoritative location at that point in the conversation ───────────
+      const movedAtMs = character?.resolved_last_updated_at
+        ? new Date(character.resolved_last_updated_at).getTime()
+        : null;
+
+      let locId = character?.resolved_current_location_id || null;
+      let locName = character?.resolved_current_location_name || null;
+      let locationSource = "current_authoritative";
+
+      if (movedAtMs && originalMs < movedAtMs) {
+        // The character moved after this message was written — use the existing
+        // location history record that covers this moment, if one exists.
+        const history = await base44.entities.LocationHistory
+          .filter({ character_id: characterId }, "-arrival_time", 40)
+          .catch(() => []);
+        const covering = (Array.isArray(history) ? history : []).find(h => {
+          const arrived = h.arrival_time ? new Date(h.arrival_time).getTime() : null;
+          const left = h.departure_time ? new Date(h.departure_time).getTime() : null;
+          if (arrived === null) return false;
+          return arrived <= originalMs && (left === null || left >= originalMs);
+        });
+        if (covering?.location_id) {
+          locId = covering.location_id;
+          locName = covering.location_name || locName;
+          locationSource = "location_history";
+        }
+      }
+
+      // Existing location record for real detail about the place (never written to)
+      let locationDetail = "";
+      if (locId) {
+        const locRecords = await base44.entities.LocationReference.filter({ id: locId }).catch(() => []);
+        const loc = Array.isArray(locRecords) ? locRecords[0] : null;
+        if (loc) {
+          const bits = [];
+          if (loc.category) bits.push(`Type: ${String(loc.category).replace(/_/g, " ")}`);
+          if (loc.venue_identity) bits.push(`Identity: ${loc.venue_identity}`);
+          if (loc.description) bits.push(`What it is: ${loc.description.substring(0, 400)}`);
+          locationDetail = bits.join("\n");
+        }
+      }
+
+      const isRabbitHole = character?.resolved_presence_status === "rabbit_hole" ||
+        character?.resolved_location_type === "rabbit_hole";
+      const presencePhrase = isRabbitHole
+        ? "at a place outside the mapped world (an off-screen location)"
+        : (PRESENCE_PHRASES[character?.resolved_presence_status] || "here");
+
+      const locationBlock = locName
+        ? `AUTHORITATIVE LOCATION AT THIS POINT IN THE CONVERSATION (this is where the character actually was):
+Where: ${locName}
+Presence: ${presencePhrase}${locationDetail ? `\n${locationDetail}` : ""}${isRabbitHole ? "\nThis is a custom off-screen place. It is their real location at this point in the conversation. Never replace it with home, work, or a scheduled destination." : ""}`
+        : `AUTHORITATIVE LOCATION AT THIS POINT IN THE CONVERSATION: the character was somewhere other than the place their message implied.`;
+
+      // ── Conversation immediately before this message ───────────────────────
+      const contextStart = Math.max(0, failedIndex - 6);
+      const contextLog = messages.slice(contextStart, failedIndex > 0 ? failedIndex : 0)
+        .map(m => m.is_narrative
+          ? `[NARRATIVE] ${m.content}`
+          : `${m.sender_type === "user" ? "User" : (character?.name || "Character")}: ${m.content}`)
+        .join("\n");
+
+      // ── Character identity (unchanged by this correction) ──────────────────
+      const identityLines = [];
+      if (character?.name) identityLines.push(`Name: ${character.name}`);
+      if (character?.personality_summary) identityLines.push(`Personality: ${character.personality_summary}`);
+      if (character?.communication_style) identityLines.push(`Communication style: ${character.communication_style}`);
+      if (character?.emotional_state) identityLines.push(`Emotional state: ${character.emotional_state}`);
+      if (character?.personality_traits?.length) identityLines.push(`Traits: ${character.personality_traits.join(", ")}`);
+      if (character?.current_activity) identityLines.push(`What they were in the middle of: ${character.current_activity}`);
+
+      const rawCorrected = await base44.integrations.Core.InvokeLLM({
+        prompt: `The character's message below was written as though they were somewhere they were not. Rewrite that same message so it is naturally grounded in where the character actually was at that moment in the conversation.
+
+The correction is not a location announcement. The reader should simply experience the character as someone who was already there.
+
+${locationBlock}
+
+TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}). The rewrite must fit this time, not the current time.
+
+CHARACTER (identity must remain intact):
+${identityLines.join("\n")}
+
+CONVERSATION IMMEDIATELY BEFORE THIS MESSAGE:
+${contextLog || "(start of the conversation)"}
+
+THE MESSAGE TO REWRITE:
+"${msg.content}"
+
+REQUIREMENTS:
+- Keep the same intent, subject, reaction and emotional register. This is the same message, grounded in the right place.
+- Every action, object, sound, interruption and surrounding the message touches must be something that exists or happens where the character actually was.
+- Keep the character's voice, vocabulary, rhythm and mannerisms exactly as established.
+- Match the original format and length: dialogue stays dialogue, action beats stay action beats (1-3 sentences).
+- Do not announce, name or explain the location. Do not mention a correction, a mistake, or anything technical.
+- Do not invent travel, arrivals, departures, or a scene change. The character has been where they are.
+- Remove anything that belongs to a different place (a desk at work, their own bed, their apartment, a workplace they left).
+- Never use em dashes, en dashes, or spaced hyphens.
+
+Write only the rewritten message body. No quotes, no labels, no preamble:`,
+      });
+
+      const correctedText = filterDashes((rawCorrected || "").trim());
+      if (!correctedText) return;
+
+      // Overwrite in place: original id, timestamp and timeline position preserved.
+      // The old location reference no longer exists in thread context.
+      await regenerateInPlace(msg, correctedText);
+      console.log(`[INCORRECT_LOCATION_CORRECTION] msg=${msg.id} | location_source=${locationSource} | location=${locName || "unknown"}`);
     } finally {
       setIsRegeneratingNarrative(false);
     }
@@ -302,5 +469,5 @@ Write ONLY the character's spoken dialogue (1-3 sentences, in the character's ow
     }
   };
 
-  return { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative, handleRepeatedMessage };
+  return { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative, handleRepeatedMessage, handleIncorrectLocation };
 }
