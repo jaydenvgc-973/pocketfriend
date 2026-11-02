@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
-import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
+import { resolveCharacterLocation, buildLiveLocationContext } from "@/lib/locationResolutionEngine";
+import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
+import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
 
 // Human-readable phrasing of the character's authoritative presence state.
 // Used only to describe where the character already is — never to write it.
@@ -329,74 +332,64 @@ Where: ${locName}${presencePhrase ? `\nPresence: ${presencePhrase}` : ""}${locat
       const answeredTurn = [...priorMessages].reverse().find(m => m.sender_type === "user" && !m.is_narrative);
       const answeredTurnText = answeredTurn?.content?.trim() || "(the user's previous message)";
 
-      // ── Character identity + what their actual work is ─────────────────────
-      const identityLines = [];
-      if (character?.name) identityLines.push(`Name: ${character.name}`);
-      if (character?.personality_summary) identityLines.push(`Personality: ${character.personality_summary}`);
-      if (character?.communication_style) identityLines.push(`Communication style: ${character.communication_style}`);
-      if (character?.emotional_state) identityLines.push(`Emotional state: ${character.emotional_state}`);
-      if (character?.personality_traits?.length) identityLines.push(`Traits: ${character.personality_traits.join(", ")}`);
-      if (character?.occupation) identityLines.push(`Occupation: ${character.occupation}`);
-      if (character?.occupation_location_name) identityLines.push(`Workplace: ${character.occupation_location_name}`);
-      const jobTitle = character?.work_details?.job_title || character?.work_details?.position;
-      if (jobTitle) identityLines.push(`Job title: ${jobTitle}`);
-      const workDuties = character?.work_details?.description || character?.work_details?.responsibilities;
-      if (workDuties) identityLines.push(`What the work actually is: ${String(workDuties).substring(0, 400)}`);
+      // ── SAME RESPONSE PIPELINE AS NORMAL CHAT ──────────────────────────────
+      // The replacement is produced by the pathway normal Chat and Text messages
+      // use: canonical character context → buildSystemPrompt → the authoritative
+      // location lock → the response parser. Nothing here invents an identity or a
+      // scene; the only difference from a normal send is that this reply answers the
+      // user's original turn at the location authoritative for that moment.
+      const sceneCharacter = buildCharacterInScene({
+        ...character,
+        resolved_current_location_id: locId || character?.resolved_current_location_id,
+        resolved_current_location_name: locName || character?.resolved_current_location_name,
+        resolved_presence_status: signalPresence || character?.resolved_presence_status,
+      });
+      let canonicalPrompt = "";
+      try {
+        const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+          characterId,
+          interactionContext: "direct_chat",
+          topKMemories: 14,
+        });
+        canonicalPrompt = (ctxRes?.data || ctxRes)?.systemPrompt || "";
+      } catch { /* stored profile fields remain available below */ }
+      const systemPrompt = buildSystemPrompt(canonicalPrompt, sceneCharacter, {
+        allowNarration: !!msg.is_narrative,
+      });
+      const liveLocationContext = buildLiveLocationContext(sceneCharacter, {});
 
       const rawCorrected = await base44.integrations.Core.InvokeLLM({
-        prompt: `${msg.is_narrative
-          ? `A narrative was written as though the character was somewhere they were not. Write that narrative again for the same moment, set in the place the character actually was.
+        prompt: `${systemPrompt}
 
 ${locationBlock}
 
 TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}).
 
-CHARACTER:
-${identityLines.join("\n")}
-
-CONVERSATION IMMEDIATELY BEFORE THIS MOMENT:
+CONVERSATION IMMEDIATELY BEFORE THIS MOMENT (older turns — not the current question):
 ${contextLog || "(start of the conversation)"}
 
-THE NARRATIVE BEING REPLACED (its setting and activities are wrong — do not carry them over):
+${msg.is_narrative
+          ? `THE NARRATIVE BEING REPLACED (its setting and activities are wrong — do not carry them over):
 "${msg.content}"
 
-REQUIREMENTS:
-- Write a new third-person narrative of the same moment, roughly the same length and register.
-- Every action, object, sound and surrounding must belong to where the character actually was. Nothing from another place survives, even reworded.
-- Do not describe cooking, kitchen appliances, their own bed, their apartment, or a home routine unless that is where they actually were.
-- Keep the character's established mannerisms and emotional state.
-- Do not announce, name or explain the location. Do not mention a correction or a mistake.
-- Never use em dashes or en dashes.
+Write that same moment again as a third-person narrative of the same length and register, set only in the place above. Every action, object, sound and surrounding must belong there; nothing from another place survives, even reworded. Do not describe cooking, kitchen appliances, their own bed, their apartment, or a home routine unless that is where they actually were. Do not announce, name or explain the location. Never use em dashes or en dashes.
 
 Write only the narrative:`
-          : `A character sent a message describing themselves doing something at a place they were not. That message is discarded. Write the reply again, from scratch, answering the user's message from where the character actually was at that moment.
-
-${locationBlock}
-
-TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern (${daypart}).
-
-CHARACTER:
-${identityLines.join("\n")}
-
-CONVERSATION IMMEDIATELY BEFORE (context only):
-${contextLog || "(start of the conversation)"}
-
-THE USER MESSAGE THIS REPLY ANSWERS:
+          : `════════════════════════════════════
+THE USER'S NEWEST MESSAGE — THIS IS WHAT YOU RESPOND TO NOW:
 "${answeredTurnText}"
+════════════════════════════════════
+${liveLocationContext}
+- LOCATION LOCK: This reply happens where you are right now, at this moment. Do not continue, resume, or reference any earlier activity from a different place that appears above. If earlier turns describe you doing something that belongs to another place, that was earlier and it is over. Every action, object, sound and interruption in your reply must belong to where you are now.
 
-REQUIREMENTS:
-- Write a completely new reply to that user message. Do not refer to, continue or preserve anything from the discarded message.
-- Speak and act only from where the character actually was. Every action, object, sound and interruption must belong there.
-- Keep the character's voice, vocabulary, rhythm and mannerisms.
-- This is SPOKEN DIALOGUE in the character's own words, not third-person narration.
-- Their real occupation and workplace shape what they would naturally talk about, without announcing where they are.
-- Do not announce, name or explain the location. Do not mention a correction, a mistake, or anything technical.
-- Never use em dashes or en dashes.
-
-Write only the character's message:`}`,
+Write only the character's reply — spoken words in their own voice, exactly as a normal reply would read:`}`,
       });
 
-      const correctedText = filterDashes((rawCorrected || "").trim());
+      const correctedText = filterDashes(
+        msg.is_narrative
+          ? (rawCorrected || "").trim()
+          : stripCharacterNamePrefix((rawCorrected || "").trim(), sceneCharacter?.name)
+      );
       if (!correctedText) return;
 
       // ── VERIFY THE ACTUAL OUTPUT ────────────────────────────────────────────

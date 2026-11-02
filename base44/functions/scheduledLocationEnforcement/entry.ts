@@ -876,6 +876,39 @@ Deno.serve(async (req) => {
                 previousLocationId: stored.resolved_current_location_id || null,
               }).catch(() => {});
             }
+
+            // ── LOCATION-TRANSITION NARRATIVE ────────────────────────────────
+            // A genuine change of place is narrated through the app's existing
+            // automatic-narrative generator, so the new physical scene supersedes
+            // the previous one instead of being read as remote work from the old
+            // place. It fires only on the commit of an actual move — a page render,
+            // refresh, or repeated query cannot re-trigger it — and an existing
+            // narrative for the same location inside the same half hour suppresses
+            // a duplicate. Sleep/presence changes at an unchanged place are skipped.
+            const movedPhysically = !!resolved.resolved_current_location_id &&
+              resolved.resolved_current_location_id !== stored.resolved_current_location_id;
+            if (movedPhysically && character.owner_email) {
+              try {
+                const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+                const alreadyNarrated = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter({
+                  character_id: character.id,
+                  location_id: resolved.resolved_current_location_id,
+                  timestamp: { $gte: since },
+                }, null, 1);
+                if (alreadyNarrated && alreadyNarrated.length > 0) {
+                  entry.transition_narrative = 'already_narrated';
+                } else {
+                  await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+                    characterId: character.id,
+                    forceGenerate: true,
+                    trigger: 'location_change',
+                  });
+                  entry.transition_narrative = 'generated';
+                }
+              } catch (narErr) {
+                entry.transition_narrative = `failed: ${narErr.message}`;
+              }
+            }
             if (Object.keys(lockFields).length > 0) {
               entry.correction_lock_written = true;
               entry.lock_until = lockFields.location_correction_locked_until;

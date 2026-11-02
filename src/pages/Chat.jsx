@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import ChatHeader from "@/components/chat/ChatHeader";
+import { useInstantImageAction } from "@/hooks/useInstantImageAction";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
@@ -13,6 +14,7 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
 import { getCharacterLivePresence, buildLiveLocationContext, resolveCharacterLocation } from "@/lib/locationResolutionEngine";
+import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 
 import SendMoneyModal from "@/components/chat/SendMoneyModal";
@@ -677,141 +679,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   // Calls the existing InvokeLLM once to produce a concise visual prompt, then
   // hands it to the existing createImageMessage pipeline. No extra location
   // lookups, no new resolvers.
-  const handleInstantImage = async () => {
-    try {
-      if (!character?.name) return;
-
-      const allMessages = messagesRef.current || messages || [];
-
-      const latestNarrative = [...allMessages]
-        .reverse()
-        .find(
-          msg =>
-            msg?.is_narrative === true &&
-            typeof msg?.content === "string" &&
-            msg.content.trim()
-        );
-
-      const recentDialogue = allMessages
-        .filter(
-          msg =>
-            !msg?.is_narrative &&
-            typeof msg?.content === "string" &&
-            msg.content.trim()
-        )
-        .slice(-4)
-        .map(msg => {
-          const speaker =
-            msg.sender_type === "user"
-              ? "User"
-              : (msg.character_name || character.name);
-
-          return `${speaker}: ${msg.content}`;
-        })
-        .join("\n");
-
-      const genderValue =
-        typeof character.gender === "string"
-          ? character.gender.trim()
-          : null;
-
-      const genderRule = genderValue
-        ? `Stored character gender: ${genderValue}. Respect the stored value.`
-        : `Character gender is unset/null. Do NOT assign or infer a gender.
-           Do not use "woman", "man", "female", "male", she/her, or he/him.
-           Use ${character.name} or gender-neutral language/them if necessary.`;
-
-      const sceneState = [
-        `CURRENT CHARACTER / PRIMARY SUBJECT: ${character.name}`,
-        character.resolved_current_location_name
-          ? `CURRENT LOCATION: ${character.resolved_current_location_name}`
-          : null,
-        character.current_activity
-          ? `CURRENT ACTIVITY: ${character.current_activity}`
-          : null,
-        character.current_situation
-          ? `CURRENT SITUATION: ${character.current_situation}`
-          : null,
-        character.daily_micro_narration
-          ? `CURRENT MICRO NARRATION: ${character.daily_micro_narration}`
-          : null,
-        latestNarrative?.content
-          ? `LATEST CURRENT-ACTION NARRATIVE: ${latestNarrative.content}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      const sceneResult =
-        await base44.integrations.Core.InvokeLLM({
-          prompt: `
-Create ONE concise image-generation description of what is happening
-RIGHT NOW with the current character.
-
-This is an Instant Image of the character's ALREADY-EXISTING current scene.
-Do not create a new scenario and do not progress the story.
-
-AUTHORITY:
-
-${sceneState}
-
-${genderRule}
-
-RULES:
-
-The current character is the default primary image subject.
-
-The character's stored current location is where the image takes place.
-
-The current activity, current situation, and latest current-action narrative
-describe what is happening now.
-
-Recent Chat/Text dialogue is SECONDARY information only. It may help with
-expression or mood, but it must NOT relocate the character.
-
-The user saying where the USER is does not move the character there.
-
-Mentioning a husband, wife, child, friend, coworker, or anyone else does not
-make that person physically present in the character's scene.
-
-Do not add another person unless the established current scene actually says
-that person is physically present.
-
-Do not invent someone entering, approaching, smiling, touching, walking over,
-sitting down, or beginning another action.
-
-Do not invent a room or location when the character already has a current
-location.
-
-Do not describe or reinterpret the character's identity, face, body, or
-wardrobe. The existing image system already handles those authorities.
-
-Capture the current moment only.
-
-RECENT DIALOGUE — SECONDARY CONTEXT ONLY:
-${recentDialogue || "No additional dialogue context needed."}
-
-Return ONLY the concise image prompt.
-`
-        });
-
-      const scenePrompt =
-        typeof sceneResult === "string"
-          ? sceneResult
-          : sceneResult?.response ||
-            sceneResult?.text ||
-            sceneResult?.content;
-
-      if (!scenePrompt?.trim()) {
-        console.error("[Instant Image] Scene prompt was empty");
-        return;
-      }
-
-      await createImageMessage(scenePrompt.trim(), 300);
-    } catch (err) {
-      console.error("[Instant Image] Failed:", err);
-    }
-  };
+  const { handleInstantImage } = useInstantImageAction({ character, messages, messagesRef, createImageMessage });
 
   const sendMessage = async (text, userImageUrl, prevGeneration) => {
     if (!character) return;
@@ -1049,8 +917,12 @@ Return ONLY the concise image prompt.
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
-    let charLocationName = resolveCharacterLocation(character, {}).resolved_current_location_name || character.resolved_current_location_name || null;
-    let charLocationId = resolveCharacterLocation(character, {}).resolved_current_location_id || character.resolved_current_location_id || null;
+    // ONE authoritative physical location for the whole turn — the same value the
+    // homepage card and the Chat geolocation tag display. Every context block below
+    // reads this snapshot, so no block can describe a place already left behind.
+    const characterInScene = buildCharacterInScene(character);
+    let charLocationName = characterInScene.resolved_current_location_name || null;
+    let charLocationId = characterInScene.resolved_current_location_id || null;
     let fullPrompt = ""; // hoisted so catch block can access it for retry
     let vickDiagnosticResults = null; // populated only for Vick when diagnostic intent detected
     let sequenceItems = null; // LLM-provided dialogue/narrative sequence (hoisted for post-try usage)
@@ -1239,7 +1111,10 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         allLocationsForContext = allLocs;
         const allActiveChars = queryClient.getQueryData(["characters", currentUser.email]) || [];
         const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
-        const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
+        const occupancyMap = buildSpatialOccupancyMap(
+          allActiveChars.map(c => (c.id === character.id ? characterInScene : c)),
+          allLocs
+        );
         return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
       };
 
@@ -1407,7 +1282,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
         worldStateReconciliation.elapsed_time_minutes = Math.max(0, Math.floor((Date.now() - new Date(_lTs).getTime()) / 60000));
       }
       // OUTFIT HINT: closet-authoritative, location-aware (resolved after worldStateLocationMap)
-      const _locForOutfit = worldStateLocationMap[character.resolved_current_location_id] || null;
+      const _locForOutfit = worldStateLocationMap[characterInScene.resolved_current_location_id] || null;
       const _resolvedOutfit = resolveCharacterOutfit(character, worldStateLocationMap || {});
       const outfitHint = buildOutfitNarrativeHint(_resolvedOutfit, character, userSettings?.daily_weather_cache || null, _locForOutfit);
       console.log(`[Chat] outfit_hint|char=${character.name}|src=${_resolvedOutfit?.source}|cat=${_resolvedOutfit?.category}|hint=${!!outfitHint}|closet=${(character.character_closet||[]).filter(o=>o.outfit_id).length}`);
@@ -1529,7 +1404,7 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       // ── AUTHORITATIVE CO-PRESENCE BLOCK — shared resolver, never cached ─────
       // resolveCoPresence reads live userSettings + character data on every send.
       // No API call. No cache. Overrides any stale co-presence in the canonical prompt.
-      const coPresenceResult = resolveCoPresence(character, userSettings, userDisplayName);
+      const coPresenceResult = resolveCoPresence(characterInScene, userSettings, userDisplayName);
       const frontendCoPresenceBlock = coPresenceResult.promptBlock;
 
       console.log(
@@ -1551,24 +1426,24 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
             systemPrompt = await promptResponse.text();
             systemPromptCacheRef.current[cacheKey] = systemPrompt;
           } catch {
-            systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
+            systemPrompt = buildSystemPrompt(canonicalPrompt, characterInScene, { allowNarration: false, outfitHint, worldName: userDisplayName });
           }
         }
       } else {
         // Pass canonical prompt as the identity base; buildSystemPrompt adds frontend-only layers
-        systemPrompt = buildSystemPrompt(canonicalPrompt, character, { allowNarration: false, outfitHint, worldName: userDisplayName });
+        systemPrompt = buildSystemPrompt(canonicalPrompt, characterInScene, { allowNarration: false, outfitHint, worldName: userDisplayName });
       }
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
       const charStatus = getCharacterStatus(character);
-      const statusContext = !isPhone ? buildStatusPromptContext(character, isPhone, recentMsgs.slice(-10)) : "";
+      const statusContext = !isPhone ? buildStatusPromptContext(characterInScene, isPhone, recentMsgs.slice(-10)) : "";
       const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
 
       const livePresence = getCharacterLivePresence(character, worldStateLocationMap || {});
       const liveLocationContext = buildLiveLocationContext(character, worldStateLocationMap || {});
 
-      const needsContext = buildNeedsContextBlock(character);
+      const needsContext = buildNeedsContextBlock(characterInScene);
 
       const awarenessContext = awarenessNarrativeText
         ? `\n\nTIME-PASSED AWARENESS — WHAT HAPPENED WHILE YOU WERE APART:\n${awarenessNarrativeText}\nThis is real. You lived through it. Reference it naturally when appropriate. Do NOT pretend the last message was just seconds ago.`
@@ -1660,11 +1535,11 @@ Respond to ${worldName} naturally as you normally would.`;
 
       // CONFINEMENT ENVIRONMENT OVERRIDE: must be injected BEFORE imageRule
       // so the LLM reads the environment isolation mandate before it generates any image prompt.
-      const confinementImageOverride = buildConfinementImageOverride(character);
+      const confinementImageOverride = buildConfinementImageOverride(characterInScene);
 
       // JAIL/PRISON NARRATIVE CONTEXT: behavioral rules, movement schedule, tone, environmental
       // realism. Injected only when character is actively incarcerated (not house arrest).
-      const jailConfinementContext = buildJailConfinementContext(character);
+      const jailConfinementContext = buildJailConfinementContext(characterInScene);
 
       const imageRule = buildImageRule({
         allowImageThisTurn,
@@ -1697,7 +1572,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
       const employmentLocations = await employmentLocationsPromise;
-      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, employmentLocations);
+      const employmentPresenceSeparation = buildEmploymentPromptBlock(characterInScene, employmentLocations);
 
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";
@@ -1717,18 +1592,18 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const clothingCoPresent = (coPresenceResult?.charactersPresentHere || [])
         .map(cp => (queryClient.getQueryData(["characters", currentUser?.email]) || []).find(c => c.id === cp.id))
         .filter(Boolean);
-      const currentLocationForClothing = worldStateLocationMap[character.resolved_current_location_id] || null;
+      const currentLocationForClothing = worldStateLocationMap[characterInScene.resolved_current_location_id] || null;
       const specialOccasionForClothing = worldStateReconciliation?.special_occasion_category || null;
       const weatherCacheForClothing = userSettings?.daily_weather_cache || null;
       const clothingAwarenessContext = buildClothingAwarenessContext(
-        character,
+        characterInScene,
         clothingCoPresent,
         currentLocationForClothing,
-        character.current_activity || null,
+        characterInScene.current_activity || null,
         specialOccasionForClothing,
         weatherCacheForClothing,
       );
-      const selfClothingContext = buildSelfClothingAwareness(character, specialOccasionForClothing, weatherCacheForClothing, currentLocationForClothing);
+      const selfClothingContext = buildSelfClothingAwareness(characterInScene, specialOccasionForClothing, weatherCacheForClothing, currentLocationForClothing);
 
       // ── VICK SERVICIO LIVE DIAGNOSTIC INJECTION ────────────────────────────
       // If vickDiagnosticResults is set, inject the real findings into the prompt
@@ -2248,7 +2123,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             location_share: {
               location_id: charLocationId,
               location_name: charLocationName,
-              presence_status: character.resolved_presence_status || character.location_status || null,
+              presence_status: characterInScene.resolved_presence_status || characterInScene.location_status || null,
               location_category: loc?.category || null,
               character_avatar_url: character.avatar_url || null,
               note: responseObj.location_share_note || null,
@@ -2278,7 +2153,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
             location_share: {
               location_id: charLocationId,
               location_name: charLocationName,
-              presence_status: character.resolved_presence_status || null,
+              presence_status: characterInScene.resolved_presence_status || null,
               character_avatar_url: character.avatar_url || null,
               note: responseObj.location_share_note || null,
               timestamp: new Date().toISOString(),
