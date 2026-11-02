@@ -175,30 +175,81 @@ Write a corrected sleep-only narrative (1-2 sentences). The environment must ref
       else if (hourET < 20) daypart = "evening";
 
       // ── Authoritative location at that point in the conversation ───────────
-      const movedAtMs = character?.resolved_last_updated_at
-        ? new Date(character.resolved_last_updated_at).getTime()
-        : null;
-
+      // Read from the existing location history — never a later location, so a
+      // message written before the character moved is corrected against where
+      // they actually were when it was written.
       let locId = character?.resolved_current_location_id || null;
       let locName = character?.resolved_current_location_name || null;
       let locationSource = "current_authoritative";
+      let signalPresence = null;
+      let rabbitHoleAtMoment = false;
 
-      if (movedAtMs && originalMs < movedAtMs) {
-        // The character moved after this message was written — use the existing
-        // location history record that covers this moment, if one exists.
+      const timeOf = (v) => (v ? new Date(v).getTime() : null);
+
+      // 1. The location signal the app recorded for this same turn. It holds the
+      //    authoritative location at the moment the message was generated, and it
+      //    is the only record that carries a rabbit hole location.
+      if (conversationId) {
+        const windowMs = 15 * 60 * 1000;
+        const signals = await base44.entities.Message.filter({
+          conversation_id: conversationId,
+          sender_type: "character",
+          "location_share.location_name": { $exists: true },
+          timestamp: {
+            $gte: new Date(originalMs - windowMs).toISOString(),
+            $lte: new Date(originalMs + windowMs).toISOString(),
+          },
+        }, "timestamp", 5).catch(() => []);
+        const nearest = (Array.isArray(signals) ? signals : [])
+          .filter(m => m.location_share?.location_name)
+          .sort((a, b) => Math.abs(timeOf(a.timestamp) - originalMs) - Math.abs(timeOf(b.timestamp) - originalMs))[0];
+        if (nearest) {
+          locId = nearest.location_share.location_id || locId;
+          locName = nearest.location_share.location_name.trim() || locName;
+          signalPresence = nearest.location_share.presence_status || null;
+          rabbitHoleAtMoment = locId === "rabbit_hole";
+          locationSource = "location_signal";
+        }
+      }
+
+      // 2. Location history covering that moment — never a later location, so a
+      //    message written before the character moved is corrected against where
+      //    they actually were when it was written.
+      if (locationSource === "current_authoritative") {
         const history = await base44.entities.LocationHistory
           .filter({ character_id: characterId }, "-arrival_time", 40)
           .catch(() => []);
-        const covering = (Array.isArray(history) ? history : []).find(h => {
-          const arrived = h.arrival_time ? new Date(h.arrival_time).getTime() : null;
-          const left = h.departure_time ? new Date(h.departure_time).getTime() : null;
+        const ascending = (Array.isArray(history) ? history : [])
+          .filter(h => h.arrival_time)
+          .slice()
+          .sort((a, b) => new Date(a.arrival_time).getTime() - new Date(b.arrival_time).getTime());
+
+        // The record whose stay spans the message
+        const covering = ascending.find(h => {
+          const arrived = timeOf(h.arrival_time);
+          const left = timeOf(h.departure_time);
           if (arrived === null) return false;
           return arrived <= originalMs && (left === null || left >= originalMs);
         });
+
         if (covering?.location_id) {
           locId = covering.location_id;
           locName = covering.location_name || locName;
           locationSource = "location_history";
+        } else {
+          // No covering record. If the character arrived somewhere AFTER this
+          // message, the record immediately before that arrival is where they
+          // were — use it rather than the later location.
+          const firstAfter = ascending.findIndex(h => timeOf(h.arrival_time) > originalMs);
+          const prior = firstAfter > 0 ? ascending[firstAfter - 1] : null;
+          if (prior?.location_id && prior.location_id !== locId) {
+            const priorLeft = timeOf(prior.departure_time);
+            if (priorLeft === null || priorLeft >= originalMs) {
+              locId = prior.location_id;
+              locName = prior.location_name || locName;
+              locationSource = "location_history";
+            }
+          }
         }
       }
 
@@ -216,16 +267,23 @@ Write a corrected sleep-only narrative (1-2 sentences). The environment must ref
         }
       }
 
-      const isRabbitHole = character?.resolved_presence_status === "rabbit_hole" ||
-        character?.resolved_location_type === "rabbit_hole";
+      // A rabbit hole is a real location. It never gets replaced by home, work,
+      // or a scheduled destination.
+      const isRabbitHole = rabbitHoleAtMoment || (locationSource === "current_authoritative" && (
+        character?.resolved_presence_status === "rabbit_hole" ||
+        character?.resolved_location_type === "rabbit_hole"
+      ));
+      // Presence wording follows the resolved moment — the current presence is
+      // only valid when the resolved location is the current one.
       const presencePhrase = isRabbitHole
-        ? "at a place outside the mapped world (an off-screen location)"
-        : (PRESENCE_PHRASES[character?.resolved_presence_status] || "here");
+        ? `at a place outside the mapped world (an off-screen location)${signalPresence && PRESENCE_PHRASES[signalPresence] ? `, ${PRESENCE_PHRASES[signalPresence]}` : ""}`
+        : (locationSource === "current_authoritative"
+          ? (PRESENCE_PHRASES[character?.resolved_presence_status] || null)
+          : (PRESENCE_PHRASES[signalPresence] || null));
 
       const locationBlock = locName
         ? `AUTHORITATIVE LOCATION AT THIS POINT IN THE CONVERSATION (this is where the character actually was):
-Where: ${locName}
-Presence: ${presencePhrase}${locationDetail ? `\n${locationDetail}` : ""}${isRabbitHole ? "\nThis is a custom off-screen place. It is their real location at this point in the conversation. Never replace it with home, work, or a scheduled destination." : ""}`
+Where: ${locName}${presencePhrase ? `\nPresence: ${presencePhrase}` : ""}${locationDetail ? `\n${locationDetail}` : ""}${isRabbitHole ? "\nThis is a custom off-screen place. It is their real location at this point in the conversation. Never replace it with home, work, or a scheduled destination." : ""}`
         : `AUTHORITATIVE LOCATION AT THIS POINT IN THE CONVERSATION: the character was somewhere other than the place their message implied.`;
 
       // ── Conversation immediately before this message ───────────────────────
@@ -267,7 +325,9 @@ REQUIREMENTS:
 - Keep the same intent, subject, reaction and emotional register. This is the same message, grounded in the right place.
 - Every action, object, sound, interruption and surrounding the message touches must be something that exists or happens where the character actually was.
 - Keep the character's voice, vocabulary, rhythm and mannerisms exactly as established.
-- Match the original format and length: dialogue stays dialogue, action beats stay action beats (1-3 sentences).
+- ${msg.is_narrative
+        ? "This message is a narrative description, not spoken dialogue. Keep it third-person narration of what the character was doing, in the same length and register as the original."
+        : "Match the original format: spoken dialogue stays spoken dialogue, action beats stay action beats. Keep roughly the same length."}
 - Do not announce, name or explain the location. Do not mention a correction, a mistake, or anything technical.
 - Do not invent travel, arrivals, departures, or a scene change. The character has been where they are.
 - Remove anything that belongs to a different place (a desk at work, their own bed, their apartment, a workplace they left).
