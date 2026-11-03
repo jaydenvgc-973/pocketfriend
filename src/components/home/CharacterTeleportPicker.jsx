@@ -33,6 +33,7 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
    const [search, setSearch] = useState("");
    const [sending, setSending] = useState(null); // locationId being sent to
    const [done, setDone] = useState(null);       // locationId just sent
+   const [error, setError] = useState(null);     // movement not confirmed
    const [rabbitHoleMode, setRabbitHoleMode] = useState(false);
    const [customName, setCustomName] = useState("");
    const triggerRef = useRef(null);
@@ -63,8 +64,9 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
   const handleSelect = async (loc) => {
     if (sending) return;
     setSending(loc.id);
+    setError(null);
     try {
-      await base44.functions.invoke("updateCharacterLocation", {
+      const res = await base44.functions.invoke("updateCharacterLocation", {
         characterId: character.id,
         locationId: loc.id,
         locationName: loc.name,
@@ -72,6 +74,13 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
         locationType: "visit",
         sourceReason: "user_teleport",
       });
+      // A movement is only reported as done when the authoritative write was
+      // verified. The function reports success:false when the write did not
+      // persist (including a reverted proof failure) — that is not a move.
+      const result = res?.data || res;
+      if (result?.success === false || result?.write_confirmed === false) {
+        throw new Error(result?.reason || result?.error || "Move was not confirmed");
+      }
       setDone(loc.id);
       setTimeout(() => {
         setDone(null);
@@ -84,6 +93,7 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
       }, 800);
     } catch (err) {
       console.error("[Teleport] Failed:", err.message);
+      setError(err.message || "Move was not confirmed");
     } finally {
       setSending(null);
     }
@@ -200,6 +210,12 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
                   />
                 </div>
               </div>
+
+              {error && (
+                <div className="mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-destructive/10 border border-destructive/30">
+                  <p className="text-[10px] text-destructive leading-snug">Not moved: {error}</p>
+                </div>
+              )}
 
               {/* Location list */}
               <div className="max-h-52 overflow-y-auto px-2 pb-2">

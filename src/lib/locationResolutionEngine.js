@@ -195,6 +195,41 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // USER-DIRECTED MOVEMENT GUARD: A location the user moved this character to
+  // through the app's own movement pathways (homepage Send to location teleport,
+  // a user-confirmed scheduled relocation, user travel) is an executed movement.
+  // The schedule layers below must NOT re-resolve the character back to a place
+  // the schedule would have put them, because that made a completed teleport
+  // display (and be narrated) as if the character never left.
+  // Sleep, pass-out and hospitalization remain higher authority: a resting or
+  // hospitalized character keeps the existing sleep/medical safeguards.
+  const USER_DIRECTED_SOURCE_REASONS = [
+    'user_teleport',
+    'user_teleport_rabbit_hole',
+    'user_travel',
+    'scheduled_user_confirmed_relocation',
+    'user_confirmed_commitment',
+  ];
+  const _restStates = ['sleeping', 'napping', 'passed_out', 'hospitalized'];
+  if (character.resolved_current_location_id &&
+      USER_DIRECTED_SOURCE_REASONS.includes(character.resolved_source_reason) &&
+      !_restStates.includes(character.resolved_presence_status)) {
+    const _userDirectedLoc = character.resolved_current_location_id === 'rabbit_hole'
+      ? null
+      : locationMap[character.resolved_current_location_id];
+    // A real location that is not in the map still keeps the committed state —
+    // the movement already happened; the map is a lookup, not the authority.
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: character.resolved_current_location_name ||
+        _userDirectedLoc?.name || 'Visiting',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: character.resolved_source_reason,
+      resolved_zone: null,
+    };
+  }
+
   // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
   // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
   // This is the ONLY gate between Presence Truth and Schedule Truth.
