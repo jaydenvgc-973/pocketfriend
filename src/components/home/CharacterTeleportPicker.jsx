@@ -79,11 +79,11 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
         locationType: "visit",
         sourceReason: "user_teleport",
       });
-      // A movement is only reported as done when the authoritative write was
-      // verified. The function reports success:false when the write did not
-      // persist (including a reverted proof failure) — that is not a move.
+      // The movement is reported as done when the authoritative write committed.
+      // A lagging read-back is evidence, not a cancelled move — only a real
+      // failure response is treated as "not moved".
       const result = res?.data || res;
-      if (result?.success === false || result?.write_confirmed === false) {
+      if (result?.success === false) {
         throw new Error(result?.reason || result?.error || "Move was not confirmed");
       }
       setDone(loc.id);

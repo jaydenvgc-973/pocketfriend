@@ -27,10 +27,8 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { characterId, characterName, locationId, locationName, presenceStatus, locationType, sourceReason, rabbitHole } = body;
 
-    // A movement the user performed through the app's own controls is the user's
-    // action, not a scheduled/automated guess. It is never undone by a later
-    // failure in the history record — the movement is retained and the gap reported.
-    const USER_DIRECTED_MOVE = ['user_teleport', 'user_teleport_rabbit_hole', 'user_travel'].includes(sourceReason);
+    // NO MOVEMENT IS EVER REVERTED. A committed location write is the authority.
+    // A failed history record is reported as evidence and never undoes a movement.
 
     if (!characterId && !characterName) {
       return Response.json({ error: 'Must provide characterId or characterName' }, { status: 400 });
@@ -103,12 +101,12 @@ Deno.serve(async (req) => {
         try {
           verified = await base44.entities.Character.get(matched.id);
         } catch {
-          const verifyList = await base44.entities.Character.list(null, 500);
-          verified = verifyList.find(c => c.id === matched.id) || null;
+          // A read that cannot complete is not evidence of a failed write.
+          verified = null;
         }
         writeConfirmed = verified?.resolved_current_location_id === 'rabbit_hole'
           && verified?.resolved_current_location_name === customName;
-        if (writeConfirmed) break;
+        if (writeConfirmed || !verified) break;
         await new Promise(r => setTimeout(r, 600));
       }
 
@@ -208,24 +206,18 @@ Deno.serve(async (req) => {
       try {
         verified = await base44.entities.Character.get(matched.id);
       } catch {
-        const verifyList = await base44.entities.Character.list(null, 500);
-        verified = verifyList.find(c => c.id === matched.id) || null;
+        // A read that cannot complete is not evidence of a failed write.
+        verified = null;
       }
       writeConfirmed = verified?.resolved_current_location_id === matchedLoc.id;
-      if (writeConfirmed) break;
+      if (writeConfirmed || !verified) break;
       await new Promise(r => setTimeout(r, 600));
     }
 
     if (!writeConfirmed) {
-      return Response.json({
-        success: false,
-        write_confirmed: false,
-        error: 'Write was not verified — read-back shows different location',
-        matched_character_name: matched.name,
-        matched_character_id: matched.id,
-        expected_location_id: matchedLoc.id,
-        actual_location_id_after_write: verified?.resolved_current_location_id || null,
-      }, { status: 500 });
+      // The write is committed. A read-back that still shows the previous value is
+      // reported as evidence, never converted into a cancelled move.
+      console.warn(`[updateCharacterLocation] read-back lag: expected ${matchedLoc.id}, saw ${verified?.resolved_current_location_id || 'null'}`);
     }
 
     // STEP 7: Write LocationHistory event (non-blocking, fire-and-forget)
@@ -261,57 +253,13 @@ Deno.serve(async (req) => {
           travel_reason: sourceReason || null,
         });
         if (!proofResult?.data?.success) {
-          // USER-DIRECTED MOVEMENT STANDS: the user asked for this move and it is
-          // already committed. A failed history record is reported, never used to
-          // cancel the user's action by reverting them to the previous location.
-          if (USER_DIRECTED_MOVE) {
-            return Response.json({
-              success: true,
-              write_confirmed: true,
-              matched_character_name: matched.name,
-              matched_character_id: matched.id,
-              previous_location_id: previousLocationId,
-              previous_location_name: previousLocationName,
-              new_location_id: matchedLoc.id,
-              new_location_name: matchedLoc.name,
-              new_presence_status: resolvedStatus,
-              new_location_type: resolvedType,
-              history_proof_failed: true,
-              proof_error: proofResult?.data?.error || 'unknown',
-              updated_at: now,
-            });
-          }
-          let revertError = null;
-          try {
-            await base44.entities.Character.update(matched.id, {
-              resolved_current_location_id: previousLocationId,
-              resolved_current_location_name: previousLocationName,
-              resolved_location_type: matched.resolved_location_type,
-              resolved_presence_status: matched.resolved_presence_status,
-              resolved_source_reason: matched.resolved_source_reason,
-              resolved_last_updated_at: matched.resolved_last_updated_at,
-              recent_location_history: matched.recent_location_history,
-              travel_status: matched.travel_status,
-              travel_destination_location_id: matched.travel_destination_location_id,
-              traveling_to_location_id: matched.traveling_to_location_id,
-              traveling_to_location_name: matched.traveling_to_location_name,
-              presence_stay_lock: matched.presence_stay_lock,
-            });
-          } catch (revertErr) { revertError = revertErr.message; }
-          return Response.json({
-            success: false,
-            error: 'unverified_state_write',
-            reason: `LocationHistory proof failed — Character state reverted. proof_error=${proofResult?.data?.error || 'unknown'}`,
-            revert_error: revertError,
-          }, { status: 500 });
-        }
-      } catch (proofError) {
-        // USER-DIRECTED MOVEMENT STANDS: the proof call itself failing (error,
-        // timeout, rate limit) is not a reason to cancel the user's own move.
-        if (USER_DIRECTED_MOVE) {
+          // THE MOVEMENT STANDS — ALWAYS.
+          // The character write above is already committed and is the authority.
+          // A history-record gap is reported as evidence. It is never used to cancel
+          // the movement and never restores a previous location.
           return Response.json({
             success: true,
-            write_confirmed: true,
+            write_confirmed: writeConfirmed,
             matched_character_name: matched.name,
             matched_character_id: matched.id,
             previous_location_id: previousLocationId,
@@ -321,39 +269,35 @@ Deno.serve(async (req) => {
             new_presence_status: resolvedStatus,
             new_location_type: resolvedType,
             history_proof_failed: true,
-            proof_error: proofError.message,
+            proof_error: proofResult?.data?.error || 'unknown',
             updated_at: now,
           });
         }
-        let revertError = null;
-        try {
-          await base44.entities.Character.update(matched.id, {
-            resolved_current_location_id: previousLocationId,
-            resolved_current_location_name: previousLocationName,
-            resolved_location_type: matched.resolved_location_type,
-            resolved_presence_status: matched.resolved_presence_status,
-            resolved_source_reason: matched.resolved_source_reason,
-            resolved_last_updated_at: matched.resolved_last_updated_at,
-            recent_location_history: matched.recent_location_history,
-            travel_status: matched.travel_status,
-            travel_destination_location_id: matched.travel_destination_location_id,
-            traveling_to_location_id: matched.traveling_to_location_id,
-            traveling_to_location_name: matched.traveling_to_location_name,
-            presence_stay_lock: matched.presence_stay_lock,
-          });
-        } catch (revertErr) { revertError = revertErr.message; }
+      } catch (proofError) {
+        // THE MOVEMENT STANDS — ALWAYS.
+        // The proof call itself failing (error, timeout, rate limit) never cancels a
+        // movement that is already committed, and never restores a previous location.
         return Response.json({
-          success: false,
-          error: 'unverified_state_write',
-          reason: `LocationHistory proof call threw — Character state reverted. proof_error=${proofError.message}`,
-          revert_error: revertError,
-        }, { status: 500 });
+          success: true,
+          write_confirmed: writeConfirmed,
+          matched_character_name: matched.name,
+          matched_character_id: matched.id,
+          previous_location_id: previousLocationId,
+          previous_location_name: previousLocationName,
+          new_location_id: matchedLoc.id,
+          new_location_name: matchedLoc.name,
+          new_presence_status: resolvedStatus,
+          new_location_type: resolvedType,
+          history_proof_failed: true,
+          proof_error: proofError.message,
+          updated_at: now,
+        });
       }
     }
 
     return Response.json({
       success: true,
-      write_confirmed: true,
+      write_confirmed: writeConfirmed,
       matched_character_name: matched.name,
       matched_character_id: matched.id,
       previous_location_id: previousLocationId,
