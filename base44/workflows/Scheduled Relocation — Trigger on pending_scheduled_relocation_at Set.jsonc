@@ -1,6 +1,6 @@
 {
   "name": "Scheduled Relocation \u2014 Trigger on pending_scheduled_relocation_at Set",
-  "description": "Fires when a character's pending_scheduled_relocation_at field is set or changed. Computes the remaining time until the confirmed move time and waits that exact duration (durable workflow delay), then invokes processScheduledRelocations, which routes the due move through enforceCharacterLocationPresence \u2014 the authoritative location writer. A move that is already due runs immediately. No recurring schedule or polling is used: the delay is derived from the authoritative relocation timestamp itself.",
+  "description": "Registration event for the existing relocation pipeline. When a character's pending_scheduled_relocation_at is set or changed, it waits until that registered instant and then invokes processScheduledRelocations \u2014 the existing executor that routes the due move through enforceCharacterLocationPresence, the sole canonical writer. An already-due registration runs immediately. No new function, no recurring schedule, no polling: the delay is read from the relocation timestamp the app already stores.",
   "trigger": {
     "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) }",
     "config": {
@@ -15,7 +15,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "scheduled_relocation_trigger_on_pending_scheduled_relocation_at_set",
-      "version": "1.1",
+      "version": "1.2",
       "namespace": "base44"
     },
     "do": [
@@ -27,8 +27,8 @@
           },
           "then": "check_due",
           "x-base44": {
-            "title": "Time until the scheduled move",
-            "description": "From the confirmed relocation time"
+            "title": "Time until the move",
+            "description": "From the registered time"
           }
         }
       },
@@ -45,18 +45,18 @@
             }
           ],
           "x-base44": {
-            "title": "Already due?",
-            "description": "Immediate move runs now"
+            "title": "Due already?",
+            "description": "Runs now if past due"
           }
         }
       },
       {
         "wait_until_due": {
-          "wait": "PT${ (.compute_wait.seconds | floor) }S",
+          "wait": "PT${ ((.compute_wait.seconds // 0 | floor) + 5) }S",
           "then": "run_process",
           "x-base44": {
-            "title": "Wait until the move time",
-            "description": "Durable delay to the confirmed time"
+            "title": "Wait for the move time",
+            "description": "Ends a few seconds after"
           }
         }
       },
@@ -70,7 +70,7 @@
           "then": "end",
           "x-base44": {
             "title": "Execute the relocation",
-            "description": "Authoritative location writer"
+            "description": "Existing executor"
           }
         }
       }

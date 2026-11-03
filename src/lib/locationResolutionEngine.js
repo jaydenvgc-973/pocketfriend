@@ -210,10 +210,17 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     'scheduled_user_confirmed_relocation',
     'user_confirmed_commitment',
   ];
-  const _restStates = ['sleeping', 'napping', 'passed_out', 'hospitalized'];
+  // Sleep, medical and confinement states keep their own authority — a resting,
+  // hospitalized, incarcerated or confined character is never relocated by this guard.
+  const _protectedStates = [
+    'sleeping', 'napping', 'passed_out', 'hospitalized',
+    'incarcerated', 'house_arrest', 'confined', 'under_supervision',
+  ];
+  const _isConfined = character.is_jailed === true || character.house_arrest_active === true;
   if (character.resolved_current_location_id &&
       USER_DIRECTED_SOURCE_REASONS.includes(character.resolved_source_reason) &&
-      !_restStates.includes(character.resolved_presence_status)) {
+      !_isConfined &&
+      !_protectedStates.includes(character.resolved_presence_status)) {
     const _userDirectedLoc = character.resolved_current_location_id === 'rabbit_hole'
       ? null
       : locationMap[character.resolved_current_location_id];
