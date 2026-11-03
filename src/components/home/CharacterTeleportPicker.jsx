@@ -176,21 +176,33 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -6, scale: 0.97 }}
               transition={{ duration: 0.15 }}
-              style={{
-                position: "fixed",
-                top: (() => {
-                  const rect = triggerRef.current?.getBoundingClientRect();
-                  return rect ? rect.bottom + 6 : 100;
-                })(),
-                left: (() => {
-                  const rect = triggerRef.current?.getBoundingClientRect();
-                  if (!rect) return 16;
-                  const w = 260;
-                  return Math.min(rect.left, window.innerWidth - w - 8);
-                })(),
-                width: 260,
-                zIndex: 9999,
-              }}
+              style={(() => {
+                // Keep the dropdown inside the viewport. A card low on a phone
+                // screen used to open the list below the fold, so tapping the
+                // location label looked like nothing happened.
+                const rect = triggerRef.current?.getBoundingClientRect();
+                const margin = 8;
+                const width = Math.min(260, window.innerWidth - margin * 2);
+                const estimatedHeight = 330;
+                const spaceBelow = rect ? window.innerHeight - rect.bottom : 0;
+                const openAbove = !!rect && spaceBelow < 240 && rect.top > spaceBelow;
+                const top = rect
+                  ? (openAbove
+                      ? Math.max(margin, rect.top - estimatedHeight - 6)
+                      : Math.min(rect.bottom + 6, Math.max(margin, window.innerHeight - estimatedHeight - margin)))
+                  : 100;
+                const left = rect
+                  ? Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin))
+                  : margin;
+                return {
+                  position: "fixed",
+                  top,
+                  left,
+                  width,
+                  maxHeight: `calc(100vh - ${margin * 2}px)`,
+                  zIndex: 9999,
+                };
+              })()}
               className="bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
               onClick={e => e.stopPropagation()}
             >

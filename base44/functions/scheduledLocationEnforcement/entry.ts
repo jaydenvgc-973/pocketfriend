@@ -525,9 +525,17 @@ function computeResolved(character, locationMap, etTime) {
     character.resolved_source_reason === 'autonomous_needs_driven' ||
     character.resolved_source_reason === 'autonomous_movement';
 
+  // USER-DIRECTED VISITS: a location the user sent the character to (homepage
+  // "Send to location" teleport, a user-confirmed scheduled relocation, user travel)
+  // is an executed movement. Recomputing over it sends the character home seconds
+  // after the user moved them, so the control appears to do nothing.
   const isUserInitiatedVisit =
     character.presence_state === 'social_visit' ||
-    character.resolved_source_reason === 'user_travel';
+    character.resolved_source_reason === 'user_travel' ||
+    character.resolved_source_reason === 'user_teleport' ||
+    character.resolved_source_reason === 'user_teleport_rabbit_hole' ||
+    character.resolved_source_reason === 'user_confirmed_commitment' ||
+    character.resolved_source_reason === 'scheduled_user_confirmed_relocation';
 
   if (isAwayFromHome) {
     const visitLoc = locationMap[resolvedLocId];

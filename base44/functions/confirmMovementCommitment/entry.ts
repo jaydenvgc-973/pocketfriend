@@ -182,13 +182,16 @@ Deno.serve(async (req) => {
     await base44.asServiceRole.entities.CharacterMemory.create({
       character_id,
       memory_type: 'event',
-      memory_text: `${character.name} committed to being at ${destLocName} at ${new Date(scheduled_arrival_time).toLocaleTimeString()}. User confirmed the scheduled move.`,
+      memory_text: `${character.name} committed to being at ${destLocName} at ${new Date(scheduled_arrival_time).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })} Eastern. User confirmed the scheduled move.`,
       memory_summary: `committed_relocation::${destLocName}`,
       importance_score: 7,
       permanence: 'short_term',
     }).catch(() => {});
 
+    // Authoritative app timezone is Eastern — the confirmation must show the
+    // user's local clock, never the server's UTC clock.
     const etaTime = new Date(scheduled_arrival_time).toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York',
       hour: 'numeric',
       minute: '2-digit',
       hour12: true

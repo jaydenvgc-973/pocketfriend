@@ -1514,6 +1514,9 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
     character.resolved_source_reason === 'autonomous_needs_driven' ||
     character.resolved_source_reason === 'autonomous_movement' ||
     character.resolved_source_reason === 'user_travel' ||
+    character.resolved_source_reason === 'user_teleport' ||
+    character.resolved_source_reason === 'user_teleport_rabbit_hole' ||
+    character.resolved_source_reason === 'user_confirmed_commitment' ||
     character.resolved_source_reason === 'scheduled_user_confirmed_relocation' ||
     character.resolved_source_reason === 'social_visit_from_system';
   if (visitIsAwayFromHome && visitIsSystemPlaced) {
