@@ -106,16 +106,20 @@ Deno.serve(async (req) => {
     const recentHistory = locationHistory.filter(h => isWithin24h(h.arrival_time));
     if (recentHistory.length > 0) {
       sourceUsed = 'LocationHistory';
-      for (const h of recentHistory) {
+      // "Still there" is NOT a history flag — it is the committed current location.
+      // A stale is_current row (or a missing departure_time) used to read as present
+      // presence and made characters speak from a place they had already left.
+      const curId = character?.resolved_current_location_id || null;
+      const curName = character?.resolved_current_location_name || null;
+      recentHistory.forEach((h, idx) => {
         const arrTime = formatTime(h.arrival_time);
         const depTime = h.departure_time ? formatTime(h.departure_time) : null;
-        const timeStr = depTime
-          ? `${arrTime}–${depTime}`
-          : (h.is_current ? `${arrTime} (still there)` : arrTime);
+        const isHereNow = idx === 0 && !depTime && ((curId && h.location_id === curId) || (curName && h.location_name === curName));
+        const timeStr = depTime ? `${arrTime}–${depTime}` : (isHereNow ? `${arrTime} — where they are now` : arrTime);
         const label = getEventLabel(h.event_type);
         const reason = h.travel_reason ? ` [${h.travel_reason}]` : (h.travel_source ? ` [${h.travel_source}]` : '');
         summaryLines.push(`- ${label} ${h.location_name} at ${timeStr}${reason}`);
-      }
+      });
     }
 
     // ── SOURCE 2: TravelSession ────────────────────────────────────────────────
@@ -250,7 +254,7 @@ Deno.serve(async (req) => {
         ? `LOCATION CONTEXT (inferred from character schedule — no movement records yet for today):`
         : `LOCATION HISTORY (Last 24 Hours — source: ${sourceUsed}):`;
 
-      contextBlock = `${prefix}\n${summaryLines.join('\n')}\n\nIMPORTANT: Use this when answering "what did you do today?", "where were you earlier?", "were you home all day?". Do NOT say you slept all day if work, school, or travel appears above.`;
+      contextBlock = `${prefix}\n${summaryLines.join('\n')}\n\nIMPORTANT: This is past-tense history only — it is never authority for where the character is right now. Only CURRENT LOCATION authorizes their present place; a place listed above is somewhere they were, not necessarily where they are, and it must not be described as an arrival they are still inside. Use this when answering "what did you do today?", "where were you earlier?", "were you home all day?". Do NOT say you slept all day if work, school, or travel appears above.`;
     }
 
     return Response.json({

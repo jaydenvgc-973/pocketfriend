@@ -472,35 +472,35 @@ function buildEducationBlock(character) {
 }
 
 function buildTodayLocationBlock(character) {
-  // Reads Character.recent_location_history[] for today's entries.
-  // This field is written by the travel/location resolver on every confirmed arrival.
+  // HISTORY ONLY — never presence. CURRENT LOCATION (resolved_*) is the sole authority;
+  // an entry with no left_at is NOT proof the character is still there (repeated moves
+  // leave entries open, which made characters speak from places they had already left).
   const history = character.recent_location_history || [];
-  if (history.length === 0) return '';
-
-  const today = new Date();
-  const todayStr = today.toDateString();
-
-  const todayEntries = history.filter(h => {
-    if (!h.arrived_at) return false;
-    return new Date(h.arrived_at).toDateString() === todayStr;
-  }).sort((a, b) => new Date(a.arrived_at) - new Date(b.arrived_at));
-
-  if (todayEntries.length === 0) return '';
-
-  const fmt = (iso) => {
-    if (!iso) return null;
-    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-  };
-
-  const lines = todayEntries.map(h => {
-    const arrTime = fmt(h.arrived_at);
-    const leftTime = h.left_at ? fmt(h.left_at) : null;
-    const reason = h.reason ? ` (${h.reason.replace(/_/g, ' ')})` : '';
-    const stillThere = !h.left_at ? ' — still there' : '';
-    return `- ${h.location_name || 'unknown location'}${arrTime ? ` at ${arrTime}` : ''}${leftTime ? ` until ${leftTime}` : stillThere}${reason}`;
-  });
-
-  return `\n════════════════════════════════════\nWHERE YOU'VE BEEN TODAY (from app location data — authoritative)\n════════════════════════════════════\n${lines.join('\n')}\nIMPORTANT: You actually went to these places today. Reference them naturally when relevant.\n════════════════════════════════════\n`; 
+  const curId = character.resolved_current_location_id || null, curName = character.resolved_current_location_name || null;
+  if (!history.length && !curName) return '';
+  const todayStr = new Date().toDateString();
+  const fmt = (iso) => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/New_York' }) : null;
+  const runs = [];
+  for (const h of history.filter(h => h.arrived_at && new Date(h.arrived_at).toDateString() === todayStr).sort((a, b) => new Date(a.arrived_at) - new Date(b.arrived_at))) {
+    const key = h.location_id || h.location_name || 'unknown', last = runs[runs.length - 1];
+    if (last && last.key === key) { last.left_at = h.left_at || null; continue; }
+    runs.push({ key, id: h.location_id || null, name: h.location_name || 'unknown location', arrived_at: h.arrived_at, left_at: h.left_at || null, reason: h.reason || null });
+  }
+  const latest = runs[runs.length - 1];
+  const isHere = (r) => !!r && ((curId && r.id === curId) || (curName && r.name === curName)); const isCurrent = (r) => r === latest && !r.left_at && isHere(r);
+  const past = runs.filter(r => !isCurrent(r) && !isHere(r));
+  const until = (r, i) => fmt(r.left_at || past[i + 1]?.arrived_at || (isCurrent(latest) ? latest.arrived_at : null));
+  const lines = [];
+  if (curName) lines.push(`YOU ARE HERE RIGHT NOW: ${curName}. This is your only physical location.`);
+  if (past.length) {
+    lines.push('EARLIER TODAY — every place below is a place you have already LEFT:');
+    past.forEach((r, i) => {
+      const arr = fmt(r.arrived_at), left = until(r, i);
+      lines.push(`- ${r.name}${arr ? ` from ${arr}` : ''}${left ? ` until ${left}` : ''}${r.reason ? ` (${r.reason.replace(/_/g, ' ')})` : ''} — you are NOT there now.`);
+    });
+  }
+  if (!lines.length) return '';
+  return `\n════════════════════════════════════\nWHERE YOU'VE BEEN TODAY (background history only — never a claim about now)\n════════════════════════════════════\n${lines.join('\n')}\nIMPORTANT: These places are past tense only. You may mention them as something you did earlier, but never speak, act, or narrate as if you are inside one. Never describe arriving, entering, dropping keys, taking off a coat, or settling in at a place you have left. If an earlier message or narrative says you arrived somewhere that is not your current location, that is outdated — you are not there. You may say you intend to go somewhere, but you may never claim to have arrived anywhere other than your current location.\n════════════════════════════════════\n`;
 }
 
 function buildHardFacts(character, hasActiveStoryEvent = false) {
@@ -543,7 +543,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   if (character.resolved_current_location_name) {
     const rawPs = character.resolved_presence_status;
     const ps = rawPs === 'traveling' ? null : rawPs;
-    lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}.`);
+    lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated.`);
   }
 
   // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────
