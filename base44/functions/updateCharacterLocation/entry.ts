@@ -27,6 +27,11 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { characterId, characterName, locationId, locationName, presenceStatus, locationType, sourceReason, rabbitHole } = body;
 
+    // A movement the user performed through the app's own controls is the user's
+    // action, not a scheduled/automated guess. It is never undone by a later
+    // failure in the history record — the movement is retained and the gap reported.
+    const USER_DIRECTED_MOVE = ['user_teleport', 'user_teleport_rabbit_hole', 'user_travel'].includes(sourceReason);
+
     if (!characterId && !characterName) {
       return Response.json({ error: 'Must provide characterId or characterName' }, { status: 400 });
     }
@@ -90,10 +95,22 @@ Deno.serve(async (req) => {
         presence_stay_lock: false,
       });
 
-      const verifyList = await base44.entities.Character.list(null, 500);
-      const verified = verifyList.find(c => c.id === matched.id);
-      const writeConfirmed = verified?.resolved_current_location_id === 'rabbit_hole'
-        && verified?.resolved_current_location_name === customName;
+      // Read the written record directly. A list query can be served from a stale
+      // snapshot immediately after a write, which made a completed move report failure.
+      let verified = null;
+      let writeConfirmed = false;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          verified = await base44.entities.Character.get(matched.id);
+        } catch {
+          const verifyList = await base44.entities.Character.list(null, 500);
+          verified = verifyList.find(c => c.id === matched.id) || null;
+        }
+        writeConfirmed = verified?.resolved_current_location_id === 'rabbit_hole'
+          && verified?.resolved_current_location_name === customName;
+        if (writeConfirmed) break;
+        await new Promise(r => setTimeout(r, 600));
+      }
 
       return Response.json({
         success: true,
@@ -180,11 +197,24 @@ Deno.serve(async (req) => {
       presence_stay_lock: false,
     });
 
-    // STEP 6: Read back to verify the write persisted
-    const verifyList = await base44.entities.Character.list(null, 500);
-    const verified = verifyList.find(c => c.id === matched.id);
-
-    const writeConfirmed = verified?.resolved_current_location_id === matchedLoc.id;
+    // STEP 6: Read back to verify the write persisted.
+    // The read-back is a DIRECT read of the record that was just written. A list
+    // query can return a snapshot taken before the write, which made a move that
+    // actually succeeded report "not verified" — the user then saw "Not moved"
+    // and the character appeared to stay put even though the write had landed.
+    let verified = null;
+    let writeConfirmed = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        verified = await base44.entities.Character.get(matched.id);
+      } catch {
+        const verifyList = await base44.entities.Character.list(null, 500);
+        verified = verifyList.find(c => c.id === matched.id) || null;
+      }
+      writeConfirmed = verified?.resolved_current_location_id === matchedLoc.id;
+      if (writeConfirmed) break;
+      await new Promise(r => setTimeout(r, 600));
+    }
 
     if (!writeConfirmed) {
       return Response.json({
@@ -231,6 +261,26 @@ Deno.serve(async (req) => {
           travel_reason: sourceReason || null,
         });
         if (!proofResult?.data?.success) {
+          // USER-DIRECTED MOVEMENT STANDS: the user asked for this move and it is
+          // already committed. A failed history record is reported, never used to
+          // cancel the user's action by reverting them to the previous location.
+          if (USER_DIRECTED_MOVE) {
+            return Response.json({
+              success: true,
+              write_confirmed: true,
+              matched_character_name: matched.name,
+              matched_character_id: matched.id,
+              previous_location_id: previousLocationId,
+              previous_location_name: previousLocationName,
+              new_location_id: matchedLoc.id,
+              new_location_name: matchedLoc.name,
+              new_presence_status: resolvedStatus,
+              new_location_type: resolvedType,
+              history_proof_failed: true,
+              proof_error: proofResult?.data?.error || 'unknown',
+              updated_at: now,
+            });
+          }
           let revertError = null;
           try {
             await base44.entities.Character.update(matched.id, {
@@ -256,6 +306,25 @@ Deno.serve(async (req) => {
           }, { status: 500 });
         }
       } catch (proofError) {
+        // USER-DIRECTED MOVEMENT STANDS: the proof call itself failing (error,
+        // timeout, rate limit) is not a reason to cancel the user's own move.
+        if (USER_DIRECTED_MOVE) {
+          return Response.json({
+            success: true,
+            write_confirmed: true,
+            matched_character_name: matched.name,
+            matched_character_id: matched.id,
+            previous_location_id: previousLocationId,
+            previous_location_name: previousLocationName,
+            new_location_id: matchedLoc.id,
+            new_location_name: matchedLoc.name,
+            new_presence_status: resolvedStatus,
+            new_location_type: resolvedType,
+            history_proof_failed: true,
+            proof_error: proofError.message,
+            updated_at: now,
+          });
+        }
         let revertError = null;
         try {
           await base44.entities.Character.update(matched.id, {

@@ -5,6 +5,7 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
+import { useAuth } from "@/lib/AuthContext";
 
 const CATEGORY_ICONS = {
   home: { icon: Home, color: "text-pink-400" },
@@ -51,7 +52,11 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
   // Shared stable hook — same LKG rules and cache key as Home/Travel/Locations.
   // Reads instantly from cache when Home has already loaded the location list.
   // The hook's enabled guard (!!ownerEmail) prevents fetching when email is absent.
-  const ownerEmail = character.owner_email || null;
+  // The list is the signed-in account's own + shared locations (the same list Home
+  // already loaded). It must never be empty just because a legacy character has no
+  // owner_email on the record — that left the picker with no destinations at all.
+  const { user } = useAuth();
+  const ownerEmail = character.owner_email || user?.email || null;
   const { locationsData: locations, isLoading } = useStableLocationReferences(ownerEmail);
 
   // Filter out locations that ARE the character's current resolved location
