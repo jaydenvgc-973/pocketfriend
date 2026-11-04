@@ -5,6 +5,14 @@ import { resolveCharacterLocation, buildLiveLocationContext } from "@/lib/locati
 import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
+import {
+  buildCorrectionPrompt,
+  buildAuditPrompt,
+  buildRepairPrompt,
+  buildTimeAndProgressionBlock,
+  buildFactsSummary,
+  AUDIT_SCHEMA,
+} from "@/lib/nonsenseCorrection";
 
 // Human-readable phrasing of the character's authoritative presence state.
 // Used only to describe where the character already is — never to write it.
@@ -64,46 +72,107 @@ export function useNarrativeCorrection({ characterId, conversationId, messages, 
     await base44.entities.Message.update(msg.id, { content: correctedText }).catch(() => {});
   };
 
+  // ── NONSENSE CORRECTION ───────────────────────────────────────────────────
+  // User-selected action: "This is nonsense"
+  // The selected content contains a factual, contextual, behavioural, chronological
+  // or structural error. The replacement is produced through the same pathway normal
+  // replies use, so it is grounded in the character's established facts, real
+  // location and real timeline — and the flagged text is never treated as an
+  // established fact that has to be preserved or reworded.
   const handleNonsenseNarrative = async (msg) => {
     if (!msg) return;
     setIsRegeneratingNarrative(true);
     try {
-      const recentContext = messages
-        .slice(-10)
-        .filter(m => m.id !== msg.id)
-        .map(m => `${m.sender_type === 'user' ? 'User' : 'Character'}: ${m.content}`)
-        .join('\n');
-
-      // Infer original timestamp context so regeneration matches the time the message was created
+      const isNarrative = !!msg.is_narrative;
+      const failedIndex = messages.findIndex(m => m.id === msg.id);
       const originalTime = msg.timestamp || msg.created_date || new Date().toISOString();
-      const originalDate = new Date(originalTime);
-      const timeLabel = originalDate.toLocaleString('en-US', {
-        timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+      const originalMs = new Date(originalTime).getTime();
+
+      // ── Conversation BEFORE this moment, by the flagged message's position ──
+      // Reading the newest messages instead put later turns — sometimes the flagged
+      // text itself — in front of the model as established context.
+      const contextStart = Math.max(0, failedIndex - 8);
+      const priorMessages = messages.slice(contextStart, failedIndex > 0 ? failedIndex : 0);
+      const contextLog = priorMessages.map(m => m.is_narrative
+        ? `[NARRATIVE] ${m.content}`
+        : `${m.sender_type === 'user' ? 'User' : (character?.name || 'Character')}: ${m.content}`).join('\n');
+      const answeredTurn = [...priorMessages].reverse().find(m => m.sender_type === 'user' && !m.is_narrative);
+
+      // ── Established reality: same sources a normal reply is built from ──────
+      const locationBlock = authoritativeLocationBlock(character);
+      const timeBlock = buildTimeAndProgressionBlock({
+        originalMs,
+        priorMessages: priorMessages.map(m => ({
+          ms: new Date(m.timestamp || m.created_date).getTime(),
+          isNarrative: !!m.is_narrative,
+          content: m.content,
+        })),
       });
 
-      const correctedText = await base44.integrations.Core.InvokeLLM({
-        prompt: `The previous response was illogical or poorly constructed. Write it again, correctly.
+      const sceneCharacter = buildCharacterInScene(character || {});
+      let canonicalPrompt = "";
+      try {
+        const ctxRes = await base44.functions.invoke("buildCanonicalCharacterContext", {
+          characterId,
+          interactionContext: "direct_chat",
+          topKMemories: 14,
+        });
+        canonicalPrompt = (ctxRes?.data || ctxRes)?.systemPrompt || "";
+      } catch { /* stored profile fields remain the identity base */ }
+      const systemPrompt = buildSystemPrompt(canonicalPrompt, sceneCharacter, { allowNarration: isNarrative });
 
-${authoritativeLocationBlock(character)}
-
-TIME AT THIS POINT IN THE CONVERSATION: ${timeLabel} Eastern. The rewrite must fit that time, not the current time.
-
-THE ORIGINAL RESPONSE (intent only — do not paraphrase it or reuse its wording):
-"${msg.content}"
-
-RECENT CONVERSATION:
-${recentContext}
-
-${msg.is_narrative
-        ? "THIS IS A NARRATIVE. Keep it a narrative: same third-person descriptive perspective and roughly the same length. Do not turn it into spoken dialogue."
-        : "THIS IS A CHARACTER MESSAGE (spoken words). Keep it spoken words in the character's own voice, roughly the same length. Do not turn it into third-person narration or a scene description."}
-
-Every room, object, sound, appliance, food and action in the replacement must be something that exists or happens where the character actually is. If the original contained something belonging to a different place, it must be gone, not reworded.
-
-Write only the rewritten ${msg.is_narrative ? "narrative" : "message"}:`,
+      const rawCorrected = await base44.integrations.Core.InvokeLLM({
+        prompt: buildCorrectionPrompt({
+          systemPrompt,
+          locationBlock,
+          timeBlock,
+          contextLog,
+          answeredTurnText: answeredTurn?.content || '',
+          flaggedText: msg.content || '',
+          isNarrative,
+        }),
       });
 
-      await regenerateInPlace(msg, correctedText);
+      let finalText = filterDashes(
+        isNarrative
+          ? (rawCorrected || '').trim()
+          : stripCharacterNamePrefix((rawCorrected || '').trim(), sceneCharacter?.name)
+      );
+      if (!finalText) return;
+
+      // ── VERIFY THE REPLACEMENT ──────────────────────────────────────────────
+      // A correction that keeps the contradiction, or buys the original claim with
+      // an invented explanation, is a failed correction. One repair pass fixes it.
+      const facts = buildFactsSummary({ character, locationBlock, timeBlock });
+      try {
+        const audit = await base44.integrations.Core.InvokeLLM({
+          prompt: buildAuditPrompt({
+            flaggedText: msg.content || '',
+            replacement: finalText,
+            facts,
+            isNarrative,
+          }),
+          response_json_schema: AUDIT_SCHEMA,
+        });
+        const problems = Array.isArray(audit?.problems) ? audit.problems.filter(Boolean) : [];
+        const failed = audit?.clean === false || audit?.invented === true || problems.length > 0;
+        if (failed) {
+          const repaired = await base44.integrations.Core.InvokeLLM({
+            prompt: buildRepairPrompt({ replacement: finalText, problems, locationBlock, isNarrative }),
+          });
+          const repairedText = filterDashes(
+            isNarrative
+              ? (repaired || '').trim()
+              : stripCharacterNamePrefix((repaired || '').trim(), sceneCharacter?.name)
+          );
+          if (repairedText) finalText = repairedText;
+        }
+      } catch {
+        // Verification is best-effort; the grounded rewrite above still stands.
+      }
+
+      // Overwrite in place: original id, timestamp and timeline position preserved.
+      await regenerateInPlace(msg, finalText);
     } finally {
       setIsRegeneratingNarrative(false);
     }
