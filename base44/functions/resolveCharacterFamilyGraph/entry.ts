@@ -267,11 +267,13 @@ function deriveSiblingLabel(siblingRecord, ownAge) {
   return 'sibling';
 }
 
-function deriveChildLabel(childRecord) {
+function deriveChildLabel(childRecord, parentEntryRel) {
   const gender = childRecord?.gender;
-  if (gender === 'male') return 'son';
-  if (gender === 'female') return 'daughter';
-  return 'child';
+  const base = gender === 'male' ? 'son' : gender === 'female' ? 'daughter' : 'child';
+  const rel = (parentEntryRel || '').toLowerCase();
+  if (rel.startsWith('step')) return `step${base}`;
+  if (rel.startsWith('adopt')) return `adopted ${base}`;
+  return base;
 }
 
 Deno.serve(async (req) => {
@@ -547,21 +549,22 @@ Deno.serve(async (req) => {
       if (otherChar.id === characterId) continue;
 
       const otherFamily = otherChar.family_members || [];
-      const listsAsParent = otherFamily.some(m => {
-        // Check both field names
+      // The linking entry also states HOW this character is that child's parent
+      // (step, adopted, or biological), so the child's title is never overstated.
+      const parentEntry = otherFamily.find(m => {
         const mLinkId = m._linked_character_id || m.character_id || null;
         return mLinkId === characterId &&
           PARENT_TYPES.has((m.relationship_type || '').toLowerCase());
       });
 
-      if (listsAsParent && !seenChildIds.has(otherChar.id)) {
+      if (parentEntry && !seenChildIds.has(otherChar.id)) {
         seenChildIds.add(otherChar.id);
         derivedChildren.push({
           name: otherChar.display_name || otherChar.name,
           character_id: otherChar.id,
           age: resolveAge(otherChar),
           gender: otherChar.gender,
-          relationship_type: deriveChildLabel(otherChar),
+          relationship_type: deriveChildLabel(otherChar, parentEntry.relationship_type),
         });
       }
     }
