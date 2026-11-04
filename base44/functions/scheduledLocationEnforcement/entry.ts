@@ -540,6 +540,21 @@ function computeResolved(character, locationMap, etTime) {
   if (isAwayFromHome) {
     const visitLoc = locationMap[resolvedLocId];
 
+    // LOOKUP-GAP GUARD: this enforcer only loads locations owned by the account.
+    // A user-initiated move to a shared or otherwise out-of-scope location is a
+    // lookup gap, not evidence the character belongs at home. Preserve the move.
+    if (!visitLoc && isUserInitiatedVisit) {
+      return {
+        resolved_current_location_id: resolvedLocId,
+        resolved_current_location_name: character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: character.resolved_location_type || 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason,
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    }
+
     // CLOSED LOCATION BLOCK: If the location is closed right now, never preserve it — fall through to home
     if (visitLoc && !isValidSleepLocation(visitLoc) && !isLocationCurrentlyOpen(visitLoc, etTime)) {
       // Location is closed — do not preserve regardless of visit source
@@ -814,7 +829,7 @@ Deno.serve(async (req) => {
             entry.action = 'would_update';
           } else {
             // WRITE: only changed fields, only if not dry_run
-            const timestamp = etTime.toISOString();
+            const timestamp = new Date().toISOString();
 
             // CORRECTION LOCK: if the character is being moved away from a non-home, non-sleep location
             // (e.g. closed social/religion/workplace), write a 30-minute lock so autonomous movement
