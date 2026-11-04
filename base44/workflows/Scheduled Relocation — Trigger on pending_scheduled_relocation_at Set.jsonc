@@ -2,7 +2,7 @@
   "name": "Scheduled Relocation \u2014 Trigger on pending_scheduled_relocation_at Set",
   "description": "Registration event for the existing relocation pipeline. When a character's pending_scheduled_relocation_at is set or changed, it waits until that registered instant and then invokes processScheduledRelocations \u2014 the existing executor that routes the due move through enforceCharacterLocationPresence, the sole canonical writer. An already-due registration runs immediately. No new function, no recurring schedule, no polling: the delay is read from the relocation timestamp the app already stores.",
   "trigger": {
-    "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) }",
+    "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) and (.trigger.data.pending_scheduled_relocation_at != null) }",
     "config": {
       "trigger_type": "entity",
       "events": [

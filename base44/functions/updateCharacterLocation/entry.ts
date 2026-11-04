@@ -86,6 +86,13 @@ Deno.serve(async (req) => {
         resolved_presence_status: rabbitHolePresence,
         resolved_source_reason: sourceReason || 'user_teleport_rabbit_hole',
         resolved_last_updated_at: now,
+        // An executed movement supersedes any pending scheduled relocation —
+        // leaving it registered would move the character again later and undo this move.
+        pending_scheduled_relocation_at: null,
+        next_location_id: null,
+        next_location_name: null,
+        pending_relocation_from: null,
+        pending_relocation_from_name: null,
         travel_status: 'not_traveling',
         travel_destination_location_id: null,
         traveling_to_location_id: null,
@@ -150,8 +157,21 @@ Deno.serve(async (req) => {
     const previousLocationName = matched.resolved_current_location_name || null;
     const now = new Date().toISOString();
 
-    const resolvedStatus = presenceStatus || 'visiting';
-    const resolvedType = locationType || 'visit';
+    // HOME PRESENCE: arriving at the character's own assigned home through any
+    // user-initiated move is HOME, not a visit. Uses the existing authoritative
+    // home fields only — no residential reassignment, no new classification rules.
+    const authoritativeHomeId = (matched.vacation_mode === true && matched.vacation_home_location_id)
+      ? matched.vacation_home_location_id
+      : (matched.is_temporarily_housed === true && matched.temporary_housing_location_id)
+        ? matched.temporary_housing_location_id
+        : (matched.current_home_location_id || matched.home_location_id || null);
+    const isHomeDestination = !!authoritativeHomeId && authoritativeHomeId === matchedLoc.id;
+    const resolvedStatus = isHomeDestination && (!presenceStatus || presenceStatus === 'visiting')
+      ? 'home'
+      : (presenceStatus || 'visiting');
+    const resolvedType = isHomeDestination && (!locationType || locationType === 'visit')
+      ? 'home'
+      : (locationType || 'visit');
 
     // STEP 5: Write using the verified matched character's real ID
     // Also append a lightweight daily location history entry so characters can reference
@@ -186,6 +206,13 @@ Deno.serve(async (req) => {
       resolved_presence_status: resolvedStatus,
       resolved_source_reason: sourceReason || 'manual_update',
       resolved_last_updated_at: now,
+      // An executed movement supersedes any pending scheduled relocation —
+      // leaving it registered would move the character again later and undo this move.
+      pending_scheduled_relocation_at: null,
+      next_location_id: null,
+      next_location_name: null,
+      pending_relocation_from: null,
+      pending_relocation_from_name: null,
       recent_location_history: updatedHistory,
       // Clear all stale travel fields
       travel_status: 'not_traveling',
