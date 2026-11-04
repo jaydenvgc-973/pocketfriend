@@ -1237,7 +1237,7 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   const locId = resolved.resolved_current_location_id;
   const locName = resolved.resolved_current_location_name || (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
-  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const timeStr = now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true });
 
   // ONE LOCATION TRUTH: what the resolver returns IS where the character is.
   // A stored resolved_* field, an earlier message, or an earlier narrative that

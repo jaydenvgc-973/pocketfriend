@@ -543,7 +543,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   if (character.resolved_current_location_name) {
     const rawPs = character.resolved_presence_status;
     const ps = rawPs === 'traveling' ? null : rawPs;
-    lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated.`);
+    lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated. A promise, a plan, or a user-confirmed scheduled move is NOT an arrival — only this line establishes where you physically are. You may say you are about to head somewhere, but you have not arrived there and may not narrate arriving.`);
   }
 
   // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────
@@ -1872,7 +1872,7 @@ Deno.serve(async (req) => {
       if (coPresence?.userPresentHere) {
         copresenceNote = `\nCO-PRESENCE: The user is physically present with you right now at ${coPresence.speakingCharacterLocationName || 'your location'}.`;
       } else if (userCurrentLocationId && userCurrentLocationId !== character.resolved_current_location_id) {
-        copresenceNote = `\nREMOTE INTERACTION: The user is at "${userCurrentLocationName || 'somewhere else'}" — you are communicating remotely (not physically together).`;
+        copresenceNote = `\nREMOTE INTERACTION: The user is at "${userCurrentLocationName || 'somewhere else'}" — you are communicating remotely (not physically together). You are NOT at that place. Do not describe arriving there, walking in, dropping keys, taking off a coat, or sitting down with them, and do not speak as if you can see or touch them. Their location is not your location, and being told or asked to come over does not move you.`;
       }
 
       const otherCharsNote = coPresence?.charactersPresentHere && coPresence.charactersPresentHere.length > 0
@@ -1886,7 +1886,7 @@ Deno.serve(async (req) => {
       // resolves schedule conflicts before committing canonical state.
       const staleCacheWarning = '';
 
-      worldStateContext = `\n════════════════════════════════════\nWORLD STATE AUTHORITY (RECONCILIATION)\n════════════════════════════════════\nCurrent Time: ${now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} ET\nYour Current Location: ${charLocName}\nYour Current Presence: ${charResolved}\n${elapsedMinutes > 0 ? `Time Since Last Interaction: ${elapsedStr}` : 'No prior interaction.'}\n${copresenceNote}${otherCharsNote}\n\nBEHAVIOR DIRECTIVE:\nThis world-state information is AUTHORITATIVE and takes precedence over recent chat context.\nYour committed presence state (${charResolved}) is the single source of truth — it was committed by the canonical authority.\nCached needs values (energy, comfort, hunger) are display data — they do NOT override your committed presence.\nIf your committed state says you are at school, at work, sleeping, or passed out — that IS your current state.\n════════════════════════════════════`;
+      worldStateContext = `\n════════════════════════════════════\nWORLD STATE AUTHORITY (RECONCILIATION)\n════════════════════════════════════\nCurrent Time: ${now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true })} ET\nYour Current Location: ${charLocName}\nYour Current Presence: ${charResolved}\n${elapsedMinutes > 0 ? `Time Since Last Interaction: ${elapsedStr}` : 'No prior interaction.'}\n${copresenceNote}${otherCharsNote}\n\nBEHAVIOR DIRECTIVE:\nThis world-state information is AUTHORITATIVE and takes precedence over recent chat context.\nYour committed presence state (${charResolved}) is the single source of truth — it was committed by the canonical authority.\nCached needs values (energy, comfort, hunger) are display data — they do NOT override your committed presence.\nIf your committed state says you are at school, at work, sleeping, or passed out — that IS your current state.\n════════════════════════════════════`;
     } catch (wsErr) {
       console.warn(`[buildCanonicalCharacterContext] world-state reconciliation error: ${wsErr.message}`);
     }
