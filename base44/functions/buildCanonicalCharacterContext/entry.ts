@@ -34,8 +34,13 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 // ── INLINE HELPERS ────────────────────────────────────────────────────────────
 // Deno functions cannot import local lib files — all helpers are inlined.
 
+// Eastern Time is the authoritative application timezone for age/birthday math.
+const _etNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+const _dobAge = (c) => { const m = String(c?.birthday || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return null; const n = _etNow(); let a = n.getFullYear() - +m[1]; if (n.getMonth() + 1 < +m[2] || (n.getMonth() + 1 === +m[2] && n.getDate() < +m[3])) a--; return a >= 0 && a < 130 ? a : null; };
 function resolveCharacterAge(c) {
   if (c.age && typeof c.age === 'number' && c.age > 0) return c.age;
+  const bd = _dobAge(c); if (bd != null) return bd;
+  const by = +c.birth_year; if (by >= 1900) { const a = _etNow().getFullYear() - by; if (a >= 0 && a < 130) return a; }
   if (c.age_range) {
     const r = c.age_range.toLowerCase();
     if (r.includes('early 20')) return 21;
@@ -1480,22 +1485,8 @@ Deno.serve(async (req) => {
       count: recentMessages.length,
     });
 
-    // NOTE: Phrase-detection research initiation (user-lookup-request and
-    // character-initiated research) was REMOVED. The character's external-
-    // information capability is now restored at the response-generation layer:
-    // callLLMWithRetry(fullPrompt, 'gemini_3_flash', 3, true) in Chat.jsx passes
-    // add_context_from_internet: true, so the LLM itself recognizes the information
-    // need from conversation context and searches Google as part of generating
-    // the character's response. No phrase detection, no deferred lookup, no
-    // stripped search subjects. The LLM preserves the full conversational context
-    // (including disambiguating identifiers) because it decides what to search for.
-    //
-    // Marketing/Promotion traits still matter — buildMarketingPromotionBlock tells
-    // the LLM about its research capabilities through the system prompt. The LLM
-    // uses these capabilities when conversation context makes them relevant.
-    //
-    // performWebLookup and buildResearchFindingsBlock remain for storing genuine
-    // research findings as character-global knowledge (available on all surfaces).
+    // NOTE: research needs are resolved at the response layer (add_context_from_internet)
+    // and by buildResearchFindingsBlock — there is no phrase detection here.
 
     // ── Step 5b: World Phone awareness — delegated to buildWorldPhoneAwarenessBlock ──
     // READ-ONLY. Returns awarenessBlock string + latestWpMsgTs for freshness metadata.
