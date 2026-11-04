@@ -906,14 +906,6 @@ function buildModeBlock(interactionContext) {
   return blocks[interactionContext] || '';
 }
 
-// ── WORLD STATE RECONCILIATION ENGINE ───────────────────────────────────────
-// This is now handled by lib/worldStateReconciliationEngine.js
-// The function signature below is kept for backwards compatibility but delegates to the engine.
-function buildWorldStateContinuityBlock(character) {
-  // Placeholder — actual implementation delegated to reconcileWorldStateForResponse
-  return '';
-}
-
 // ── MARKETING / PROMOTION CAPABILITY BLOCK ────────────────────────────────────
 // Injects behavioral instructions for active Marketing/Promotion traits AND connects
 // them to existing real-world information (world_context_cache, daily_weather_cache)

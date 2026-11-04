@@ -45,9 +45,212 @@ const MOTHER_TYPES = new Set([
   'stepmother', 'stepmom', 'adoptive mother', 'maternal mother', 'foster mother',
 ]);
 
+// ── AGE / BIRTHDAY (Eastern Time — the application's authoritative timezone) ─
+// Age follows from whatever the profile actually records: numeric age, then a
+// recorded date of birth, then a recorded birth year. Nothing is invented.
+function easternToday() {
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return { year: et.getFullYear(), month: et.getMonth() + 1, day: et.getDate() };
+}
+
+function parseBirthday(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return { year: +iso[1], month: +iso[2], day: +iso[3], hasMonthDay: true };
+  const yearOnly = s.match(/^(\d{4})$/);
+  if (yearOnly) return { year: +yearOnly[1], month: null, day: null, hasMonthDay: false };
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return null;
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(), hasMonthDay: true };
+}
+
+function ageFromBirthday(birthday) {
+  const b = parseBirthday(birthday);
+  if (!b || !b.hasMonthDay) return null;
+  const today = easternToday();
+  let age = today.year - b.year;
+  if (today.month < b.month || (today.month === b.month && today.day < b.day)) age--;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+function ageFromBirthYear(birthYear) {
+  const y = typeof birthYear === 'number' ? birthYear : parseInt(birthYear, 10);
+  if (!y || isNaN(y) || y < 1900) return null;
+  const age = easternToday().year - y;
+  return age >= 0 && age < 130 ? age : null;
+}
+
 function resolveAge(c) {
-  if (c?.age && typeof c.age === 'number' && c.age > 0) return c.age;
-  return null;
+  if (!c) return null;
+  if (typeof c.age === 'number' && c.age > 0) return Math.floor(c.age);
+  const fromBirthday = ageFromBirthday(c.birthday);
+  if (fromBirthday != null) return fromBirthday;
+  return ageFromBirthYear(c.birth_year);
+}
+
+function birthdayLabel(character) {
+  const b = parseBirthday(character?.birthday);
+  if (!b || !b.hasMonthDay) return null;
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthName = monthNames[b.month - 1];
+  if (!monthName) return null;
+  const dateLabel = `${monthName} ${b.day}`;
+  return {
+    date: b.year > 1900 ? `${dateLabel}, ${b.year}` : dateLabel,
+    monthDay: dateLabel,
+    hasYear: b.year > 1900,
+  };
+}
+
+// ── KINSHIP HELPERS ──────────────────────────────────────────────────────────
+// Stored parent links only. Step links are kept separate from lineage links:
+// marriage and co-parenting create step relationships, never biological ones.
+const LINEAGE_KINDS = new Set(['lineage', 'adoptive']);
+
+function parentKindFromRel(relLower) {
+  if (relLower.startsWith('step')) return 'step';
+  if (relLower.startsWith('foster')) return 'foster';
+  if (relLower.startsWith('adopt')) return 'adoptive';
+  return 'lineage';
+}
+
+function buildParentMap(allChars) {
+  const map = new Map();
+  const add = (childId, parentId, kind, rel) => {
+    if (!childId || !parentId || childId === parentId) return;
+    const arr = map.get(childId) || [];
+    if (arr.some(p => p.parentId === parentId && p.kind === kind)) return;
+    arr.push({ parentId, kind, rel });
+    map.set(childId, arr);
+  };
+  for (const c of allChars) {
+    for (const m of c.family_members || []) {
+      const link = m._linked_character_id || m.character_id || null;
+      if (!link) continue;
+      const rel = (m.relationship_type || '').toLowerCase();
+      if (PARENT_TYPES.has(rel)) add(c.id, link, parentKindFromRel(rel), rel);
+      else if (CHILD_TYPES.has(rel)) add(link, c.id, parentKindFromRel(rel), rel);
+    }
+  }
+  return map;
+}
+
+function kinshipTerm(record, male, female, neutral) {
+  const g = (record?.gender || '').toLowerCase();
+  if (g === 'male') return male;
+  if (g === 'female') return female;
+  return neutral;
+}
+
+function cousinDegreeLabel(degree, removal) {
+  const ord = degree === 1 ? 'first' : degree === 2 ? 'second' : degree === 3 ? 'third' : `${degree}th`;
+  const rem = removal <= 0 ? '' : removal === 1 ? ' once removed' : removal === 2 ? ' twice removed' : ` ${removal} times removed`;
+  return `${ord} cousin${rem}`;
+}
+
+// Ancestor depth map (1 = parent, 2 = grandparent, ...). Biological and adoptive
+// links carry lineage; step and foster links do not create blood relationship.
+function ancestorDepths(id, parentMap, cache) {
+  if (cache.has(id)) return cache.get(id);
+  const depths = new Map();
+  let frontier = [{ id, depth: 0 }];
+  const seen = new Set([id]);
+  while (frontier.length > 0) {
+    const next = [];
+    for (const node of frontier) {
+      if (node.depth >= 4) continue;
+      for (const p of (parentMap.get(node.id) || [])) {
+        if (!LINEAGE_KINDS.has(p.kind)) continue;
+        if (seen.has(p.parentId)) continue;
+        seen.add(p.parentId);
+        const depth = node.depth + 1;
+        if (!depths.has(p.parentId) || depths.get(p.parentId) > depth) depths.set(p.parentId, depth);
+        next.push({ id: p.parentId, depth });
+      }
+    }
+    frontier = next;
+  }
+  cache.set(id, depths);
+  return depths;
+}
+
+function deriveExtendedKin(characterId, allChars, parentMap, excludeIds) {
+  const cache = new Map();
+  const own = ancestorDepths(characterId, parentMap, cache);
+  const out = { grandparents: [], grandchildren: [], auntsUncles: [], niecesNephews: [], cousins: [] };
+  const push = (list, rec, label) => {
+    if (list.length >= 8) return;
+    list.push({ name: rec.display_name || rec.name || 'Unnamed', character_id: rec.id, relationship_type: label });
+  };
+
+  for (const other of allChars) {
+    if (other.id === characterId || excludeIds.has(other.id)) continue;
+    const theirs = ancestorDepths(other.id, parentMap, cache);
+
+    // They are my descendant
+    const iAmTheirAncestor = theirs.get(characterId);
+    if (iAmTheirAncestor === 2) { push(out.grandchildren, other, kinshipTerm(other, 'grandson', 'granddaughter', 'grandchild')); continue; }
+    if (iAmTheirAncestor >= 3) { push(out.grandchildren, other, 'great-' + kinshipTerm(other, 'grandson', 'granddaughter', 'grandchild')); continue; }
+
+    // They are my ancestor
+    const theyAreMyAncestor = own.get(other.id);
+    if (theyAreMyAncestor === 2) { push(out.grandparents, other, kinshipTerm(other, 'grandfather', 'grandmother', 'grandparent')); continue; }
+    if (theyAreMyAncestor >= 3) { push(out.grandparents, other, 'great-' + kinshipTerm(other, 'grandfather', 'grandmother', 'grandparent')); continue; }
+
+    // Closest common ancestor — the basis of cousinship
+    let best = null;
+    for (const [ancId, dA] of own) {
+      const dB = theirs.get(ancId);
+      if (!dB) continue;
+      if (dA === 1 && dB === 1) continue; // siblings are derived separately
+      const score = dA + dB;
+      const removal = Math.abs(dA - dB);
+      if (!best || score < best.score || (score === best.score && removal < best.removal)) best = { dA, dB, score, removal };
+    }
+    if (!best) continue;
+
+    if (best.dA === 1 && best.dB === 2) { push(out.niecesNephews, other, kinshipTerm(other, 'nephew', 'niece', "sibling's child")); continue; }
+    if (best.dA === 1 && best.dB >= 3) { push(out.niecesNephews, other, 'great-' + kinshipTerm(other, 'nephew', 'niece', "sibling's grandchild")); continue; }
+    if (best.dB === 1 && best.dA === 2) { push(out.auntsUncles, other, kinshipTerm(other, 'uncle', 'aunt', "parent's sibling")); continue; }
+    if (best.dB === 1 && best.dA >= 3) { push(out.auntsUncles, other, 'great-' + kinshipTerm(other, 'uncle', 'aunt', "grandparent's sibling")); continue; }
+    if (best.dA >= 2 && best.dB >= 2) {
+      push(out.cousins, other, cousinDegreeLabel(Math.min(best.dA, best.dB) - 1, best.removal));
+    }
+  }
+  return out;
+}
+
+function classifySibling(sibling, characterId, charById, parentMap) {
+  const rec = sibling.character_id ? charById.get(sibling.character_id) : null;
+  const base = kinshipTerm(rec || { gender: sibling.gender }, 'brother', 'sister', 'sibling');
+  const explicit = (sibling.relationship_type || '').toLowerCase();
+  const order = explicit.includes('older') ? 'older ' : explicit.includes('younger') ? 'younger ' : '';
+
+  // An explicitly recorded half/step title is established profile information.
+  if (explicit.includes('step')) return { label: sibling.relationship_type, kind: 'step' };
+  if (explicit.includes('half')) return { label: sibling.relationship_type, kind: 'half' };
+
+  const mine = (parentMap.get(characterId) || []);
+  const theirLinks = sibling.character_id ? (parentMap.get(sibling.character_id) || []) : [];
+  const myBio = mine.filter(p => LINEAGE_KINDS.has(p.kind)).map(p => p.parentId);
+  const theirBio = theirLinks.filter(p => LINEAGE_KINDS.has(p.kind)).map(p => p.parentId);
+  const myStep = mine.filter(p => p.kind === 'step').map(p => p.parentId);
+  const theirStep = theirLinks.filter(p => p.kind === 'step').map(p => p.parentId);
+  const sharedBio = myBio.filter(id => theirBio.includes(id));
+
+  // A step-parent's own child is a step-sibling — not a biological sibling.
+  const stepTie = myStep.some(id => theirBio.includes(id)) || theirStep.some(id => myBio.includes(id));
+  if (sharedBio.length === 0 && stepTie) {
+    return { label: `step${base}`, kind: 'step' };
+  }
+  if (sharedBio.length >= 2) return { label: `${order}${base}`, kind: 'full' };
+  if (sharedBio.length === 1) {
+    // One shared parent only counts as half-siblings when another parent is recorded.
+    if (myBio.length >= 2 || theirBio.length >= 2) return { label: `half-${base}`, kind: 'half' };
+    return { label: `${order}${base}`, kind: 'sibling' };
+  }
+  return { label: `${order}${base}`, kind: 'sibling' };
 }
 
 function deriveSiblingLabel(siblingRecord, ownAge) {
@@ -127,6 +330,11 @@ Deno.serve(async (req) => {
     const nonUserFamilyMembers = familyMembers.filter(m =>
       m._is_user !== true && m.participant_type !== 'user'
     );
+
+    // Established parent links across the roster, read once from the records
+    // themselves (child-side entries and parent-side child lists). Kinship
+    // implications follow from these links — they are never entered twice.
+    const parentMap = buildParentMap(allChars);
 
     // ── STEP 1: Identify explicit family members by type ─────────────────────
     const explicitParents = nonUserFamilyMembers.filter(m =>
@@ -381,18 +589,39 @@ Deno.serve(async (req) => {
       ...derivedChildren.map(c => ({ ...c, source: 'derived' })),
     ];
 
+    // ── STEP 5b: SIBLING CLASSIFICATION + EXTENDED KIN ────────────────────────
+    // Sibling titles follow from recorded parentage: both parents shared = full,
+    // one shared (with another parent recorded) = half, a step-parent's other
+    // children = step-sibling. Never asserted where the data does not support it.
+    allSiblings.forEach(s => {
+      const classified = classifySibling(s, characterId, charById, parentMap);
+      s.relationship_type = classified.label;
+      s.sibling_kind = classified.kind;
+    });
+
+    const directKinIds = new Set([
+      characterId,
+      ...resolvedParents.map(p => p.character_id).filter(Boolean),
+      ...allChildren.map(c => c.character_id).filter(Boolean),
+      ...allSiblings.map(s => s.character_id).filter(Boolean),
+    ]);
+    const kin = deriveExtendedKin(characterId, allChars, parentMap, directKinIds);
+
     // ── STEP 6: Build the authoritative prompt block ──────────────────────────
-    const hasAnyFamily = resolvedParents.length > 0 || allSiblings.length > 0 || allChildren.length > 0;
+    const hasExtendedKin = kin.grandparents.length > 0 || kin.grandchildren.length > 0 ||
+      kin.auntsUncles.length > 0 || kin.niecesNephews.length > 0 || kin.cousins.length > 0;
+    const hasAnyFamily = resolvedParents.length > 0 || allSiblings.length > 0 || allChildren.length > 0 || hasExtendedKin;
     // Use effectiveAge (parent-derived if own record missing), effectiveGender similarly
     const finalAge = effectiveAge;
     const finalGender = effectiveGender;
+    const dob = birthdayLabel(targetChar);
 
     let promptBlock = '';
 
     // Include user participants in "hasAnyFamily" check
     const hasUserParticipants = userParticipantMembers.length > 0;
 
-    if (hasAnyFamily || finalAge || hasUserParticipants) {
+    if (hasAnyFamily || finalAge || dob || hasUserParticipants) {
       const lines = [];
       lines.push('════════════════════════════════════');
       lines.push('AUTHORITATIVE FAMILY KNOWLEDGE — DERIVED FROM FAMILY GRAPH');
@@ -408,22 +637,34 @@ Deno.serve(async (req) => {
         lines.push('NOTE: The above person(s) are the real authenticated user, not simulated NPCs. Treat them as the person you are talking to.');
       }
 
-      // Age
-      if (finalAge) {
+      // Age + birthday — profile facts, not narrative decoration
+      if (finalAge || dob) {
         const ageGroup = finalAge <= 3 ? 'toddler' : finalAge <= 12 ? 'child' : finalAge <= 17 ? 'teenager' : finalAge <= 25 ? 'young adult' : 'adult';
-        lines.push(`YOUR AGE: You are ${finalAge} years old (${ageGroup}). This is a fact — never express uncertainty about your own age.`);
+        lines.push('\nYOUR AGE AND BIRTHDAY:');
+        if (dob) lines.push(`- Date of birth: ${dob.date}.`);
+        if (finalAge) lines.push(`- You are ${finalAge} years old${dob && dob.hasYear ? ` (${ageGroup})` : ''}.`);
+        lines.push('RULES: Your age follows from your recorded date of birth — once your birthday passes in a given year, your age has advanced. Never give an age that contradicts this, never invent a different birthday, and never claim you do not know your own age. Do NOT volunteer this unprompted; it is knowledge, not small talk.');
+        if (!dob && finalAge) {
+          lines.push('NOTE: Only your age is established. Your birthday date is not recorded, so do not invent a month or day.');
+        }
+        if (dob && !dob.hasYear) {
+          lines.push('NOTE: Your birth year is not established. Do not invent one.');
+        }
       }
 
       // Parents
       if (resolvedParents.length > 0) {
         lines.push('\nYOUR PARENTS:');
         for (const p of resolvedParents) {
-          const naturalTerm = p.is_mother ? 'Mom' : 'Dad';
-          let line = `- ${p.name} — your ${p.relationship_type}. Call them "${naturalTerm}" naturally in conversation (not by first name).`;
+          const relLower = (p.relationship_type || '').toLowerCase();
+          const gendered = relLower.includes('mother') ? 'Mom' : relLower.includes('father') ? 'Dad' : null;
+          let line = `- ${p.name} — your ${p.relationship_type}.`;
+          if (gendered) line += ` Call them "${gendered}" naturally in conversation (not by first name).`;
+          else line += ` Use "my parent" or their name. Do NOT assign a gendered title that is not established.`;
           if (p.age) line += ` Age: ${p.age}.`;
           lines.push(line);
         }
-        lines.push(`RULE: Do NOT address your parent by their first name as if they were a stranger. Use "${resolvedParents[0]?.is_mother ? 'Mom' : 'Dad'}" etc.`);
+        lines.push(`RULE: Do NOT address your parent by their first name as if they were a stranger. Use the established title: a mother is "Mom", a father is "Dad", otherwise "my parent".`);
       }
 
       // Siblings
@@ -451,6 +692,28 @@ Deno.serve(async (req) => {
         lines.push(`CHILDREN COUNT: You have ${allChildren.length} child${allChildren.length !== 1 ? 'ren' : ''}.`);
         lines.push(`PROHIBITED: Do NOT claim you have no children.`);
       }
+
+      // ── Extended kin — derived from the same recorded parent links ──────────
+      const kinSection = (title, list, rule) => {
+        if (list.length === 0) return;
+        lines.push(`\n${title}`);
+        for (const k of list) lines.push(`- ${k.name} — your ${k.relationship_type}.`);
+        if (rule) lines.push(rule);
+      };
+      kinSection('YOUR GRANDPARENTS:', kin.grandparents, 'These are your parents\' parents. Use the correct generational title.');
+      kinSection('YOUR GRANDCHILDREN:', kin.grandchildren, 'These are your children\'s children.');
+      kinSection('YOUR AUNTS AND UNCLES:', kin.auntsUncles, 'These are your parents\' siblings. Do NOT call them cousins or siblings.');
+      kinSection('YOUR NIECES AND NEPHEWS:', kin.niecesNephews, 'These are your siblings\' children. Do NOT call them your children or your cousins.');
+      kinSection('YOUR COUSINS:', kin.cousins, 'The degree and any "removed" wording is the correct title for each person. A first cousin once removed is NOT a second cousin. Relate to them as cousins.');
+
+      // ── Kinship rules — relationship facts vs. family dynamics ──────────────
+      lines.push('\nKINSHIP RULES:');
+      lines.push('- Family titles describe how people are related. They do NOT describe how close you are, how you feel about each other, or how you treat each other. That comes from your history, memories, and relationships.');
+      lines.push('- One shared biological parent makes half-siblings. Both shared makes full siblings. A step-parent\'s other children are step-siblings, not biological siblings.');
+      lines.push('- Marriage creates step and in-law relationships. It never rewrites who someone\'s biological parents are.');
+      lines.push('- Adoption is a real family relationship. It is never a biological one.');
+      lines.push('- Do not invent family connections that are not listed here. Having a child with someone does not make you the parent of their other children, and does not make those children your stepchildren.');
+      lines.push('- If you learn something new that establishes a relationship (for example, that someone shares your biological parent), reason from it: one shared biological parent makes them your half-sibling. Do not require it to be explained to you again.');
 
       // Dialogue requirements
       lines.push('\n════════════════════════════════════');
@@ -486,9 +749,16 @@ Deno.serve(async (req) => {
       characterId,
       ownAge: finalAge,
       ownGender: finalGender,
+      ownBirthday: dob ? dob.date : null,
+      birthdayMonthDay: dob ? dob.monthDay : null,
       parents: resolvedParents,
       siblings: allSiblings,
       children: allChildren,
+      grandparents: kin.grandparents,
+      grandchildren: kin.grandchildren,
+      auntsUncles: kin.auntsUncles,
+      niecesNephews: kin.niecesNephews,
+      cousins: kin.cousins,
       derivedSiblingsCount: derivedSiblings.length,
       explicitSiblingsCount: explicitSiblings.length,
       promptBlock,
