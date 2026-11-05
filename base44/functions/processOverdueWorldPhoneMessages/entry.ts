@@ -54,11 +54,16 @@ Return ONLY the description text, nothing else.`;
 // A routing label like "Image sent to X" is NOT image analysis.
 const TRANSPORT_REJECT = /image sent to|photo shared|sent to [A-Z]|shared with [A-Z]|uploaded image|image attachment|photo attachment/i;
 
+// An apology that the image could not be read is NOT image analysis either.
+// Storing it as a successful description would report a failed read as a success.
+const UNREADABLE_REJECT = /unable to (?:provide|describe|analy[sz]e|see|view|access|open|process)|cannot (?:see|view|access|open|process)|can't (?:see|view|access|open|process)|could not be opened|couldn't be opened|could not be (?:loaded|accessed|found)|no image (?:was )?(?:provided|attached)|please (?:re-?upload|upload (?:the|an|a) (?:image|file|photo))|not a valid image|image (?:is |appears )?(?:blank|corrupt|unreadable)|i (?:don't|do not) have (?:access|the ability) to (?:see|view)/i;
+
 function isUsableDescription(text) {
   if (!text || typeof text !== 'string') return false;
   const trimmed = text.trim();
   if (trimmed.length < 40) return false;
   if (TRANSPORT_REJECT.test(trimmed)) return false;
+  if (UNREADABLE_REJECT.test(trimmed)) return false;
   return true;
 }
 
@@ -88,7 +93,9 @@ async function resolveReceivedImageUnderstanding(base44, message) {
         image_analysis_status: 'failed',
         image_analysis_error: TRANSPORT_REJECT.test(description)
           ? 'Vision returned transport metadata, not a visual description'
-          : 'Vision returned insufficient visual detail',
+          : UNREADABLE_REJECT.test(description)
+            ? 'Attachment could not be read — vision reported no usable image content'
+            : 'Vision returned insufficient visual detail',
       }).catch(() => {});
       return { description: null, status: 'failed' };
     }
