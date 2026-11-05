@@ -31,6 +31,102 @@ const OVERDUE_HOURS = 48;
 const MAX_RESPONSES_PER_RUN = 5; // cap to avoid rate limit per production run
 const MAX_CONVOS_TO_SCAN = 50; // limit conversation scan per run to avoid 429s on message fetch
 
+// ── IMAGE UNDERSTANDING (WORLD PHONE RECIPIENT) ─────────────────────────────
+// Reuses the SAME established image-understanding mechanism the Chat and Text
+// pages use: vision analysis of the actual attachment via InvokeLLM
+// (prompt identical to src/lib/analyzeImageForCharacterContext.js), result stored
+// durably on the Message record so later turns keep the image in context.
+// Deno functions cannot import src/lib — this is the same enforced duplication
+// pattern already used by the Story Event generators. No parallel vision system.
+const IMAGE_ANALYSIS_PROMPT = `Provide a rich, detailed visual description of this image.
+Include ALL of the following that are visible:
+- People shown: apparent age range, gender presentation, clothing details, expressions, poses
+- Objects visible: food, drinks, furniture, decorations, vehicles, any notable items
+- Setting and environment: indoor/outdoor, type of location (restaurant, home, park, etc.)
+- Lighting and atmosphere: warm/cool, time of day, mood
+- Relationship or context clues: are people together? What are they doing?
+- Any text, signs, or notable details visible
+
+Be specific, factual, and thorough. Minimum 3-5 sentences.
+Do NOT speculate beyond what is literally visible.
+Return ONLY the description text, nothing else.`;
+
+// A routing label like "Image sent to X" is NOT image analysis.
+const TRANSPORT_REJECT = /image sent to|photo shared|sent to [A-Z]|shared with [A-Z]|uploaded image|image attachment|photo attachment/i;
+
+function isUsableDescription(text) {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (trimmed.length < 40) return false;
+  if (TRANSPORT_REJECT.test(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Resolve what a received image actually shows.
+ * 1. Use the description already stored on the message (written by sendWorldPhoneMessage
+ *    or by a previous pass of this function).
+ * 2. Otherwise run the established vision analysis on the real attachment and store it.
+ * Never returns invented content: a failure yields description = null.
+ */
+async function resolveReceivedImageUnderstanding(base44, message) {
+  const stored = message.image_description || message.inferred_image_description || null;
+  if (isUsableDescription(stored)) {
+    return { description: stored.trim(), status: 'stored' };
+  }
+  if (!message.image_url) return { description: null, status: 'no_image' };
+
+  try {
+    const res = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt: IMAGE_ANALYSIS_PROMPT,
+      file_urls: [message.image_url],
+    });
+    const description = (typeof res === 'string' ? res : '').trim();
+
+    if (!isUsableDescription(description)) {
+      await base44.asServiceRole.entities.Message.update(message.id, {
+        image_analysis_status: 'failed',
+        image_analysis_error: TRANSPORT_REJECT.test(description)
+          ? 'Vision returned transport metadata, not a visual description'
+          : 'Vision returned insufficient visual detail',
+      }).catch(() => {});
+      return { description: null, status: 'failed' };
+    }
+
+    await base44.asServiceRole.entities.Message.update(message.id, {
+      inferred_image_description: description,
+      image_analysis_status: 'complete',
+      image_analysis_source: 'world_phone_recipient_visual_analysis',
+      image_analysis_is_inferred: true,
+      image_analysis_is_transport_metadata: false,
+    }).catch((e) => console.warn(`[processOverdueWorldPhoneMessages] Failed to store image description: ${e.message}`));
+
+    return { description, status: 'analyzed' };
+  } catch (err) {
+    await base44.asServiceRole.entities.Message.update(message.id, {
+      image_analysis_status: 'failed',
+      image_analysis_error: err.message || 'Vision analysis failed',
+    }).catch(() => {});
+    return { description: null, status: 'failed' };
+  }
+}
+
+// What the received attachment is, expressed for the recipient character.
+function buildReceivedImageBlock(imageUnderstanding, senderName) {
+  if (!imageUnderstanding || imageUnderstanding.status === 'no_image') return '';
+  if (!imageUnderstanding.description) {
+    return `\n\n${senderName} sent you a photo, but you cannot make out what it shows. You may acknowledge that you got a photo — do NOT describe or invent its contents.`;
+  }
+  return `\n\n${senderName} also sent you a PHOTO. What the photo actually shows (this is what you see):
+"${imageUnderstanding.description}"
+
+WHAT YOU ARE LOOKING AT:
+• This description is your own view of the photo — react to it naturally, in your own voice.
+• You may notice people, objects, the setting, what they are doing, and how the moment feels.
+• Do NOT invent anything that is not in the description above.
+• Do NOT deliver a flat image summary — respond the way you actually would to a friend sending you this.`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -45,6 +141,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun === true;
     const overdueHours = body.overdueHours || OVERDUE_HOURS;
+    // Optional scope limit — processes only this conversation when provided.
+    // Absent in the scheduled run, which keeps its existing full-scan behavior.
+    const onlyConversationId = body.conversationId || null;
 
     const cutoff = new Date(Date.now() - overdueHours * 3600 * 1000).toISOString();
     const nowIso = new Date().toISOString();
@@ -60,9 +159,11 @@ Deno.serve(async (req) => {
     // This drains the deepest backlog items before newer ones.
     // Limit scan to MAX_CONVOS_TO_SCAN to avoid rate limit on message fetches.
     const convos = await base44.asServiceRole.entities.Conversation.filter(
-      { channel: 'world_phone' },
+      onlyConversationId
+        ? { channel: 'world_phone', id: onlyConversationId }
+        : { channel: 'world_phone' },
       'last_message_date',  // ascending — oldest first for backlog drain
-      MAX_CONVOS_TO_SCAN
+      onlyConversationId ? 1 : MAX_CONVOS_TO_SCAN
     ).catch(() => []);
 
     log.push(`[processOverdueWorldPhoneMessages] WP convos found: ${convos.length}`);
@@ -83,11 +184,13 @@ Deno.serve(async (req) => {
         10
       ).catch(() => []);
 
-      // Filter to real bilateral messages (not narrative, not excluded)
+      // Filter to real bilateral messages (not narrative, not excluded).
+      // An image sent with no caption is still a real message that expects a reply —
+      // it must never be filtered out for having no text.
       const realMsgs = msgs.filter(m =>
         !m.is_narrative &&
         !m.canon_excluded &&
-        m.content?.trim() &&
+        (m.content?.trim() || m.image_url) &&
         m.sender_character_id &&
         m.receiver_character_id
       );
@@ -191,17 +294,66 @@ Deno.serve(async (req) => {
         ? `It has been ${Math.round(ageHours / 24)} days since they sent this.`
         : `It has been about ${Math.round(ageHours)} hours since they sent this.`;
 
+      // ── RECEIVED IMAGE UNDERSTANDING (same capability as Chat / Text) ────────
+      // The attachment is analyzed from its actual pixels, never from its filename,
+      // type, or the sender's caption. Result is stored on the message for continuity.
+      const imageUnderstanding = await resolveReceivedImageUnderstanding(base44, lastMsg);
+      const imageBlock = buildReceivedImageBlock(imageUnderstanding, sender.name);
+      if (lastMsg.image_url) {
+        log.push(`[processOverdueWorldPhoneMessages] Image understanding for msg=${lastMsg.id}: ${imageUnderstanding.status}`);
+      }
+
+      // ── RECENT EXCHANGE (continuity) ─────────────────────────────────────────
+      // Earlier photos stay in context through their stored descriptions, so the
+      // recipient can refer back to what was shown instead of losing it.
+      const recentExchange = realMsgs.slice(0, 5).reverse().map(m => {
+        const who = m.sender_character_id === receiverId ? 'You' : sender.name;
+        const text = (m.content || '').trim();
+        const storedDescription = (m.image_description || m.inferred_image_description || '').trim();
+        if (m.image_url) {
+          return storedDescription
+            ? `${who}: [sent a photo — ${storedDescription}]${text ? ` with the message: "${text}"` : ''}`
+            : `${who}: [sent a photo]${text ? ` with the message: "${text}"` : ''}`;
+        }
+        return `${who}: "${text}"`;
+      }).join('\n');
+
+      // ── PEOPLE THE RECIPIENT ACTUALLY KNOWS (identity must respect knowledge) ─
+      // Only people this character already has a relationship with. Recognition is
+      // never assumed: an unfamiliar face stays unfamiliar.
+      const knownNames = [...new Set([
+        sender.name,
+        ...(receiver.fictional_relationships || [])
+          .map(r => r.related_character_name || r.character_name || r.name)
+          .filter(Boolean),
+      ])].slice(0, 10);
+      const knownPeopleBlock = knownNames.length > 0
+        ? `\nPeople you already know: ${knownNames.join(', ')}. If someone in the photo is clearly one of them, you may recognise them by name. Otherwise they are a stranger to you — you do not know who they are, and it is natural to say so or ask.`
+        : `\nYou do not have an established list of people you know by sight. Do not claim to recognise anyone in the photo unless ${sender.name} tells you who they are.`;
+
+      const lastMsgBody = lastMsg.content?.trim()
+        ? `"${lastMsg.content}"`
+        : `(a photo, with no caption)`;
+
       const catchUpPrompt = `You are ${receiver.name}. ${receiverPersonality}
 
 ${relContext}
 
-${sender.name} sent you this message ${timeNote}:
-"${lastMsg.content}"
+${sender.name} sent you this ${timeNote}:
+${lastMsgBody}
+${imageBlock}
+${knownPeopleBlock}
 
-You're just now getting around to responding. Write a short, natural catch-up reply in your own voice.
+--- Recent exchange, oldest to newest ---
+${recentExchange}
+--- End of exchange ---
+
+You're just now getting around to responding. Write a short, natural reply in your own voice.
+- If a photo was sent, react to what it actually shows. Do not ignore it, and do not reply as though you never saw it.
 - Acknowledge the delay naturally if it was long (2+ days): "Sorry, been busy" / "Just seeing this" / "Heads up been slammed"
 - If it was shorter (under 2 days), just reply normally without belaboring the delay
 - 1-3 sentences max. Sound real. Sound like you.
+- Never list or transcribe everything in a photo like a caption generator — respond the way you actually would.
 - Return ONLY the message text.`;
 
       let replyText = null;
