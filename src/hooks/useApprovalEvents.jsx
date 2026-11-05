@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { base44 } from "@/api/base44Client";
+import { buildPostBirthLifeEvent, easternDateString } from "@/lib/pregnancyState";
 
 /**
  * useApprovalEvents
@@ -506,8 +507,11 @@ Return JSON:`,
               }],
             });
             const existingFamily = char.family_members || [];
+            // The birth ENDS the pregnancy: the due date must not outlive the child.
+            // Written in the same update as the family link, dated by the actual birth.
             await base44.entities.Character.update(data.character.id, {
               family_members: [...existingFamily, { name: childName, relationship_type: 'child' }],
+              current_life_event: buildPostBirthLifeEvent(childName, easternDateString()),
             });
           }
         }
