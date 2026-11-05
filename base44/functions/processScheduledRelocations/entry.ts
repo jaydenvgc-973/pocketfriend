@@ -36,13 +36,16 @@ Deno.serve(async (req) => {
     } catch { /* non-fatal */ }
     const isForegroundActive = now.getTime() < userActiveSessionUntil;
 
-    // Load characters with pending relocations only
+    // Load characters with pending relocations only.
+    // The query selects on the pending field itself: reading the newest N characters and
+    // filtering afterwards silently dropped any due relocation on a character that had
+    // not been updated recently, which left it pending indefinitely.
     let commitmentChars = [];
     try {
-      commitmentChars = await base44.asServiceRole.entities.Character.filter(
-        { status: 'active' }, '-updated_date', 200
+      const pendingRows = await base44.asServiceRole.entities.Character.filter(
+        { status: 'active', pending_scheduled_relocation_at: { $exists: true } }, null, 500
       );
-      commitmentChars = commitmentChars.filter(c =>
+      commitmentChars = (pendingRows || []).filter(c =>
         c.owner_email && c.pending_scheduled_relocation_at && c.next_location_id
       );
     } catch (e) {

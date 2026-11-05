@@ -35,9 +35,17 @@ Deno.serve(async (req) => {
         await base44.asServiceRole.entities.ScheduledEvent.update(event.id, { status: 'completed' });
 
         for (const charId of (event.character_ids || [])) {
+          // PREGNANCY PERSISTENCE — an active pregnancy (gestational age + due date)
+          // lives in this same field. A calendar event must not erase it.
+          const [evtChar] = await base44.asServiceRole.entities.Character
+            .filter({ id: charId }, null, 1).catch(() => []);
+          const _storedLife = evtChar?.current_life_event || '';
+          const _pregnancyActive = /pregnan/i.test(_storedLife) &&
+            !/\b(gave birth|has given birth|no longer pregnant|baby was born)\b/i.test(_storedLife);
           // Update character state
           await base44.asServiceRole.entities.Character.update(charId, {
-            current_life_event: event.description,
+            current_life_event: _pregnancyActive ? _storedLife : event.description,
+            daily_micro_narration: _pregnancyActive ? event.description : undefined,
             life_last_updated: new Date().toISOString(),
           });
 

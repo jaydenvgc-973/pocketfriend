@@ -54,8 +54,14 @@ Deno.serve(async (req) => {
     // Update character's current_life_event to reflect this narrative.
     // Use user-scoped client — the Character RLS allows update when owner_email matches
     // the authenticated user. asServiceRole does NOT satisfy the Character RLS update condition.
+    // PREGNANCY PERSISTENCE — an active pregnancy (gestational age + due date) lives
+    // in this same field. A written narrative must not erase it.
+    const _storedLife = character[0].current_life_event || '';
+    const _pregnancyActive = /pregnan/i.test(_storedLife) &&
+      !/\b(gave birth|has given birth|no longer pregnant|baby was born)\b/i.test(_storedLife);
     const updatedCharacter = await base44.entities.Character.update(characterId, {
-      current_life_event: narrativeContent.substring(0, 150),
+      current_life_event: _pregnancyActive ? _storedLife : narrativeContent.substring(0, 150),
+      daily_micro_narration: _pregnancyActive ? narrativeContent.substring(0, 150) : undefined,
       life_last_updated: nowISO
     });
 

@@ -1,8 +1,8 @@
 {
   "name": "Scheduled Relocation \u2014 Trigger on pending_scheduled_relocation_at Set",
-  "description": "Registration event for the existing relocation pipeline. When a character's pending_scheduled_relocation_at is set or changed, it waits until that registered instant and then invokes processScheduledRelocations \u2014 the existing executor that routes the due move through enforceCharacterLocationPresence, the sole canonical writer. An already-due registration runs immediately. No new function, no recurring schedule, no polling: the delay is read from the relocation timestamp the app already stores.",
+  "description": "Registration event for the existing relocation pipeline. When a character's pending_scheduled_relocation_at is set or changed, it waits until that registered instant and then invokes processScheduledRelocations \u2014 the existing executor that routes the due move through enforceCharacterLocationPresence, the sole canonical writer. An already-due registration runs immediately. No new function, no recurring schedule, no polling: the delay is read from the relocation timestamp the app already stores. The wait target is pinned from the registration (new value, falling back to the previous value) so a later update that clears the field cannot turn a pending move into a failed run.",
   "trigger": {
-    "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) and (.trigger.data.pending_scheduled_relocation_at != null) }",
+    "condition": "${ (.trigger.changed_fields | index(\"pending_scheduled_relocation_at\") != null) }",
     "config": {
       "trigger_type": "entity",
       "events": [
@@ -15,15 +15,33 @@
     "document": {
       "dsl": "1.0.0",
       "name": "scheduled_relocation_trigger_on_pending_scheduled_relocation_at_set",
-      "version": "1.2",
+      "version": "1.3",
       "namespace": "base44"
     },
     "do": [
       {
+        "check_registration": {
+          "switch": [
+            {
+              "when": "${ ((.trigger.data.pending_scheduled_relocation_at // .trigger.old_data.pending_scheduled_relocation_at) | type) == \"string\" and (((.trigger.data.pending_scheduled_relocation_at // .trigger.old_data.pending_scheduled_relocation_at) | length) > 0) }",
+              "then": "compute_wait"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ],
+          "x-base44": {
+            "title": "Is a move registered?",
+            "description": "Only waits when a timestamp exists"
+          }
+        }
+      },
+      {
         "compute_wait": {
           "call": "compute_seconds_until",
           "with": {
-            "target_iso": "${ .trigger.data.pending_scheduled_relocation_at }"
+            "target_iso": "${ .trigger.data.pending_scheduled_relocation_at // .trigger.old_data.pending_scheduled_relocation_at }"
           },
           "then": "check_due",
           "x-base44": {

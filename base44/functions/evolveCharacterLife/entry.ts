@@ -791,11 +791,18 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
       // ── NARRATIVE FIELDS — inferred ambient narrative, not a state transition ──
       // current_life_event / emotional_state / health_status are LLM-generated
       // flavor text and mood, not canonical state facts requiring transition proof.
+      // PREGNANCY PERSISTENCE — an active pregnancy (gestational age + due date) lives
+      // in this same field. Narrative generation must not erase it; the generated
+      // sentence becomes the ambient narration instead.
+      const _pregnancyActive = /pregnan/i.test(character.current_life_event || '') &&
+        !/\b(gave birth|has given birth|no longer pregnant|baby was born)\b/i.test(character.current_life_event || '');
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
         // transient_encounters: intentionally omitted — user-controlled only
-        current_life_event: lifeEvent || '',
-        daily_micro_narration: update.daily_micro_narration || '',
+        current_life_event: _pregnancyActive ? character.current_life_event : (lifeEvent || ''),
+        daily_micro_narration: _pregnancyActive && !update.daily_micro_narration
+          ? (lifeEvent || '')
+          : (update.daily_micro_narration || ''),
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
         health_status: update.health_status || character.health_status || 'healthy',
         health_habits: update.health_habits || character.health_habits || '',

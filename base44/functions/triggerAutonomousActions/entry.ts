@@ -1104,7 +1104,18 @@ Deno.serve(async (req) => {
       // through the existing shouldTriggerAutonomy gate — no new timing mechanism.
       const lifeEvolution = await generateLifeEvolutionUpdate(base44, character, worldConditions, now);
       if (lifeEvolution) {
-        if (lifeEvolution.current_life_event) updates.current_life_event = lifeEvolution.current_life_event;
+        // PREGNANCY PERSISTENCE — an active pregnancy (gestational age + due date) is
+        // stored in this same life-event field. Unrelated narrative generation must not
+        // erase it: the generated sentence becomes the ambient narration instead.
+        const _pregnancyActive = /pregnan/i.test(character.current_life_event || '') &&
+          !/\b(gave birth|has given birth|no longer pregnant|baby was born)\b/i.test(character.current_life_event || '');
+        if (lifeEvolution.current_life_event && _pregnancyActive) {
+          if (!lifeEvolution.daily_micro_narration) {
+            updates.daily_micro_narration = lifeEvolution.current_life_event;
+          }
+        } else if (lifeEvolution.current_life_event) {
+          updates.current_life_event = lifeEvolution.current_life_event;
+        }
         if (lifeEvolution.daily_micro_narration) updates.daily_micro_narration = lifeEvolution.daily_micro_narration;
         if (lifeEvolution.emotional_state) updates.emotional_state = lifeEvolution.emotional_state;
         if (lifeEvolution.health_status) updates.health_status = lifeEvolution.health_status;
