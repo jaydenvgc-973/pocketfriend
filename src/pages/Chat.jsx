@@ -674,12 +674,21 @@ export default function Chat({ chatTypeOverride } = {}) {
     };
 
   // handleInstantImage — Instant Image button handler at component scope.
-  // Uses the already-loaded character current state + latest current-action
-  // narrative as authority, with recent dialogue as secondary context only.
-  // Calls the existing InvokeLLM once to produce a concise visual prompt, then
-  // hands it to the existing createImageMessage pipeline. No extra location
-  // lookups, no new resolvers.
-  const { handleInstantImage } = useInstantImageAction({ character, messages, messagesRef, createImageMessage });
+  // Authority: the authoritative character location snapshot + the shared
+  // co-presence resolver (same one Chat's own prompt uses) + the established
+  // current-action narratives, with dialogue as secondary context only.
+  // Produces a concise visual prompt, then hands it to the existing
+  // createImageMessage pipeline — the same subject/identity resolution a
+  // character-generated image goes through. No parallel context system.
+  const { handleInstantImage } = useInstantImageAction({
+    character,
+    messages,
+    messagesRef,
+    createImageMessage,
+    userSettings,
+    currentUser,
+    queryClient,
+  });
 
   const sendMessage = async (text, userImageUrl, prevGeneration) => {
     if (!character) return;
