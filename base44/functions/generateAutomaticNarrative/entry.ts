@@ -398,6 +398,48 @@ Deno.serve(async (req) => {
       canonicalSystemPrompt = `You are ${character.name}. ${character.personality_summary || 'A real person with their own life and personality.'}\nEmotional state: ${character.emotional_state || 'calm'}.`;
     }
 
+    // ── PLACE / PRESENCE RECONCILIATION WITH THE LIVE SNAPSHOT ────────────────
+    // buildCanonicalCharacterContext builds its place and sleep blocks from the stored
+    // record, and those fields lag the schedule. When the caller supplies the resolved
+    // snapshot (Right Now), every block that declares where the character physically is
+    // must agree with it: a corrected situation block is worthless if another block still
+    // asserts the old place, because the model follows whichever it read last.
+    if (canonicalLoaded && authoritativeState && character.resolved_current_location_name) {
+      const authName = character.resolved_current_location_name;
+      const authPresenceRaw = character.resolved_presence_status || '';
+      const authPresence = authPresenceRaw.replace(/_/g, ' ');
+      const snapshotAtWork = authPresenceRaw === 'at_work';
+      const snapshotAtSchool = authPresenceRaw === 'at_school';
+      const snapshotAsleep = authPresenceRaw === 'sleeping' || authPresenceRaw === 'napping';
+      const snapshotPassedOut = authPresenceRaw === 'passed_out';
+      let skippingPassedOutBlock = false;
+      const reconciledLines = canonicalSystemPrompt.split('\n').filter((line) => {
+        if (/^(FORBIDDEN WORDING|REQUIRED WORDING|RECOVERY|WAKE EXPERIENCE):/.test(line)) {
+          return !skippingPassedOutBlock;
+        }
+        skippingPassedOutBlock = false;
+        if (line.startsWith('CURRENT STATE: PASSED OUT')) {
+          skippingPassedOutBlock = true;
+          return snapshotPassedOut;
+        }
+        if (!snapshotAsleep && line.startsWith('SLEEP STATE: CURRENTLY ASLEEP')) return false;
+        if (!snapshotAtWork && (line.startsWith('AUTHORITATIVE PRESENCE: AT WORK') || line.startsWith('PRESENCE STATUS: at_work'))) return false;
+        if (!snapshotAtSchool && (line.startsWith('AUTHORITATIVE PRESENCE: AT SCHOOL') || line.startsWith('PRESENCE STATUS: at_school'))) return false;
+        return true;
+      }).map((line) => {
+        if (line.startsWith('YOU ARE HERE RIGHT NOW:')) {
+          return `YOU ARE HERE RIGHT NOW: ${authName}. This is your only physical location.`;
+        }
+        if (line.startsWith('CURRENT LOCATION:')) {
+          return `CURRENT LOCATION: ${authName}${authPresence ? ` (${authPresence})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated. A promise, a plan, or a user-confirmed scheduled move is NOT an arrival — only this line establishes where you physically are.`;
+        }
+        if (/^Your [Cc]urrent [Ll]ocation:/.test(line)) return `Your Current Location: ${authName}`;
+        return line;
+      });
+      canonicalSystemPrompt = reconciledLines.join('\n');
+      console.log(`[generateAutomaticNarrative] Canonical place/presence blocks reconciled to snapshot: ${authName} | presence=${authPresenceRaw || 'none'}`);
+    }
+
     // ── FULL DIAGNOSTIC LOG ───────────────────────────────────────────────────
     console.log(
       `[generateAutomaticNarrative] route=automatic_narrative` +
