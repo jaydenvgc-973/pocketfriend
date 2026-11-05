@@ -10,6 +10,8 @@ import { useInstantImage } from "@/hooks/useInstantImage";
 import AlarmTool from "@/components/chat/AlarmTool";
 import LifeNeedsPopover from "@/components/chat/LifeNeedsPopover";
 import { getCharacterSleepState } from "@/lib/characterSleepState";
+import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
+import { getLocations } from "@/lib/locationSessionCache";
 
 export default function ChatHeader({
   character,
@@ -49,6 +51,29 @@ export default function ChatHeader({
 
   // Right Now — instant user-controlled narrative based on current state.
   // Creates placeholder immediately, then generates real narrative in background.
+  //
+  // LOCATION AUTHORITY: the stored resolved_* fields can lag the schedule. The
+  // homepage card and the Incorrect location correction both read the shared resolver
+  // with the location map (buildCharacterInScene → resolveCharacterLocation), so the
+  // same call is used here and its answer travels with the request. Right Now then
+  // describes the place the UI already shows.
+  const buildAuthoritativeState = async () => {
+    const locations = await getLocations(async () => {
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
+    }).catch(() => []);
+    const locationMap = Object.fromEntries((locations || []).map(l => [l.id, l]));
+    const live = buildCharacterInScene(character, locationMap) || {};
+    return {
+      location_id: live.resolved_current_location_id ?? null,
+      location_name: live.resolved_current_location_name ?? null,
+      location_type: live.resolved_location_type ?? null,
+      presence_status: live.resolved_presence_status ?? null,
+      current_activity: live.current_activity ?? null,
+      source: 'buildCharacterInScene',
+    };
+  };
+
   const handleRightNow = async () => {
     console.log('[RightNow] Clicked | char:', character?.name, '| convoId:', conversationId);
     if (!character || !conversationId || isGeneratingRightNow) return;
@@ -72,10 +97,12 @@ export default function ChatHeader({
 
     // 2. Generate real narrative in background
     try {
+      const authoritativeState = await buildAuthoritativeState();
       const res = await base44.functions.invoke('generateAutomaticNarrative', {
         characterId,
         trigger: 'manual_right_now',
         forceGenerate: true,
+        authoritativeState,
       });
       const narrativeText = res?.data?.narrativeText;
       

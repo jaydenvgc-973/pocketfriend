@@ -4,11 +4,12 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
+    const body = await req.json();
     const {
       characterId,
       forceGenerate = false,
       trigger = 'interval',
-    } = await req.json();
+    } = body;
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -81,6 +82,25 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── AUTHORITATIVE SNAPSHOT FROM THE EXISTING SHARED RESOLVER ─────────────
+    // The stored resolved_* fields are only rewritten when a scheduled pathway
+    // commits a change, so they can lag the schedule: a character whose shift has
+    // started can still read "sleeping at home" on the record while the homepage
+    // card, the Chat geotag and the Incorrect location correction already resolve
+    // them to work. Right Now is triggered from Chat, which already holds that
+    // exact snapshot (buildCharacterInScene → resolveCharacterLocation), so the
+    // caller passes it and the narrative describes the same place the UI shows.
+    // Scheduled runs pass nothing and keep reading the stored state.
+    const authoritativeState = body?.authoritativeState || null;
+    if (authoritativeState && typeof authoritativeState === 'object') {
+      if (authoritativeState.location_id !== undefined) character.resolved_current_location_id = authoritativeState.location_id || null;
+      if (authoritativeState.location_name !== undefined) character.resolved_current_location_name = authoritativeState.location_name || null;
+      if (authoritativeState.location_type !== undefined) character.resolved_location_type = authoritativeState.location_type || null;
+      if (authoritativeState.presence_status !== undefined) character.resolved_presence_status = authoritativeState.presence_status || null;
+      if (authoritativeState.current_activity !== undefined) character.current_activity = authoritativeState.current_activity || null;
+      console.log(`[generateAutomaticNarrative] Authoritative snapshot applied: ${character.resolved_current_location_name} | presence=${character.resolved_presence_status} | source=${authoritativeState.source || 'resolver'}`);
+    }
+
     // ── RESOLVE LOCATION — authoritative state is the single source of truth ──
     // A null resolved_current_location_id does NOT mean "location unknown." The
     // character may be in a valid rabbit-hole or other destination that has no
@@ -106,10 +126,14 @@ Deno.serve(async (req) => {
     // - resolved_current_location_id when present (normal Location destination)
     // - current_home_location_id ONLY when presence is genuinely home / unspecified
     // - null for active non-home states without a physical id (rabbit hole)
+    // 'rabbit_hole' is the sentinel stored when the destination is a custom
+    // off-screen place with no LocationReference record. It is a real location,
+    // not a missing one — it must never resolve to the home record.
+    const _isRabbitHoleId = character.resolved_current_location_id === 'rabbit_hole';
     let locationId = null;
-    if (character.resolved_current_location_id) {
+    if (character.resolved_current_location_id && !_isRabbitHoleId) {
       locationId = character.resolved_current_location_id;
-    } else if (!_isActiveNonHome) {
+    } else if (!_isActiveNonHome && !_isRabbitHoleId) {
       locationId = character.current_home_location_id || null;
     }
 
@@ -125,11 +149,11 @@ Deno.serve(async (req) => {
     }[_resolvedLocationType] || 'generic';
 
     let location = null;
-    let resolvedLocationName = _stateLocationName || 'home';
+    // An active non-home state never defaults to the word "home" or to the home
+    // category — that is the exact collapse that put a working character in bed.
+    let resolvedLocationName = _stateLocationName || (_isActiveNonHome ? 'their current location' : 'home');
     let resolvedZoneName = null;
-    let locationCategory = _isActiveNonHome && !character.resolved_current_location_id
-      ? _categoryFromType
-      : 'home';
+    let locationCategory = _isActiveNonHome ? _categoryFromType : 'home';
     let locationDescription = '';
 
     if (locationId) {
@@ -469,9 +493,33 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
     if (needsSnapshot.social < 30) needsHints.push('they feel isolated or lonely');
     if (needsSnapshot.hygiene < 75) needsHints.push(needsSnapshot.hygiene < 40 ? 'they really need to clean up' : 'they want to freshen up');
     if (needsSnapshot.mental < 30) needsHints.push('they are mentally stressed or overwhelmed');
-    const needsLine = needsHints.length > 0
-      ? `\nCURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.`
-      : '';
+
+    // ── AUTHORITATIVE LIFE NEEDS ───────────────────────────────────────────
+    // The values themselves must reach the model. Negative hints alone told it what
+    // was low but never what was FULL, so an earlier narrative's exhaustion carried
+    // forward and was written again while Energy read 100. The values are the
+    // character's current physical condition and outrank any older description.
+    const _band = (v, hi, mid, hiLabel, midLabel, lowLabel) => v >= hi ? hiLabel : v >= mid ? midLabel : lowLabel;
+    const needsValueLines = [
+      `- Energy: ${Math.round(needsSnapshot.energy)} — ${_band(needsSnapshot.energy, 70, 40, 'fully rested, wide awake', 'ordinary tiredness', 'running low on energy')}`,
+      `- Hunger: ${Math.round(needsSnapshot.hunger)} — ${_band(needsSnapshot.hunger, 75, 40, 'fed and comfortable', 'hungry, would like to eat', 'very hungry')}`,
+      `- Hygiene: ${Math.round(needsSnapshot.hygiene)} — ${_band(needsSnapshot.hygiene, 75, 40, 'clean and fresh', 'could freshen up', 'needs to clean up')}`,
+      `- Comfort: ${Math.round(needsSnapshot.comfort)} — ${_band(needsSnapshot.comfort, 70, 40, 'physically comfortable', 'mildly uncomfortable', 'uncomfortable')}`,
+      `- Mental: ${Math.round(needsSnapshot.mental)} — ${_band(needsSnapshot.mental, 70, 40, 'mentally steady', 'some mental strain', 'significantly strained')}`,
+      `- Social: ${Math.round(needsSnapshot.social)} — ${_band(needsSnapshot.social, 65, 30, 'socially fulfilled', 'socially under-stimulated', 'socially isolated')}`,
+      `- Health: ${Math.round(needsSnapshot.health)} — ${_band(needsSnapshot.health, 70, 40, 'in good health', 'minor health strain', 'in poor health')}`,
+    ].join('\n');
+    const needsStateBlock = `
+AUTHORITATIVE LIFE NEEDS — CURRENT VALUES (0 = completely deprived, 100 = fully satisfied):
+${needsValueLines}
+${needsHints.length > 0 ? `CURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.\n` : ''}NON-CONTRADICTION RULE — ABSOLUTE:
+- Never present a physical condition these values contradict. At Energy 70-100 the character is rested: do NOT write heavy or uncooperative limbs, lingering soreness, struggling to keep their eyes open, fighting to stay awake, or being pulled toward sleep by exhaustion.
+- Exhaustion belongs only to Energy below 35. Ordinary tiredness belongs to 40-69. Hunger, freshness, discomfort, strain and isolation follow the same rule against their own values.
+- Normal emotions, mood, personality and brief passing sensations remain free — only a condition contradicting these values as an established state is forbidden.
+- A condition described by an earlier narrative is history. If it contradicts these values now, it has passed and must not be carried forward.
+- If a cause in the SITUATION block above genuinely establishes one (illness, injury, medication, a stated circumstance), the narrative may reflect it — but never as generic exhaustion that contradicts Energy.
+- These values are read-only authority. Never treat the narrative as a reason to change them.`;
+    const needsLine = needsStateBlock;
 
     // ── QUIRK TENDENCIES — influence narrative tone, never force activities ─
     const quirkHints = [];
@@ -670,6 +718,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
 ${situationBlock}${userPresenceLine}
+LOCATION AUTHORITY — ${character.name}'s residence (home address in the profile) is where they LIVE, not where they are. It is never the scene by default. Write them at home only when the SITUATION block above says home. A previous narrative, an earlier activity, a home routine, or a remembered address is never authority to place them there now.
 ${needsLine}${quirkLine}${householdActivityBlock}${healthActivityBlock}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
@@ -857,7 +906,7 @@ EMOTION DOES NOT ALWAYS REQUIRE VISIBLE PHYSICAL SYMPTOMS — characters can sim
 
 PROGRESSION DOES NOT MEAN ESCALATION — continuing the story can include calming down, sitting quietly, eating, changing rooms, laughing, answering a question, accepting or refusing reassurance, ordinary activity, silence, returning to a topic, or making a decision. Do not invent drama to prove the story is progressing.
 
-PREVIOUS NARRATIVES REMAIN REAL SCENE HISTORY — if a previous narrative established movement, activity, emotional state, or physical positioning, respect it. But do not recursively exaggerate previous emotional language. Reevaluate using everything that has happened since.
+PREVIOUS NARRATIVES REMAIN REAL SCENE HISTORY — if a previous narrative established movement, activity, emotional state, or physical positioning, respect it ONLY where it stays consistent with the SITUATION block and the AUTHORITATIVE LIFE NEEDS above. Current location, current activity and current needs are newer authority and always win: when an earlier narrative places them somewhere they are no longer, or describes a physical condition the current values contradict, that description is no longer current — continue from the authoritative state, not the old text. Do not recursively exaggerate previous emotional language.
 
 NEW DIALOGUE CAN CHANGE DIRECTION — if an earlier narrative described worry but later messages show reassurance, reduce intensity. If new information worsens the situation, intensity may increase. Track emotional direction, not merely labels.
 

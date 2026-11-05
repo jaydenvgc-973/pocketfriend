@@ -18,10 +18,10 @@ import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
  * not the present: the location is authoritative and the activity string is not, so
  * a stale activity is dropped rather than narrated as the current scene.
  */
-export function buildCharacterInScene(character) {
+export function buildCharacterInScene(character, locationMap = {}) {
   if (!character) return character;
 
-  const live = resolveCharacterLocation(character, {}) || {};
+  const live = resolveCharacterLocation(character, locationMap) || {};
   const liveId = live.resolved_current_location_id ?? character.resolved_current_location_id ?? null;
   const liveName = live.resolved_current_location_name ?? character.resolved_current_location_name ?? null;
   const movedSinceStored = !!liveId && !!character.resolved_current_location_id &&
