@@ -7,6 +7,8 @@
  * generateImageAsync resolves location from character file + LocationReference records.
  */
 import { base44 } from "@/api/base44Client";
+import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
+import { getLocations } from "@/lib/locationSessionCache";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import { enforceValidation } from "@/lib/appearanceLockValidator";
 import { resolveHousingLocationForCharacter } from "@/lib/resolveHousingLocationForCharacter";
@@ -122,7 +124,32 @@ export async function dispatchImageGeneration({
       ? `${imageGenPrompt}\n\n${_pregnancyState}`
       : imageGenPrompt;
 
+    // ── AUTHORITATIVE LOCATION SNAPSHOT ────────────────────────────────────────
+    // The same shared resolver the homepage card, the Chat geotag and Right Now use.
+    // The stored resolved_* fields can lag the schedule or a user-typed off-screen
+    // destination, so the live answer travels with the request instead of letting the
+    // image fall back to the saved residence. Only for the sender as subject.
+    let authoritativeState;
+    if (senderIsSubject) {
+      const locations = await getLocations(async () => {
+        const r = await base44.functions.invoke('fetchAllLocationsForUser', {});
+        return r?.data?.locations || [];
+      }).catch(() => []);
+      const locMap = (locations || []).length
+        ? Object.fromEntries(locations.map(l => [l.id, l]))
+        : (locationMap || {});
+      const scene = buildCharacterInScene(character, locMap) || {};
+      authoritativeState = {
+        location_id: scene.resolved_current_location_id ?? null,
+        location_name: scene.resolved_current_location_name ?? null,
+        location_type: scene.resolved_location_type ?? null,
+        presence_status: scene.resolved_presence_status ?? null,
+        source: 'buildCharacterInScene',
+      };
+    }
+
     const res = await base44.functions.invoke('generateImageAsync', {
+      authoritativeState,
       messageId: targetMsgId,
       prompt: _promptWithState,
       characterReferenceImages: publicCharRefs,

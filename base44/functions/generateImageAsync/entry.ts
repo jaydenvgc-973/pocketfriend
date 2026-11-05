@@ -1095,6 +1095,7 @@ Deno.serve(async (req) => {
       manualZoneName,         // UI-selected zone from Media Grid dropdown — overrides auto-resolve
       additionalCharacterIds, // Additional character IDs to include as secondary subjects
       userIsVisualSubject,    // true when user's world name detected in prompt by resolveImageSubjects / imageGenerationContextBuilder
+      authoritativeState,     // live snapshot from the caller's shared resolver (same one Right Now uses)
     } = await req.json();
 
     if (!messageId) {
@@ -1629,18 +1630,15 @@ Deno.serve(async (req) => {
       const _locSrc = useManualLocation ? 'manual_ui_dropdown' : 'auto_resolve_from_character';
 
       if (!useManualLocation && charRecord) {
-        // ── RABBIT HOLE GUARD — terminal off-screen destination ──────────────────
-        // A rabbit hole is an intentional user-placed off-screen destination with no
-        // persisted LocationReference. The location tag must show the rabbit hole label
-        // (e.g. "Spectrum Lounge"), NOT the character's home. Set locationId to a sentinel
-        // so LAYERS 4-6 (which check !locationId) do NOT override with home fallback.
-        // The LocationReference lookup for 'rabbit_hole' will fail (no such record),
-        // leaving resolvedLocationName as the rabbit hole label set here.
+        // ── TERMINAL DESTINATION GUARD — authoritative place, never home fallback ──
+        // The caller's live snapshot (same resolver as Right Now) outranks stored fields.
+        if (charRecord && authoritativeState && (!senderCharacterId || charRecord.id === senderCharacterId)) { if (authoritativeState.location_id !== undefined) charRecord.resolved_current_location_id = authoritativeState.location_id || null; if (authoritativeState.location_name !== undefined) charRecord.resolved_current_location_name = authoritativeState.location_name || null; if (authoritativeState.location_type !== undefined) charRecord.resolved_location_type = authoritativeState.location_type || null; if (authoritativeState.presence_status !== undefined) charRecord.resolved_presence_status = authoritativeState.presence_status || null; console.log(`[generateImageAsync] AUTHORITATIVE-SNAPSHOT: name="${charRecord.resolved_current_location_name || 'none'}" id="${charRecord.resolved_current_location_id || 'none'}" presence="${charRecord.resolved_presence_status || 'none'}"`); }
         if (charRecord.resolved_current_location_id === 'rabbit_hole' ||
             charRecord.resolved_presence_status === 'rabbit_hole' ||
             charRecord.resolved_location_type === 'rabbit_hole' ||
-            charRecord.is_rabbit_hole === true) {
-          const _rhLabel = charRecord.resolved_current_location_name || null;
+            charRecord.is_rabbit_hole === true ||
+            (authoritativeState?.location_name && (!authoritativeState.location_id || authoritativeState.location_id === 'rabbit_hole'))) {
+          const _rhLabel = authoritativeState?.location_name || charRecord.resolved_current_location_name || null;
           resolvedLocationName = _rhLabel;
           resolvedLocationId = null;
           resolvedLocCategory = null;
