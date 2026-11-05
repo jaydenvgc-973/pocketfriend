@@ -72,6 +72,50 @@ function resolveCharacterRefImages(charRecord) {
 // Story Event moments are generated one at a time. These blocks keep the same
 // people, the same selected venue and the same clothing across all of them.
 
+// Age at the date the event represents — a child's appearance depends on the age
+// they were AT THAT TIME, not their age today. Eastern Time is authoritative;
+// event dates are plain calendar dates so the year difference is exact.
+function ageAtEventDate(character, eventDate) {
+  const birthday = character?.birthday;
+  const target = eventDate ? new Date(`${String(eventDate).substring(0, 10)}T12:00:00`) : new Date();
+  if (birthday) {
+    const birth = new Date(birthday);
+    if (!isNaN(birth.getTime()) && !isNaN(target.getTime())) {
+      let age = target.getFullYear() - birth.getFullYear();
+      const monthDiff = target.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && target.getDate() < birth.getDate())) age--;
+      if (age >= 0) return age;
+    }
+  }
+  const storedAge = Number(character?.age);
+  return Number.isFinite(storedAge) && storedAge >= 0 ? Math.floor(storedAge) : null;
+}
+
+// Adults must never be aged by stereotype; children must actually develop,
+// because identity is not a frozen body.
+function developmentalAgeDirective(entry) {
+  const fixed = entry.appearance_age != null && Number.isFinite(Number(entry.appearance_age))
+    ? Number(entry.appearance_age)
+    : null;
+  if (fixed !== null) {
+    return `  - The user has fixed this character's visual age at ${fixed}. That decision is authoritative: do not age them older or younger than ${fixed}. Keep their identity from the reference imagery.`;
+  }
+  const age = entry.age_at_event != null ? Number(entry.age_at_event) : null;
+  if (age === null) {
+    return `  - No age is recorded. Do not invent one, and do not apply a stereotypical appearance for any age.`;
+  }
+  if (age < 18) {
+    return [
+      `  - AGE AT THIS EVENT: ${age}. At this moment in the story this person is a child or adolescent.`,
+      `  - Take IDENTITY from the reference imagery (facial features, eye shape, complexion, hair colour and texture). Take HEIGHT, body proportions and facial maturity from age ${age}.`,
+      `  - The reference images may have been made at an earlier age. Use them for identity only, never for developmental stage.`,
+      `  - Do NOT render an infant or toddler where a ${age}-year-old is described, and do NOT render an adult. The same recognisable person must appear, grown to ${age}.`,
+      `  - Never substitute an unrelated child. It must read as this person at ${age}, not a stranger of that age.`,
+    ].join('\n');
+  }
+  return `  - AGE AT THIS EVENT: ${age}. Adults do not visibly transform on a schedule. Do NOT add wrinkles, grey hair, weight, sagging, frailty or "elderly" styling merely because of this number, and do NOT smooth them into a younger person. Their reference imagery is authoritative.`;
+}
+
 function buildCharacterIdentityLockBlock(entries) {
   if (!entries || entries.length === 0) return '';
   const lines = [
@@ -86,11 +130,10 @@ function buildCharacterIdentityLockBlock(entries) {
       ? `  Documented appearance: ${e.appearance}`
       : `  Documented appearance: (none recorded — the attached reference image is the sole authority for this person)`);
     lines.push(`  Reference images attached: ${e.ref_count > 0 ? `${e.ref_count} (${e.ref_range})` : `NONE — this is a data gap, render only from documented appearance`}`);
-    lines.push(`  - Face, facial features, complexion, hairstyle, hair texture, body type and proportions MUST match this person's reference imagery exactly.`);
-    lines.push(`  - AGE IS NOT AN APPEARANCE DESCRIPTION. Never infer how this person looks from a numeric age, and never from a family or social role (grandmother, grandfather, mother, father, elder).`);
-    lines.push(`  - Do NOT age them up: no added gray hair, added weight, wrinkles, frailty, dowdy clothing, or "typical for their age" styling that the reference imagery does not show.`);
-    lines.push(`  - Do NOT age them down or idealize them into a younger, smoother, more generic version of themselves.`);
-    lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins.`);
+    lines.push(`  - Face, facial features, complexion, hairstyle, hair texture and individual appearance MUST match this person's reference imagery exactly.`);
+    lines.push(developmentalAgeDirective(e));
+    lines.push(`  - AGE IS NOT A ROLE. Never infer appearance from a family or social role (grandmother, grandfather, mother, father, elder). A grandmother is not automatically grey-haired, heavyset or dressed in a stereotypical way.`);
+    lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins for identity.`);
   }
   lines.push(`════════════════════════════════════════════════════════════`);
   return lines.join('\n');
@@ -125,7 +168,7 @@ function buildClothingContinuityBlock(entries) {
     `════════════════════════════════════════════════════════════`,
   ];
   for (const e of entries) {
-    lines.push(`${e.name}: ${e.outfit || 'no wardrobe record — the outfit established in the other images of this event must be repeated exactly'}`);
+    lines.push(`${e.name}: ${e.outfit || 'no wardrobe record — if an earlier image of this event exists, repeat exactly the clothing worn there; otherwise dress them in ordinary, fully covering everyday clothing appropriate to this venue and keep it identical for the rest of the event'}`);
   }
   lines.push(``);
   lines.push(`- Every image of this event shows the same outfit on the same person, in the same colours, patterns and accessories.`);
@@ -488,6 +531,8 @@ Deno.serve(async (req) => {
         first_name: b.matched_prompt_name,
         character_id: b.character_id,
         appearance: b.appearance_notes,
+        age_at_event: ageAtEventDate(b.char_record, eventDate),
+        appearance_age: b.char_record?.appearance_age ?? null,
         ref_count: nums.length,
         ref_range: nums.length > 0 ? rangeOf(nums) : null,
       });
@@ -588,7 +633,8 @@ Deno.serve(async (req) => {
       `Describe ONLY: the visible characters using their documented appearance, their actions and expressions, the camera position/angle/distance, the lighting and the mood.`,
       `Do NOT describe generic strangers. Every person must match a participant's documented appearance.`,
       `Do NOT describe the room's decor, furniture, layout, architecture, wall treatments or lighting fixtures — the venue's own reference photographs are attached to the renderer and are the sole authority for the interior. Naming interior details here would conflict with them. Refer to the venue only by its name.`,
-      `AGE IS NOT AN APPEARANCE DESCRIPTION: never describe anyone as elderly, aged, gray-haired, heavyset, frail, dowdy, or "typical for their age" because of a numeric age or a family role (grandmother, grandfather, mother, father). Never describe anyone as younger or more idealized than their documented appearance.`,
+      `AGE IS NOT A ROLE: never describe anyone as elderly, aged, gray-haired, heavyset, frail, dowdy, or "typical for their age" because of a numeric age or a family role (grandmother, grandfather, mother, father). Never describe an adult as younger or more idealized than their documented appearance.`,
+      `CHILDREN DO DEVELOP: if a participant is a child or adolescent at this event's date, describe them at that developmental stage (age-appropriate height, proportions and facial maturity) while keeping them recognisably the same person from their references. A reference photo from an earlier age is identity, not current stage.`,
       `DO NOT INVENT OR RESTYLE ANYONE'S CLOTHING. Outfits come from the Character/User Closet and stay identical across this event's images. The ONLY exception: when the narrative explicitly establishes a clothing change at this moment (showering, changing into gym clothes, dressing for a shift, getting ready for bed, a different time or place), state that change plainly, and only that change.`,
       ...(userBundle ? [
         `The user participant "${userBundle.display_name}" MUST appear in this image by name.`,

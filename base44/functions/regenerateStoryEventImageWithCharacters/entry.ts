@@ -26,6 +26,50 @@ function cdnFilter(urls) {
 // Every Story Event moment is generated separately. These blocks keep the same
 // people, the same selected venue and the same clothing across the whole event.
 
+// Age at the date the event represents — a child's appearance depends on the age
+// they were AT THAT TIME, not their age today. Eastern Time is authoritative;
+// event dates are plain calendar dates so the year difference is exact.
+function ageAtEventDate(character, eventDate) {
+  const birthday = character?.birthday;
+  const target = eventDate ? new Date(`${String(eventDate).substring(0, 10)}T12:00:00`) : new Date();
+  if (birthday) {
+    const birth = new Date(birthday);
+    if (!isNaN(birth.getTime()) && !isNaN(target.getTime())) {
+      let age = target.getFullYear() - birth.getFullYear();
+      const monthDiff = target.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && target.getDate() < birth.getDate())) age--;
+      if (age >= 0) return age;
+    }
+  }
+  const storedAge = Number(character?.age);
+  return Number.isFinite(storedAge) && storedAge >= 0 ? Math.floor(storedAge) : null;
+}
+
+// Adults must never be aged by stereotype; children must actually develop,
+// because identity is not a frozen body.
+function developmentalAgeDirective(entry) {
+  const fixed = entry.appearance_age != null && Number.isFinite(Number(entry.appearance_age))
+    ? Number(entry.appearance_age)
+    : null;
+  if (fixed !== null) {
+    return `  - The user has fixed this character's visual age at ${fixed}. That decision is authoritative: do not age them older or younger than ${fixed}. Keep their identity from the reference imagery.`;
+  }
+  const age = entry.age_at_event != null ? Number(entry.age_at_event) : null;
+  if (age === null) {
+    return `  - No age is recorded. Do not invent one, and do not apply a stereotypical appearance for any age.`;
+  }
+  if (age < 18) {
+    return [
+      `  - AGE AT THIS EVENT: ${age}. At this moment in the story this person is a child or adolescent.`,
+      `  - Take IDENTITY from the reference imagery (facial features, eye shape, complexion, hair colour and texture). Take HEIGHT, body proportions and facial maturity from age ${age}.`,
+      `  - The reference images may have been made at an earlier age. Use them for identity only, never for developmental stage.`,
+      `  - Do NOT render an infant or toddler where a ${age}-year-old is described, and do NOT render an adult. The same recognisable person must appear, grown to ${age}.`,
+      `  - Never substitute an unrelated child. It must read as this person at ${age}, not a stranger of that age.`,
+    ].join('\n');
+  }
+  return `  - AGE AT THIS EVENT: ${age}. Adults do not visibly transform on a schedule. Do NOT add wrinkles, grey hair, weight, sagging, frailty or "elderly" styling merely because of this number, and do NOT smooth them into a younger person. Their reference imagery is authoritative.`;
+}
+
 function buildCharacterIdentityLockBlock(entries) {
   if (!entries || entries.length === 0) return '';
   const lines = [
@@ -39,11 +83,10 @@ function buildCharacterIdentityLockBlock(entries) {
     lines.push(e.appearance
       ? `  Documented appearance: ${e.appearance}`
       : `  Documented appearance: (none recorded — the attached reference image is the sole authority for this person)`);
-    lines.push(`  - Face, facial features, complexion, hairstyle, hair texture, body type and proportions MUST match this person's reference imagery exactly.`);
-    lines.push(`  - AGE IS NOT AN APPEARANCE DESCRIPTION. Never infer how this person looks from a numeric age, and never from a family or social role (grandmother, grandfather, mother, father, elder).`);
-    lines.push(`  - Do NOT age them up: no added gray hair, added weight, wrinkles, frailty, dowdy clothing, or "typical for their age" styling that the reference imagery does not show.`);
-    lines.push(`  - Do NOT age them down or idealize them into a younger, smoother, more generic version of themselves.`);
-    lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins.`);
+    lines.push(`  - Face, facial features, complexion, hairstyle, hair texture and individual appearance MUST match this person's reference imagery exactly.`);
+    lines.push(developmentalAgeDirective(e));
+    lines.push(`  - AGE IS NOT A ROLE. Never infer appearance from a family or social role (grandmother, grandfather, mother, father, elder). A grandmother is not automatically grey-haired, heavyset or dressed in a stereotypical way.`);
+    lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins for identity.`);
   }
   lines.push(`════════════════════════════════════════════════════════════`);
   return lines.join('\n');
@@ -58,10 +101,11 @@ function buildVenueIdentityLockBlock(venue, imageRange) {
     `This event takes place at "${venue.name}", a real existing location the user selected.`,
     `Attached ${venue.images.length === 1 ? 'image' : 'images'} ${imageRange} ${venue.images.length === 1 ? 'is a reference photograph' : 'are reference photographs'} of that actual place.`,
   ];
-  if (venue.description) lines.push(`Documented description: ${venue.description}`);
+  if (venue.description) lines.push(`User's written description (background colour only — NOT an authority on the interior, OVERRIDDEN by the photographs): ${String(venue.description).substring(0, 200)}`);
   if (venue.category) lines.push(`Location type: ${String(venue.category).replace(/_/g, ' ')}`);
-  lines.push(`- Treat it as a THREE-DIMENSIONAL PLACE, not a backdrop: same architecture, geometry, layout, materials, furniture types, colours, finishes and distinguishing features.`);
-  lines.push(`- The camera may be anywhere inside it — facing another wall, closer to a surface, from the entrance, from a different angle. A different viewpoint is expected and correct.`);
+  lines.push(`- The room is built ONLY from those photographs: architecture, layout, materials, furniture types, colours, finishes and distinctive features.`);
+  lines.push(`- Do NOT invent decor, fixtures, wall treatments, furniture or room features that are not visible in the photographs.`);
+  lines.push(`- Treat it as a THREE-DIMENSIONAL PLACE, not a backdrop: you may place the camera anywhere inside it — facing another wall, closer to a surface, from the entrance, from a different angle. A different viewpoint is expected and correct.`);
   lines.push(`- Do NOT reproduce the reference photograph's framing or composition, and do NOT composite people onto it.`);
   lines.push(`- Do NOT restyle, renovate, redecorate or simplify it, and do NOT replace it with generic scenery of the same category.`);
   lines.push(`- Lighting, weather and atmosphere follow THIS event's time and mood, not the reference photograph.`);
@@ -77,7 +121,7 @@ function buildClothingContinuityBlock(entries) {
     `════════════════════════════════════════════════════════════`,
   ];
   for (const e of entries) {
-    lines.push(`${e.name}: ${e.outfit || 'no wardrobe record — the outfit established in the other images of this event must be repeated exactly'}`);
+    lines.push(`${e.name}: ${e.outfit || 'no wardrobe record — if an earlier image of this event exists, repeat exactly the clothing worn there; otherwise dress them in ordinary, fully covering everyday clothing appropriate to this venue and keep it identical for the rest of the event'}`);
   }
   lines.push(``);
   lines.push(`- Every image of this event shows the same outfit on the same person, in the same colours, patterns and accessories.`);
@@ -297,7 +341,7 @@ Deno.serve(async (req) => {
         outfitLockLines.push(`- ${name}: ${outfitByCid[cid]}`);
       }
     }
-    if (!anyOutfit) outfitLockLines.push(`(No closet outfit resolved — repeat exactly the clothing established in the other images of this event.)`);
+    if (!anyOutfit) outfitLockLines.push(`(No closet outfit resolved — if an earlier image of this event exists, repeat exactly the clothing worn there; otherwise dress them in ordinary, fully covering everyday clothing appropriate to this venue.)`);
     outfitLockLines.push(``);
     outfitLockLines.push(`- This is ONE CONTINUOUS EVENT: every image of it shows the same outfit on the same person.`);
     outfitLockLines.push(`- A new image is NOT a new outfit, and a different camera angle is NOT a new outfit.`);
@@ -410,6 +454,8 @@ Deno.serve(async (req) => {
                c.style_identity ? `style: ${c.style_identity}` : null,
               ].filter(Boolean).join(' | ')
             : null,
+          age_at_event: c ? ageAtEventDate(c, event.event_date) : null,
+          appearance_age: c?.appearance_age ?? null,
         });
         if (nums.length > 0) {
           planMap.push({
@@ -483,8 +529,43 @@ Deno.serve(async (req) => {
       ? `REGENERATION REASONS: ${allReasons.join(', ')}.`
       : 'Regenerating with selected characters.';
 
+    // ── FRESH MOMENT SCENE ────────────────────────────────────────────────────
+    // A regeneration must NOT re-use the previous prompt. That prompt already
+    // contained a full instruction set and, when the first render invented part of
+    // the room, it contained that invented room in words. Stacking a new prompt on
+    // top of it left two conflicting instruction sets and a written interior that
+    // overrode the venue photographs. The moment is therefore described again from
+    // the event's own narrative: people, action, camera and light only. The room is
+    // left to the attached photographs.
+    let momentScene = '';
+    try {
+      const sceneRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: [
+          `Describe one photographic moment for an image prompt.`,
+          `EVENT: ${event.title}`,
+          `MOMENT: ${momentType.replace('_', ' ')}`,
+          `PEOPLE PRESENT: ${visibleNames.join(', ') || 'no specific people'}`,
+          `NARRATIVE: ${(event.generated_narrative || '').substring(0, 2000)}`,
+          ``,
+          `Write 2-3 sentences describing ONLY: what these people are doing, their expressions and posture, the camera position/angle/distance, and the lighting and mood.`,
+          `Use only the people named above. Do NOT describe the room, its decor, furniture, architecture, wall treatments, colours or lighting fixtures — the venue's own photographs define the room and are attached separately. Refer to the venue only as "${venueName}".`,
+          `Do NOT describe or change anyone's clothing.`,
+          ``,
+          `Return JSON: { "scene": "..." }`,
+        ].join('\n'),
+        response_json_schema: { type: 'object', properties: { scene: { type: 'string' } }, required: ['scene'] },
+      });
+      momentScene = (sceneRes?.scene || '').trim();
+    } catch (sceneErr) {
+      console.warn(`[regenerateStoryEventImageWithCharacters] Moment scene build failed: ${sceneErr?.message}`);
+    }
+    if (!momentScene) {
+      momentScene = `A ${momentType.replace('_', ' ')} moment of "${event.title}" showing ${visibleNames.join(' and ') || 'the participants'}.`;
+    }
+
     const regenPrompt = [
-      originalPrompt,
+      `SCENE (people, action, camera and light only — the room is defined by the attached location photographs):`,
+      momentScene,
       '',
       reasonText,
       '',

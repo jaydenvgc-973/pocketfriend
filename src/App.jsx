@@ -54,6 +54,7 @@ import MultiCharacterProof from './pages/MultiCharacterProof';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import EditCharacterPublicRelations from './pages/EditCharacterPublicRelations';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
+import AvatarMilestonePrompt from './components/character/AvatarMilestonePrompt';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
 import { ForegroundPriorityProvider } from '@/lib/ForegroundPriorityContext';
 import { base44 } from '@/api/base44Client';
@@ -200,6 +201,7 @@ function App() {
               <Router>
                 <ForegroundPriorityProvider>
                 <PlayAsCharacterBanner />
+                <AvatarMilestonePrompt />
                 <AuthenticatedApp holidaysEnabled={holidaysEnabled} />
                 </ForegroundPriorityProvider>
               </Router>
