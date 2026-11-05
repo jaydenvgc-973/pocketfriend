@@ -8,6 +8,7 @@ import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
 import { buildArcContextBlock } from "@/lib/arcEngine";
 import { buildOutfitPromptText, resolveOutfitForDate } from "@/lib/outfitRotationEngine";
 import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
+import { reconcileAuthoritativePlace } from "@/lib/authoritativePlaceReconciliation";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -405,6 +406,19 @@ export function buildSystemPrompt(canonicalPromptOrCharacter, characterOrOptions
       .replace(/^YOUR CURRENT LIFE:/gm, 'YOUR LIFE (background context):');
 
     identityBase = `${identityBase}\n\nPHYSICAL LOCATION — AUTHORITATIVE (supersedes every other line in this prompt):\nYou are at: ${_liveName}${_presenceLabel}.\nThis is where you physically are right now. Wherever any other line, memory, life event, or earlier turn of this conversation places you, this line is correct. The room, the things you can see and hear, and everything you can physically do come from this place. Do not announce it, explain it, or describe the surroundings for its own sake.`;
+
+    // The remaining present-tense place claims in the canonical section: the
+    // "YOU ARE HERE RIGHT NOW" line from the today-history block, and the
+    // "AUTHORITATIVE PRESENCE: AT WORK / AT SCHOOL" confirmations. A canonical
+    // prompt cached while the character was somewhere else still carries those,
+    // and they out-argued the authoritative line above — the character then denied
+    // being home and insisted he was still at the office. They are rewritten to the
+    // live place, and a presence confirmation for a place the character is NOT at
+    // is removed rather than left to compete.
+    identityBase = reconcileAuthoritativePlace(identityBase, {
+      location_name: _liveName,
+      presence_status: _liveLoc.resolved_presence_status || null,
+    });
   }
 
   // ── VICK SERVICIO EXCEPTION — CRITICAL ────────────────────────────────────

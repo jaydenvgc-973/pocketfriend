@@ -79,6 +79,11 @@ export function reconcileAuthoritativePlace(prompt, state) {
       out.push(`Your Current Presence: ${presence ? presence.replace(/_/g, ' ') : name}`);
       continue;
     }
+    // The world-state block restates the committed presence the same way.
+    if (line.startsWith('Your committed presence state (') && presence) {
+      out.push(line.replace(/^Your committed presence state \([^)]*\)/, `Your committed presence state (${presence})`));
+      continue;
+    }
     out.push(line);
   }
 
