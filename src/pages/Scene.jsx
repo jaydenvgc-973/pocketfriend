@@ -28,7 +28,7 @@ import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
-import { getEnvironmentTypeForZone } from "@/components/location/EnvironmentSelectorModal";
+import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
@@ -58,6 +58,7 @@ export default function Scene() {
   const locationId = urlParams.get("locationId");
   const characterIds = (urlParams.get("characterIds") || "").split(",").filter(Boolean);
   const initialZoneName = urlParams.get("zoneName") || null;
+  const initialEnvironmentId = urlParams.get("environmentId") || null;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -123,6 +124,18 @@ export default function Scene() {
   const locationZones = location?.zones || [];
   const activeEnvType = getEnvironmentTypeForZone(location, activeZone || locationZones[0]?.zone_name);
   const isRestrictedEnv = activeEnvType === 'restricted';
+
+  // The environment the user selected on Travel is authoritative for arrival access.
+  // Resolved once from the carried environmentId (or the arrival zone's environment),
+  // so moving between zones inside the scene never re-triggers the closing gate.
+  const selectedEnvironment = useMemo(() => {
+    const envs = getLocationEnvironments(location);
+    if (envs.length === 0) return null;
+    const byId = initialEnvironmentId ? envs.find((e) => e.id === initialEnvironmentId) : null;
+    if (byId) return byId;
+    const arrivalZone = initialZoneName || locationZones[0]?.zone_name;
+    return envs.find((e) => Array.isArray(e.zone_names) && e.zone_names.includes(arrivalZone)) || null;
+  }, [location?.id, initialEnvironmentId, initialZoneName]);
   const broughtCharacters = characters.filter((c) => characterIds.includes(c.id));
 
   const unifiedPresenceEntities = useMemo(() => {
@@ -499,7 +512,9 @@ export default function Scene() {
     } finally { setActionCooldown(false); }
   };
 
-  const locationClosed = isLocationOpen(location) === false;
+  // Location-level closing only blocks when the SELECTED environment is also unavailable.
+  // An accessible residential environment remains reachable while business operations are closed.
+  const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false);
 
   const renderNpc = (npc) => {
     const isSelected = (selectedNpcIds || []).includes(npc.id);

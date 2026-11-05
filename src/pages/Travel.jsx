@@ -17,7 +17,7 @@ import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilit
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import RealLocationModal from "@/components/travel/RealLocationModal";
-import EnvironmentSelectorModal, { getLocationEnvironments } from "@/components/location/EnvironmentSelectorModal";
+import EnvironmentSelectorModal, { getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import GatheringRoomCard from "@/components/travel/GatheringRoomCard";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
@@ -474,9 +474,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   const handleTravel = async () => {
     if (!selectedLocation) return;
     const isOpen = isLocationActiveNow(selectedLocation);
-    // Residential environments (explicit metadata only) bypass business hours
-    const isResidentialBypass = selectedEnvironment?.type === 'residential' && selectedEnvironment?.follows_business_hours === false;
-    if (isOpen === false && !isResidentialBypass) {
+    // The SELECTED environment is authoritative: an accessible residential (or
+    // explicitly non-business-hours) environment is not blocked by the property's
+    // business hours. Same rule the environment-selection modal uses.
+    const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, isOpen);
+    if (isOpen === false && !selectedEnvAccessible) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
         character: { id: "closed", name: selectedLocation.name, avatar_url: null },
@@ -501,6 +503,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // Pass the first zone assigned to this environment so Scene starts in the correct zone
     const envZone = selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
+    // Carry the selected environment itself so the arrival gate validates the
+    // environment the user chose, not the property's business hours.
+    if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -756,9 +761,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const isHome = selectedLocation.category === "home";
                   const isClosed = isLocationActiveNow(selectedLocation) === false;
 
-                  // For mixed-use locations: residential environments bypass business closing.
-                  const isResidentialEnv = selectedEnvironment?.type === 'residential' && selectedEnvironment?.follows_business_hours === false;
-                  if (isClosed && !isResidentialEnv) {
+                  // For mixed-use locations: an accessible selected environment bypasses business closing.
+                  const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, false);
+                  if (isClosed && !selectedEnvAccessible) {
                     // Check if explicitly configured mixed-use — if so, allow re-selection of environment
                     const envs = getLocationEnvironments(selectedLocation);
                     if (envs.length > 0) {

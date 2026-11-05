@@ -19,6 +19,21 @@ export function getLocationEnvironments(location) {
 }
 
 /**
+ * isEnvironmentAccessibleNow
+ *
+ * SINGLE SOURCE OF TRUTH for whether a selected environment is currently reachable.
+ * Residential environments and environments explicitly configured to not follow
+ * business hours remain accessible while the property's business hours are closed.
+ * Every other environment continues to follow the location's operating hours.
+ */
+export function isEnvironmentAccessibleNow(environment, isLocationOpenNow) {
+  if (!environment) return isLocationOpenNow !== false;
+  if (environment.type === 'residential') return true;
+  if (environment.follows_business_hours === false) return true;
+  return isLocationOpenNow !== false;
+}
+
+/**
  * Resolves the environment type for a given zone name.
  * Returns 'operational' | 'residential' | 'restricted' | null.
  * Used by the Scene page to drive population behavior per the active zone's environment.
@@ -87,7 +102,7 @@ export default function EnvironmentSelectorModal({ location, isOpen, onClose, on
               {environments.map((env) => {
                 const isResidential = env.type === "residential";
                 const isRestricted = env.type === "restricted";
-                const isBlocked = !isResidential && env.follows_business_hours !== false && isLocationOpenNow === false;
+                const isBlocked = !isEnvironmentAccessibleNow(env, isLocationOpenNow);
 
                 return (
                   <button
