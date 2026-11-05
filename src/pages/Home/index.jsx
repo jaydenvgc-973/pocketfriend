@@ -418,7 +418,7 @@ export default function Home() {
           <WeeklyPublicationCard />
           
           {currentUser?.email && (
-            <VickServiceCard ownerEmail={currentUser.email} />
+            <VickServiceCard ownerEmail={currentUser.email} locationMap={locationMap} />
           )}
 
           <div>

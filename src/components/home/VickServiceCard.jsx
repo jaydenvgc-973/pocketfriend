@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { Shield, AlertTriangle, CheckCircle2, Activity, MessageSquare, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import VickInvestigationQueue from "./VickInvestigationQueue";
+import ServiceOperatorLocationMarker from "./ServiceOperatorLocationMarker";
 import { getOrResolveVick, isVickRecord, updateVickCache, getCachedVick } from "@/lib/vickServiceCache";
 
 /**
@@ -45,7 +46,7 @@ async function resolveVickRecord(ownerEmail) {
   return null;
 }
 
-export default function VickServiceCard({ ownerEmail }) {
+export default function VickServiceCard({ ownerEmail, locationMap = {} }) {
   const navigate = useNavigate();
 
   // ── STABLE INITIALISATION: if cache already has Vick, start with him immediately.
@@ -335,6 +336,12 @@ export default function VickServiceCard({ ownerEmail }) {
             </div>
           </div>
         </motion.button>
+
+        {/* Location marker — same live presence + teleportation as ordinary character cards */}
+        <div className="flex items-center justify-between gap-2 px-4 pb-3 border-t border-border/60 pt-2">
+          <ServiceOperatorLocationMarker character={vick} locationMap={locationMap} />
+          <span className="text-[10px] text-muted-foreground flex-shrink-0">Tap location to move</span>
+        </div>
 
         {hasQueue && (
           <div className="border-t border-border">
