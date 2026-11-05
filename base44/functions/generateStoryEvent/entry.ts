@@ -80,25 +80,123 @@ function addHoursToTime(timeStr, hours) {
 
 // ── RESOLVE PARTICIPANT REFERENCE IMAGES ──────────────────────────────────────
 // Resolves canonical reference images for a character record.
-// Priority: reference_image_urls (no generated) → CDN avatar → empty.
+// The AVATAR is the character's canonical face and is ALWAYS included first —
+// reference photographs follow. Story Event images must preserve the established
+// face, hair, complexion and body, so the avatar can never be dropped just
+// because loose reference photos exist.
 function resolveCharacterRefImages(charRecord) {
   if (!charRecord) return [];
-  const allRefs = cdnFilter(charRecord.reference_image_urls || []);
-  const validRefs = allRefs.filter(url => !url.includes('generated_image'));
-  if (validRefs.length > 0) return validRefs.slice(0, 3);
-  // CDN avatar fallback — only if it is a canonical portrait, not a generated scene image
-  if (charRecord.avatar_url) {
-    const avatarPublic = toPublicCDN(charRecord.avatar_url);
-    const isCDN = avatarPublic.startsWith('https://media.base44.com/');
-    if (isAccessible(avatarPublic) && (isCDN || !avatarPublic.includes('generated_image'))) {
-      return [avatarPublic];
+  const out = [];
+  const pushUrl = (url) => {
+    const pub = toPublicCDN(url);
+    if (!pub || !isAccessible(pub) || out.includes(pub)) return;
+    out.push(pub);
+  };
+  pushUrl(charRecord.avatar_url);
+  pushUrl(charRecord.image_avatar_url);
+  for (const url of cdnFilter(charRecord.reference_image_urls || [])) {
+    if (out.length >= 4) break;
+    if (url.includes('generated_image') && out.length > 0) continue; // keep scene renders out of identity anchoring
+    pushUrl(url);
+  }
+  return out.slice(0, 4);
+}
+
+// ── STORY EVENT IMAGE CONTINUITY BLOCKS ───────────────────────────────────────
+// These three blocks exist because Story Event images are generated one moment at
+// a time. Without them each moment is an independent invention: a different face,
+// a different room, a different wardrobe. They are injected into EVERY Story Event
+// image prompt so all moments of one event describe the same people in the same
+// place wearing the same clothes.
+
+// Character identity — the avatar and reference photographs ARE the character.
+function buildCharacterIdentityLockBlock(entries) {
+  if (!entries || entries.length === 0) return '';
+  const lines = [
+    `════════════════════════════════════════════════════════════`,
+    `🔒 CHARACTER IDENTITY LOCK — REFERENCE IMAGERY IS AUTHORITY`,
+    `════════════════════════════════════════════════════════════`,
+  ];
+  for (const e of entries) {
+    lines.push(``);
+    lines.push(`${e.name} ("${e.first_name}", Character ID: ${e.character_id})`);
+    if (e.appearance) {
+      lines.push(`  Documented appearance: ${e.appearance}`);
+    } else {
+      lines.push(`  Documented appearance: (none recorded — the attached reference image is the sole authority for this person)`);
     }
+    lines.push(`  Reference images attached: ${e.ref_count > 0 ? `${e.ref_count} (${e.ref_range})` : `NONE — this is a data gap, render only from documented appearance`}`);
+    lines.push(`  - Face, facial features, complexion, hairstyle, hair texture, body type and proportions MUST match this person's reference imagery exactly.`);
+    lines.push(`  - AGE IS NOT AN APPEARANCE DESCRIPTION. Never infer how this person looks from a numeric age, and never from a family or social role (grandmother, grandfather, mother, father, elder).`);
+    lines.push(`  - Do NOT age them up: no added gray hair, added weight, wrinkles, frailty, dowdy clothing, or "typical for their age" styling that the reference imagery does not show.`);
+    lines.push(`  - Do NOT age them down or idealize them into a younger, smoother, more generic version of themselves.`);
+    lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins.`);
   }
-  if (charRecord.image_avatar_url) {
-    const imgAvatar = toPublicCDN(charRecord.image_avatar_url);
-    if (isAccessible(imgAvatar)) return [imgAvatar];
+  lines.push(`════════════════════════════════════════════════════════════`);
+  return lines.join('\n');
+}
+
+// Venue identity — the selected location's own reference photographs.
+// Used ONLY for a real, persisted, non-rabbit-hole venue that has reference images.
+function buildVenueIdentityLockBlock(venue, imageRange) {
+  if (!venue || !venue.images || venue.images.length === 0) return '';
+  const lines = [
+    `════════════════════════════════════════════════════════════`,
+    `📍 LOCATION IDENTITY LOCK — THE SELECTED, EXISTING VENUE`,
+    `════════════════════════════════════════════════════════════`,
+    `This event takes place at "${venue.name}", a real existing location the user selected.`,
+    `Attached ${venue.images.length === 1 ? 'image' : 'images'} ${imageRange} ${venue.images.length === 1 ? 'is a reference photograph' : 'are reference photographs'} of that actual place.`,
+  ];
+  lines.push(`- The room is built ONLY from those photographs. Architecture, layout, materials, furniture types, colours, finishes and distinctive features must come from them.`);
+  lines.push(`- Do NOT invent decor, fixtures, wall treatments, furniture or room features that are not visible in the photographs. Any written description of the interior is background colour only and is OVERRIDDEN by the photographs.`);
+  lines.push(`- Treat it as a THREE-DIMENSIONAL PLACE, not a backdrop: you may place the camera anywhere inside it — facing another wall, closer to a surface, from the entrance, from a different angle. A different viewpoint is expected and correct.`);
+  lines.push(`- Do NOT reproduce the reference photograph's framing or composition, and do NOT composite people onto it.`);
+  lines.push(`- Do NOT restyle, renovate, redecorate or simplify it, and do NOT replace it with generic scenery of the same category (no "a generic restaurant", "a generic living room").`);
+  lines.push(`- Lighting, weather and atmosphere follow THIS event's time and mood, not the reference photograph.`);
+  lines.push(`- The photographs are also the authority for continuity: every image of this event shows the SAME place.`);
+  lines.push(`════════════════════════════════════════════════════════════`);
+  return lines.join('\n');
+}
+
+// Clothing continuity — one event, one outfit per person, unless the story says otherwise.
+function buildClothingContinuityBlock(entries) {
+  if (!entries || entries.length === 0) return '';
+  const lines = [
+    `════════════════════════════════════════════════════════════`,
+    `👕 CLOTHING CONTINUITY — THIS IS ONE CONTINUOUS EVENT`,
+    `════════════════════════════════════════════════════════════`,
+  ];
+  for (const e of entries) {
+    lines.push(`${e.name}: ${e.outfit || 'no wardrobe record — the outfit established in the first image of this event must be repeated exactly'}`);
   }
-  return [];
+  lines.push(``);
+  lines.push(`- Every image of this event shows the same outfit on the same person, in the same colours, patterns and accessories.`);
+  lines.push(`- A new image is NOT a new outfit. A different camera angle is NOT a new outfit. A new moment is NOT a new outfit.`);
+  lines.push(`- Change someone's clothing ONLY when this image's own scene explicitly shows the change: they shower or bathe, dress for a new activity (gym clothes before exercising, work clothes before a shift), get ready for bed, or the story moves to a different time or place where a change has happened.`);
+  lines.push(`- Never keep a stale outfit when the scene explicitly establishes a change.`);
+  lines.push(`════════════════════════════════════════════════════════════`);
+  return lines.join('\n');
+}
+
+// Image map — tells the generator exactly what each attached image is for.
+function buildImageMapBlock(entries) {
+  if (!entries || entries.length === 0) return '';
+  const lines = [`IMAGE MAP (attached images, in order):`];
+  for (const e of entries) {
+    lines.push(`${e.range}: ${e.label}`);
+  }
+  return lines.join('\n');
+}
+
+// Venue reference images — location-level photos first, then zone photos.
+// Only for a real, persisted venue. Rabbit holes never take this path.
+function resolveVenueRefImages(venue) {
+  if (!venue) return [];
+  const urls = [
+    ...cdnFilter(venue.image_urls || []),
+    ...(venue.zones || []).flatMap(z => cdnFilter(z.image_urls || [])),
+  ];
+  return urls.filter((url, i, arr) => arr.indexOf(url) === i).slice(0, 3);
 }
 
 /**
@@ -483,13 +581,17 @@ Deno.serve(async (req) => {
       ? 'All-day event'
       : `${startTime || 'TBD'}${endTime ? ` to ${endTime}` : ''}`;
 
-    // Build venue appearance context from LocationReference if available
+    // Build venue appearance context from LocationReference if available.
+    // The record is also kept for the image step: a selected, existing venue is
+    // the visual identity authority for its own reference photographs.
     let venueContext = '';
+    let venueRecord = null;
     if (!isRabbitHole && event.venue_id) {
       try {
         const venueRecs = await base44.asServiceRole.entities.LocationReference.filter({ id: event.venue_id }, null, 1);
         const venue = venueRecs[0];
         if (venue) {
+          venueRecord = venue;
           venueContext = [
             `Venue: ${venue.name}`,
             venue.description ? `Description: ${venue.description}` : '',
@@ -497,6 +599,18 @@ Deno.serve(async (req) => {
           ].filter(Boolean).join('\n');
         }
       } catch (_) {}
+    }
+
+    // Venue reference photographs (real, persisted, non-rabbit-hole venue only).
+    const venueRefImages = isRabbitHole ? [] : resolveVenueRefImages(venueRecord);
+    const venueImageLock = isRabbitHole ? null : {
+      name: venueRecord?.name || venueName,
+      description: (venueRecord?.description || '').substring(0, 600) || null,
+      category: venueRecord?.category || null,
+      images: venueRefImages,
+    };
+    if (!isRabbitHole) {
+      console.log(`[generateStoryEvent] VENUE REFS: "${venueName}" → ${venueRefImages.length} reference image(s)`);
     }
 
     // ── STEP 1: GENERATE NARRATIVE ──────────────────────────────────────────────
@@ -605,8 +719,11 @@ Deno.serve(async (req) => {
       `- EVERY CHARACTER participant (family members, NPCs, service characters, AND active characters) gets at least one memory. No character who attended is left without a memory.`,
       `- The USER participant is NOT a character. Do NOT include them in the memories array, emotional_outcomes array, or any memory-related output. Only create memories for CHARACTER participants.`,
       `- Relationship changes can be created between CHARACTER participants who interact meaningfully. A character's relationship toward the USER can also change — when it does, use the user's User ID as target_character_id and the user's display name as target_name.`,
-      `- Image prompts must reference the venue: ${venueName}.`,
-      `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, clothing, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
+      `- Image prompts must reference the venue by name only: ${venueName}. Do NOT describe its decor, furniture, layout, architecture, wall treatments or lighting fixtures — the venue's own reference photographs are attached to the renderer and are the sole authority for the interior. Invented interior detail conflicts with them.`,
+      `- Each image prompt must state a DIFFERENT camera position (for example a wider view, a closer angle from the side, a view across the table) so the three moments are not the same shot.`,
+      `- IMAGE IDENTITY RULE (CRITICAL): For every character visible in an image, copy their APPEARANCE data verbatim from the character details above. Use their actual skin tone, hair, hairstyle, aesthetic. DO NOT describe generic strangers. DO NOT invent replacement faces. The people shown must match the selected characters.`,
+      `- AGE IS NOT AN APPEARANCE DESCRIPTION. Never describe anyone as elderly, aged, gray-haired, heavyset, frail, dowdy, or "typical for their age" because of a numeric age or a family role (grandmother, grandfather, mother, father). Never describe anyone as younger or more idealized than their documented appearance. If no appearance data exists, describe no physical features at all — the character's own reference image supplies them.`,
+      `- OUTFITS ARE NOT YOURS TO INVENT. Do NOT name, describe or restyle anyone's clothing in the image prompts — each person's outfit comes from their Character Closet and is identical in all three moments. The ONLY exception: when the narrative explicitly establishes a clothing change at that moment (they shower or bathe, change into gym clothes to exercise, dress for a work shift, get ready for bed, or the scene moves to a different time or place where they changed), then state that change plainly — and only that change.`,
       userImageRuleLine,
       `- Only include relationship changes for character pairs that actually interact meaningfully.`,
     ].join('\n');
@@ -1020,6 +1137,9 @@ Deno.serve(async (req) => {
     //   3. Stores resolved participant metadata in generation_context
     const imagePrompts = generated.image_prompts || [];
     const momentOrder = { opening: 0, key_moment: 1, closing: 2 };
+    // First successfully generated image of this event. Later moments receive it as
+    // a clothing/room continuity reference (never as a composition template).
+    let eventContinuityImageUrl = null;
 
     for (const img of imagePrompts) {
       if (!img.moment || !img.prompt) continue;
@@ -1065,6 +1185,75 @@ Deno.serve(async (req) => {
         const userIdentityLockBlock = buildUserIdentityLockBlock(userBundle);
         const userIsIncluded = !!userBundle;
 
+        // ── REFERENCE IMAGE PLAN ─────────────────────────────────────────────────
+        // Identity first (avatar, then photographs), then the real venue's own
+        // photographs, then the user, then the event's continuity reference.
+        // The IMAGE MAP below tells the generator what each attached image is for,
+        // so identity, location and clothing can never be confused with each other.
+        const planRefs = [];
+        const planMap = [];
+        const addPlanRef = (url) => {
+          const clean = toPublicCDN(url);
+          if (!clean || !isAccessible(clean) || planRefs.includes(clean)) return null;
+          planRefs.push(clean);
+          return planRefs.length; // 1-based image number
+        };
+        const rangeOf = (nums) => (nums.length === 1 ? `Image ${nums[0]}` : `Images ${nums[0]}–${nums[nums.length - 1]}`);
+
+        const identityEntries = [];
+        for (const b of visibleBundles) {
+          const nums = b.ref_images.slice(0, 2).map(u => addPlanRef(u)).filter(Boolean);
+          if (nums.length > 0) {
+            planMap.push({
+              range: rangeOf(nums),
+              label: `FACE / BODY IDENTITY — ${b.display_name}. Face, hair, complexion, body type come from here.`,
+            });
+          }
+          identityEntries.push({
+            name: b.display_name,
+            first_name: b.matched_prompt_name,
+            character_id: b.character_id,
+            appearance: b.appearance_notes,
+            ref_count: nums.length,
+            ref_range: nums.length > 0 ? rangeOf(nums) : null,
+          });
+        }
+
+        const venueNums = venueRefImages.map(u => addPlanRef(u)).filter(Boolean);
+        if (venueNums.length > 0) {
+          planMap.push({
+            range: rangeOf(venueNums),
+            label: `LOCATION SPATIAL DATA — ${venueImageLock.name}. Build this exact place from these; do NOT copy their framing.`,
+          });
+        }
+
+        if (userIsIncluded) {
+          const userNums = userRefImagesForPayload.map(u => addPlanRef(u)).filter(Boolean);
+          if (userNums.length > 0) {
+            planMap.push({ range: rangeOf(userNums), label: `FACE / IDENTITY — ${userBundle.display_name} (the User).` });
+          }
+        }
+
+        if (eventContinuityImageUrl) {
+          const addedNum = addPlanRef(eventContinuityImageUrl);
+          if (addedNum) {
+            planMap.push({
+              range: `Image ${addedNum}`,
+              label: `CONTINUITY REFERENCE — an earlier photograph from THIS SAME EVENT. Use ONLY for the same clothing and the same room. Do NOT copy its camera angle, framing, pose or composition — this is a different moment.`,
+            });
+          }
+        }
+
+        const identityLockBlock = buildCharacterIdentityLockBlock(identityEntries);
+        const venueIdentityLockBlock = venueImageLock && venueNums.length > 0
+          ? buildVenueIdentityLockBlock(venueImageLock, rangeOf(venueNums).replace(/^Images? /, '').replace('Images ', ''))
+          : '';
+        const clothingContinuityBlock = buildClothingContinuityBlock([
+          ...visibleBundles.map(b => ({ name: b.display_name, outfit: b.outfit_text })),
+          ...(userBundle ? [{ name: `${userBundle.display_name} (User)`, outfit: userBundle.outfit_text }] : []),
+        ]);
+        const imageMapBlock = buildImageMapBlock(planMap);
+
         // ── FINAL IMAGE PROMPT: Name Reference Key + scene description ──────────
         const finalImagePrompt = [
           `════════════════════════════════════════════════════════════`,
@@ -1078,6 +1267,14 @@ Deno.serve(async (req) => {
           ``,
           // ── USER IDENTITY LOCK — zero-drift enforcement ──
           ...(userIdentityLockBlock ? [userIdentityLockBlock, ``] : []),
+          // ── CHARACTER IDENTITY LOCK — avatars and reference photos are authority ──
+          ...(identityLockBlock ? [identityLockBlock, ``] : []),
+          // ── LOCATION IDENTITY LOCK — the selected venue's own reference photos ──
+          ...(venueIdentityLockBlock ? [venueIdentityLockBlock, ``] : []),
+          // ── CLOTHING CONTINUITY — one event, one outfit per person ──
+          ...(clothingContinuityBlock ? [clothingContinuityBlock, ``] : []),
+          // ── IMAGE MAP — what each attached image is for ──
+          ...(imageMapBlock ? [imageMapBlock, ``] : []),
           `════════════════════════════════════════════════════════════`,
           `STORY EVENT: "${title}"`,
           `MOMENT: ${img.moment.replace('_', ' ')}`,
@@ -1087,8 +1284,12 @@ Deno.serve(async (req) => {
           ``,
           img.prompt,
           ``,
-          `VISIBLE PARTICIPANTS (ALL listed must appear in this image — NO OMISSIONS, NO STAND-INS, NO GENERIC STRANGERS):`,
-          allParticipantNames.length > 0 ? allParticipantNames.map(name => `- ${name}`).join('\n') : '- No participants specified',
+          `VISIBLE PARTICIPANTS (exactly these people appear — NO EXTRA PEOPLE, NO OMISSIONS, NO STAND-INS, NO GENERIC STRANGERS):`,
+          [
+            ...visibleCharNames.map(name => `- ${name}`),
+            ...(userIsIncluded ? [`- ${userBundle.display_name} (User)`] : []),
+          ].join('\n') || '- No participants specified',
+          `- Every other person in the room, if any, is incidental background and must never resemble a Story Event participant.`,
           ``,
           `Photorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.`,
           ``,
@@ -1123,19 +1324,12 @@ Deno.serve(async (req) => {
         ].join('\n');
 
         // ── REFERENCE IMAGE PAYLOAD ────────────────────────────────────────────
-        // Focus character refs first, then visible character refs, then user refs.
-        // Deduplication and CDN-filtering applied.
-        const visibleCharRefImages = visibleBundles.flatMap(b => b.ref_images);
-        const refImages = [
-          ...focusRefImages,
-          ...visibleCharRefImages,
-          ...userRefImagesForPayload,
-        ]
-          .filter((url, i, arr) => arr.indexOf(url) === i) // deduplicate
-          .filter(Boolean)
-          .slice(0, 10); // cap to avoid oversized payloads
+        // Built by the reference plan above: identity, then venue, then user,
+        // then the event continuity reference. Already CDN-filtered and deduped.
+        const refImages = planRefs.slice(0, 12); // cap to avoid oversized payloads
 
         console.log(`[generateStoryEvent] IMAGE DISPATCH: moment="${img.moment}" participants=${imageKeyParticipants.length} ref_images=${refImages.length}`);
+        console.log(`[generateStoryEvent]   identity_refs=${identityEntries.reduce((n, e) => n + e.ref_count, 0)} venue_refs=${venueNums.length} continuity_ref=${eventContinuityImageUrl ? 'yes' : 'no'}`);
         console.log(`[generateStoryEvent]   key_header_present: ${finalImagePrompt.includes('[NAME REFERENCE KEY — SELECTED PARTICIPANTS]')}`);
         console.log(`[generateStoryEvent]   existing_image_urls_count: ${refImages.length}`);
 
@@ -1224,6 +1418,9 @@ Deno.serve(async (req) => {
             timestamp: new Date().toISOString(),
             owner_email: ownerEmail,
           });
+
+          // Clothing / room continuity anchor for the remaining moments.
+          if (!eventContinuityImageUrl) eventContinuityImageUrl = imageRes.url;
         }
       } catch (imgErr) {
         console.warn(`[generateStoryEvent] Image generation failed for moment="${img.moment}": ${imgErr?.message}`);
