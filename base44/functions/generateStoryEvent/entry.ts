@@ -113,6 +113,32 @@ function resolveCharacterRefImages(charRecord) {
 // they were AT THAT TIME, not their age today. Eastern Time is the authoritative
 // clock here; the date strings involved are plain calendar dates so the year
 // difference is exact. Returns null when the age genuinely cannot be known.
+// ── PREGNANCY — PERSISTENT BODY STATE ─────────────────────────────────────────
+// Pregnancy is a state, not a per-prompt detail. While it is recorded the character
+// is pregnant in EVERY image, and the stage is derived from the recorded start date
+// so it advances on its own. Birth (recorded as such) ends it automatically.
+// ANTI-DRIFT: identical copy exists in generateMissingStoryEventImage and
+// regenerateStoryEventImageWithCharacters (Deno functions cannot share local files).
+function pregnancyAppearanceLine(c) {
+  const life = c?.current_life_event;
+  if (typeof life !== 'string' || !/pregnan/i.test(life)) return '';
+  if (/\b(gave birth|has given birth|no longer pregnant|gave birth to)\b/i.test(life)) return '';
+  const beganMatch = life.match(/began\s+(\d{4}-\d{2}-\d{2})/i);
+  const beganMs = beganMatch ? new Date(`${beganMatch[1]}T12:00:00`).getTime() : NaN;
+  const nowMs = Date.now();
+  const weeks = !isNaN(beganMs) ? Math.max(0, Math.min(42, Math.floor((nowMs - beganMs) / 604800000))) : null;
+  const months = weeks == null ? null : Math.min(9, Math.max(1, Math.round(weeks / 4.345)));
+  const visual = weeks == null
+    ? 'visibly pregnant with a moderate, believable bump'
+    : weeks <= 13 ? 'the abdomen is barely changed — NO prominent bump yet, waistline only slightly softened'
+    : weeks <= 19 ? 'a small but genuinely visible rounded bump low on the abdomen'
+    : weeks <= 27 ? 'a clearly rounded, forward-set bump — the abdomen projects ahead of her waistline and shows through clothing'
+    : weeks <= 33 ? 'a large, high-carried bump that dominates her midsection; her lower back curves to balance it'
+    : weeks <= 39 ? 'a very large, low-carried bump: her whole midsection projects far forward, the bump sits low, and it is unmistakable even under loose clothing'
+    : 'full-term: an extremely large, low-set bump — she is visibly at the very end of pregnancy';
+  return `PREGNANCY STATE — PERSISTENT BODY STATE (NOT A COSTUME): this character is pregnant${weeks != null ? `, about ${weeks} weeks (${months} month${months === 1 ? '' : 's'})` : ''}. Visible stage: ${visual}. The bump must be unmistakably present and this stage must look visibly different from an earlier stage of the same pregnancy — a later stage is larger, lower and heavier, never the same size. Do NOT render a flat abdomen and do NOT advance her beyond this stage. Her face, hair and identity are unchanged and come from her reference images.`;
+}
+
 function ageAtEventDate(character, eventDate) {
   const birthday = character?.birthday;
   const target = eventDate ? new Date(`${String(eventDate).substring(0, 10)}T12:00:00`) : new Date();
@@ -421,6 +447,8 @@ Deno.serve(async (req) => {
       const appearanceParts = [];
       if (c.appearance_notes) appearanceParts.push(c.appearance_notes);
       if (c.avatar_description_text) appearanceParts.push(c.avatar_description_text);
+      const _pregLine = pregnancyAppearanceLine(c);
+      if (_pregLine) appearanceParts.push(_pregLine);
       if (c.appearance_lock && typeof c.appearance_lock === 'object') {
         const al = c.appearance_lock;
         const lockParts = [];

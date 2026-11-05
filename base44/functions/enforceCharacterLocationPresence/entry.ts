@@ -1288,7 +1288,33 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
  * (aligned with src/lib/locationResolutionEngine.js).
  */
 function evaluateLegacyRecompute(character, locationMap, etTime, activeStoryEventVenue = null) {
-  const resolved = computeResolvedLocation(character, locationMap, etTime, activeStoryEventVenue);
+  // ── ENDED STORY EVENT RELEASE ──────────────────────────────────────────────
+  // A completed Story Event is history, not presence. Once the event window has
+  // passed, the venue it committed must stop being the character's authoritative
+  // location: the character is re-resolved from their own schedules, home and
+  // routines, and the venue timestamp is cleared so nothing downstream can keep
+  // pinning them to the event location. The event record itself is untouched.
+  // Rest/medical states are left alone — a sleeping or hospitalized character is
+  // not moved by an event ending.
+  const _restStates = ['sleeping', 'napping', 'passed_out', 'hospitalized'];
+  const _venueExpired =
+    character.resolved_source_reason === 'story_event_venue' &&
+    !!character.story_event_venue_until &&
+    Date.now() > new Date(character.story_event_venue_until).getTime() &&
+    !_restStates.includes(character.resolved_presence_status);
+  const _releaseBase = _venueExpired
+    ? {
+        ...character,
+        resolved_current_location_id: null,
+        resolved_current_location_name: null,
+        resolved_location_type: null,
+        resolved_presence_status: null,
+        resolved_source_reason: null,
+        story_event_venue_until: null,
+      }
+    : character;
+
+  const resolved = computeResolvedLocation(_releaseBase, locationMap, etTime, activeStoryEventVenue);
   const stored = buildStoredState(character);
   if (!hasChanged(resolved, stored)) {
     return { disposition: 'no_change', canonicalFields: {} };

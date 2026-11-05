@@ -10,6 +10,7 @@ import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import { enforceValidation } from "@/lib/appearanceLockValidator";
 import { resolveHousingLocationForCharacter } from "@/lib/resolveHousingLocationForCharacter";
+import { pregnancyPromptLine } from "@/lib/pregnancyState";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -113,9 +114,17 @@ export async function dispatchImageGeneration({
     const publicCharRefs = rawCharRefs.map(toPublicCDN).filter(isProviderAccessible);
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
 
+    // ── PERSISTENT APPEARANCE STATE ────────────────────────────────────────────
+    // Pregnancy is carried on the character's own record, not restated per prompt,
+    // so it is appended to every generated image until birth is recorded.
+    const _pregnancyState = senderIsSubject ? pregnancyPromptLine(character) : '';
+    const _promptWithState = _pregnancyState
+      ? `${imageGenPrompt}\n\n${_pregnancyState}`
+      : imageGenPrompt;
+
     const res = await base44.functions.invoke('generateImageAsync', {
       messageId: targetMsgId,
-      prompt: imageGenPrompt,
+      prompt: _promptWithState,
       characterReferenceImages: publicCharRefs,
       userReferenceImages: useUserRefs ? publicUserRefs : [],
       // characterName: use the SUBJECT's name when different from sender

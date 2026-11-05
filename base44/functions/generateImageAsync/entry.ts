@@ -1702,7 +1702,7 @@ Deno.serve(async (req) => {
           // Skip when the character is at an active Story Event venue — the venue
           // is the authoritative location, not the correctional facility.
           if (!locationId && charRecord.is_jailed && charRecord.incarceration_facility_id &&
-              charRecord.resolved_source_reason !== 'story_event_venue') {
+              !(charRecord.resolved_source_reason === 'story_event_venue' && charRecord.story_event_venue_until && Date.now() < new Date(charRecord.story_event_venue_until).getTime())) {
             locationId = charRecord.incarceration_facility_id;
             console.log(`[generateImageAsync] INCARCERATION-AUTHORITY: character is jailed → facility="${charRecord.incarceration_facility_id}"`);
           }
@@ -2085,7 +2085,7 @@ All reference images (if any) are environment/location refs only — do NOT trea
     // No permanent field — the condition is computed at generation time and naturally
     // clears when the Story Event ends (resolved_source_reason changes).
     const _isIncarceratedAtStoryEvent = charRecord?.is_jailed === true &&
-      charRecord?.resolved_source_reason === 'story_event_venue' &&
+      charRecord?.resolved_source_reason === 'story_event_venue' && !!charRecord?.story_event_venue_until && Date.now() < new Date(charRecord.story_event_venue_until).getTime() &&
       charRecord?.resolved_current_location_id !== charRecord?.incarceration_facility_id;
     const _custodyIndicatorBlock = _isIncarceratedAtStoryEvent
       ? `\n═══════════════════════════════════════════════════════════\n⛔ CUSTODY STATUS — INCARCERATED, TEMPORARILY OUTSIDE FACILITY\n═══════════════════════════════════════════════════════════\nThis character is currently INCARCERATED but temporarily outside the correctional facility for an authorized event.\nThey MUST visibly wear an ELECTRONIC ANKLE MONITOR on their ankle — a small black GPS tracking device with a strap, clearly visible in the image.\nThis is a custody indicator, not a fashion accessory. It must be present and visible.\n═══════════════════════════════════════════════════════════\n`

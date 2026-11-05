@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -33,6 +33,7 @@ import ManualNeedsEditor from "@/components/character/ManualNeedsEditor";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import CharacterBusinessesPanel from "@/components/character/CharacterBusinessesPanel";
 import LifeJournal from "@/components/character/LifeJournal";
+import PregnancyPanel from "@/components/character/PregnancyPanel";
 import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
@@ -696,6 +697,10 @@ export default function CharacterProfile() {
 
           <CollapsibleProfileSection icon={BookOpen} title="Life Journal">
             <LifeJournal characterId={characterId} character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Baby} title="Pregnancy & Birth">
+            <PregnancyPanel character={character} onUpdated={() => refetch()} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={AlertCircle} title="What They've Been Through">
