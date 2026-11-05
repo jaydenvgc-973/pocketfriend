@@ -60,8 +60,10 @@ export function reconcileAuthoritativePlace(prompt, state) {
   for (const line of lines) {
     // Presence assertions that contradict this turn's place are removed entirely —
     // an unsupported "AT WORK" is what let a character insist he was still there.
-    if (!atWork && (line.startsWith('AUTHORITATIVE PRESENCE: AT WORK') || line.startsWith('PRESENCE STATUS: at_work'))) continue;
-    if (!atSchool && (line.startsWith('AUTHORITATIVE PRESENCE: AT SCHOOL') || line.startsWith('PRESENCE STATUS: at_school'))) continue;
+    // Only removed when the authoritative presence is actually known to be different;
+    // an unknown presence is not evidence that the assertion is wrong.
+    if (presence && !atWork && (line.startsWith('AUTHORITATIVE PRESENCE: AT WORK') || line.startsWith('PRESENCE STATUS: at_work'))) continue;
+    if (presence && !atSchool && (line.startsWith('AUTHORITATIVE PRESENCE: AT SCHOOL') || line.startsWith('PRESENCE STATUS: at_school'))) continue;
 
     if (line.startsWith('YOU ARE HERE RIGHT NOW:')) {
       out.push(`YOU ARE HERE RIGHT NOW: ${name}. This is your only physical location.`);
