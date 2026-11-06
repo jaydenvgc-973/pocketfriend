@@ -228,14 +228,22 @@ Deno.serve(async (req) => {
       conversationMetaById[c.id] = {
         character_ids: Array.isArray(c.character_ids) ? c.character_ids.filter(Boolean) : [],
         title: c.title || '',
+        channel: c.channel || null,
       };
     }
 
-    const candidateCharacterIds = [...new Set(
-      Object.values(conversationMetaById)
+    const candidateCharacterIds = [...new Set([
+      // Own chat/text conversations: exactly one character in the thread.
+      ...Object.values(conversationMetaById)
         .filter((c) => c.character_ids.length === 1 && !c.title.startsWith('story_event::'))
-        .map((c) => c.character_ids[0])
-    )];
+        .map((c) => c.character_ids[0]),
+      // World Phone threads carry the pair (two characters), so the thread alone
+      // cannot name a folder. Both sides still need a resolvable name, because
+      // each side's own images are filed under that side's folder.
+      ...Object.values(conversationMetaById)
+        .filter((c) => c.channel === 'world_phone')
+        .flatMap((c) => c.character_ids),
+    ])];
 
     const characterNameById = {};
     for (let i = 0; i < candidateCharacterIds.length; i += 40) {
@@ -253,7 +261,7 @@ Deno.serve(async (req) => {
     // Readable fallback name for a folder whose character record is unavailable
     // (e.g. a character deleted before the folder was organized).
     function nameFromConversationTitle(title) {
-      if (!title || title.startsWith('story_event::')) return null;
+      if (!title || title.startsWith('story_event::') || title.startsWith('world_phone::')) return null;
       const base = title.replace(/^(direct|phone|text|chat)\s+with\s+/i, '').split('::')[0].trim();
       if (!base) return null;
       if (/^[0-9a-f-]{16,}$/i.test(base.replace(/\s/g, ''))) return null;
@@ -276,6 +284,25 @@ Deno.serve(async (req) => {
           ? conv.title.slice('story_event::'.length).split('::')[0]
           : (gc.story_event_id || null);
         return { key: 'story_events', kind: 'story_events', name: 'Story Events', characterId: null, storyEventId };
+      }
+      // ── WORLD PHONE ─────────────────────────────────────────────────────────
+      // A World Phone thread always holds the pair, so its two characters cannot
+      // identify the owner of a single image. The message itself records the
+      // character whose phone generated and sent the image — that is the image's
+      // owner, and it belongs in that character's existing folder. No separate
+      // World Phone folder exists; nothing about World Phone is changed here.
+      const isWorldPhoneThread = conv.channel === 'world_phone' || m.channel === 'world_phone';
+      if (isWorldPhoneThread) {
+        const phoneCharacterId = m.character_id || m.sender_character_id || null;
+        if (phoneCharacterId) {
+          return {
+            key: `character:${phoneCharacterId}`,
+            kind: 'character',
+            name: characterNameById[phoneCharacterId] || null,
+            characterId: phoneCharacterId,
+            storyEventId: null,
+          };
+        }
       }
       if (conv.character_ids.length === 1) {
         const characterId = conv.character_ids[0];
