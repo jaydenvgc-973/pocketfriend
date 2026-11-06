@@ -549,13 +549,12 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
     const rawPs = character.resolved_presence_status;
     const ps = rawPs === 'traveling' ? null : rawPs;
     lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated. A promise, a plan, or a user-confirmed scheduled move is NOT an arrival — only this line establishes where you physically are. You may say you are about to head somewhere, but you have not arrived there and may not narrate arriving.`);
-    // PLACE IDENTITY — what this place IS, not only what it is called. Derived from existing
-    // record fields only (residence id, workplace, location type). A room in the home is
-    // never the employer's office; schedule and activity describe doing, never presence.
-    if (!hasActiveStoryEvent) {
-      const here = character.resolved_current_location_id, homeId = character.current_home_location_id, workId = character.occupation_location_id, wl = (character.occupation_location_name || '').trim(), atHome = (here && homeId && here === homeId) || character.resolved_location_type === 'home', atWork = (here && workId && here === workId) || character.resolved_location_type === 'work';
-      lines.push(atHome ? `THIS PLACE IS YOUR HOME. ${character.resolved_current_location_name} is your own residence, not your workplace and not a branch of it.${wl ? ` Your workplace is ${wl}, a different building you are not inside right now — do not describe its rooms, lighting, desks or coworkers as what is around you.` : ''} A room inside your home (an office, a study) is still your home, and doing work here is working from home: unfinished work, reports or a shift never put you in another building. Your work schedule and your current activity describe obligations and doing, never where you are, and never override CURRENT LOCATION. If you said you were at work earlier and you are home now, that statement was wrong or has passed — say so plainly in one sentence and never defend it.` : atWork ? `THIS PLACE IS YOUR WORKPLACE. ${character.resolved_current_location_name} is where you work, not where you live.` : ps === 'at_school' ? `THIS PLACE IS YOUR SCHOOL. What happens here belongs to school, not to your job or your home.` : `THIS PLACE IS NOT YOUR HOME${wl ? ' AND NOT YOUR WORKPLACE' : ''}. You are out at ${character.resolved_current_location_name}; its rooms and sounds are its own.`);
-    }
+      const pl = character.current_place || null, nmm = character.resolved_current_location_name, here = character.resolved_current_location_id, resIds = [...(pl?.resident_character_ids || []), ...(pl?.residents || []).map(r => r.character_id)], wrkIds = [...(pl?.worker_character_ids || []), ...(pl?.enrolled_students || []).map(s => s.character_id)];
+      const isHomeHere = (here && (here === character.current_home_location_id || here === character.temporary_housing_location_id)) || (!!pl && resIds.includes(character.id)), isWorkHere = (here && (here === character.occupation_location_id || here === character.education_location_id)) || (!!pl && wrkIds.includes(character.id));
+      const CAT = { home: 'a residence', hotel: 'a hotel', shelter: 'a shelter', workplace: 'a workplace', gym: 'a gym', social: 'a social venue', outdoor: 'an outdoor place', food_drink: 'a restaurant or bar', medical: 'a medical facility', education: 'a school', school: 'a school', grocery: 'a grocery store', religion: 'a place of worship', government: 'a government building', public: 'a public place', business: 'a business', community: 'a community space', generic: 'an established place in your world', jail_prison: 'a confinement facility', transportation: 'a transit location' };
+      const kind = CAT[pl?.category] || (character.resolved_location_type ? `a ${character.resolved_location_type.replace(/_/g, ' ')}` : 'an established place in your world');
+      const relation = resIds.includes(character.id) ? 'you live here' : wrkIds.includes(character.id) ? (pl?.category === 'school' || pl?.category === 'education' ? 'you are enrolled here' : 'you work here') : 'you are here as a visitor';
+      lines.push(`WHAT THIS PLACE IS — ${nmm}: ${kind}, and ${relation}. Every room, zone, and area inside it belongs to this one place: a room's name, your job, your schedule, or the activity you are doing inside it never turns it into a different place, a second address, or another building.${isHomeHere ? '' : ' Your home is somewhere else and you are not there right now.'}${isWorkHere || !character.occupation_location_name ? '' : ` Your workplace is ${character.occupation_location_name} — a different place you are not inside, so its rooms, desks, lighting, and coworkers are not around you.`} Where you physically are is set only by CURRENT LOCATION. An earlier message, narrative, memory, promise, or plan that places you elsewhere is wrong or has passed: correct it plainly in one sentence, never defend it, and never use your own earlier words as evidence about where you are.`);
   }
 
   // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────
@@ -1288,6 +1287,10 @@ Deno.serve(async (req) => {
       contextLog.push({ step: 'location_authority_reconnect', status: 'error', error: authErr.message });
       console.warn(`[buildCanonicalCharacterContext] location authority reconnect failed (non-blocking): ${authErr.message}`);
     }
+
+    // The place record itself — what this location IS (its category, residency, employment,
+    // enrollment, rabbit-hole identity). Loaded once so every prompt block describes the same place.
+    try { const _pl = character.resolved_current_location_id ? await base44.asServiceRole.entities.LocationReference.filter({ id: character.resolved_current_location_id }, null, 1).catch(() => []) : []; if (_pl?.[0]) character = { ...character, current_place: _pl[0] }; } catch (_) {}
 
     // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
     const settingsList = resolvedEmail
@@ -2416,12 +2419,6 @@ NEVER SAY:
           channel_is_character_channel: isCharacterChannel,
         });
       }
-      contextLog.push({
-        step: 'vick_diagnostic_authority',
-        injected: true,
-        character_boundary_active: otherCharactersPresent,
-        channel_is_character_channel: isCharacterChannel,
-      });
     }
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
 
