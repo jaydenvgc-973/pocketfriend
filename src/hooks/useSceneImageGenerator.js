@@ -75,14 +75,19 @@ export function useSceneImageGenerator() {
     const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
 
     // ── REFERENCE IMAGE ASSEMBLY ──
+    // ── ZONE REFERENCE LOCK ──
+    // The selected zone's own reference images (Places > Zones & Images) are the visual
+    // authority for this scene. Images belonging to OTHER zones are never mixed in —
+    // mixing them is what made a zone render as a different room. When a zone has no
+    // images of its own, the location's own reference images are used; another zone's
+    // room is never substituted.
     const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone) || locationZones[0];
-    const allZoneImagesFlat = locationZones.flatMap((z) => z.image_urls || []);
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
-    const envRefs = activeZoneImagesForAction.length > 0 ?
-      [...activeZoneImagesForAction, ...allZoneImagesFlat.filter((u) => !activeZoneImagesForAction.includes(u))].slice(0, 4) :
-      allZoneImagesFlat.length > 0 ?
-      allZoneImagesFlat.slice(0, 4) :
-      firstImage ? [firstImage] : [];
+    const envRefs = activeZoneImagesForAction.length > 0
+      ? activeZoneImagesForAction.slice(0, 4)
+      : (location.image_urls || []).slice(0, 4);
+    // Fallback display when generation fails must stay the SAME zone, never a first-zone image.
+    const zoneFallbackImage = activeZoneImagesForAction[0] || firstImage;
 
     // ── REFERENCE KEY — avatar primary, reference images supplement ──
     // The avatar is the primary visual identity image (always included when present).
@@ -149,7 +154,7 @@ export function useSceneImageGenerator() {
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
         setSceneImage(result.url);
-      } catch { setSceneImage(firstImage); } finally { setIsGeneratingImage(false); }
+      } catch { setSceneImage(zoneFallbackImage); } finally { setIsGeneratingImage(false); }
       return;
     }
 
@@ -177,7 +182,7 @@ export function useSceneImageGenerator() {
         });
         setSceneImage(result.url);
       } catch {
-        setSceneImage(firstImage);
+        setSceneImage(zoneFallbackImage);
       } finally {
         setIsGeneratingImage(false);
       }
@@ -207,7 +212,7 @@ export function useSceneImageGenerator() {
       });
       setSceneImage(result.url);
     } catch {
-      setSceneImage(firstImage);
+      setSceneImage(zoneFallbackImage);
     } finally {
       setIsGeneratingImage(false);
     }

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { assignNewbornToBirthParentHousehold } from "@/lib/newbornResidency";
 import {
   pregnancyProfile,
   buildPregnancyLifeEvent,
@@ -135,15 +136,14 @@ export default function PregnancyPanel({ character, onUpdated }) {
         fictional_relationships: [...motherRels.filter(r => r.person_name !== name), relEntry],
       });
 
-      // Giving the baby their own parent links, so the family graph is two-way.
-      await base44.entities.Character.update(baby.id, {
-        family_members: [
-          { _member_id: `birth_mother_${character.id}`, name: character.name, relationship_type: "mother", photo_url: character.avatar_url || null, age_at_creation: character.age ?? null, age_set_date: today },
-        ],
-        fictional_relationships: [
-          { person_name: character.name, relationship_type: "mother", description: `${name}'s mother.`, source_character_id: character.id, relationship_context: "birth" },
-        ],
-      });
+      // Every known parent is carried onto the child here and written ONCE, so a
+      // later parent can never overwrite the birth parent out of the child's record.
+      const childFamily = [
+        { _member_id: `birth_mother_${character.id}`, name: character.name, relationship_type: "mother", photo_url: character.avatar_url || null, age_at_creation: character.age ?? null, age_set_date: today },
+      ];
+      const childRels = [
+        { person_name: character.name, relationship_type: "mother", description: `${name}'s mother.`, source_character_id: character.id, relationship_context: "birth" },
+      ];
 
       // Both parents list the child.
       if (otherParentId) {
@@ -159,18 +159,19 @@ export default function PregnancyPanel({ character, onUpdated }) {
               description: `${other.name}'s ${relationshipType}, born ${today}.`,
             }],
           });
-          await base44.entities.Character.update(baby.id, {
-            family_members: [
-              ...(baby.family_members || []).filter(m => m.name !== other.name),
-              { _member_id: `birth_${otherRelType}_${other.id}`, name: other.name, relationship_type: otherRelType, photo_url: other.avatar_url || null, age_at_creation: other.age ?? null, age_set_date: today },
-            ],
-            fictional_relationships: [
-              ...(baby.fictional_relationships || []).filter(r => r.person_name !== other.name),
-              { person_name: other.name, relationship_type: otherRelType, description: `${name}'s ${otherRelType}.`, source_character_id: other.id, relationship_context: "birth" },
-            ],
-          });
+          childFamily.push({ _member_id: `birth_${otherRelType}_${other.id}`, name: other.name, relationship_type: otherRelType, photo_url: other.avatar_url || null, age_at_creation: other.age ?? null, age_set_date: today });
+          childRels.push({ person_name: other.name, relationship_type: otherRelType, description: `${name}'s ${otherRelType}.`, source_character_id: other.id, relationship_context: "birth" });
         }
       }
+
+      // The child's own family record — birth parent first, every established parent kept.
+      await base44.entities.Character.update(baby.id, {
+        family_members: childFamily,
+        fictional_relationships: childRels,
+      });
+
+      // The newborn lives in the birth parent's existing household and dwelling unit.
+      await assignNewbornToBirthParentHousehold(character, baby);
 
       setNaming(false);
       setChildName("");

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
+import PresenceGroups from "@/components/travel/PresenceGroups";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
@@ -822,7 +823,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       status = 'working';
                       color = 'text-purple-400';
                     }
-                    lines.push({ name, status, color });
+                    lines.push({ name, status, color, id: entity.id });
                   });
 
                   // RESIDENTS WHO ARE AWAY: show residents not physically here as "out"
@@ -833,7 +834,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const name = entity.display_name;
                     if (!name || seenNames.has(name?.toLowerCase())) return;
                     seenNames.add(name.toLowerCase());
-                    lines.push({ name, status: 'out', color: 'text-amber-400' });
+                    lines.push({ name, status: 'out', color: 'text-amber-400', id: entity.id });
                   });
 
                   // LOCATION RECORD FALLBACK: resident_family_members listed on this location.
@@ -872,21 +873,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     if (!name || seenNames.has(name.toLowerCase())) return;
                     if (resChar.character_type === 'active_created_character') return;
                     seenNames.add(name.toLowerCase());
-                    lines.push({ name, status: 'home', color: 'text-green-400' });
+                    lines.push({ name, status: 'home', color: 'text-green-400', id: resId });
                   });
 
                   console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 
-                  const presenceSummary = lines.length > 0 ? (
-                    <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
-                      {lines.map((l, i) => (
-                        <p key={i} className="text-xs truncate">
-                          <span className="text-foreground font-medium">{l.name}</span>
-                          <span className={`ml-1 ${l.color}`}>is {l.status}</span>
-                        </p>
-                      ))}
-                    </div>
-                  ) : null;
+                  const presenceSummary = <PresenceGroups location={selectedLocation} lines={lines} />;
 
                   // VGC Towers: show how many residents are out
                   let vgcTowersNote = null;
