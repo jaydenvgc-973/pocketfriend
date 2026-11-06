@@ -183,6 +183,13 @@ Deno.serve(async (req) => {
       // ABSOLUTE RULE: user-owned locations are never filtered out
       if (loc.owner_email === user.email) return true;
 
+      // ABSOLUTE RULE: scope === 'shared' is the sole sharing authority. A shared
+      // location is visible to every user regardless of how it is typed. Resident
+      // homes are normally location_type 'character_specific', and the character-link
+      // check below would otherwise drop them for every non-owner — which made a
+      // shared residential location invisible on all other accounts.
+      if (loc.scope === 'shared') return true;
+
       const isCharSpecific = loc.location_type === 'character_specific' || loc.scope === 'character_specific';
       
       // Account-global and shared locations not owned by user: always keep (passed Query 2)
