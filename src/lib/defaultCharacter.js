@@ -405,7 +405,16 @@ export function buildSystemPrompt(canonicalPromptOrCharacter, characterOrOptions
       .replace(/^WHAT YOU'RE DOING RIGHT NOW:/gm, 'WHAT YOU WERE LAST DOING (background — CURRENT LOCATION is where you are now):')
       .replace(/^YOUR CURRENT LIFE:/gm, 'YOUR LIFE (background context):');
 
-    identityBase = `${identityBase}\n\nPHYSICAL LOCATION — AUTHORITATIVE (supersedes every other line in this prompt):\nYou are at: ${_liveName}${_presenceLabel}.\nThis is where you physically are right now. Wherever any other line, memory, life event, or earlier turn of this conversation places you, this line is correct. The room, the things you can see and hear, and everything you can physically do come from this place. Do not announce it, explain it, or describe the surroundings for its own sake.`;
+    // What the place IS, not only its address. Repeating the correct address while
+    // still describing the office is not knowing where you are.
+    const _isHomeNow = _liveLoc.resolved_location_type === 'home' ||
+      !!(character?.current_home_location_id && character.current_home_location_id === _liveLoc.resolved_current_location_id);
+    const _workplace = (character?.occupation_location_name || '').trim() || null;
+    const _identityLine = _isHomeNow
+      ? `\nThis address is your own home, your residence, not a workplace.${_workplace ? ` Your workplace is ${_workplace}, a different building you are not in.` : ''} A room inside your home (an office, a study) is still your home. Working from home does not put you at your workplace, and your work schedule never changes where you physically are. If you said you were at work earlier and you are home now, that earlier statement was wrong or has passed. Say so plainly, do not defend it.`
+      : '';
+
+    identityBase = `${identityBase}\n\nPHYSICAL LOCATION — AUTHORITATIVE (supersedes every other line in this prompt):\nYou are at: ${_liveName}${_presenceLabel}.\nThis is where you physically are right now. Wherever any other line, memory, life event, or earlier turn of this conversation places you, this line is correct. The room, the things you can see and hear, and everything you can physically do come from this place. Do not announce it, explain it, or describe the surroundings for its own sake.${_identityLine}`;
 
     // The remaining present-tense place claims in the canonical section: the
     // "YOU ARE HERE RIGHT NOW" line from the today-history block, and the

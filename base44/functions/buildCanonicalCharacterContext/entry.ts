@@ -549,6 +549,13 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
     const rawPs = character.resolved_presence_status;
     const ps = rawPs === 'traveling' ? null : rawPs;
     lines.push(`CURRENT LOCATION: ${character.resolved_current_location_name}${ps ? ` (${ps.replace(/_/g, ' ')})` : ''}. You are physically here and only here right now; anything in earlier messages, narratives, promises or history that places you elsewhere is outdated. A promise, a plan, or a user-confirmed scheduled move is NOT an arrival — only this line establishes where you physically are. You may say you are about to head somewhere, but you have not arrived there and may not narrate arriving.`);
+    // PLACE IDENTITY — what this place IS, not only what it is called. Derived from existing
+    // record fields only (residence id, workplace, location type). A room in the home is
+    // never the employer's office; schedule and activity describe doing, never presence.
+    if (!hasActiveStoryEvent) {
+      const here = character.resolved_current_location_id, homeId = character.current_home_location_id, workId = character.occupation_location_id, wl = (character.occupation_location_name || '').trim(), atHome = (here && homeId && here === homeId) || character.resolved_location_type === 'home', atWork = (here && workId && here === workId) || character.resolved_location_type === 'work';
+      lines.push(atHome ? `THIS PLACE IS YOUR HOME. ${character.resolved_current_location_name} is your own residence, not your workplace and not a branch of it.${wl ? ` Your workplace is ${wl}, a different building you are not inside right now — do not describe its rooms, lighting, desks or coworkers as what is around you.` : ''} A room inside your home (an office, a study) is still your home, and doing work here is working from home: unfinished work, reports or a shift never put you in another building. Your work schedule and your current activity describe obligations and doing, never where you are, and never override CURRENT LOCATION. If you said you were at work earlier and you are home now, that statement was wrong or has passed — say so plainly in one sentence and never defend it.` : atWork ? `THIS PLACE IS YOUR WORKPLACE. ${character.resolved_current_location_name} is where you work, not where you live.` : ps === 'at_school' ? `THIS PLACE IS YOUR SCHOOL. What happens here belongs to school, not to your job or your home.` : `THIS PLACE IS NOT YOUR HOME${wl ? ' AND NOT YOUR WORKPLACE' : ''}. You are out at ${character.resolved_current_location_name}; its rooms and sounds are its own.`);
+    }
   }
 
   // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────
@@ -603,12 +610,8 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   if (character.occupation) lines.push(`OCCUPATION: ${character.occupation} — identity and history only, never a location${hasActiveStoryEvent ? '; your current activities come from the active Story Event above' : '; CURRENT LOCATION outranks it'}.`);
   if (character.occupation_location_name) lines.push(`WORKPLACE: ${character.occupation_location_name} — never speak or act as if they are there unless CURRENT LOCATION says so${hasActiveStoryEvent ? '; the Story Event venue governs' : ''}.`);
 
-  // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived ──────────
-  // There is no default attitude toward work. The character's experience of
-  // employment is derived from their personality, education, history, skills,
-  // actual circumstances, and the specific workday — not from a generic
-  // assumption that work is stressful, dreaded, or unpleasant. This applies
-  // to all generation: dialogue, narration, memory, autonomous behavior.
+  // ── EMPLOYMENT EXPERIENCE PRINCIPLE — global, character-derived. No default attitude
+  // toward work: experience comes from the character and the actual workday.
   if (character.occupation) {
     const expFactors = [];
     if (character.work_details?.is_new_job) expFactors.push('relatively new to this role');
@@ -637,11 +640,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
     lines.push(`EDUCATION STATUS: Currently active: ${character.current_education_activity}${character.education_location_name ? ` at ${character.education_location_name}` : ''}.`);
   }
 
-  // Travel — REMOVED. Traveling is not a presence. Characters teleport to their
-  // destination; their presence is always the destination state. The travel_status
-  // display field may persist as metadata but it is never injected as a presence
-  // fact. Characters may talk about traveling in dialogue — that is conversation,
-  // not a system presence state.
+  // Travel — REMOVED as a presence. Characters teleport to their destination; travel_status is metadata only.
 
   // Emotional state
   if (character.emotional_state) {
@@ -2123,7 +2122,7 @@ Deno.serve(async (req) => {
         // Parse times as Eastern Time by appending the ET offset
         const s = new Date(`${d}T${e.start_time || '00:00'}:00${_etOffsetStr}`).getTime();
         if (isNaN(s) || nowSE < s) return false;
-        if (e.end_time) { const en = new Date(`${d}T${e.end_time}:00${_etOffsetStr}`).getTime(); if (!isNaN(en) && nowSE > en) return false; }
+        if (e.end_time) { const en = new Date(`${d}T${e.end_time}:00${_etOffsetStr}`).getTime(); if (!isNaN(en) && nowSE > en) return false; } else if (!isNaN(new Date(`${d}T23:59:59${_etOffsetStr}`).getTime()) && nowSE > new Date(`${d}T23:59:59${_etOffsetStr}`).getTime()) return false; // no end_time: the event ends with its own day, it never stays active forever
         return true;
       });
       if (activeSE.length > 0) {
