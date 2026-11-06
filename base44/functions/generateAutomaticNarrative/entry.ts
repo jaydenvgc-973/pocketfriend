@@ -9,6 +9,7 @@ Deno.serve(async (req) => {
       characterId,
       forceGenerate = false,
       trigger = 'interval',
+      shiftContext = null,
     } = body;
 
     if (!characterId) {
@@ -41,7 +42,20 @@ Deno.serve(async (req) => {
 
     // owner_email is the sole source of truth — created_by is permanently forbidden
     const ownerEmail = character.owner_email;
-    const ownerUser = character.owner_user_id;
+    let ownerUser = character.owner_user_id || null;
+
+    // LEGACY COMPATIBILITY: an older character record may predate owner_user_id.
+    // Missing newer fields must never block the character's narratives — derive the
+    // account id from the authoritative owner_email instead of failing the write.
+    if (!ownerUser && ownerEmail) {
+      try {
+        const ownerRecords = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1).catch(() => []);
+        ownerUser = ownerRecords?.[0]?.id || null;
+      } catch { /* leave null — handled below */ }
+    }
+    if (!ownerUser) {
+      ownerUser = ownerEmail;
+    }
 
     if (!ownerEmail) {
       console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
@@ -54,11 +68,19 @@ Deno.serve(async (req) => {
 
     console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
 
+    // SCHEDULED SHIFT COMPLETION is a discrete occurrence, not a repeating
+    // instance: the existing enforcement pathway detected that the character's
+    // scheduled shift reached its end time and handed that occurrence here.
+    // It must not be suppressed by the interval or same-instance gates — those
+    // exist to stop the same ongoing state being re-narrated, and a completed
+    // shift is exactly the transition they must not swallow.
+    const isWorkEnd = trigger === 'work_end';
+
     // ── CHECK INTERVAL (skip for manual triggers) ─────────────────────────
     const NOW = new Date();
     const isManual = trigger === 'manual_right_now';
 
-    if (!forceGenerate && !isManual) {
+    if (!forceGenerate && !isManual && !isWorkEnd) {
       const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
         { character_id: characterId },
         '-timestamp',
@@ -296,7 +318,10 @@ Deno.serve(async (req) => {
     // entry when the character is still at work/school creates duplicate entries.
     // Skip if: same location, same sleep/work/travel state, within 60 minutes,
     // AND no manual trigger (manual_right_now always generates).
-    if (!isManual) {
+    // A completed scheduled shift always generates: presence can still read
+    // 'at_work' when the shift ends, so the state comparison would otherwise
+    // treat the shift end as "unchanged" and drop the narrative.
+    if (!isManual && !isWorkEnd) {
       try {
         const lastTwoNarrs = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
           { character_id: characterId },
@@ -511,6 +536,28 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Category: ${locationCategory}
 ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Narrative must reflect what they'd realistically be doing here at this time.${activityLine}`;
+    }
+
+    // SCHEDULED SHIFT COMPLETION overrides the working-state framing. The existing
+    // enforcement pathway established that the scheduled shift reached its end time,
+    // so the narrative must recognize the shift as complete — even when the stored
+    // presence has not been rewritten yet. Location stays authoritative: nothing is
+    // moved, invented, or announced, and no destination or commute is fabricated.
+    if (isWorkEnd) {
+      const _shiftEndLabel = shiftContext?.shift_end_time || character.work_end_time || null;
+      const _endLabel12 = (() => {
+        if (!_shiftEndLabel) return null;
+        const [h, m] = String(_shiftEndLabel).split(':').map(Number);
+        if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
+        const hour12 = ((h + 11) % 12) + 1;
+        return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'} Eastern`;
+      })();
+      situationBlock = `SITUATION: ${character.name}'s scheduled work shift has ENDED${_endLabel12 ? ` (scheduled end ${_endLabel12})` : ''}.
+- The scheduled work activity is COMPLETE. Work is over for today.
+- Do NOT describe ${character.name} as still working, still at work, still at the office, still on the clock, finishing up, staying late, wrapping up duties, or in the middle of job tasks.
+- Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the shift.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
+- Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -1029,7 +1076,7 @@ If no actions occur, return empty action_effects array.`;
     // sometimes still generates transition wording ("has gone to work").
     // Correct only the work-status transition phrases to current-state wording.
     // This does NOT change scheduling, triggers, location, or any other logic.
-    if (isAtWork) {
+    if (isAtWork && !isWorkEnd) {
       narrativeText = narrativeText
         .replace(/\bhas gone to work\b/gi, 'is at work')
         .replace(/\bgone to work\b/gi, 'at work')
@@ -1307,7 +1354,7 @@ If no actions occur, return empty action_effects array.`;
       character_name: character.name,
       owner_user_id: ownerUser,
       owner_email: ownerEmail,
-      event_type: 'passive_time',
+      event_type: isWorkEnd ? 'work_end' : 'passive_time',
       narrative_text: narrativeText,
       memory_summary: memorySummary,
       timestamp: NOW.toISOString(),
@@ -1318,7 +1365,7 @@ If no actions occur, return empty action_effects array.`;
       zone_name: resolvedZoneName,
       sleep_state: isAsleep ? 'asleep' : 'awake',
       travel_state: isTraveling ? 'traveling' : 'at_location',
-      work_state: workState,
+      work_state: isWorkEnd ? 'off_work' : workState,
       needs_snapshot: updatedNeeds,
       emotional_state: character.emotional_state || 'calm',
       triggered_by: isManual ? 'manual' : 'scheduled',

@@ -28,6 +28,108 @@ const buildLocationAffinityContext = (character) => {
   return lines.join('. ');
 };
 
+// ── SCHEDULED SHIFT COMPLETION → EXISTING NARRATIVE PATHWAY ─────────────────
+// The character's own work schedule is the trigger. This heartbeat runs inside
+// the app's existing narrative workflow, so a completed shift is narrated even
+// when no location change and no other pathway touched the character. It never
+// moves or reinterprets the character; it hands the occurrence to the existing
+// generator (generateAutomaticNarrative, trigger 'work_end').
+// Occurrence dedup uses the existing narrative table, so the enforcement pathway
+// and this one can never double-write the same shift end.
+const SHIFT_COMPLETION_RECENCY_MIN = 12 * 60;
+
+function minutesSinceMostRecentShiftEnd(shift, clock) {
+  if (!shift?.start || !shift?.end) return null;
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const [eh, em] = shift.end.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (!Number.isFinite(startMin) || !Number.isFinite(endMin)) return null;
+  const crossMidnight = endMin < startMin;
+  const endOffset = (crossMidnight ? 1440 : 0) + endMin;
+  const nowMin = clock.getHours() * 60 + clock.getMinutes();
+  const today = clock.getDay();
+  const hasDays = Array.isArray(shift.days) && shift.days.length > 0;
+  let best = null;
+  for (let back = 0; back <= 2; back++) {
+    const shiftDay = (today - back + 7) % 7;
+    if (hasDays && !shift.days.includes(shiftDay)) continue;
+    const since = nowMin + back * 1440 - endOffset;
+    if (since >= 0 && (best === null || since < best)) best = since;
+  }
+  return best;
+}
+
+function easternClock(nowUtc) {
+  const str = nowUtc.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
+  });
+  const wdMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const parsed = str.match(/(\w+),\s*(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+)/);
+  if (!parsed) return null;
+  return {
+    getHours: () => parseInt(parsed[5]) % 24,
+    getMinutes: () => parseInt(parsed[6]),
+    getDay: () => wdMap[parsed[1]],
+  };
+}
+
+async function narrateCompletedShift(base44SR, character, nowUtc) {
+  if (!character?.id) return null;
+  const clock = easternClock(nowUtc);
+  if (!clock) return null;
+
+  // Every established schedule this character holds — primary plus secondary jobs.
+  const shifts = [];
+  if (character.work_start_time && character.work_end_time) {
+    shifts.push({ start: character.work_start_time, end: character.work_end_time, days: character.work_days });
+  }
+  if (Array.isArray(character.additional_occupation_locations)) {
+    for (const entry of character.additional_occupation_locations) {
+      if (entry?.work_start_time && entry?.work_end_time) {
+        shifts.push({ start: entry.work_start_time, end: entry.work_end_time, days: entry.work_days });
+      }
+    }
+  }
+  if (shifts.length === 0) return null;
+
+  let latest = null;
+  for (const shift of shifts) {
+    const since = minutesSinceMostRecentShiftEnd(shift, clock);
+    if (since === null || since > SHIFT_COMPLETION_RECENCY_MIN) continue;
+    if (!latest || since < latest.since) latest = { since, shift };
+  }
+  if (!latest) return null;
+
+  const occurrenceIso = new Date(nowUtc.getTime() - latest.since * 60000).toISOString();
+
+  const alreadyNarrated = await base44SR.entities.CharacterAutomaticNarrative.filter(
+    { character_id: character.id, event_type: 'work_end', timestamp: { $gte: occurrenceIso } },
+    null,
+    1
+  ).catch(() => []);
+  if (alreadyNarrated && alreadyNarrated.length > 0) {
+    return { generated: false, reason: 'already_narrated', occurrenceIso };
+  }
+
+  const res = await base44SR.functions.invoke('generateAutomaticNarrative', {
+    characterId: character.id,
+    forceGenerate: true,
+    trigger: 'work_end',
+    shiftContext: { shift_end_time: latest.shift.end },
+  }).catch((e) => ({ error: e.message }));
+
+  return {
+    generated: res?.success === true,
+    occurrenceIso,
+    narrativeId: res?.narrativeId || null,
+    error: res?.error || null,
+    reason: res?.reason || null,
+  };
+}
+
 async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode = false) {
   const log = [];
   const now = new Date();
@@ -59,6 +161,17 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
 
   for (const character of userChars) {
     const skipBase = { characterId: character.id, name: character.name, userEmail, status: 'skipped' };
+
+    // ── SCHEDULED SHIFT COMPLETION → existing narrative pathway ─────────────
+    // Runs before the conversation/scheduling checks below: a completed shift is
+    // narrated regardless of conversation activity, location, or movement.
+    try {
+      const _shiftEndRes = await narrateCompletedShift(base44SR, character, now);
+      if (_shiftEndRes?.generated) log.push(`[${runId}] ${character.name}: shift-completion narrative generated for ${_shiftEndRes.occurrenceIso}`);
+      else if (_shiftEndRes && _shiftEndRes.generated === false && _shiftEndRes.reason !== 'already_narrated') log.push(`[${runId}] ${character.name}: shift-completion narrative not generated — ${_shiftEndRes.reason || _shiftEndRes.error}`);
+    } catch (_shiftEndErr) {
+      log.push(`[${runId}] ${character.name}: shift-completion narrative failed — ${_shiftEndErr.message}`);
+    }
 
     // ── 1. Find the most recent DIRECT (user↔character) conversation (scoped to this user) ──
     // CRITICAL BOUNDARY: narratives must ONLY be written to type='direct', channel!='world_phone' convos.
