@@ -7,7 +7,12 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const gatheringRoomId = body.gathering_room_id;
+    const gatheringRoomId = body.gathering_room_id || null;
+    // A shared residential location speaks through the SAME conversation engine.
+    // location_id selects presence-driven participation; gathering_room_id selects
+    // the existing session-driven Gathering Room participation.
+    const locationId = body.location_id || null;
+    const containerType = locationId ? 'shared_location' : 'gathering_room';
     const content = body.content || '';
     const senderParticipantId = body.sender_participant_id || null;
     const isDirected = !!body.is_directed;
@@ -15,72 +20,186 @@ Deno.serve(async (req) => {
     const imageUrl = body.image_url || null;
     const mediaShare = body.media_share || null;
 
-    if (!gatheringRoomId || !content) {
-      return Response.json({ error: 'Missing gathering_room_id or content' }, { status: 400 });
+    if ((!gatheringRoomId && !locationId) || !content) {
+      return Response.json({ error: 'Missing gathering_room_id or location_id or content' }, { status: 400 });
     }
 
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // ── 1. LAZY EXPIRATION: expire stale sessions before processing ──
-    const allSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
-      { gathering_room_id: gatheringRoomId, status: 'active' },
-      null, 50
-    );
-    const stale = allSessions.filter(s => new Date(s.expires_at).getTime() < now.getTime());
-    for (const sess of stale) {
-      await base44.asServiceRole.entities.GatheringRoomSession.update(sess.id, {
-        status: 'expired', ended_at: nowIso,
-      });
-      await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({ session_id: sess.id });
-      await base44.asServiceRole.entities.GatheringRoomCooldown.create({
-        gathering_room_id: gatheringRoomId,
-        gathering_room_name: sess.gathering_room_name,
-        owner_email: sess.owner_email,
-        owner_user_id: sess.owner_user_id,
-        cooldown_until: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
-        reason: 'expired',
-        character_ids: sess.character_ids || [],
-        created_at: nowIso,
-      });
-    }
+    // Infants are present but non-verbal. They are never response candidates and
+    // never form conversational memories of adult conversation.
+    const isInfantParticipant = (p) => typeof p.age === 'number' && p.age < 1;
 
-    // Recalculate room occupancy after lazy expiration so the sanitized
-    // current_occupancy on the GatheringRoom entity stays authoritative.
-    if (stale.length > 0) {
-      try {
-        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
-          gathering_room_id: gatheringRoomId,
+    // ══════════════════════════════════════════════════════════════════════════
+    // CONTAINER RESOLUTION — Gathering Room OR shared residential location
+    // ──────────────────────────────────────────────────────────────────────────
+    // Everything below this block — message commit, cross-account character
+    // responses, canonical identity injection, relationship binding, and memory
+    // extraction — is IDENTICAL for both containers. Only the participation
+    // authority differs:
+    //   Gathering Room   → timed sessions, capacity, cooldowns
+    //   shared residence → authoritative presence (no sessions, no timer, no
+    //                      capacity — a home is not a timed gathering)
+    let session = null;
+    let sender = null;
+    let allParticipants = [];
+    let validRoomParticipants = [];
+    let room = null;
+
+    if (locationId) {
+      const locs = await base44.asServiceRole.entities.LocationReference.filter(
+        { id: locationId }, null, 1
+      );
+      const location = locs[0];
+      if (!location) return Response.json({ error: 'Location not found' }, { status: 404 });
+      if (location.scope !== 'shared') {
+        return Response.json({ error: 'This location is not shared.' }, { status: 403 });
+      }
+
+      // Live presence projection — the same sanitized shape a Gathering Room uses.
+      // Resolved here (not through a service-role invoke) so the CALLER's identity
+      // is authoritative: presence is verified against the authenticated user.
+      const presentCharacters = (await base44.asServiceRole.entities.Character.filter(
+        { resolved_current_location_id: locationId }, null, 200
+      ) || []).filter(c => !['deleted', 'soft_deleted', 'merged', 'moved_away'].includes(c.status || 'active'));
+
+      const presentSettings = await base44.asServiceRole.entities.UserSettings.filter(
+        { user_presence_status: 'present', user_current_location_id: locationId }, null, 50
+      );
+
+      const participants = [];
+      for (const s of presentSettings || []) {
+        if (!s.owner_email) continue;
+        let u = null;
+        try {
+          u = (await base44.asServiceRole.entities.User.filter({ email: s.owner_email }, null, 1))[0] || null;
+        } catch (_) {}
+        participants.push({
+          id: `user:${s.owner_email}`,
+          participant_id: u?.id || s.owner_user_id || s.owner_email,
+          participant_name: s.fictional_world_name || u?.full_name || 'Guest',
+          avatar_url: u?.generated_avatar_urls?.[0] || u?.reference_image_urls?.[0] || null,
+          participant_type: 'user',
+          owner_email: s.owner_email,
         });
-      } catch (_) {}
-    }
+      }
+      for (const c of presentCharacters) {
+        participants.push({
+          id: `character:${c.id}`,
+          participant_id: c.id,
+          participant_name: c.display_name || c.name,
+          avatar_url: c.avatar_url || c.image_avatar_url || null,
+          participant_type: 'character',
+          owner_email: c.owner_email || null,
+          age: typeof c.age === 'number' ? c.age : null,
+        });
+      }
+      if (participants.length === 0) {
+        return Response.json({ error: 'You are not present at this location.' }, { status: 403 });
+      }
 
-    // ── 2. VERIFY SENDER HAS ACTIVE SESSION ──
-    const userSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
-      { gathering_room_id: gatheringRoomId, owner_email: user.email, status: 'active' },
-      null, 1
-    );
-    const session = userSessions[0];
-    if (!session) {
-      return Response.json({ error: 'You do not have an active session in this Gathering Room.' }, { status: 403 });
-    }
+      if (senderParticipantId) {
+        sender = participants.find(
+          p => p.id === senderParticipantId || p.participant_id === senderParticipantId
+        ) || null;
+        // A sender may only speak as themselves or as a character they own.
+        if (sender && sender.owner_email !== user.email) sender = null;
+      }
+      if (!sender) {
+        sender = participants.find(
+          p => p.participant_type === 'user' && p.owner_email === user.email
+        ) || null;
+      }
+      if (!sender) {
+        return Response.json({ error: 'You are not present at this location.' }, { status: 403 });
+      }
 
-    // ── 3. RESOLVE SENDER PARTICIPANT ──
-    // If sender_participant_id is provided, verify it belongs to this user's session.
-    // Otherwise default to the user's own participant record.
-    const allParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
-      { gathering_room_id: gatheringRoomId },
-      null, 20
-    );
+      allParticipants = participants;
+      validRoomParticipants = participants;
+      room = {
+        id: locationId,
+        name: location.name,
+        description: location.description || '',
+        active_media: null,
+        gathering_epoch: null,
+        container_type: 'shared_location',
+      };
+    } else {
+      // ── 1. LAZY EXPIRATION: expire stale sessions before processing ──
+      const allSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+        { gathering_room_id: gatheringRoomId, status: 'active' },
+        null, 50
+      );
+      const stale = allSessions.filter(s => new Date(s.expires_at).getTime() < now.getTime());
+      for (const sess of stale) {
+        await base44.asServiceRole.entities.GatheringRoomSession.update(sess.id, {
+          status: 'expired', ended_at: nowIso,
+        });
+        await base44.asServiceRole.entities.GatheringRoomParticipant.deleteMany({ session_id: sess.id });
+        await base44.asServiceRole.entities.GatheringRoomCooldown.create({
+          gathering_room_id: gatheringRoomId,
+          gathering_room_name: sess.gathering_room_name,
+          owner_email: sess.owner_email,
+          owner_user_id: sess.owner_user_id,
+          cooldown_until: new Date(now.getTime() + 5 * 60 * 1000).toISOString(),
+          reason: 'expired',
+          character_ids: sess.character_ids || [],
+          created_at: nowIso,
+        });
+      }
 
-    const userParticipants = allParticipants.filter(p => p.session_id === session.id);
-    let sender = userParticipants.find(p => p.id === senderParticipantId);
-    if (!sender) {
-      // Default to the user participant (not a character)
-      sender = userParticipants.find(p => p.participant_type === 'user');
-    }
-    if (!sender) {
-      return Response.json({ error: 'Sender participant not found in your session.' }, { status: 403 });
+      // Recalculate room occupancy after lazy expiration so the sanitized
+      // current_occupancy on the GatheringRoom entity stays authoritative.
+      if (stale.length > 0) {
+        try {
+          await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+            gathering_room_id: gatheringRoomId,
+          });
+        } catch (_) {}
+      }
+
+      // ── 2. VERIFY SENDER HAS ACTIVE SESSION ──
+      const userSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+        { gathering_room_id: gatheringRoomId, owner_email: user.email, status: 'active' },
+        null, 1
+      );
+      session = userSessions[0];
+      if (!session) {
+        return Response.json({ error: 'You do not have an active session in this Gathering Room.' }, { status: 403 });
+      }
+
+      // ── 3. RESOLVE SENDER PARTICIPANT ──
+      // If sender_participant_id is provided, verify it belongs to this user's session.
+      // Otherwise default to the user's own participant record.
+      allParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+        { gathering_room_id: gatheringRoomId },
+        null, 20
+      );
+
+      const userParticipants = allParticipants.filter(p => p.session_id === session.id);
+      sender = userParticipants.find(p => p.id === senderParticipantId);
+      if (!sender) {
+        // Default to the user participant (not a character)
+        sender = userParticipants.find(p => p.participant_type === 'user');
+      }
+      if (!sender) {
+        return Response.json({ error: 'Sender participant not found in your session.' }, { status: 403 });
+      }
+
+      // ── 4.5. LOAD ROOM + ENSURE GATHERING EPOCH (synchronous) ──────────────────
+      // The gathering_epoch scopes the live transcript. Set it before the message
+      // commit so the message timestamp is always >= epoch. This runs synchronously
+      // so the epoch is authoritative before any message is visible.
+      const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
+      room = roomResult[0];
+      if (room && !room.gathering_epoch) {
+        await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
+          gathering_epoch: nowIso,
+        });
+        room = { ...room, gathering_epoch: nowIso };
+      }
+      if (room) room.container_type = 'gathering_room';
     }
 
     // ── 3.5. RE-RESOLVE SENDER AVATAR ──
@@ -106,27 +225,17 @@ Deno.serve(async (req) => {
         .map(p => p.participant_name);
     }
 
-    // ── 4.5. LOAD ROOM + ENSURE GATHERING EPOCH (synchronous) ──────────────────
-    // The gathering_epoch scopes the live transcript. Set it before the message
-    // commit so the message timestamp is always >= epoch. This runs synchronously
-    // so the epoch is authoritative before any message is visible.
-    const roomResult = await base44.asServiceRole.entities.GatheringRoom.filter({ id: gatheringRoomId }, null, 1);
-    let room = roomResult[0];
-    if (room && !room.gathering_epoch) {
-      await base44.asServiceRole.entities.GatheringRoom.update(gatheringRoomId, {
-        gathering_epoch: nowIso,
-      });
-      room = { ...room, gathering_epoch: nowIso };
-    }
-
     // ── 5. CREATE MESSAGE ──
     const message = await base44.asServiceRole.entities.GatheringRoomMessage.create({
-      gathering_room_id: gatheringRoomId,
-      session_id: session.id,
+      container_type: containerType,
+      gathering_room_id: locationId ? null : gatheringRoomId,
+      location_id: locationId || null,
+      session_id: session?.id || null,
       owner_email: user.email,
       sender_participant_id: sender.id,
       sender_participant_name: sender.participant_name,
       sender_avatar_url: resolvedSenderAvatarUrl,
+      sender_participant_type: sender.participant_type || 'user',
       content,
       is_directed: isDirected,
       directed_to_participant_ids: directedToParticipantIds,
@@ -183,35 +292,38 @@ Deno.serve(async (req) => {
     // characters with active, non-expired sessions are eligible. Messages before
     // entry or after exit are excluded because those sessions are not active.
 
-    // 6a. Get all valid active sessions in the room (cross-account)
-    const allRoomSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
-      { gathering_room_id: gatheringRoomId, status: 'active' },
-      'started_at', 50
-    );
-    const validRoomSessionIds = new Set(
-      allRoomSessions
-        .filter(s => new Date(s.expires_at).getTime() > now.getTime())
-        .map(s => s.id)
-    );
-
-    // 6b. Re-fetch all participants (the earlier fetch was capped at 20; rooms can hold up to 8)
-    const allRoomParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
-      { gathering_room_id: gatheringRoomId },
-      'joined_at', 50
-    );
-    const validRoomParticipants = allRoomParticipants.filter(p => validRoomSessionIds.has(p.session_id));
+    // 6a/6b. Participation pool.
+    // Gathering Rooms: valid, non-expired sessions decide who participates.
+    // Shared residences: the presence projection resolved above IS the pool —
+    // nobody is added, nobody is assumed, nobody is left out.
+    if (!locationId) {
+      const allRoomSessions = await base44.asServiceRole.entities.GatheringRoomSession.filter(
+        { gathering_room_id: gatheringRoomId, status: 'active' },
+        'started_at', 50
+      );
+      const validRoomSessionIds = new Set(
+        allRoomSessions
+          .filter(s => new Date(s.expires_at).getTime() > now.getTime())
+          .map(s => s.id)
+      );
+      const allRoomParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+        { gathering_room_id: gatheringRoomId },
+        'joined_at', 50
+      );
+      validRoomParticipants = allRoomParticipants.filter(p => validRoomSessionIds.has(p.session_id));
+    }
 
     // 6c. Response candidate pool — all character-type participants EXCLUDING the sender
     // (a character must not respond to its own message).
     const roomCharacterPool = validRoomParticipants.filter(
-      p => p.participant_type === 'character' && p.id !== sender.id
+      p => p.participant_type === 'character' && p.id !== sender.id && !isInfantParticipant(p)
     );
 
     // 6d. Memory character pool — ALL character-type participants INCLUDING the sender
     // (a character who spoke must remember what they said). This is the participation
     // window: only characters with valid active sessions at this moment are eligible.
     const allRoomCharacterParticipants = validRoomParticipants.filter(
-      p => p.participant_type === 'character'
+      p => p.participant_type === 'character' && !isInfantParticipant(p)
     );
 
     const characterResponses = [];
@@ -249,9 +361,13 @@ Deno.serve(async (req) => {
       // same bounded live transcript the frontend renders. Past gatherings do
       // not bloat the active interaction context. Character memory is written
       // separately by the memory extraction block below and is NOT truncated.
-      const epochFilter = room?.gathering_epoch
-        ? { gathering_room_id: gatheringRoomId, timestamp: { $gte: room.gathering_epoch } }
-        : { gathering_room_id: gatheringRoomId };
+      // Shared residences have no gathering epoch: the home's conversation is
+      // continuous, so the live window is simply the newest 20 messages there.
+      const epochFilter = locationId
+        ? { location_id: locationId }
+        : (room?.gathering_epoch
+            ? { gathering_room_id: gatheringRoomId, timestamp: { $gte: room.gathering_epoch } }
+            : { gathering_room_id: gatheringRoomId });
       const recentMessages = await base44.asServiceRole.entities.GatheringRoomMessage.filter(
         epochFilter, '-timestamp', 20
       );
@@ -668,12 +784,15 @@ Deno.serve(async (req) => {
           }
 
           const charMsg = await base44.asServiceRole.entities.GatheringRoomMessage.create({
-            gathering_room_id: gatheringRoomId,
-            session_id: matchedChar.participant.session_id,
+            container_type: containerType,
+            gathering_room_id: locationId ? null : gatheringRoomId,
+            location_id: locationId || null,
+            session_id: matchedChar.participant.session_id || null,
             owner_email: matchedChar.participant.owner_email,
             sender_participant_id: matchedChar.participant.id,
             sender_participant_name: matchedChar.participant.participant_name,
             sender_avatar_url: charAvatarUrl,
+            sender_participant_type: 'character',
             content: trimmed,
             is_directed: false,
             directed_to_participant_ids: [],
@@ -779,7 +898,9 @@ Deno.serve(async (req) => {
             description: mem.description.trim(),
             emotional_impact: mem.emotional_impact?.trim() || 'neutral',
             timestamp: nowIso,
-            source_context: `gathering_room:${gatheringRoomId}:${room?.name || ''}`,
+            source_context: locationId
+              ? `shared_location:${locationId}:${room?.name || ''}`
+              : `gathering_room:${gatheringRoomId}:${room?.name || ''}`,
           });
         }
       } catch (memErr) {

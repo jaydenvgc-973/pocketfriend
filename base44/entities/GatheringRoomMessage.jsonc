@@ -14,13 +14,26 @@
     }
   },
   "properties": {
+    "container_type": {
+      "type": "string",
+      "enum": [
+        "gathering_room",
+        "shared_location"
+      ],
+      "default": "gathering_room",
+      "description": "Which kind of shared space this message belongs to. gathering_room = a GatheringRoom record (timed gathering). shared_location = a shared residential location (continuous presence). Same conversation, memory, and response mechanics for both."
+    },
     "gathering_room_id": {
       "type": "string",
-      "description": "ID of the GatheringRoom this message belongs to"
+      "description": "ID of the GatheringRoom this message belongs to (container_type gathering_room only)."
+    },
+    "location_id": {
+      "type": "string",
+      "description": "ID of the shared LocationReference this message belongs to (container_type shared_location only)."
     },
     "session_id": {
       "type": "string",
-      "description": "ID of the sender's GatheringRoomSession"
+      "description": "ID of the sender's GatheringRoomSession. Null for shared_location messages, where presence \u2014 not a session \u2014 is the participation authority."
     },
     "owner_email": {
       "type": "string",
@@ -28,7 +41,7 @@
     },
     "sender_participant_id": {
       "type": "string",
-      "description": "ID of the GatheringRoomParticipant who sent this message"
+      "description": "ID of the participant who sent this message."
     },
     "sender_participant_name": {
       "type": "string",
@@ -112,7 +125,7 @@
     },
     "media_share": {
       "type": "object",
-      "description": "Shared media activity (video, music) attached to this message",
+      "description": "Shared media activity (video, music, image) attached to this message",
       "properties": {
         "media_type": {
           "type": "string",
@@ -138,7 +151,6 @@
     }
   },
   "required": [
-    "gathering_room_id",
     "owner_email",
     "sender_participant_id",
     "sender_participant_name",

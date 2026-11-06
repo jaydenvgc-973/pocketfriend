@@ -22,18 +22,105 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     let gatheringRoomId = null;
+    let locationId = null;
     try {
       const body = await req.json();
       gatheringRoomId = body?.gathering_room_id || null;
+      locationId = body?.location_id || null;
     } catch (_) {
       const url = new URL(req.url);
       gatheringRoomId = url.searchParams.get('gathering_room_id');
+      locationId = url.searchParams.get('location_id');
     }
-    if (!gatheringRoomId) {
-      return Response.json({ error: 'Missing gathering_room_id' }, { status: 400 });
+    if (!gatheringRoomId && !locationId) {
+      return Response.json({ error: 'Missing gathering_room_id or location_id' }, { status: 400 });
     }
 
     const now = new Date();
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SHARED RESIDENTIAL LOCATION — presence IS the participation authority
+    // ──────────────────────────────────────────────────────────────────────────
+    // A Gathering Room participation window is a session. A residence has no
+    // sessions, no capacity, no timer: who is here is answered by the existing
+    // authoritative presence system — a character's resolved location and a
+    // user's recorded presence. The projection returned is IDENTICAL in shape to
+    // the room projection below, so the same conversation engine consumes it.
+    if (locationId) {
+      const locs = await base44.asServiceRole.entities.LocationReference.filter(
+        { id: locationId }, null, 1
+      );
+      const location = locs[0];
+      if (!location) return Response.json({ participants: [] });
+      if (location.scope !== 'shared') return Response.json({ participants: [] });
+
+      // Characters authoritatively present at this location (any account).
+      const charRecords = await base44.asServiceRole.entities.Character.filter(
+        { resolved_current_location_id: locationId }, null, 200
+      );
+      const INVALID_STATUS = ['deleted', 'soft_deleted', 'merged', 'moved_away'];
+      const presentCharacters = (charRecords || []).filter(
+        c => !INVALID_STATUS.includes(c.status || 'active')
+      );
+
+      // Users physically present here — the existing user-presence authority
+      // (UserSettings.user_presence_status + user_current_location_id).
+      const presentSettings = await base44.asServiceRole.entities.UserSettings.filter(
+        { user_presence_status: 'present', user_current_location_id: locationId }, null, 50
+      );
+
+      const participants = [];
+
+      for (const s of presentSettings || []) {
+        if (!s.owner_email) continue;
+        let u = null;
+        try {
+          const users = await base44.asServiceRole.entities.User.filter(
+            { email: s.owner_email }, null, 1
+          );
+          u = users[0] || null;
+        } catch (_) {}
+        participants.push({
+          id: `user:${s.owner_email}`,
+          participant_id: u?.id || s.owner_user_id || s.owner_email,
+          participant_name: s.fictional_world_name || u?.full_name || 'Guest',
+          avatar_url: u?.generated_avatar_urls?.[0] || u?.reference_image_urls?.[0] || null,
+          is_self: s.owner_email === user.email,
+          is_owned: s.owner_email === user.email,
+          participant_type: 'user',
+          owner_email: s.owner_email,
+          joined_at: null,
+        });
+      }
+
+      for (const c of presentCharacters) {
+        participants.push({
+          id: `character:${c.id}`,
+          participant_id: c.id,
+          participant_name: c.display_name || c.name,
+          avatar_url: c.avatar_url || c.image_avatar_url || null,
+          is_self: false,
+          is_owned: c.owner_email === user.email,
+          participant_type: 'character',
+          owner_email: c.owner_email || null,
+          age: typeof c.age === 'number' ? c.age : null,
+          joined_at: null,
+        });
+      }
+
+      // PRESENCE GATE: cross-account identities are only returned to someone who
+      // is themselves here. Access to a shared property is not presence.
+      const iAmPresent = participants.some(
+        p => p.participant_type === 'user' && p.owner_email === user.email
+      );
+      if (!iAmPresent) return Response.json({ participants: [] });
+
+      return Response.json({
+        participants,
+        container_type: 'shared_location',
+        location_name: location.name,
+      });
+    }
 
     // 0. SESSION GATE: The authenticated user MUST have a valid active session in
     //    this exact room before cross-account participant identities are returned.

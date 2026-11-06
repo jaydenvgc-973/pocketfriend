@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Camera, Tv } from "lucide-react";
+import { ArrowLeft, Camera, Tv, Users as UsersIcon } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,9 @@ import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInterac
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import { useUserSettings } from "@/hooks/useUserSettings";
+import { useUserPresence } from "@/hooks/useUserPresence";
+import { useSharedResidenceParticipants } from "@/hooks/useSharedResidencePresence";
+import SharedResidenceConversation from "@/components/scene/SharedResidenceConversation";
 import { useSceneImageGenerator } from "@/hooks/useSceneImageGenerator";
 import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
@@ -87,6 +90,7 @@ export default function Scene() {
   const [watchVideoActive, setWatchVideoActive] = useState(false);
   const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
+  const [showSharedConversation, setShowSharedConversation] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const narratorModeRef = useRef(narratorMode);
@@ -122,6 +126,29 @@ export default function Scene() {
   const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
+
+  // ── SHARED RESIDENCE ──
+  // A deliberately shared residential property supports the same cross-account
+  // interaction as a Gathering Room. The property stays a residence: its
+  // ownership, residents, and presence are untouched. Only the conversation
+  // surface is added, and only while people are actually here together.
+  const isSharedResidence = !!location
+    && (location.scope === 'shared' || location.location_type === 'shared')
+    && (location.category === 'home' || (location.environments || []).some((e) => e.type === 'residential'));
+
+  const { participants: sharedResidenceParticipants } = useSharedResidenceParticipants(
+    location?.id,
+    isSharedResidence && !!currentUser?.email
+  );
+  const { setUserLocation, setUserAway } = useUserPresence(currentUser, settings, settings?.id);
+
+  // Arriving at a shared residence IS the user's presence there — the existing
+  // user-presence authority records it, so co-present users can see each other.
+  useEffect(() => {
+    if (!isSharedResidence || !location?.id) return;
+    setUserLocation(location.id, location.name).catch(() => {});
+  }, [isSharedResidence, location?.id]);
+
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
   const locationZones = location?.zones || [];
   const activeEnvType = getEnvironmentTypeForZone(location, activeZone || locationZones[0]?.zone_name);
@@ -363,6 +390,7 @@ export default function Scene() {
       ),
       writeSceneExitMemories(_exitMemoryArgs('left_together'))
     ]);
+    if (isSharedResidence) setUserAway().catch(() => {});
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
@@ -383,6 +411,7 @@ export default function Scene() {
       ),
       writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))
     ]);
+    if (isSharedResidence) setUserAway().catch(() => {});
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
@@ -552,6 +581,11 @@ export default function Scene() {
         <button onClick={() => setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title="Leave location"><ArrowLeft className="w-5 h-5" /></button>
         <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
         {isHomeLocation && !isSharedLocation && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
+        {isSharedResidence && sharedResidenceParticipants.length > 1 && (
+          <button onClick={() => { setShowSharedConversation(true); setUserLocation(location.id, location.name).then(() => queryClient.invalidateQueries({ queryKey: ["sharedResidenceParticipants", location.id] })).catch(() => {}); }} className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium flex-shrink-0" title="Talk with everyone here">
+            <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
+          </button>
+        )}
         <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
         <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
         <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
@@ -609,6 +643,14 @@ export default function Scene() {
       </div>
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
+
+      {showSharedConversation && isSharedResidence && (
+        <SharedResidenceConversation
+          location={location}
+          currentUser={currentUser}
+          onClose={() => setShowSharedConversation(false)}
+        />
+      )}
 
       <NPCEvolutionTracker messages={messages} selectedNpcs={selectedNpcs} currentUser={currentUser} locationName={location.name} onNpcSaved={(name) => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${name} has been saved to your world.`, timestamp: new Date().toISOString() }])} />
       <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
