@@ -1,6 +1,7 @@
 import React from "react";
 import { Users, ChevronDown, UserPlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import DwellingUnitGroups, { splitByDwellingUnit } from "@/components/scene/DwellingUnitGroups";
 
 /**
  * WHO'S HERE DROPDOWN — UNIFIED PARTICIPANT SOURCE
@@ -29,17 +30,25 @@ export default function WhosHereDropdown({
   onToggleDropdown = () => {},
   onInviteClick = () => {},
   renderNpc = null,
+  residentialUnits = [],
+  locationCategory = "home",
 }) {
   // Present people from authoritative sceneParticipants (excluding the user)
   const present = presentParticipants.filter((n) => !n.isUser);
-  const patients = present.filter((n) => n.sceneRole === 'patient');
-  const inmates = present.filter((n) => n.sceneRole === 'inmate');
-  const realEmployees = present.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
-  const npcEmployees = present.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
-  const realResidents = present.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
-  const npcResidents = present.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
-  const realVisitors = present.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
-  const npcVisitors = present.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
+
+  // Multidwelling properties: present characters are organized by the dwelling
+  // assignments already stored on the location (Places). Only people who are
+  // actually here are grouped — an absent resident is never listed.
+  const { groups: unitGroups, order: unitOrder, unassigned: presentWithoutUnit } = splitByDwellingUnit(present, residentialUnits);
+
+  const patients = presentWithoutUnit.filter((n) => n.sceneRole === 'patient');
+  const inmates = presentWithoutUnit.filter((n) => n.sceneRole === 'inmate');
+  const realEmployees = presentWithoutUnit.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
+  const npcEmployees = presentWithoutUnit.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
+  const realResidents = presentWithoutUnit.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
+  const npcResidents = presentWithoutUnit.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
+  const realVisitors = presentWithoutUnit.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
+  const npcVisitors = presentWithoutUnit.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
 
   // Candidates from allPossibleNpcs (not already present)
   const candRealEmployees = candidateNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
@@ -92,7 +101,14 @@ export default function WhosHereDropdown({
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
-              {/* PRESENT — from authoritative sceneParticipants */}
+              {/* PRESENT — grouped by the property's existing dwelling assignments */}
+              <DwellingUnitGroups
+                groups={unitGroups}
+                order={unitOrder}
+                locationCategory={locationCategory}
+                renderParticipant={renderNpcWrapper}
+              />
+
               {patients.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">

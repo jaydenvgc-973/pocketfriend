@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
-import PresenceGroups from "@/components/travel/PresenceGroups";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
@@ -878,7 +877,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 
-                  const presenceSummary = <PresenceGroups location={selectedLocation} lines={lines} />;
+                  const presenceSummary = (
+                    <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
+                      {lines.map((l, i) => (
+                        <p key={i} className="text-xs truncate">
+                          <span className="text-foreground font-medium">{l.name}</span>
+                          <span className={`ml-1 ${l.color}`}>is {l.status}</span>
+                        </p>
+                      ))}
+                    </div>
+                  );
 
                   // VGC Towers: show how many residents are out
                   let vgcTowersNote = null;
