@@ -30,7 +30,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 const PAGE_SIZE = 20;
 const BATCH_SIZE = 500; // Larger batches = fewer API calls = less rate limiting
 const SCAN_FLOOR = '2023-01-01T00:00:00.000Z'; // Extended back to catch all historical images
-const MAX_RUNTIME_MS = 35000;
+const MAX_RUNTIME_MS = 45000;
 
 const MONTH_PART_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
@@ -131,19 +131,23 @@ function stripInternalMetadata(text) {
 /**
  * Fetch a batch with retry on 429 rate limit errors.
  */
-async function fetchBatchWithRetry(base44, conversationIds, sortField, batchSize, offset, maxRetries = 3) {
+async function fetchBatchWithRetry(base44, conversationIds, sortField, batchSize, offset, maxRetries = 5) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
+      // Only image-bearing messages are scanned. Without this filter the scan
+      // walks every chat/text message and runs out of time long before reaching
+      // older months, which silently hid all images older than ~June 2026.
       return await base44.entities.Message.filter(
-        { conversation_id: { $in: conversationIds } },
+        { conversation_id: { $in: conversationIds }, image_url: { $ne: null } },
         sortField,
         batchSize,
         offset
       );
     } catch (e) {
-      const is429 = e?.message?.includes('429') || e?.message?.includes('Rate limit');
-      if (is429 && attempt < maxRetries) {
-        const delay = 500 * Math.pow(2, attempt); // 500ms, 1s, 2s
+      const msg = String(e?.message || '');
+      const retryable = /429|rate limit|timeout|timed out|ECONNRESET|ETIMEDOUT|502|503|504|network/i.test(msg);
+      if (retryable && attempt < maxRetries) {
+        const delay = Math.min(800 * Math.pow(2, attempt), 6000);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
@@ -175,12 +179,15 @@ Deno.serve(async (req) => {
     const imageStartIndex = (safePage - 1) * safePageSize;
     const imageEndIndex = imageStartIndex + safePageSize;
     const isFolderMode = mode === 'folders';
-    // Folder mode indexes every folder, so it never early-exits.
-    const neededImages = isFolderMode ? Number.MAX_SAFE_INTEGER : imageEndIndex + 1; // +1 to prove hasMore
     const searchLower = (searchTerm || '').toLowerCase().trim();
     const requestedFolderKey = typeof folderKey === 'string' && folderKey ? folderKey : null;
     const isMonthMode = mode === 'months';
     const requestedMonthKey = typeof monthKey === 'string' && /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : null;
+    // Folder mode indexes every folder, and a single month must report its exact
+    // image total, so neither early-exits at the requested page size.
+    const neededImages = (isFolderMode || requestedMonthKey)
+      ? Number.MAX_SAFE_INTEGER
+      : imageEndIndex + 1; // +1 to prove hasMore
 
     console.log(`[fetchMediaGalleryPage] v5 owner=${ownerEmail} mode=${mode} folder=${requestedFolderKey || 'ALL'} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex}`);
 
@@ -421,18 +428,20 @@ Deno.serve(async (req) => {
       } catch {
         try {
           batch = await base44.asServiceRole.entities.Message.filter(
-            { conversation_id: { $in: conversationIds } },
+            { conversation_id: { $in: conversationIds }, image_url: { $ne: null } },
             '-created_date',
             BATCH_SIZE,
             offset
           );
         } catch (e2) {
-          if (batchCount === 1) {
-            return Response.json({ error: `Message fetch failed: ${e2.message}` }, { status: 500 });
-          }
-          terminationReason = 'db_error';
-          exhaustedAllMessages = true;
-          break;
+          // A partial scan would silently drop older months and older images, so
+          // an interrupted scan is reported as a failure the gallery can retry
+          // instead of being returned as if it were complete.
+          console.error(`[fetchMediaGalleryPage] Scan interrupted at offset=${offset}: ${e2.message}`);
+          return Response.json(
+            { error: `Gallery scan interrupted before completion (${e2.message}). Please retry.` },
+            { status: 503 }
+          );
         }
       }
 
@@ -457,6 +466,9 @@ Deno.serve(async (req) => {
 
         const dedupKey = normalizeUrlForDedup(m.image_url);
         if (seenNormalizedUrls.has(dedupKey)) continue;
+        // Registered before any folder/month/search filtering so every mode counts
+        // the exact same set of unique images (folder tiles and month buckets agree).
+        seenNormalizedUrls.add(dedupKey);
 
         const folder = resolveFolderForMessage(m);
 
@@ -503,7 +515,6 @@ Deno.serve(async (req) => {
               bucket.lastImageAt = m.created_date || null;
             }
             bucket.imageCount++;
-            seenNormalizedUrls.add(dedupKey);
           }
           continue;
         }
@@ -515,7 +526,6 @@ Deno.serve(async (req) => {
         // titles, location, subjects and dates.
         if (searchLower && !buildSearchHaystack(m, folder).includes(searchLower)) continue;
 
-        seenNormalizedUrls.add(dedupKey);
         imageFolderById[m.id] = folder;
         imageIndex.push(m);
       }
@@ -555,6 +565,15 @@ Deno.serve(async (req) => {
     }
 
     if (terminationReason === 'in_progress') terminationReason = 'safety_cap';
+
+    // Month and folder views must be complete: a time-truncated scan would show
+    // only the newest months and look like older images were lost.
+    if (terminationReason === 'runtime_limit' && (isMonthMode || isFolderMode)) {
+      return Response.json(
+        { error: 'Gallery scan ran out of time before it finished. Please retry.' },
+        { status: 503 }
+      );
+    }
 
     // ── SORT DETERMINISTICALLY: created_date DESC, id DESC ──────────────────
     imageIndex.sort((a, b) => {
