@@ -34,28 +34,6 @@ function logStateWrite(source, data) {
 // ── POISON DETECTION MIDDLEWARE ────────────────────────────────────────────────
 // Block any state write that is significantly worse than the last known-good write
 let LAST_GOOD_STATE = { images: 0, prompts: 0, unique: 0, source: null };
-function isPoisonWrite(newState) {
-  if (!LAST_GOOD_STATE.images || !newState.pageImages) return false;
-  
-  const newImages = newState.pageImages?.length ?? 0;
-  const newPrompts = newState.pageImages?.filter(img => !!img.displayPrompt).length ?? 0;
-  const newUnique = newState.proof?.uniqueImagesCollected ?? 0;
-  
-  // If >20% fewer images OR >20% fewer prompts, it's poison
-  const imageCollapse = newImages > 0 && newImages < LAST_GOOD_STATE.images * 0.8;
-  const promptCollapse = newPrompts > 0 && LAST_GOOD_STATE.prompts > 0 && newPrompts < LAST_GOOD_STATE.prompts * 0.8;
-  
-  if (imageCollapse || promptCollapse) {
-    console.warn(
-      `[POISON WRITER BLOCKED] ATTEMPTED WRITE: images=${newImages} prompts=${newPrompts} unique=${newUnique} ` +
-      `vs LAST_GOOD: images=${LAST_GOOD_STATE.images} prompts=${LAST_GOOD_STATE.prompts} unique=${LAST_GOOD_STATE.unique} ` +
-      `from ${LAST_GOOD_STATE.source}`
-    );
-    return true;
-  }
-  
-  return false;
-}
 
 function updateLastGoodState(source, data) {
   const images = data.pageImages?.length ?? 0;
@@ -224,33 +202,6 @@ export default function MediaGallery() {
       // ── POISON DETECTION AGAINST IMMUTABLE GALLERY INDEX PROOF ────────────────
       // The proof is the SOURCE OF TRUTH for gallery size. It only grows.
       // Any scan returning fewer images/prompts than the proof is PERMANENTLY rejected.
-      const proof = galleryIndexProofRef.current;
-      const poisonedByProof =
-        (newImageCount > 0 && proof.highestUniqueImageCount > 0 && newImageCount < proof.highestUniqueImageCount * 0.8) ||
-        (newPromptCount >= 0 && proof.highestPromptCount > 0 && newPromptCount < proof.highestPromptCount * 0.8);
-
-      if (poisonedByProof) {
-        const reason = `page=${page} new(imgs=${newImageCount},prompts=${newPromptCount}) vs PROOF(imgs=${proof.highestUniqueImageCount},prompts=${proof.highestPromptCount})`;
-        console.warn(`[MediaGallery] POISON REJECTED (IMMUTABLE PROOF): ${reason}`);
-        proof.rejectedReasons.push(reason);
-        proof.lastRejectedPoisonScanAt = Date.now();
-        logStateWrite(`fetchPage[REJECTED:immutableProof] ${reason}`, { pageImages: [], hasMore: false });
-        return;
-      }
-
-      // ── ALSO CHECK BEST-KNOWN-PER-PAGE (extra safety) ──────────────────────────
-      if (best && newImageCount > 0) {
-        const promptCollapse = best.promptCount > 0 && newPromptCount < best.promptCount * 0.8;
-        const imageCollapse = best.imageCount > 0 && newImageCount < best.imageCount * 0.8;
-        if (promptCollapse || imageCollapse) {
-          console.warn(
-            `[MediaGallery] POISON REJECTED (per-page best): ` +
-            `page=${page} new(imgs=${newImageCount},prompts=${newPromptCount}) vs best(imgs=${best.imageCount},prompts=${best.promptCount})`
-          );
-          return;
-        }
-      }
-
       // ── UPDATE BEST KNOWN RESULT ─────────────────────────────────────────────
       if (!best || newImageCount >= best.imageCount) {
         bestResultRef.current[page] = {
@@ -285,21 +236,12 @@ export default function MediaGallery() {
       }
       indexProof.lastSuccessfulFullScanAt = Date.now();
 
-      // ── POISON DETECTION BLOCK ──────────────────────────────────────────────
       const stateToWrite = {
         pageImages: dedupedImages,
         hasMore: data.hasMore === true,
         proof: data.proof || null,
       };
-      
-      if (isPoisonWrite(stateToWrite)) {
-        // BLOCKED — this write is worse than the last good state
-        console.warn(`[MediaGallery] POISON WRITE REJECTED for page=${page}. Keeping current display.`);
-        logStateWrite(`fetchPage[REJECTED:poison] page=${page}`, stateToWrite);
-        return;
-      }
 
-      // Safe to write
       if (dedupedImages.length > 0) {
         setPageImages(dedupedImages);
       } else {
