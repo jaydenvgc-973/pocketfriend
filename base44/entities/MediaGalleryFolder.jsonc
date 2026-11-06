@@ -1,0 +1,66 @@
+{
+  "name": "MediaGalleryFolder",
+  "type": "object",
+  "description": "Folder identity for the Media Gallery. Stores the folder name and cover so a character's folder keeps its name and images remain identifiable after the character is deleted. Images themselves are never stored here.",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Account that owns this gallery folder"
+    },
+    "folder_key": {
+      "type": "string",
+      "description": "Stable folder identity: character:<characterId>, story_events, or miscellaneous"
+    },
+    "folder_name": {
+      "type": "string",
+      "description": "Display name captured when the folder was first organized"
+    },
+    "folder_kind": {
+      "type": "string",
+      "enum": [
+        "character",
+        "story_events",
+        "miscellaneous"
+      ],
+      "enumColors": [
+        "blue",
+        "purple",
+        "gray"
+      ],
+      "description": "What kind of folder this is"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "Character ID for character folders. Used so characters with identical names never share a folder."
+    },
+    "cover_image_url": {
+      "type": "string",
+      "description": "Most recent image used as the folder preview"
+    },
+    "last_image_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the cover image was generated"
+    }
+  },
+  "required": [
+    "owner_email",
+    "folder_key",
+    "folder_name",
+    "folder_kind"
+  ]
+}

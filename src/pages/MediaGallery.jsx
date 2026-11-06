@@ -5,6 +5,9 @@ import { analyzeImageForCharacterContext } from '@/lib/analyzeImageForCharacterC
 import { usePageContext } from '@/hooks/usePageContext';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
+import FolderGrid from '@/components/gallery/FolderGrid';
+import DeleteFolderModal from '@/components/gallery/DeleteFolderModal';
+import GalleryImageGrid from '@/components/gallery/GalleryImageGrid';
 
 // ── CENTRALIZED STATE MUTATION LOGGER ──────────────────────────────────────────
 // Every write to gallery state (pageImages, hasMore, proof, etc) gets logged with:
@@ -97,6 +100,20 @@ export default function MediaGallery() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [pageJumpValue, setPageJumpValue] = useState('');
 
+  // ── FOLDER LAYER ────────────────────────────────────────────────────────────
+  // Folders come from the server, which resolves each image's existing
+  // generation context (character chat/text, Story Event, or neither).
+  const [folders, setFolders] = useState([]);
+  const [totalFoldersImages, setTotalFoldersImages] = useState(0);
+  const [foldersLoading, setFoldersLoading] = useState(true);
+  const [foldersError, setFoldersError] = useState(null);
+  const [activeFolder, setActiveFolder] = useState(null);
+  const [totalImages, setTotalImages] = useState(null);
+  const [lastError, setLastError] = useState(null);
+  const [folderPendingDelete, setFolderPendingDelete] = useState(null);
+  const [isDeletingFolder, setIsDeletingFolder] = useState(false);
+  const [deleteFolderError, setDeleteFolderError] = useState(null);
+
   // Monotonically increasing request counter — any response with requestId < activeRequestRef is stale
   const activeRequestRef = useRef(0);
   
@@ -148,7 +165,7 @@ export default function MediaGallery() {
     };
   }, []);
 
-  const fetchPage = useCallback(async (page, search) => {
+  const fetchPage = useCallback(async (page, search, folderKey = null) => {
     if (!user?.email) return;
 
     const requestId = ++activeRequestRef.current;
@@ -164,6 +181,8 @@ export default function MediaGallery() {
         page,
         pageSize: 20,
         searchTerm: search,
+        folderKey: folderKey || null,
+        mode: 'images',
       });
 
       // ── STALE REQUEST GUARD ───────────────────────────────────────────────────
@@ -283,6 +302,8 @@ export default function MediaGallery() {
 
       setHasMore(data.hasMore === true);
       setLastProof(data.proof || null);
+      setTotalImages(typeof data.totalImages === 'number' ? data.totalImages : dedupedImages.length);
+      setLastError(null);
       
       // Log successful write and update last-good-state
       logStateWrite(`fetchPage[OK] page=${page} requestId=${requestId}`, stateToWrite);
@@ -290,7 +311,8 @@ export default function MediaGallery() {
 
     } catch (e) {
       console.error('[MediaGallery] fetchPage error:', e.message);
-      // On error: keep existing display (do not blank the gallery)
+      // On error: keep existing display (do not blank the gallery) but surface it
+      setLastError(e.message || 'Failed to load images');
     } finally {
       if (requestId === activeRequestRef.current) {
         setIsLoading(false);
@@ -300,15 +322,55 @@ export default function MediaGallery() {
     }
   }, [user?.email]);
 
-  useEffect(() => {
-    if (user?.email) {
-      fetchPage(currentPage, searchTerm);
+  // ── FOLDER LIST ─────────────────────────────────────────────────────────────
+  const fetchFolders = useCallback(async () => {
+    if (!user?.email) return;
+    setFoldersLoading(true);
+    setFoldersError(null);
+    try {
+      const res = await base44.functions.invoke('fetchMediaGalleryPage', { mode: 'folders' });
+      const data = res?.data;
+      if (!data || data.error) throw new Error(data?.error || 'No data returned');
+      setFolders(Array.isArray(data.folders) ? data.folders : []);
+      setTotalFoldersImages(typeof data.totalImages === 'number' ? data.totalImages : 0);
+    } catch (e) {
+      console.error('[MediaGallery] fetchFolders error:', e.message);
+      setFoldersError(e.message || 'Failed to load folders');
+    } finally {
+      setFoldersLoading(false);
     }
-  }, [user?.email, currentPage, searchTerm, fetchPage]);
+  }, [user?.email]);
+
+  useEffect(() => {
+    if (user?.email) fetchFolders();
+  }, [user?.email, fetchFolders]);
+
+  // Images are only loaded when a folder is open or a search is active.
+  const isShowingImages = !!activeFolder || !!searchTerm.trim();
+
+  useEffect(() => {
+    if (!user?.email || !isShowingImages) return;
+    fetchPage(currentPage, searchTerm, activeFolder?.key || null);
+  }, [user?.email, currentPage, searchTerm, activeFolder?.key, isShowingImages, fetchPage]);
 
   useEffect(() => {
     setInitSettled(false);
-  }, [currentPage, searchTerm]);
+  }, [currentPage, searchTerm, activeFolder?.key]);
+
+  // Each folder / search is its own query context with its own page floor.
+  useEffect(() => {
+    bestResultRef.current = {};
+    galleryIndexProofRef.current = {
+      highestPageReached: 0,
+      highestUniqueImageCount: 0,
+      highestPromptCount: 0,
+      exhaustedAtPage: null,
+      exhaustedAtImageCount: null,
+      lastSuccessfulFullScanAt: null,
+      lastRejectedPoisonScanAt: null,
+      rejectedReasons: [],
+    };
+  }, [activeFolder?.key, searchTerm]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
   const handlePrev = () => { if (currentPage > 1) setCurrentPage(p => p - 1); };
@@ -325,9 +387,59 @@ export default function MediaGallery() {
     setCurrentPage(1);
     setHasMore(true);
     setPageImages([]);
+    setTotalImages(null);
+    setLastError(null);
     setInitSettled(false);
     // Clear best results on search change — new dataset
     bestResultRef.current = {};
+  };
+
+  const handleOpenFolder = (folder) => {
+    setActiveFolder(folder);
+    setSearchTerm('');
+    setCurrentPage(1);
+    setHasMore(true);
+    setPageImages([]);
+    setTotalImages(null);
+    setLastError(null);
+  };
+
+  const handleBackToFolders = () => {
+    setActiveFolder(null);
+    setSearchTerm('');
+    setCurrentPage(1);
+    setHasMore(true);
+    setPageImages([]);
+    setTotalImages(null);
+    setLastError(null);
+    fetchFolders();
+  };
+
+  const handleConfirmDeleteFolder = async () => {
+    if (!folderPendingDelete) return;
+    setIsDeletingFolder(true);
+    setDeleteFolderError(null);
+    try {
+      const res = await base44.functions.invoke('deleteMediaGalleryFolder', {
+        folderKey: folderPendingDelete.key,
+      });
+      if (!res?.data?.success) {
+        throw new Error(res?.data?.error || 'Folder deletion failed');
+      }
+      if (activeFolder?.key === folderPendingDelete.key) {
+        setActiveFolder(null);
+        setSearchTerm('');
+        setPageImages([]);
+        setTotalImages(null);
+      }
+      setFolderPendingDelete(null);
+      fetchFolders();
+    } catch (e) {
+      console.error('[MediaGallery] Folder delete failed:', e.message);
+      setDeleteFolderError(e.message || 'Folder deletion failed');
+    } finally {
+      setIsDeletingFolder(false);
+    }
   };
 
   const handleManualRefresh = () => {
@@ -336,7 +448,11 @@ export default function MediaGallery() {
     nukeAllGalleryCache();
     bestResultRef.current = {};
     console.log('[MediaGallery] Manual refresh: cache busted. Immutable proof preserved:', proof);
-    fetchPage(currentPage, searchTerm);
+    if (isShowingImages) {
+      fetchPage(currentPage, searchTerm, activeFolder?.key || null);
+    } else {
+      fetchFolders();
+    }
   };
 
   const handleSelectImage = (image) => {
@@ -369,7 +485,8 @@ export default function MediaGallery() {
         nukeAllGalleryCache();
         bestResultRef.current = {};
         console.log('[MediaGallery] Image deleted. Immutable proof preserved:', proof);
-        fetchPage(currentPage, searchTerm);
+        fetchPage(currentPage, searchTerm, activeFolder?.key || null);
+        fetchFolders();
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
       }
@@ -379,25 +496,27 @@ export default function MediaGallery() {
     }
   };
 
-  const showSpinner = isLoading && pageImages.length === 0 && !initSettled;
-  const showEmpty = initSettled && !isLoading && pageImages.length === 0;
-  const showGrid = pageImages.length > 0;
-
   return (
     <div className="min-h-screen bg-background p-6" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => navigate(-1)}
+              onClick={() => (activeFolder ? handleBackToFolders() : navigate(-1))}
               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
-              <h1 className="text-3xl font-bold text-foreground">Media Gallery</h1>
+              <h1 className="text-3xl font-bold text-foreground">
+                {activeFolder ? activeFolder.name : 'Media Gallery'}
+              </h1>
               <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
-                Page {currentPage}{hasMore ? '+' : ''} • {pageImages.length} images
+                {activeFolder
+                  ? `${totalImages ?? 0} images • Page ${currentPage}${hasMore ? '+' : ''}`
+                  : searchTerm.trim()
+                  ? `${totalImages ?? 0} matching images across all folders`
+                  : `${folders.length} folders • ${totalFoldersImages} images`}
                 {isRefreshing && <RefreshCw className="w-3 h-3 animate-spin opacity-50" />}
               </p>
             </div>
@@ -405,7 +524,7 @@ export default function MediaGallery() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleManualRefresh}
-              disabled={isLoading || isRefreshing}
+              disabled={(isShowingImages ? isLoading : foldersLoading) || isRefreshing}
               className="p-2 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
               title="Refresh gallery"
             >
@@ -470,100 +589,63 @@ export default function MediaGallery() {
           <Search className="w-4 h-4 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search by name or description..."
+            placeholder={activeFolder ? `Search in ${activeFolder.name}...` : 'Search all folders by name, description, or event...'}
             value={searchTerm}
             onChange={(e) => handleSearchChange(e.target.value)}
             className="flex-1 px-4 py-2 rounded-lg border border-border bg-card text-foreground placeholder-muted-foreground"
           />
         </div>
 
-        {showSpinner ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
-          </div>
-        ) : showEmpty ? (
-          <div className="text-center py-12 text-muted-foreground">
-            {lastProof && lastProof.enoughForRequestedPage === false
-              ? `Page ${currentPage} is beyond the gallery.`
-              : searchTerm ? 'No images match your search.' : 'No media found.'}
-          </div>
-        ) : !showGrid ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full" />
-          </div>
+        {!activeFolder && !searchTerm.trim() ? (
+          <FolderGrid
+            folders={folders}
+            isLoading={foldersLoading}
+            error={foldersError}
+            onOpen={handleOpenFolder}
+            onDeleteRequest={(folder) => { setDeleteFolderError(null); setFolderPendingDelete(folder); }}
+            onRetry={fetchFolders}
+          />
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-              {pageImages.map((item) => (
-                <div
-                  key={item.id}
-                  className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer border border-border hover:border-primary/50 transition-all"
-                  onClick={() => handleSelectImage(item)}
-                >
-                  <img
-                    src={item.url}
-                    alt={item.description || 'Gallery image'}
-                    loading="lazy"
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    onError={(e) => {
-                      e.target.src = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23333%22 width=%22200%22 height=%22200%22/%3E%3C/svg%3E';
-                    }}
-                  />
-                  {(item.originalPrompt || item.generationPrompt) && (
-                    <div className="absolute bottom-1 left-1 px-1 py-0.5 bg-black/60 rounded text-[9px] text-white/80 pointer-events-none">
-                      📝
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                    <Send className="w-5 h-5 text-white" />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex items-center justify-center gap-4 mb-8 flex-wrap">
-              <button
-                onClick={handlePrev}
-                disabled={currentPage === 1 || isLoading}
-                className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Previous
-              </button>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Page:</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={pageJumpValue}
-                  placeholder={String(currentPage)}
-                  onChange={(e) => setPageJumpValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handlePageJump(); }}
-                  className="w-16 px-2 py-1 rounded-lg border border-border bg-card text-foreground text-sm focus:outline-none focus:border-primary"
-                />
-                {pageJumpValue && (
-                  <button
-                    onClick={handlePageJump}
-                    className="px-2 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-medium"
-                  >
-                    Go
-                  </button>
-                )}
-              </div>
-
-              <span className="text-sm text-muted-foreground">Page {currentPage}{hasMore ? '+' : ''}</span>
-
-              <button
-                onClick={handleNext}
-                disabled={!hasMore || isLoading || (lastProof && lastProof.enoughForRequestedPage === false)}
-                className="px-4 py-2 rounded-lg bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Next
-              </button>
-            </div>
+            {activeFolder && (
+              <p className="text-xs text-muted-foreground mb-3">
+                Images generated from {activeFolder.name}'s chat or text page.
+              </p>
+            )}
+            <GalleryImageGrid
+              images={pageImages}
+              isLoading={isLoading}
+              isError={!!lastError}
+              errorMessage={lastError}
+              onRetry={() => fetchPage(currentPage, searchTerm, activeFolder?.key || null)}
+              onOpenImage={handleSelectImage}
+              currentPage={currentPage}
+              hasMore={hasMore}
+              onPrev={handlePrev}
+              onNext={handleNext}
+              isBeyondGallery={lastProof ? lastProof.enoughForRequestedPage === false : false}
+              pageJumpValue={pageJumpValue}
+              onPageJumpValueChange={setPageJumpValue}
+              onPageJump={handlePageJump}
+              emptyMessage={
+                activeFolder
+                  ? searchTerm.trim()
+                    ? `No images in ${activeFolder.name} match your search.`
+                    : `${activeFolder.name} has no images yet.`
+                  : 'No images match your search across your folders.'
+              }
+            />
           </>
         )}
       </div>
+
+      <DeleteFolderModal
+        folder={folderPendingDelete}
+        isDeleting={isDeletingFolder}
+        error={deleteFolderError}
+        onCancel={() => { if (!isDeletingFolder) { setFolderPendingDelete(null); setDeleteFolderError(null); } }}
+        onConfirm={handleConfirmDeleteFolder}
+      />
 
       {selectedImage && (
         <ImageDetailModal
