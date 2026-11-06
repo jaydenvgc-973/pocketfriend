@@ -508,8 +508,47 @@ function buildTodayLocationBlock(character) {
   return `\n════════════════════════════════════\nWHERE YOU'VE BEEN TODAY (background history only — never a claim about now)\n════════════════════════════════════\n${lines.join('\n')}\nIMPORTANT: These places are past tense only. You may mention them as something you did earlier, but never speak, act, or narrate as if you are inside one. Never describe arriving, entering, dropping keys, taking off a coat, or settling in at a place you have left. If an earlier message or narrative says you arrived somewhere that is not your current location, that is outdated — you are not there. You may say you intend to go somewhere, but you may never claim to have arrived anywhere other than your current location.\n════════════════════════════════════\n`;
 }
 
+// ── WORK SCHEDULE AUTHORITY — existing schedule, evaluated in Eastern Time ────
+// READ-ONLY. Never writes, moves, or reschedules anything. It exists so a finished
+// shift can never be presented as the character's current situation.
+function parseClockMinutes(value) {
+  if (!value || typeof value !== 'string') return null; const p = value.split(':').map(Number); return Number.isFinite(p[0]) && Number.isFinite(p[1]) ? p[0] * 60 + p[1] : null;
+}
+
+function clock12(minutes) {
+  const h24 = Math.floor(minutes / 60) % 24, m = minutes % 60, h12 = h24 % 12 === 0 ? 12 : h24 % 12; return `${h12}:${String(m).padStart(2, '0')} ${h24 < 12 ? 'AM' : 'PM'}`;
+}
+
+function getWorkScheduleState(character, now = new Date()) {
+  if (!character) return null;
+  const startM = parseClockMinutes(character.work_start_time), endM = parseClockMinutes(character.work_end_time);
+  if (startM == null || endM == null || !Array.isArray(character.work_days) || character.work_days.length === 0) return null;
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t)?.value;
+  const dayIdx = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
+  const nowM = (Number(get('hour')) % 24) * 60 + Number(get('minute'));
+  const overnight = endM <= startM, worksToday = character.work_days.includes(dayIdx);
+  const status = !worksToday ? 'off_day' : overnight ? (nowM >= startM || nowM < endM ? 'on_shift' : 'before_shift') : nowM < startM ? 'before_shift' : nowM < endM ? 'on_shift' : 'ended_shift';
+  const startLabel = clock12(startM), endLabel = clock12(endM), nowLabel = clock12(nowM);
+  const dayLabel = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayIdx] || 'today';
+  const statusLine = status === 'on_shift' ? `Your scheduled shift is happening now: ${startLabel} to ${endLabel}.`
+    : status === 'before_shift' ? 'Your shift has not started yet today. You are not at work and not working yet.'
+    : status === 'ended_shift' ? `Your shift ended at ${endLabel}. Your workday is over. No scheduled work is taking place now.`
+    : 'Today is not a scheduled workday for you. You are not at work and not working today.';
+  const statusRule = status === 'ended_shift'
+    ? 'Never say you are still at work, still at the office, still at your desk, finishing reports, working late, or on the clock. Scheduled work is finished for today. If you are physically at your workplace after hours it is not a shift and you are not working there. CURRENT LOCATION is the truth about where you are; your current situation is not work.'
+    : status === 'off_day' ? 'Do not describe yourself as at work, on shift, or working today unless CURRENT LOCATION places you there for your own reasons.'
+    : status === 'before_shift' ? 'Do not describe yourself as already at work, mid-shift, or working.' : '';
+  const promptLine = `\n════════════════════════════════════\nYOUR WORK SCHEDULE — TODAY (authoritative, Eastern Time)\n════════════════════════════════════\nToday is ${dayLabel} and it is ${nowLabel} Eastern. Your existing scheduled shift runs ${startLabel} to ${endLabel}.\n${statusLine}${statusRule ? ` ${statusRule}` : ''}\nThis is fixed fact. Never contradict it, and never let an earlier message, memory, narrative, or story outrank it.\n════════════════════════════════════`;
+  return { status, dateKey: `${get('year')}-${get('month')}-${get('day')}`, statusLine, promptLine };
+}
+
 function buildHardFacts(character, hasActiveStoryEvent = false) {
   const lines = [];
+
+  // ── SCHEDULE AUTHORITY — stated on every build so a finished shift is never "at work"
+  const schedule = getWorkScheduleState(character);
+  if (schedule) lines.push(schedule.promptLine);
 
   // ── HOUSING TRUTH ─────────────────────────────────────────────────────────
   // Source: home/residence fields ONLY.
@@ -589,7 +628,10 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
     }
   }
   if (rp === 'at_work') {
-    if (hasActiveStoryEvent) {
+    const staleWork = schedule && ['ended_shift', 'off_day', 'before_shift'].includes(schedule.status);
+    if (staleWork) {
+      lines.push(`PRESENCE CORRECTION: a stored "at work" status is outdated for today. ${schedule.statusLine} You are not working now and must not describe work as your current situation. CURRENT LOCATION is the truth about where you are.`);
+    } else if (hasActiveStoryEvent) {
       lines.push("PRESENCE STATUS: at_work (persistent profile). An active Story Event is currently governing your lived experience. This status confirms work-related engagement, but the specific activities, circumstances, and experience of this time come from the active Story Event above — not from an ordinary workday. Do not construct an ordinary desk shift, routine workday, or generic work experience from this status.");
     } else {
       lines.push("AUTHORITATIVE PRESENCE: AT WORK. You are awake and working. Your experience of this workday is derived from your personality, knowledge, history, and how work is actually going — not from a default assumption that work is stressful. You may be engaged, focused, routine, bored, satisfied, or frustrated — depending on who you are and what is actually happening.");
@@ -1762,13 +1804,7 @@ Deno.serve(async (req) => {
       relationshipContext = relLines.join('\n');
     }
 
-    contextLog.push({
-      step: 'relationship_context',
-      loaded: relationshipLoaded,
-      total: rels.length,
-      linked: rels.filter(r => !!r.related_character_id).length,
-      unlinked: rels.filter(r => !r.related_character_id).length,
-    });
+    contextLog.push({ step: 'relationship_context', loaded: relationshipLoaded, total: rels.length, linked: rels.filter(r => !!r.related_character_id).length, unlinked: rels.filter(r => !r.related_character_id).length });
 
     // ── Step 7b: Extract user birthday from UserSettings ────────────────────────
     // Birthday is stored at account level in UserSettings — available to ALL characters.
@@ -1797,11 +1833,7 @@ Deno.serve(async (req) => {
       contextLog.push({ step: 'birthday_fact_load', status: 'error', error: bdErr.message });
     }
 
-    contextLog.push({
-      step: 'birthday_fact_load',
-      found: !!userBirthdayFact,
-      date: userBirthdayFact?.date || null,
-    });
+    contextLog.push({ step: 'birthday_fact_load', found: !!userBirthdayFact, date: userBirthdayFact?.date || null });
 
     if (userBirthdayFact) {
       console.log(`[buildCanonicalCharacterContext] birthday_fact | date=${userBirthdayFact.date} | hasYear=${userBirthdayFact.hasYear} | injected_into_prompt=true`);
@@ -2090,8 +2122,7 @@ Deno.serve(async (req) => {
     // so it cannot compete with that pathway. No outfit resolver is invoked here.
     const wardrobeBlock = buildWardrobeAwarenessBlock(character);
     const selfClothingBlock = '';
-    const coPresenceCharRecords = (coPresence?.charactersPresentHere || [])
-      .map(cp => ({ id: cp.id, name: cp.name, display_name: cp.name, current_outfit: null, character_closet: [] }));
+    const coPresenceCharRecords = (coPresence?.charactersPresentHere || []).map(cp => ({ id: cp.id, name: cp.name, display_name: cp.name, current_outfit: null, character_closet: [] }));
     // Note: co-presence records from this path only carry id+name (not full character records).
     // Full outfit data would require additional DB fetches — clothing awareness activates
     // when outfit data exists, degrades gracefully (empty string) when it does not.
@@ -2109,11 +2140,7 @@ Deno.serve(async (req) => {
       // Story Event times are stored in Eastern Time (America/New_York).
       // Serverless runs in UTC, so we must convert ET times to UTC before comparing.
       // Compute the ET timezone offset dynamically (handles DST: EDT=-04:00, EST=-05:00).
-      const _etOffsetMin = (() => {
-        const now = new Date();
-        const etMs = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime();
-        return Math.round((etMs - now.getTime()) / 60000);
-      })();
+      const _etOffsetMin = (() => { const _now = new Date(); const _etMs = new Date(_now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime(); return Math.round((_etMs - _now.getTime()) / 60000); })();
       const _etOffsetStr = `${_etOffsetMin >= 0 ? '+' : '-'}${String(Math.floor(Math.abs(_etOffsetMin)/60)).padStart(2,'0')}:${String(Math.abs(_etOffsetMin)%60).padStart(2,'0')}`;
       const nowSE = new Date();
       const seEvents = await base44.asServiceRole.entities.StoryEvent.filter({ status: 'complete' }, '-created_date', 20).catch(() => []);
@@ -2412,12 +2439,7 @@ NEVER SAY:
 
 `;
         finalSystemPrompt = vickLeadBlock + systemPrompt + vickDiagnosticBlock;
-        contextLog.push({
-          step: 'vick_diagnostic_authority',
-          injected: true,
-          character_boundary_active: false,
-          channel_is_character_channel: isCharacterChannel,
-        });
+        contextLog.push({ step: 'vick_diagnostic_authority', injected: true, character_boundary_active: false, channel_is_character_channel: isCharacterChannel });
       }
     }
     contextLog.push({ step: 'prompt_built', length: systemPrompt.length });
@@ -2425,38 +2447,9 @@ NEVER SAY:
     const totalMs = Date.now() - startTime;
 
     // ── FULL DIAGNOSTIC LOG LINE ──────────────────────────────────────────────
-    console.log(
-      `[buildCanonicalCharacterContext] ✓ route=${interactionContext}` +
-      ` | character=${character.name} (${characterId})` +
-      ` | owner=${resolvedEmail || 'none'}` +
-        ` | canonical_loaded=true` +
-      ` | hard_facts_loaded=${hardFactsLoaded}` +
-      ` | life_journal_count=${lifeJournalCount}` +
-      ` | memory_count=${memories.length}` +
-      ` | relationship_context_loaded=${relationshipLoaded}` +
-      ` | recent_messages=${recentMessages.length}` +
-      ` | co_presence_injected=${!!coPresence}` +
-      ` | user_present_here=${coPresence?.userPresentHere ?? 'unresolved'}` +
-      ` | others_present=${coPresence?.charactersPresentHere?.length ?? 0}` +
-      ` | fallback_used=false` +
-      ` | load_path=${characterLoadPath}` +
-      ` | ms=${totalMs}`
-    );
+    console.log(`[buildCanonicalCharacterContext] ✓ route=${interactionContext} | character=${character.name} (${characterId}) | owner=${resolvedEmail || 'none'} | canonical_loaded=true | hard_facts_loaded=${hardFactsLoaded} | life_journal_count=${lifeJournalCount} | memory_count=${memories.length} | relationship_context_loaded=${relationshipLoaded} | recent_messages=${recentMessages.length} | co_presence_injected=${!!coPresence} | user_present_here=${coPresence?.userPresentHere ?? 'unresolved'} | others_present=${coPresence?.charactersPresentHere?.length ?? 0} | fallback_used=false | load_path=${characterLoadPath} | ms=${totalMs}`);
 
-    contextLog.push({
-      step: 'complete',
-      totalMs,
-      characterName: character.name,
-      characterId,
-      ownerEmail: resolvedEmail || 'none',
-      route: interactionContext,
-      canonical_loaded: true,
-      hard_facts_loaded: hardFactsLoaded,
-      life_journal_count: lifeJournalCount,
-      memory_count: memories.length,
-      relationship_context_loaded: relationshipLoaded,
-      fallback_used: false,
-    });
+    contextLog.push({ step: 'complete', totalMs, characterName: character.name, characterId, ownerEmail: resolvedEmail || 'none', route: interactionContext, canonical_loaded: true, hard_facts_loaded: hardFactsLoaded, life_journal_count: lifeJournalCount, memory_count: memories.length, relationship_context_loaded: relationshipLoaded, fallback_used: false });
 
     return Response.json({
       success: true,
@@ -2476,6 +2469,11 @@ NEVER SAY:
       freshnessMeta: {
         latestWpMsgTs,          // ISO timestamp of most recent WP Message at build time
         latestCommitmentTs,     // ISO timestamp of most recent Commitment change at build time
+        // Presence + schedule truth at build time. A cached prompt whose presence or
+        // schedule state no longer matches live records must be rebuilt — this is what
+        // stopped "at work" prompts from surviving their own shift end.
+        presenceKey: `${character.resolved_presence_status || ''}|${character.resolved_current_location_id || ''}|${character.resolved_last_updated_at || ''}`,
+        scheduleKey: (() => { const s = getWorkScheduleState(character); return s ? `${s.dateKey}|${s.status}` : 'none'; })(),
         builtAt: new Date().toISOString(),
       },
     });

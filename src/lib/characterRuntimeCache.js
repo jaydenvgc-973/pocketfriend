@@ -107,6 +107,10 @@ export function setCachedCanonicalPrompt(ownerEmail, characterId, prompt, freshn
     // Used by verifyCachedPromptFreshness() to detect stale context before generation.
     canonicalLatestWpMsgTs: freshnessMeta.latestWpMsgTs || null,
     canonicalLatestCommitmentTs: freshnessMeta.latestCommitmentTs || null,
+    // Presence + schedule truth captured at build time. A cached prompt whose presence
+    // or scheduled-shift state no longer matches live records must be rebuilt.
+    canonicalPresenceKey: freshnessMeta.presenceKey || null,
+    canonicalScheduleKey: freshnessMeta.scheduleKey || null,
   });
 }
 
@@ -227,7 +231,38 @@ export function getCachedPromptMeta(ownerEmail, characterId) {
     builtAt: entry.canonicalPromptCachedAt || null,
     latestWpMsgTs: entry.canonicalLatestWpMsgTs || null,
     latestCommitmentTs: entry.canonicalLatestCommitmentTs || null,
+    presenceKey: entry.canonicalPresenceKey || null,
+    scheduleKey: entry.canonicalScheduleKey || null,
   };
+}
+
+/**
+ * computePresenceKey — the presence/location truth a prompt was built against.
+ */
+export function computePresenceKey(character) {
+  if (!character) return null;
+  return `${character.resolved_presence_status || ''}|${character.resolved_current_location_id || ''}|${character.resolved_last_updated_at || ''}`;
+}
+
+/**
+ * computeScheduleKey — the character's scheduled-shift state RIGHT NOW, in Eastern Time.
+ * Changes at shift start and shift end (and at midnight), which is exactly when a cached
+ * prompt describing "at work" stops being true.
+ */
+export function computeScheduleKey(character, now = new Date()) {
+  if (!character?.work_start_time || !character?.work_end_time) return 'none';
+  if (!Array.isArray(character.work_days) || character.work_days.length === 0) return 'none';
+  const toMin = (v) => { const p = String(v).split(':').map(Number); return Number.isFinite(p[0]) && Number.isFinite(p[1]) ? p[0] * 60 + p[1] : null; };
+  const startM = toMin(character.work_start_time), endM = toMin(character.work_end_time);
+  if (startM == null || endM == null) return 'none';
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t)?.value;
+  const dayIdx = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
+  const nowM = (Number(get('hour')) % 24) * 60 + Number(get('minute'));
+  const worksToday = character.work_days.includes(dayIdx);
+  const overnight = endM <= startM;
+  const status = !worksToday ? 'off_day' : overnight ? (nowM >= startM || nowM < endM ? 'on_shift' : 'before_shift') : nowM < startM ? 'before_shift' : nowM < endM ? 'on_shift' : 'ended_shift';
+  return `${get('year')}-${get('month')}-${get('day')}|${status}`;
 }
 
 /**
@@ -343,6 +378,46 @@ export async function verifyCachedPromptFreshness(ownerEmail, characterId, base4
       );
       return { fresh: false, reason: 'newer_commitment', latestWpMsgTs, latestCommitmentTs };
     }
+  }
+
+  // ── PRESENCE + SCHEDULE AUTHORITY CHECK ────────────────────────────────────
+  // A cached prompt is only usable while the presence and scheduled-shift state it
+  // was built from still hold. Without this, a prompt built during a shift kept
+  // telling the character they were "still at the office" hours after the shift
+  // ended — the recurring schedule-authority regression.
+  if (!meta.presenceKey || !meta.scheduleKey) {
+    return { fresh: false, reason: 'no_authority_meta', latestWpMsgTs, latestCommitmentTs };
+  }
+
+  try {
+    const charHead = await base44Instance.entities.Character.filter({ id: characterId }, '-created_date', 1);
+    const liveChar = Array.isArray(charHead) ? charHead[0] : charHead;
+    if (!liveChar) {
+      return { fresh: false, reason: 'character_not_found', latestWpMsgTs, latestCommitmentTs };
+    }
+    const livePresenceKey = computePresenceKey(liveChar);
+    const liveScheduleKey = computeScheduleKey(liveChar);
+
+    if (livePresenceKey !== meta.presenceKey) {
+      console.log(
+        `[RUNTIME_CACHE] freshness_fail | char=${characterId}` +
+        ` | reason=presence_changed` +
+        ` | cached=${meta.presenceKey} | live=${livePresenceKey}`
+      );
+      return { fresh: false, reason: 'presence_changed', latestWpMsgTs, latestCommitmentTs };
+    }
+
+    if (liveScheduleKey !== meta.scheduleKey) {
+      console.log(
+        `[RUNTIME_CACHE] freshness_fail | char=${characterId}` +
+        ` | reason=schedule_boundary_crossed` +
+        ` | cached=${meta.scheduleKey} | live=${liveScheduleKey}`
+      );
+      return { fresh: false, reason: 'schedule_boundary_crossed', latestWpMsgTs, latestCommitmentTs };
+    }
+  } catch (_presErr) {
+    // Cannot prove presence/schedule freshness — rebuild rather than reuse.
+    return { fresh: false, reason: 'presence_check_failed', latestWpMsgTs, latestCommitmentTs };
   }
 
   console.log(
