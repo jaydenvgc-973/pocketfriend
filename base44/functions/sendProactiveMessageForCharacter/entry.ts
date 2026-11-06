@@ -331,6 +331,18 @@ Deno.serve(async (req) => {
     const char = charList?.[0];
     if (!char) return Response.json({ error: 'Character not found', characterId }, { status: 404 });
 
+    // ── INFANT NON-VERBAL AUTHORITY ───────────────────────────────────────────
+    // Age 0 is a real, established age: an infant under one year old. Infants
+    // never send messages — they cannot write, text, or start a conversation.
+    {
+      const rawAge = char.age;
+      const hasAge = !(rawAge === undefined || rawAge === null || (typeof rawAge === 'string' && rawAge.trim() === ''));
+      const numericAge = hasAge ? Number(rawAge) : null;
+      if (numericAge !== null && Number.isFinite(numericAge) && numericAge >= 0 && numericAge < 1) {
+        return Response.json({ success: false, skipped: true, reason: 'infant_non_verbal', character_name: char.name });
+      }
+    }
+
     const now = new Date();
     const today = now.toISOString().split('T')[0];
 

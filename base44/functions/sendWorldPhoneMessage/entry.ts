@@ -331,6 +331,26 @@ Return ONLY the person's name or "UNKNOWN" — nothing else.`,
       return Response.json({ success: false, error: 'Sender and recipient are the same character.' });
     }
 
+    // ── INFANT COMMUNICATION AUTHORITY ────────────────────────────────────────
+    // Age 0 is a real, established age: an infant under one year old. Infants are
+    // physical world participants, never phone conversation participants — in
+    // either direction (they cannot answer, reply, or place a call).
+    const _isInfantRecord = (c) => {
+      if (!c) return false;
+      const raw = c.age;
+      if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) return false;
+      const n = Number(raw);
+      return Number.isFinite(n) && n >= 0 && n < 1;
+    };
+    if (_isInfantRecord(sender)) {
+      console.log(`[sendWorldPhoneMessage] BLOCKED sender is an infant: ${sender.name}`);
+      return Response.json({ success: false, error: 'sender_is_infant', message: `${sender.name} is a newborn and cannot take part in a phone conversation.` });
+    }
+    if (_isInfantRecord(recipient)) {
+      console.log(`[sendWorldPhoneMessage] BLOCKED recipient is an infant: ${recipient.name}`);
+      return Response.json({ success: false, error: 'recipient_is_infant', message: `${recipient.name} is a newborn and cannot take part in a phone conversation.` });
+    }
+
     // ── BOUNDARY CHECK — Test Character Safety Addendum ────────────────────
     // Before the outbound Message write completes, use the existing
     // authoritative classification (is_test_character) on both participants.

@@ -2,8 +2,10 @@ import React, { useState, useRef } from "react";
 import { Send, Mic, MicOff, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import CharacterInitiatedMessageButton from "@/components/chat/CharacterInitiatedMessageButton";
+import { isInfantCharacter } from "@/lib/characterAgeStage";
 
 export default function ChatInput({
   onSend,
@@ -22,8 +24,20 @@ export default function ChatInput({
   const recognitionRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // Shares the Chat page's existing character cache key — no extra network read.
+  const { data: characterRecord = null } = useQuery({
+    queryKey: ["character", characterId],
+    queryFn: () => base44.entities.Character.get(characterId),
+    enabled: !!characterId,
+    staleTime: 60000,
+  });
+
+  // INFANT NON-VERBAL GATE (Chat + Text): age 0 is a newborn. They stay fully
+  // visible as characters, but cannot speak, text, or answer.
+  const isInfant = isInfantCharacter(characterRecord);
+
   const handleSend = () => {
-    if (disabled) return;
+    if (disabled || isInfant) return;
     if (!text.trim() && !pendingImage) return;
     onSend(text.trim(), pendingImage);
     setText("");
@@ -54,7 +68,7 @@ export default function ChatInput({
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!disabled) handleSend();
+      if (!disabled && !isInfant) handleSend();
     }
   };
 
@@ -83,6 +97,11 @@ export default function ChatInput({
 
   return (
     <div className="px-4 pb-4 pt-2">
+      {isInfant && (
+        <p className="mb-2 px-2 text-[11px] text-muted-foreground">
+          {characterName || "This character"} is a newborn — babies can&apos;t hold a conversation yet.
+        </p>
+      )}
       {pendingImage && (
         <div className="mb-2 ml-2 relative inline-block">
           <img src={pendingImage} alt="pending" className="h-16 w-16 rounded-xl object-cover border border-border" />
@@ -100,7 +119,7 @@ export default function ChatInput({
             conversationId={conversationId}
             characterName={characterName}
             isPhone={isPhone}
-            disabled={disabled}
+            disabled={disabled || isInfant}
           />
         )}
         <Button
@@ -116,9 +135,9 @@ export default function ChatInput({
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? "Loading conversation…" : "Say something..."}
+          placeholder={isInfant ? "Newborns can't hold a conversation yet" : disabled ? "Loading conversation…" : "Say something..."}
           rows={1}
-          disabled={disabled}
+          disabled={disabled || isInfant}
           className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground disabled:opacity-50"
           style={{ minHeight: "40px" }}
         />
@@ -135,7 +154,7 @@ export default function ChatInput({
             <Button
               size="icon"
               onClick={handleSend}
-              disabled={disabled || (!text.trim() && !pendingImage)}
+              disabled={disabled || isInfant || (!text.trim() && !pendingImage)}
               className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90"
             >
               <Send className="w-4 h-4" />

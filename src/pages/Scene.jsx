@@ -44,6 +44,8 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
+import { isInfantCharacter } from "@/lib/characterAgeStage";
+import { getCharacterAge } from "@/lib/characterAgeSystem";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -117,7 +119,7 @@ export default function Scene() {
     enabled: !!locationId && !locationsData.find((l) => l.id === locationId),
   });
 
-  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees } = useSceneCharacters(currentUser);
+  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
@@ -143,7 +145,7 @@ export default function Scene() {
       currentUser, userSettings: settings || null, activeCharacters: activeChars,
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
-      allCharacters: characters, sharedLocationEmployees, locations: locationsData
+      allCharacters: characters, sharedLocationEmployees, sharedLocationVisitors, locations: locationsData
     });
     const withBrought = resolved.map((entity) => {
       if (broughtCharacters.find((bc) => bc.id === entity.id)) return { ...entity, resolved_current_location_id: locationId, is_currently_present: true };
@@ -155,7 +157,7 @@ export default function Scene() {
       }
     });
     return withBrought;
-  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, locationsData, broughtCharacters, locationId, location?.name]);
+  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
 
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
@@ -445,17 +447,24 @@ export default function Scene() {
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
       const selectedCharIds = selectedNpcIds || [];
       const dialogueEligible = privateTarget ? sceneCharacters.filter((c) => c.id === privateTarget.id || c.name === privateTarget.name) : selectedCharIds.length > 0 ? [...broughtCharacters.filter((c) => selectedCharIds.includes(c.id)), ...selectedNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i) : [];
-      const charSummaries = dialogueEligible.map((c) => `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`).join("; ");
-      const eligibleKnownChars = dialogueEligible.filter((c) => !c.isNpc);
-      const eligibleNpcList = dialogueEligible.filter((c) => c.isNpc).map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
+      // INFANTS ARE PRESENT, NOT CONVERSATIONAL: age 0 is a newborn — physically in
+      // the scene, never capable of speech or an adult conversational response.
+      const infantCharacters = dialogueEligible.filter((c) => isInfantCharacter(c));
+      const speakingEligible = dialogueEligible.filter((c) => !isInfantCharacter(c));
+      const charSummaries = speakingEligible.map((c) => `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`).join("; ");
+      const eligibleKnownChars = speakingEligible.filter((c) => !c.isNpc);
+      const eligibleNpcList = speakingEligible.filter((c) => c.isNpc).map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
       const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:\n- Selected characters: ${[...eligibleKnownChars.map((c) => c.name), ...(eligibleNpcList ? [eligibleNpcList] : [])].join(", ") || "none"}\nResidents, owners, and employees who are present but NOT selected must NOT respond.\nIf no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
       const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`).join('\n\n');
       const memSection = eligibleKnownChars.filter((c) => crossMem[c.id]).map((c) => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
-      const ageGateRules = dialogueEligible.map((char) => { const age = char.age || (char.age_range?.match(/\d+/) ? parseInt(char.age_range.match(/\d+/)[0]) : null); if (!age || age >= 6) return null; if (age < 3) return `${char.name} is a baby: speak ONLY 1-2 words max.`; if (age < 6) return `${char.name} is a toddler: max 5 words.`; return null; }).filter(Boolean).join('\n');
+      const infantRule = infantCharacters.length > 0
+        ? `\nINFANT PRESENT — CANNOT SPEAK (mandatory): ${infantCharacters.map((c) => c.name).join(", ")} ${infantCharacters.length === 1 ? "is a newborn baby" : "are newborn babies"}. They are physically present but non-verbal: they may only be described non-verbally (crying, cooing, babbling, reaching, sleeping). ⛔ Do NOT give them words, sentences, questions, answers, or dialogue of any kind. ⛔ Do NOT include them in the responses array. Other people present may respond and may react to the baby.`
+        : "";
+      const ageGateRules = speakingEligible.map((char) => { const age = getCharacterAge(char); if (age === null || age >= 6) return null; if (age < 3) return `${char.name} is a toddler: speak ONLY 1-2 words max.`; return `${char.name} is a young child: max 5 words.`; }).filter(Boolean).join('\n');
       const watchContextBlock = watchContext ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together.\n- You MUST NOT pretend to know the video's contents until analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n` : "";
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -466,6 +475,8 @@ export default function Scene() {
         const userNames = [displayName?.trim().toLowerCase(), currentUser?.full_name?.trim().toLowerCase(), currentUser?.email?.split("@")[0]?.toLowerCase(), settings?.fictional_world_name?.trim().toLowerCase(), ...(settings?.user_aliases || []).map((a) => a?.trim().toLowerCase())].filter(Boolean);
         if (userNames.includes(respNameLower)) continue;
         const char = sceneCharacters.find((c) => c.name === resp.character_name);
+        // Infants cannot speak — never render a reply attributed to a newborn.
+        if (char && isInfantCharacter(char)) continue;
         let cleanedContent = filterDashes(resp.content);
         if (char) { try { const wpResult = await handleCharacterWorldPhoneAction({ responseText: cleanedContent, character: char, characterId: char.id, conversationId: null, ownerEmail: currentUser?.email, recentMessages: messages.slice(-15) }); cleanedContent = wpResult.responseText || cleanedContent; } catch {} }
         const msg = { id: Date.now().toString() + resp.character_name, sender: "character", senderName: resp.character_name, characterId: char?.id, avatarUrl: char?.avatar_url, content: cleanedContent, timestamp: new Date().toISOString() };

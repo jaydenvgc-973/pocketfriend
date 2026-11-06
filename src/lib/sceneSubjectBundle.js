@@ -18,6 +18,8 @@
  * participant → own reference range → own stored appearance → own role → own outfit.
  * One participant's identity/refs/appearance/outfit must never be applied to another.
  */
+import { isInfantCharacter, buildInfantImageDirective } from "@/lib/characterAgeStage";
+
 function formatRefRange(start, end) {
   if (start === null || start === undefined) return null;
   return start === end ? `Image ${start}` : `Images ${start}–${end}`;
@@ -38,6 +40,13 @@ function buildSubjectAppearanceLock(person) {
   const gender = person.gender || null;
 
   const lines = [];
+
+  // Developmental stage is authoritative: an infant is rendered as an infant,
+  // using their own reference images / appearance lock for identity only.
+  if (!person.isUser && isInfantCharacter(person)) {
+    lines.push(`  • ${buildInfantImageDirective(person.name)}`);
+  }
+
   if (ethnicities.length > 0) {
     lines.push(`  • Ethnicity: ${ethnicities.join(', ')} — render EXACTLY. ⛔ No Caucasian default.`);
   } else if (userRace) {
