@@ -6,6 +6,7 @@ import { usePageContext } from '@/hooks/usePageContext';
 import { motion } from 'framer-motion';
 import { X, Send, Trash2, Search, ArrowLeft, RefreshCw } from 'lucide-react';
 import FolderGrid from '@/components/gallery/FolderGrid';
+import MonthGrid from '@/components/gallery/MonthGrid';
 import DeleteFolderModal from '@/components/gallery/DeleteFolderModal';
 import GalleryImageGrid from '@/components/gallery/GalleryImageGrid';
 
@@ -108,6 +109,12 @@ export default function MediaGallery() {
   const [foldersLoading, setFoldersLoading] = useState(true);
   const [foldersError, setFoldersError] = useState(null);
   const [activeFolder, setActiveFolder] = useState(null);
+  // Month-and-year subfolders inside a character folder. Only buckets are fetched
+  // until a month is chosen, so opening a character never loads its whole library.
+  const [activeMonth, setActiveMonth] = useState(null);
+  const [months, setMonths] = useState([]);
+  const [monthsLoading, setMonthsLoading] = useState(false);
+  const [monthsError, setMonthsError] = useState(null);
   const [totalImages, setTotalImages] = useState(null);
   const [lastError, setLastError] = useState(null);
   const [folderPendingDelete, setFolderPendingDelete] = useState(null);
@@ -165,7 +172,7 @@ export default function MediaGallery() {
     };
   }, []);
 
-  const fetchPage = useCallback(async (page, search, folderKey = null) => {
+  const fetchPage = useCallback(async (page, search, folderKey = null, monthKey = null) => {
     if (!user?.email) return;
 
     const requestId = ++activeRequestRef.current;
@@ -182,6 +189,7 @@ export default function MediaGallery() {
         pageSize: 20,
         searchTerm: search,
         folderKey: folderKey || null,
+        monthKey: monthKey || null,
         mode: 'images',
       });
 
@@ -345,13 +353,50 @@ export default function MediaGallery() {
     if (user?.email) fetchFolders();
   }, [user?.email, fetchFolders]);
 
-  // Images are only loaded when a folder is open or a search is active.
-  const isShowingImages = !!activeFolder || !!searchTerm.trim();
+  // ── MONTH LIST ──────────────────────────────────────────────────────────────
+  // A character folder opens onto its month-and-year subfolders. This request
+  // returns buckets only — no images are loaded until a month is chosen.
+  const fetchMonths = useCallback(async () => {
+    if (!user?.email || !activeFolder?.key) return;
+    setMonthsLoading(true);
+    setMonthsError(null);
+    try {
+      const res = await base44.functions.invoke('fetchMediaGalleryPage', {
+        mode: 'months',
+        folderKey: activeFolder.key,
+      });
+      const data = res?.data;
+      if (!data || data.error) throw new Error(data?.error || 'No data returned');
+      setMonths(Array.isArray(data.months) ? data.months : []);
+    } catch (e) {
+      console.error('[MediaGallery] fetchMonths error:', e.message);
+      setMonthsError(e.message || 'Failed to load months');
+    } finally {
+      setMonthsLoading(false);
+    }
+  }, [user?.email, activeFolder?.key]);
+
+  const isCharacterFolder = activeFolder?.kind === 'character';
+
+  useEffect(() => {
+    if (isCharacterFolder) fetchMonths();
+    else setMonths([]);
+  }, [isCharacterFolder, fetchMonths]);
+
+  // Months are shown for a character folder until a month or a search is chosen.
+  const isShowingMonths = isCharacterFolder && !activeMonth && !searchTerm.trim();
+  const isShowingImages = (!!activeFolder && !isShowingMonths) || !!searchTerm.trim();
 
   useEffect(() => {
     if (!user?.email || !isShowingImages) return;
-    fetchPage(currentPage, searchTerm, activeFolder?.key || null);
-  }, [user?.email, currentPage, searchTerm, activeFolder?.key, isShowingImages, fetchPage]);
+    // A month view loads only that month; search still spans the whole folder.
+    fetchPage(
+      currentPage,
+      searchTerm,
+      activeFolder?.key || null,
+      searchTerm.trim() ? null : activeMonth?.key || null
+    );
+  }, [user?.email, currentPage, searchTerm, activeFolder?.key, activeMonth?.key, isShowingImages, fetchPage]);
 
   useEffect(() => {
     setInitSettled(false);
@@ -370,7 +415,7 @@ export default function MediaGallery() {
       lastRejectedPoisonScanAt: null,
       rejectedReasons: [],
     };
-  }, [activeFolder?.key, searchTerm]);
+  }, [activeFolder?.key, activeMonth?.key, searchTerm]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
   const handlePrev = () => { if (currentPage > 1) setCurrentPage(p => p - 1); };
@@ -396,6 +441,28 @@ export default function MediaGallery() {
 
   const handleOpenFolder = (folder) => {
     setActiveFolder(folder);
+    setActiveMonth(null);
+    setMonths([]);
+    setSearchTerm('');
+    setCurrentPage(1);
+    setHasMore(true);
+    setPageImages([]);
+    setTotalImages(null);
+    setLastError(null);
+  };
+
+  const handleOpenMonth = (month) => {
+    setActiveMonth(month);
+    setSearchTerm('');
+    setCurrentPage(1);
+    setHasMore(true);
+    setPageImages([]);
+    setTotalImages(null);
+    setLastError(null);
+  };
+
+  const handleBackFromMonth = () => {
+    setActiveMonth(null);
     setSearchTerm('');
     setCurrentPage(1);
     setHasMore(true);
@@ -406,6 +473,8 @@ export default function MediaGallery() {
 
   const handleBackToFolders = () => {
     setActiveFolder(null);
+    setActiveMonth(null);
+    setMonths([]);
     setSearchTerm('');
     setCurrentPage(1);
     setHasMore(true);
@@ -448,8 +517,15 @@ export default function MediaGallery() {
     nukeAllGalleryCache();
     bestResultRef.current = {};
     console.log('[MediaGallery] Manual refresh: cache busted. Immutable proof preserved:', proof);
-    if (isShowingImages) {
-      fetchPage(currentPage, searchTerm, activeFolder?.key || null);
+    if (isShowingMonths) {
+      fetchMonths();
+    } else if (isShowingImages) {
+      fetchPage(
+        currentPage,
+        searchTerm,
+        activeFolder?.key || null,
+        searchTerm.trim() ? null : activeMonth?.key || null
+      );
     } else {
       fetchFolders();
     }
@@ -485,8 +561,14 @@ export default function MediaGallery() {
         nukeAllGalleryCache();
         bestResultRef.current = {};
         console.log('[MediaGallery] Image deleted. Immutable proof preserved:', proof);
-        fetchPage(currentPage, searchTerm, activeFolder?.key || null);
+        fetchPage(
+          currentPage,
+          searchTerm,
+          activeFolder?.key || null,
+          searchTerm.trim() ? null : activeMonth?.key || null
+        );
         fetchFolders();
+        if (isCharacterFolder) fetchMonths();
       } else {
         alert(`Delete denied: ${res?.data?.error || 'Unknown error'}`);
       }
@@ -502,17 +584,23 @@ export default function MediaGallery() {
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => (activeFolder ? handleBackToFolders() : navigate(-1))}
+              onClick={() => (activeMonth ? handleBackFromMonth() : activeFolder ? handleBackToFolders() : navigate(-1))}
               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div>
               <h1 className="text-3xl font-bold text-foreground">
-                {activeFolder ? activeFolder.name : 'Media Gallery'}
+                {activeFolder
+                  ? activeMonth
+                    ? `${activeFolder.name} · ${activeMonth.label}`
+                    : activeFolder.name
+                  : 'Media Gallery'}
               </h1>
               <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
-                {activeFolder
+                {isShowingMonths
+                  ? `${months.length} ${months.length === 1 ? 'month' : 'months'}`
+                  : activeFolder
                   ? `${totalImages ?? 0} images • Page ${currentPage}${hasMore ? '+' : ''}`
                   : searchTerm.trim()
                   ? `${totalImages ?? 0} matching images across all folders`
@@ -524,7 +612,7 @@ export default function MediaGallery() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleManualRefresh}
-              disabled={(isShowingImages ? isLoading : foldersLoading) || isRefreshing}
+              disabled={(isShowingMonths ? monthsLoading : isShowingImages ? isLoading : foldersLoading) || isRefreshing}
               className="p-2 rounded-lg bg-secondary/40 text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
               title="Refresh gallery"
             >
@@ -605,11 +693,21 @@ export default function MediaGallery() {
             onDeleteRequest={(folder) => { setDeleteFolderError(null); setFolderPendingDelete(folder); }}
             onRetry={fetchFolders}
           />
+        ) : isShowingMonths ? (
+          <MonthGrid
+            months={months}
+            isLoading={monthsLoading}
+            error={monthsError}
+            onOpen={handleOpenMonth}
+            onRetry={fetchMonths}
+          />
         ) : (
           <>
             {activeFolder && (
               <p className="text-xs text-muted-foreground mb-3">
-                Images generated from {activeFolder.name}'s chat or text page.
+                {activeMonth
+                  ? `Images generated in ${activeMonth.label}.`
+                  : `Images generated from ${activeFolder.name}'s chat or text page.`}
               </p>
             )}
             <GalleryImageGrid
@@ -617,7 +715,14 @@ export default function MediaGallery() {
               isLoading={isLoading}
               isError={!!lastError}
               errorMessage={lastError}
-              onRetry={() => fetchPage(currentPage, searchTerm, activeFolder?.key || null)}
+              onRetry={() =>
+                fetchPage(
+                  currentPage,
+                  searchTerm,
+                  activeFolder?.key || null,
+                  searchTerm.trim() ? null : activeMonth?.key || null
+                )
+              }
               onOpenImage={handleSelectImage}
               currentPage={currentPage}
               hasMore={hasMore}

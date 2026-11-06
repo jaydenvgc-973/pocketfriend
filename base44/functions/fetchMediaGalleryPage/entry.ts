@@ -32,6 +32,34 @@ const BATCH_SIZE = 500; // Larger batches = fewer API calls = less rate limiting
 const SCAN_FLOOR = '2023-01-01T00:00:00.000Z'; // Extended back to catch all historical images
 const MAX_RUNTIME_MS = 35000;
 
+const MONTH_PART_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+});
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * Month-and-year bucket key for an image's existing generation date.
+ * Eastern Time is the app's authoritative timezone, so an image generated late on
+ * the last evening of a month belongs to that month, not the next one.
+ * Returns 'YYYY-MM', or null when the date is unusable.
+ */
+function monthKeyForDate(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = MONTH_PART_FORMATTER.formatToParts(d);
+  const year = parts.find((p) => p.type === 'year')?.value;
+  const month = parts.find((p) => p.type === 'month')?.value;
+  return year && month ? `${year}-${month}` : null;
+}
+
+function monthLabelForKey(key) {
+  const [year, month] = String(key).split('-');
+  return `${MONTH_NAMES[Number(month) - 1] || month} ${year}`;
+}
+
 /**
  * Normalize URL for deduplication — strips query strings (signed tokens, CDN params).
  */
@@ -138,6 +166,7 @@ Deno.serve(async (req) => {
       pageSize = PAGE_SIZE,
       searchTerm = '',
       folderKey = null,
+      monthKey = null,
       mode = 'images',
     } = await req.json();
     const ownerEmail = user.email;
@@ -150,6 +179,8 @@ Deno.serve(async (req) => {
     const neededImages = isFolderMode ? Number.MAX_SAFE_INTEGER : imageEndIndex + 1; // +1 to prove hasMore
     const searchLower = (searchTerm || '').toLowerCase().trim();
     const requestedFolderKey = typeof folderKey === 'string' && folderKey ? folderKey : null;
+    const isMonthMode = mode === 'months';
+    const requestedMonthKey = typeof monthKey === 'string' && /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : null;
 
     console.log(`[fetchMediaGalleryPage] v5 owner=${ownerEmail} mode=${mode} folder=${requestedFolderKey || 'ALL'} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex}`);
 
@@ -360,6 +391,7 @@ Deno.serve(async (req) => {
     const seenNormalizedUrls = new Set();
     const imageIndex = [];
     const folderStats = {};
+    const monthStats = {};
     const imageFolderById = {};
     let offset = 0;
     let batchCount = 0;
@@ -448,6 +480,37 @@ Deno.serve(async (req) => {
         // Apply folder filter
         if (requestedFolderKey && folder.key !== requestedFolderKey) continue;
 
+        const imageMonthKey = monthKeyForDate(m.created_date);
+
+        // ── MONTH INDEX ─────────────────────────────────────────────────────────
+        // Opening a character folder asks only for its month-and-year subfolders:
+        // a count and a cover per month, never image records. Buckets are built
+        // from each image's existing generation date, so a month with no images
+        // simply has no bucket. Images are not collected in this mode.
+        if (isMonthMode) {
+          if (imageMonthKey) {
+            const bucket = monthStats[imageMonthKey] || (monthStats[imageMonthKey] = {
+              key: imageMonthKey,
+              label: monthLabelForKey(imageMonthKey),
+              year: Number(imageMonthKey.slice(0, 4)),
+              month: Number(imageMonthKey.slice(5, 7)),
+              imageCount: 0,
+              coverImageUrl: null,
+              lastImageAt: null,
+            });
+            if (!bucket.coverImageUrl) {
+              bucket.coverImageUrl = m.image_url;
+              bucket.lastImageAt = m.created_date || null;
+            }
+            bucket.imageCount++;
+            seenNormalizedUrls.add(dedupKey);
+          }
+          continue;
+        }
+
+        // A chosen month loads only that month's images.
+        if (requestedMonthKey && imageMonthKey !== requestedMonthKey) continue;
+
         // Apply search filter — matches names, descriptions, prompts, Story Event
         // titles, location, subjects and dates.
         if (searchLower && !buildSearchHaystack(m, folder).includes(searchLower)) continue;
@@ -469,6 +532,18 @@ Deno.serve(async (req) => {
 
       console.log(`[fetchMediaGalleryPage] Batch ${batchCount} offset=${offset}: ${batch.length} msgs → ${imageIndex.length} unique images`);
 
+      // ── STOP AT THE CHOSEN MONTH'S BOUNDARY ──────────────────────────────────
+      // The scan walks newest-first, so once the oldest message in a batch predates
+      // the chosen month, nothing older can belong to it. This is what keeps a month
+      // view from walking (and loading) the character's entire history.
+      if (requestedMonthKey) {
+        const oldestMonth = monthKeyForDate(batch[batch.length - 1]?.created_date);
+        if (oldestMonth && oldestMonth < requestedMonthKey) {
+          terminationReason = 'before_requested_month';
+          break;
+        }
+      }
+
       offset += BATCH_SIZE;
 
       // Check if we hit the end
@@ -488,6 +563,24 @@ Deno.serve(async (req) => {
       if (dateB !== dateA) return dateB - dateA;
       return (b.id || '').localeCompare(a.id || '');
     });
+
+    // ── MONTH MODE: month-and-year subfolders for the requested character folder ──
+    // Newest month first. Only months that actually hold images are returned.
+    if (isMonthMode) {
+      const months = Object.values(monthStats).sort((a, b) => b.key.localeCompare(a.key));
+      return Response.json({
+        mode: 'months',
+        folderKey: requestedFolderKey,
+        months,
+        totalImages: months.reduce((sum, bucket) => sum + bucket.imageCount, 0),
+        currentUserEmail: ownerEmail,
+        proof: {
+          messagesScanned,
+          terminationReason,
+          runtimeMs: Date.now() - scanStart,
+        },
+      });
+    }
 
     // ── FOLDER MODE: return the organized folder view ─────────────────────────
     if (isFolderMode) {
