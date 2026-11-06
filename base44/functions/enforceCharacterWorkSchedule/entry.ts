@@ -125,91 +125,6 @@ function computeNextWorkExecutionTime(character, orderedJobs, locMap, clock, now
   return new Date(now.getTime() + earliestMinutes * 60 * 1000).toISOString();
 }
 
-// ── SCHEDULED SHIFT COMPLETION → EXISTING NARRATIVE PATHWAY ──────────────────
-// The character's own work schedule is the trigger. This reads the SAME shift
-// resolution enforcement already performs (location worker_shifts override, then
-// the job's own schedule, rabbit-hole or linked alike) and hands the completed
-// shift to the EXISTING narrative generator (generateAutomaticNarrative, trigger
-// 'work_end'). It never moves, teleports, or reinterprets the character, and it
-// does not need a location change — the schedule end alone is the trigger.
-// Occurrence dedup reads the existing narrative table, the same way the existing
-// location-change narrative avoids double-writing one transition.
-const SHIFT_COMPLETION_RECENCY_MIN = 12 * 60; // covers the app's existing periodic heartbeats
-
-function minutesSinceMostRecentShiftEnd(shift, clock) {
-  // Minutes since this shift's most recent scheduled END, or null when the
-  // schedule has no end boundary that has already passed.
-  if (!shift?.start || !shift?.end) return null;
-  const [sh, sm] = shift.start.split(':').map(Number);
-  const [eh, em] = shift.end.split(':').map(Number);
-  const startMin = sh * 60 + sm;
-  const endMin = eh * 60 + em;
-  if (!Number.isFinite(startMin) || !Number.isFinite(endMin)) return null;
-  const crossMidnight = endMin < startMin;
-  // Minutes from the shift's OWN day midnight to its end moment.
-  const endOffset = (crossMidnight ? 1440 : 0) + endMin;
-  const nowMin = clock.getHours() * 60 + clock.getMinutes();
-  const today = clock.getDay();
-  const hasDays = Array.isArray(shift.days) && shift.days.length > 0;
-  let best = null;
-  for (let back = 0; back <= 2; back++) {
-    const shiftDay = (today - back + 7) % 7;
-    if (hasDays && !shift.days.includes(shiftDay)) continue;
-    const since = nowMin + back * 1440 - endOffset;
-    if (since >= 0 && (best === null || since < best)) best = since;
-  }
-  return best;
-}
-
-async function narrateCompletedShift(base44, character, orderedJobs, locMap, clock, nowUtc) {
-  if (!character?.id || !Array.isArray(orderedJobs) || orderedJobs.length === 0) return null;
-
-  // Most recent completed shift across every active job (primary + additional,
-  // linked + rabbit-hole), using the same per-job resolution enforcement uses.
-  let latest = null;
-  for (const job of orderedJobs) {
-    let shift = null;
-    if (job.type === 'linked') {
-      const loc = locMap?.[job.locId];
-      const locationShift = loc?.worker_shifts?.[character.id];
-      shift = (locationShift && locationShift.start && locationShift.end) ? locationShift : job.shift;
-    } else {
-      shift = job.shift;
-    }
-    const since = minutesSinceMostRecentShiftEnd(shift, clock);
-    if (since === null || since > SHIFT_COMPLETION_RECENCY_MIN) continue;
-    if (!latest || since < latest.since) latest = { since, shift };
-  }
-  if (!latest) return null;
-
-  // The occurrence is the scheduled end moment itself.
-  const occurrenceIso = new Date(nowUtc.getTime() - latest.since * 60000).toISOString();
-
-  const alreadyNarrated = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
-    { character_id: character.id, event_type: 'work_end', timestamp: { $gte: occurrenceIso } },
-    null,
-    1
-  ).catch(() => []);
-  if (alreadyNarrated && alreadyNarrated.length > 0) {
-    return { generated: false, reason: 'already_narrated', occurrenceIso };
-  }
-
-  const res = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-    characterId: character.id,
-    forceGenerate: true,
-    trigger: 'work_end',
-    shiftContext: { shift_end_time: latest.shift.end },
-  }).catch((e) => ({ error: e.message }));
-
-  return {
-    generated: res?.success === true,
-    occurrenceIso,
-    narrativeId: res?.narrativeId || null,
-    error: res?.error || null,
-    reason: res?.reason || null,
-  };
-}
-
 /**
  * OWNERSHIP-ISOLATED SCHEDULER
  * 
@@ -468,6 +383,7 @@ Deno.serve(async (req) => {
       // or end) at that exact ET time on that day. If no job has a matching boundary,
       // the schedule changed while the Workflow was waiting and this instance returns
       // a superseded result without committing any transition.
+      let _shiftEndNarrative = null;
       if (expected_occurrence_time) {
         const _expectedDate = new Date(expected_occurrence_time);
         const _expEtStr = _expectedDate.toLocaleString('en-US', {
@@ -481,6 +397,8 @@ Deno.serve(async (req) => {
         const _expDay = _expWdMap[_expParsed[1]];
         const _expYesterday = (_expDay + 6) % 7;
         let _occurrenceValid = false;
+        let _occurrenceIsShiftEnd = false;
+        let _matchedShiftEnd = null;
         for (const _job of singleOrderedJobs) {
           let _shift = null;
           if (_job.type === 'linked') {
@@ -501,9 +419,9 @@ Deno.serve(async (req) => {
           if (_shiftStartMin === _expMin && (!_hasDays || _shift.days.includes(_expDay))) { _occurrenceValid = true; break; }
           if (_shiftEndMin === _expMin) {
             if (_isCrossMidnight) {
-              if (!_hasDays || _shift.days.includes(_expYesterday)) { _occurrenceValid = true; break; }
+              if (!_hasDays || _shift.days.includes(_expYesterday)) { _occurrenceValid = true; _occurrenceIsShiftEnd = true; _matchedShiftEnd = _shift.end; break; }
             } else {
-              if (!_hasDays || _shift.days.includes(_expDay)) { _occurrenceValid = true; break; }
+              if (!_hasDays || _shift.days.includes(_expDay)) { _occurrenceValid = true; _occurrenceIsShiftEnd = true; _matchedShiftEnd = _shift.end; break; }
             }
           }
         }
@@ -515,18 +433,32 @@ Deno.serve(async (req) => {
             next_execution_time: null,
           });
         }
-      }
 
-      // ── SCHEDULED SHIFT COMPLETION → existing narrative pathway ───────────
-      // Placed BEFORE job evaluation so a completed shift is narrated whether or
-      // not this run changes the character's location (and whether the character
-      // holds a linked workplace or a rabbit-hole occupation).
-      try {
-        const _scRes = await narrateCompletedShift(base44, character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
-        if (_scRes?.generated) console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-completion narrative generated for ${_scRes.occurrenceIso} (id=${_scRes.narrativeId})`);
-        else if (_scRes && _scRes.generated === false && _scRes.reason !== 'already_narrated') console.warn(`[enforceCharacterWorkSchedule] ${character.name}: shift-completion narrative not generated — ${_scRes.reason || _scRes.error}`);
-      } catch (_scErr) {
-        console.warn(`[enforceCharacterWorkSchedule] ${character.name}: shift-completion narrative failed (non-blocking): ${_scErr.message}`);
+        // ── THE COMPLETED SHIFT IS THE TRIGGER ──────────────────────────────
+        // The existing scheduling mechanism has just established that this run IS
+        // the shift's scheduled end boundary, using the same per-job schedule
+        // resolution it uses for every transition (linked workplace or
+        // rabbit-hole). That occurrence directly triggers the existing narrative
+        // generator, once. Nothing is re-detected, nothing is polled, and no
+        // location change is involved.
+        if (_occurrenceIsShiftEnd) {
+          try {
+            const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+              characterId,
+              forceGenerate: true,
+              trigger: 'work_end',
+              shiftContext: { shift_end_time: _matchedShiftEnd },
+            });
+            _shiftEndNarrative = _narrRes?.data || _narrRes || null;
+          } catch (_narrErr) {
+            _shiftEndNarrative = { success: false, error: _narrErr.message };
+          }
+          if (_shiftEndNarrative?.success !== true) {
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at ${expected_occurrence_time} — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
+          } else {
+            console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated at ${expected_occurrence_time} (id=${_shiftEndNarrative.narrativeId})`);
+          }
+        }
       }
 
       // Evaluate jobs in order. First active shift wins.
@@ -805,6 +737,7 @@ Deno.serve(async (req) => {
             updated: _singleLockRelRes?.disposition === 'accepted',
             reason: 'Stale work lock released — shift ended, not at workplace',
             disposition: _singleLockRelRes?.disposition,
+            shift_end_narrative: _shiftEndNarrative,
             next_execution_time: singleNextExecTime,
           });
         }
@@ -875,7 +808,7 @@ Deno.serve(async (req) => {
               }
             } catch (e) { /* non-fatal — movement already committed */ }
           }
-          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false, next_execution_time: singleNextExecTime });
+          return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false, shift_end_narrative: _shiftEndNarrative, next_execution_time: singleNextExecTime });
         }
       }
 
@@ -1103,16 +1036,6 @@ Deno.serve(async (req) => {
             }
           }
         }
-        // ── SCHEDULED SHIFT COMPLETION → existing narrative pathway ─────────
-        // Same correction as the single-character path: the schedule end alone
-        // triggers the existing narrative generator, independent of movement.
-        try {
-          const _gScRes = await narrateCompletedShift(base44, char, orderedJobs, locMap, globalClock, nowET);
-          if (_gScRes?.generated) fixes_applied.push(`${char.name}: shift-completion narrative generated for ${_gScRes.occurrenceIso}`);
-        } catch (_gScErr) {
-          console.warn(`[enforceCharacterWorkSchedule] ${char.name}: shift-completion narrative failed (non-blocking): ${_gScErr.message}`);
-        }
-
         // Evaluate jobs in order. First active shift wins.
         let activeJob = null;
         for (const job of orderedJobs) {

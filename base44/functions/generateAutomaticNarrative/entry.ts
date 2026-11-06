@@ -42,20 +42,7 @@ Deno.serve(async (req) => {
 
     // owner_email is the sole source of truth — created_by is permanently forbidden
     const ownerEmail = character.owner_email;
-    let ownerUser = character.owner_user_id || null;
-
-    // LEGACY COMPATIBILITY: an older character record may predate owner_user_id.
-    // Missing newer fields must never block the character's narratives — derive the
-    // account id from the authoritative owner_email instead of failing the write.
-    if (!ownerUser && ownerEmail) {
-      try {
-        const ownerRecords = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1).catch(() => []);
-        ownerUser = ownerRecords?.[0]?.id || null;
-      } catch { /* leave null — handled below */ }
-    }
-    if (!ownerUser) {
-      ownerUser = ownerEmail;
-    }
+    const ownerUser = character.owner_user_id || null;
 
     if (!ownerEmail) {
       console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
