@@ -207,11 +207,24 @@ export function countCharactersByType(characters) {
 }
 
 /**
+ * A test character is a disposable diagnostic record — never a canonical
+ * character. Flagged explicitly (is_test_character / diagnostic_only) or
+ * carrying the mandated "Test Character …" name.
+ */
+export function isTestCharacter(c) {
+  if (!c) return false;
+  return c.is_test_character === true
+    || c.diagnostic_only === true
+    || /^test character\b/i.test(c.name || '');
+}
+
+/**
  * Sort characters using the ManageCharacterList hierarchy:
- *   0. active_created_character  (status === 'active')
+ *   0. active_created_character  (status === 'active', NOT a test character)
  *   1. npc_fictitious            (status === 'active')
  *   2. npc_family_member         (status === 'active')
- *   3. untyped / test / other    (status === 'active', not one of the 3 known types above)
+ *   3. untyped / test / other    (status === 'active' — test characters regardless of
+ *                                 their stored type, plus any other/unset type)
  *   4. moved_away                (status === 'moved_away')
  *   5. everything else           (other non-terminal statuses — kept visible, sorted last)
  *
@@ -227,17 +240,19 @@ export function sortCharactersByManageListHierarchy(characters) {
   const bucket = (c) => {
     if (!c) return 6;
     if (c.status === 'moved_away') return 4;
+    // Test characters always belong to the last group, whatever type they carry.
+    if (c.status === 'active' && isTestCharacter(c)) return 3;
     if (c.character_type === 'active_created_character' && c.status === 'active') return 0;
     if (c.character_type === 'npc_fictitious' && c.status === 'active') return 1;
     if (c.character_type === 'npc_family_member' && c.status === 'active') return 2;
-    if (c.status === 'active') return 3; // untyped / test / other active
+    if (c.status === 'active') return 3; // untyped / other active
     return 5; // other non-terminal statuses — stay visible, sort last
   };
 
-  const nameOf = (c) => c.name || c.display_name || '';
+  const nameOf = (c) => (c.name || c.display_name || '').trim();
 
   return [...characters].sort((a, b) => {
     const diff = bucket(a) - bucket(b);
-    return diff !== 0 ? diff : nameOf(a).localeCompare(nameOf(b));
+    return diff !== 0 ? diff : nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: 'base' });
   });
 }
