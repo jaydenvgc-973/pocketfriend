@@ -42,12 +42,26 @@ Deno.serve(async (req) => {
 
     // LEGACY COMPATIBILITY: filter by id only — owner_email may be missing on legacy characters.
     // RLS enforces scope server-side. owner_email filter would hide valid legacy records.
-    const [targetChar, playingAsChar] = await Promise.all([
+    const [targetCharOwn, playingAsChar] = await Promise.all([
       base44.entities.Character.filter({ id: characterId }).then(r => r[0]),
       playingAsCharacterId
         ? base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
         : Promise.resolve(null),
     ]);
+
+    // ── CROSS-ACCOUNT PARTICIPANT ──────────────────────────────────────────
+    // A character present at a shared location (a shared hospital, for example)
+    // can belong to another account. The user-scoped read above is RLS-scoped to
+    // the caller's own records, so it returns nothing for that character — and
+    // because every target write below hangs off this record, the memory of an
+    // interaction the character personally took part in was dropped entirely.
+    // The record is read and written with service role, keyed strictly to this
+    // character id, so the participant keeps their own memory of the interaction
+    // whoever's account the visiting user or character belongs to.
+    const targetChar = targetCharOwn || (characterId
+      ? await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).then(r => r[0] || null).catch(() => null)
+      : null);
+    const targetWrites = targetCharOwn ? base44.entities : base44.asServiceRole.entities;
 
     let newPeopleDetected = [];
 
@@ -134,12 +148,12 @@ Return JSON only.`,
         ? (playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`)
         : 'scene_interaction';
       const recentTargetMems = conversationId
-        ? await base44.entities.Memory.filter({ character_id: characterId, source_context: targetSourceCtx }, '-created_date', 5).catch(() => [])
+        ? await targetWrites.Memory.filter({ character_id: characterId, source_context: targetSourceCtx }, '-created_date', 5).catch(() => [])
         : [];
       const targetMemExists = recentTargetMems.length > 0 &&
         (Date.now() - new Date(recentTargetMems[0].created_date || recentTargetMems[0].timestamp || 0).getTime()) < 30000;
       if (!targetMemExists && !_testBoundaryBlocked) {
-        await base44.entities.Memory.create({
+        await targetWrites.Memory.create({
           character_id: characterId,
           title: playingAsChar ? `Interaction with ${playingAsChar.name}` : `Conversation moment`,
           description: targetMemDesc,
@@ -159,7 +173,7 @@ Return JSON only.`,
           const updatedRels = existingRels.map((r, i) =>
             i === relIdx ? { ...r, last_interaction_summary: interactionSummary } : r
           );
-          await base44.entities.Character.update(characterId, { fictional_relationships: updatedRels });
+          await targetWrites.Character.update(characterId, { fictional_relationships: updatedRels });
         } else {
           // Add a new relationship entry on target char pointing back to the played character
           const newRels = [
@@ -177,7 +191,7 @@ Return JSON only.`,
               last_interaction_summary: interactionSummary,
             },
           ];
-          await base44.entities.Character.update(characterId, { fictional_relationships: newRels });
+          await targetWrites.Character.update(characterId, { fictional_relationships: newRels });
         }
       }
     }
@@ -412,7 +426,7 @@ Return JSON.`,
         try {
           await base44.asServiceRole.entities.CharacterMemory.create({
             character_id: characterId,
-            owner_email: user.email,
+            owner_email: targetChar.owner_email || user.email,
             memory_type: 'relationship',
             memory_text: `${targetChar.name} knows someone named ${person.name} (${person.relationship_type || 'unknown relationship'}). Context: ${person.context || 'mentioned in conversation'}`,
             memory_summary: `Knows ${person.name}`,
