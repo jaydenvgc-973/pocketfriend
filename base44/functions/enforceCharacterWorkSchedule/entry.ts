@@ -447,6 +447,7 @@ Deno.serve(async (req) => {
               characterId,
               forceGenerate: true,
               trigger: 'work_end',
+              narrative_trigger: 'work_end',
               shiftContext: { shift_end_time: _matchedShiftEnd },
             });
             _shiftEndNarrative = _narrRes?.data || _narrRes || null;

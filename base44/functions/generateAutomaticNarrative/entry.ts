@@ -8,9 +8,14 @@ Deno.serve(async (req) => {
     const {
       characterId,
       forceGenerate = false,
-      trigger = 'interval',
+      trigger: triggerParam = 'interval',
+      narrative_trigger,
       shiftContext = null,
     } = body;
+    // A completed scheduled shift is signalled by the existing enforcement pathway.
+    // `trigger` is a reserved key in a mediated server-to-server invoke, so the
+    // caller also names the same completed-shift occurrence in narrative_trigger.
+    const trigger = narrative_trigger || triggerParam;
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -1386,6 +1391,7 @@ If no actions occur, return empty action_effects array.`;
       characterName: character.name,
       narrativeText,
       memorySummary,
+      trigger,
       timestamp: NOW.toISOString(),
       memory_write_failed: memoryWriteFailed,
     });
