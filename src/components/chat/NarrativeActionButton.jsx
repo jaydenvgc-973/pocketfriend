@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
+import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -391,7 +392,8 @@ Every other continuity rule still applies: the scene starts exactly where the ch
 
 WHAT THIS SELECTION IS:
 • ONE new development entering the character's life right now.
-• It may grow directly out of what is happening (something on the stove catches, a bill arrives, a message comes in) OR be completely unrelated to the current conversation (a call, a diagnosis, a stranger, a letter, a landlord, an accident, a discovery).
+• It may grow directly out of what is happening OR arrive completely unrelated to the current conversation.
+• You choose the situation yourself. Anything named anywhere in this prompt is an example of the KIND of thing that can happen, offered to show breadth — never a set of options to choose from.
 • It does NOT need foreshadowing. The conversation does not have to be about the subject first.
 • It is an EVENT that happened — not a mood, not a reflection, not a dramatic retelling of the current exchange.
 • It must leave the situation OPEN. Introduce it, do not resolve it. No aftermath, no clean ending, no full account of the consequences.
@@ -425,12 +427,41 @@ BODY-AWARE RULES:
 • A pregnancy scare is NEVER a confirmed pregnancy. Do not state or imply a confirmed pregnancy, a certain positive test, or an existing pregnancy record.
 • Match anatomy, age, and established relationship facts. Do not invent a partner who does not exist.
 
-VARIETY AND TONE — this is the most common failure of this Action:
-• Rotate the domain. Across selections, move through: physical or medical, crime or confrontation, family or relationship news, work or financial disruption, legal or official, household failure or everyday inconvenience, social embarrassment, discovery or revelation, unexpected visitor, small disappointment.
-• Do NOT default to the four obvious ones: a knock at the door, a phone call or text arriving, someone showing up unannounced, or a confrontation. Those are correct only when the chosen domain genuinely calls for them.
-• At least as often the development should be quiet, private, logistical, or mundane: a letter that finally came, a result released to a portal, an appliance failing, a charge that should not be there, a schedule change, a drawer that held something it should not have, an item out of stock, a cancellation, a name in a document.
-• Severity is chosen deliberately, not escalated: an eye-roll, an inconvenience, an awkward moment, a real problem, and a life change are all valid outcomes. Do not make it an emergency by default.
-• Never repeat the domain of the previous Action narrative in this conversation.
+ORIGINALITY AND NON-REPETITION — the most common failure of this Action:
+Every situation mentioned anywhere in this prompt is an ILLUSTRATION of range, never a menu. They exist to show how wide and unpredictable real life is — not to be selected from, rotated through, or completed like a checklist. The strongest outcome is usually one that is not mentioned here at all. Invent.
+
+STEP A — NAME THE PREMISE BEFORE YOU WRITE (silently, every time):
+Reduce the event you are about to write to one plain sentence of underlying premise — "someone shows up unannounced", "a medical result changes something", "a machine fails", "money is wrong", "an official notice arrives", "a stranger accuses them", "a discovery makes them question something".
+Reduce each development already present in the beats and conversation above the same way, then compare PREMISES, not wording.
+• If your premise already appears among those beats → discard it and invent a different premise.
+• THE AREA TEST — apply it as well: name the AREA OF LIFE the event comes from — health and medical care, money and banking, housing and tenancy, work and employment, family, legal and official, institutions and records, romance, friendship and social life, possessions and property, travel and transport. If an earlier beat already came from that area, the area is spent: take another one, even when your premise sentence for it looks different.
+• THE FAMILY TEST — the stories that repeat most are these: money trouble; medical trouble or medical news; an unexpected or estranged relative or old acquaintance appearing; theft, burglary or loss; a stranger accusing, confronting or mistaking them; something in the home or building breaking; an official, legal or institutional notice changing their situation; work or job trouble; an animal; a record of them being wrong. If a beat above already used one of these, that storyline is spent for now — choose something that is not any of them.
+• COSMETIC VARIATION TEST: if one noun could be swapped to turn your event into an earlier beat, it is the same development. "A billing notice for a procedure she never had" and "a consent form for a surgery she already had" are ONE development, not two. "A stranger accuses her" and "another stranger accuses her" are one development, not two. Failing this test means rewrite, not reword.
+• A new name, a new object, a new room, a different stranger, a different relative, or a different appliance is NOT a new development. If the underlying situation is the same, discard it.
+• If the last development used the same broad category, choose a different category unless nothing else is plausible here.
+• The most overused defaults are: a knock at the door, a call or text arriving, someone showing up unannounced, a confrontation, and an appliance, pipe, machine, or part of the building failing. Treat all of them as overused, not as options — and never use the same one twice in a conversation.
+
+STEP B — VARY MORE THAN THE EVENT:
+Change the CATEGORY of the situation, the SEVERITY, and the TONE.
+• Severity is chosen deliberately: an eye-roll, an inconvenience, an awkward moment, a real problem, and a life change are all valid. Do not escalate to an emergency by default.
+• Tone must vary across selections: frightening, embarrassing, funny, financially annoying, socially awkward, medically concerning, emotionally complicated, quietly strange, or so unusual that ${character.name} struggles to believe it.
+• Consecutive developments must not all land as serious problems, and must not all land as jokes.
+• Quiet, private, logistical, and mundane are first-class outcomes, at least as often as loud ones.
+• YOUR DEFAULT INSTINCT WILL BE AN OBJECT FAILING OR A NOISE IN THE ROOM. Override it. Unless a physical failure is genuinely the most plausible thing here, choose a development whose cause is a PERSON, an INSTITUTION, MONEY, an OBLIGATION, or INFORMATION — someone does something, someone decides something about them, a record is wrong, a rule changes, a payment or arrangement breaks, something is learned that was not known.
+• Final self-check before writing: if the event could be summarized as "something broke, fell, leaked, or made a sound", rewrite it unless nothing else fits this character in this place right now.
+
+STEP C — CONTINUATION OR RECYCLING? Decide deliberately:
+• CONTINUATION is allowed when an open thread is genuinely ADVANCED — new information, its next step, or a consequence that had not happened yet. A character who chipped a tooth sees a dentist; a character with a worrying result attends the follow-up.
+• RECYCLING is forbidden: re-triggering the same premise with cosmetic changes — a second relative appearing, a second theft, another medical scare of the same shape, another stranger starting something.
+• If this beat would not move an open thread forward, choose an unrelated development instead.
+
+DO NOT FILTER FOR THE UNUSUAL: something may be strange, statistically unlikely, or entirely unforeseen and still be completely possible. Do not reject an event because it is bizarre or because nothing foreshadowed it. Unpredictability is required. Only implausibility against the established facts, location, and elapsed time is forbidden.
+
+REALITY IS NEVER BROKEN — the boundary on the above:
+• Every event has an ordinary physical, human, institutional, or accidental cause. Strange means unlikely and surprising, never impossible.
+• No supernatural, paranormal, psychic, prophetic, haunting, or cursed events. No reality glitches, no objects moving on their own, no unexplained phenomena, no uncanny coincidences presented as more than coincidence.
+• No catastrophic global events, no celebrity or public-figure involvement, no impossible timing, and no knowledge the character could not actually have.
+• ${character.name}'s reaction stays proportionate and grounded: they may be shaken, baffled, amused, or annoyed by something genuinely strange, but they do not accept an impossible explanation as fact.
 
 CRAFT:
 • Third person, in the tense the scene already reads. 2-3 sentences — the event, then the reaction.
@@ -473,7 +504,7 @@ ${buildStyleMotifContext()}
         spend_time: "SPEND TIME — generate a narrative where the character meaningfully spends time with the user or engages in shared presence. Conversation, companionship, quiet moments, shared activities, attentiveness. Do NOT leave the current scene, begin an unrelated activity alone, or force a dramatic event. Develop the current interaction into a recognizable moment of companionship.",
         check_in: "CHECK IN — generate a meaningful check-in relating to the current conversation, circumstances, or emotional condition. The character demonstrates interest in how the user is doing, feeling, or coping. Gentle, casual, serious, affectionate, or concerned depending on personality and context. Do NOT ask a question that ignores information already provided in the conversation. Do NOT restart the same inquiry if already asked.",
 
-        drama: "INSERT DRAMA — introduce ONE spontaneous, unexpected development that is happening to or around the character right now. It may grow out of the current conversation or be entirely unrelated to it. It must be an EVENT, not a restatement, summary, or dramatic retelling of what is already being discussed, and it needs no foreshadowing. It must be plausible for the authoritative location and circumstances, must not invent or alter any existing character, and must stay OPEN — a complication, discovery, question, or change that can continue into later conversations and decisions. Do not resolve it. Vary the domain each time: physical or medical, crime or confrontation, family or relationship news, work or financial, legal or official, household or everyday, social embarrassment, discovery, unexpected visitor, ordinary inconvenience. Never default to the same category.",
+        drama: "INSERT DRAMA — introduce ONE spontaneous, unexpected development that is happening to or around the character right now. It may grow out of the current conversation or be entirely unrelated to it. It must be an EVENT, not a restatement, summary, or dramatic retelling of what is already being discussed, and it needs no foreshadowing. It must be plausible for the authoritative location and circumstances, must not invent or alter any existing character, and must stay OPEN — a complication, discovery, question, or change that can continue into later conversations and decisions. Do not resolve it. Invent the premise yourself: it must not share its underlying situation, category, or severity with any earlier development already present in this conversation, and it must not be drawn from any example in this prompt.",
       };
 
       // Context tier instruction
@@ -538,8 +569,8 @@ ${intent === 'spend_time' ? `
   SPEND TIME PATTERNS — select ONE:
   shared activity together | comfortable silence with no urgency | background environment shaping the moment | time passing naturally | subtle bonding through small things` : ''}
 ${intent === 'drama' ? `
-  INSERT DRAMA PATTERNS — select ONE, and NOT the one already used in this conversation:
-  news arriving through a screen or a call | something in the environment failing | a person appearing who was not expected | a discovery that reframes what was already known | accident or sudden physical mishap | an institutional or official development (medical, legal, employment) | ordinary errand going wrong | a message meant for someone else` : ''}
+  INSERT DRAMA — THERE IS NO PATTERN MENU:
+  Do not pick from a list of situations. First derive the underlying premise of every development already present in the beats above (STEP A of the Insert Drama block), then INVENT one development whose premise is none of them. If you notice the result is an earlier premise wearing new surface details, discard it and invent again. Originality is the requirement here, not compliance with an example.` : ''}
 ${intent === 'action' ? `
   LET THEM ACT PATTERNS — select ONE:
   environmental interaction with objects | micro-behaviors (glance, posture shift, physical tell) | time progression awareness | reaction to background stimuli | silent action that carries meaning` : ''}
@@ -575,13 +606,70 @@ STYLE RULES:
 - Include one grounded environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
 - Do NOT repeat descriptive patterns from recent outputs. Vary the sensory entry point each time.
 
-Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
+${intent === 'drama'
+  ? `Return JSON only, with exactly these three fields — no other text:
+{ "premise": "one plain sentence naming the underlying development you chose (STEP A)", "area_of_life": "the area of life it comes from (THE AREA TEST)", "narrative": "the 2-3 sentence narrative" }
+The premise and area must describe what you actually wrote.`
+  : `Return ONLY the narrative text. No labels, no JSON, no extra commentary.`}`;
 
-      const result = await base44.integrations.Core.InvokeLLM({ prompt });
+// Insert Drama is the only Action validated before saving: its failure mode is
+// a repeated development wearing new surface details. The prompt already tests
+// against that, and the finished development is checked against the beats
+// already in this conversation. One replacement attempt, then accept.
+let result = "";
 
-      if (!result || typeof result !== "string" || result.trim().length < 10) {
-        throw new Error("Empty narrative returned");
-      }
+if (intent !== 'drama') {
+  const raw = await base44.integrations.Core.InvokeLLM({ prompt });
+  result = typeof raw === "string" ? raw.trim() : "";
+} else {
+  const priorBeats = allRecentNarratives.map(m => m.content).join("\n---\n");
+
+  const generateDrama = async (rejectionNote = "") => {
+    const raw = await base44.integrations.Core.InvokeLLM({
+      prompt: rejectionNote ? `${prompt}\n\n${rejectionNote}` : prompt,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          premise: { type: "string" },
+          area_of_life: { type: "string" },
+          narrative: { type: "string" },
+        },
+        required: ["premise", "area_of_life", "narrative"],
+      },
+    });
+    return {
+      narrative: typeof raw?.narrative === "string" ? raw.narrative.trim() : "",
+      premise: typeof raw?.premise === "string" ? raw.premise : "",
+      area: typeof raw?.area_of_life === "string" ? raw.area_of_life : "",
+    };
+  };
+
+  let attempt = await generateDrama();
+
+  if (attempt.narrative && priorBeats) {
+    const duplicate = await isDuplicateDevelopment({
+      candidatePremise: attempt.premise,
+      candidateArea: attempt.area,
+      priorBeats,
+    });
+    if (duplicate) {
+      console.log("[NarrativeButton] Insert Drama repeated an existing development — regenerating:", attempt.premise);
+      const retry = await generateDrama(
+        `REPLACE THE DEVELOPMENT. "${attempt.premise}"${attempt.area ? ` (area of life: ${attempt.area})` : ""} repeats a storyline that already happened in this conversation.
+      HARD REQUIREMENT: do not write another version of that development, and do not stay in its concern family. If it was an administrative mix-up, do not write another mix-up, wrong record, wrong room, or someone arriving with the wrong information. Different names, objects, people or wording do not satisfy this — the KIND of development must change.
+      It does not have to happen where they are. A development elsewhere that reaches them is valid: news about their home, someone they know, money, an obligation, or something that changes what happens next.
+      Write the different development, plausibly for their actual circumstances.`
+      );
+      if (retry.narrative) attempt = retry;
+    }
+  }
+
+  result = attempt.narrative;
+}
+
+if (!result || typeof result !== "string" || result.trim().length < 10) {
+  throw new Error("Empty narrative returned");
+}
 
       const narrativeMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
