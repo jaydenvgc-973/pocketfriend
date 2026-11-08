@@ -25,6 +25,7 @@ export default function ApartmentManager({
   contextNoun = "building",
   addPlaceholder = "e.g. Apartment 1, Unit 4B...",
   emptyHint = "Add residents to the building first, then create apartments to organize them.",
+  maxUnits = 0,
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -47,9 +48,12 @@ export default function ApartmentManager({
     return `unit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   };
 
+  // Administrator-set apartment limit (0 = no limit)
+  const unitLimitReached = maxUnits > 0 && units.length >= maxUnits;
+
   const handleAddUnit = () => {
     const name = newUnitName.trim();
-    if (!name) return;
+    if (!name || unitLimitReached) return;
     const newUnit = {
       unit_id: generateUnitId(),
       unit_name: name,
@@ -283,17 +287,23 @@ export default function ApartmentManager({
           value={newUnitName}
           onChange={e => setNewUnitName(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleAddUnit()}
-          placeholder={addPlaceholder}
-          className="flex-1 h-8 px-2.5 rounded-lg bg-card border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+          placeholder={unitLimitReached ? "Apartment limit reached" : addPlaceholder}
+          disabled={unitLimitReached}
+          className="flex-1 h-8 px-2.5 rounded-lg bg-card border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-50"
         />
         <button
           onClick={handleAddUnit}
-          disabled={!newUnitName.trim()}
+          disabled={!newUnitName.trim() || unitLimitReached}
           className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-40"
         >
           <Plus className="w-3 h-3" /> Add
         </button>
       </div>
+      {unitLimitReached && (
+        <p className="text-[10px] text-amber-400/80">
+          All {maxUnits} {unitSingular}s at this residence are in use. Raise the limit in Settings to add more.
+        </p>
+      )}
 
       {/* Unassigned residents summary */}
       {unassignedIds.length > 0 && (

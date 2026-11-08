@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User } from "lucide-react";
+import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User, X } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -162,8 +162,10 @@ async function syncFamilyToRelationships(character, familyMembers, currentUser) 
           }
         }
 
-        // Sync avatar_url, age, gender, and age_range to the linked Character record
-        if (linkedCharId) {
+        // Sync avatar_url, age, gender, and age_range to the linked Character record.
+        // A family member who lives on another account is referenced by their real id
+        // only — their record is never written from this account.
+        if (linkedCharId && !m._cross_account) {
           try {
             const FEMALE_ROLES = new Set(['mother', 'mom', 'grandmother', 'grandma', 'great-grandmother',
               'aunt', 'niece', 'sister', 'half-sister', 'step-mother', 'stepmother', 'stepsister', 'step-sister',
@@ -463,7 +465,8 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         await base44.entities.Character.update(character.id, updateData);
 
         // CRITICAL: Update linked npc_family_member Character with the generated avatar
-        if (member._linked_character_id) {
+        // (skipped for a relative who lives on another account)
+        if (member._linked_character_id && !member._cross_account) {
           await base44.entities.Character.update(member._linked_character_id, {
             avatar_url: result.url
           });
@@ -533,7 +536,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
             updateData.system_prompt_url = file_url;
           }
           await base44.entities.Character.update(character.id, updateData);
-          if (member._linked_character_id) {
+          if (member._linked_character_id && !member._cross_account) {
             await base44.entities.Character.update(member._linked_character_id, {
               avatar_url: retryResult.url
             });
@@ -775,6 +778,13 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                   <Plus className="w-3.5 h-3.5 text-muted-foreground" />
                   Add family member
                 </button>
+                <button
+                  onClick={openCrossAccount}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-foreground hover:bg-secondary transition-colors text-left border-t border-border"
+                >
+                  <User className="w-3.5 h-3.5 text-muted-foreground" />
+                  From another account
+                </button>
                 {(availableCharacters.length > 0 || embeddedFamilyNpcs.length > 0) && (
                   <button
                     onClick={() => { setShowCharacterPicker(v => !v); }}
@@ -870,6 +880,69 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           <span className="text-[10px] text-amber-400/80 font-medium">List locked</span>
         )}
       </div>
+
+      {/* Cross-account people — shared residence residents only */}
+      {crossAccount.open && (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-semibold text-primary uppercase tracking-wider">
+              From another account
+            </p>
+            <button
+              onClick={() => setCrossAccount(prev => ({ ...prev, open: false }))}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {crossAccount.loading ? (
+            <p className="text-xs text-muted-foreground">Looking for people…</p>
+          ) : crossAccount.eligible === false ? (
+            <p className="text-xs text-muted-foreground">
+              Relatives on another account become available once {character.name} lives at
+              {crossAccount.locationName ? ` ${crossAccount.locationName}` : " the shared residence"}.
+            </p>
+          ) : (
+            <>
+              <input
+                type="text"
+                value={crossAccount.search}
+                onChange={e => setCrossAccount(prev => ({ ...prev, search: e.target.value }))}
+                placeholder="Search people"
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-3 py-2 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground"
+              />
+              {(() => {
+                const query = crossAccount.search.trim().toLowerCase();
+                const options = crossAccount.people.filter(p =>
+                  !members.some(m => m.name?.trim().toLowerCase() === p.name?.trim().toLowerCase()) &&
+                  (!query || p.name?.toLowerCase().includes(query))
+                );
+                if (options.length === 0) {
+                  return <p className="text-xs text-muted-foreground">No one matches that name.</p>;
+                }
+                return (
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {options.map(person => (
+                      <button
+                        key={person.id}
+                        onClick={() => addCharacterAsMember({ ...person, _cross_account: true })}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-secondary transition-colors text-left"
+                      >
+                        {person.avatar_url
+                          ? <img src={person.avatar_url} alt={person.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                          : <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{person.name?.[0]}</span></div>
+                        }
+                        <span className="text-xs text-foreground truncate flex-1">{person.name}</span>
+                        <span className="text-[9px] text-muted-foreground flex-shrink-0">Shared residence</span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </div>
+      )}
 
       {members.filter(m => !m._is_user).length === 0 && !members.some(m => m._is_user) && (
         <p className="text-xs text-muted-foreground italic">No family members added yet.</p>

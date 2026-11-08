@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import AdminConsole from "@/components/admin/AdminConsole";
+import GatewayHousePanel from "@/components/admin/GatewayHousePanel";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import UserPhotoUploader from "@/components/user/UserPhotoUploader";
@@ -541,6 +542,10 @@ export default function Settings() {
           <div className="pt-4 border-t border-border space-y-4">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Admin Console</p>
             <SectionIsolate name="AdminConsole"><AdminConsole /></SectionIsolate>
+            <div className="bg-card border border-border rounded-2xl p-4">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Shared Residence</p>
+              <SectionIsolate name="GatewayHousePanel"><GatewayHousePanel /></SectionIsolate>
+            </div>
             <div className="pt-4 border-t border-border">
               <SectionIsolate name="AdminIssueReportViewer"><AdminIssueReportViewer /></SectionIsolate>
             </div>

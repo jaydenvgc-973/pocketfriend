@@ -688,6 +688,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+  // Administrator-set capacity for the shared residence (Gateway House only)
+  const { data: sharedResidencyConfig = null } = useQuery({
+    queryKey: ['sharedResidency', editingLocation?.id],
+    queryFn: async () => (await base44.entities.SharedResidency.filter({ canonical_location_key: 'gateway_house' }))[0] || null,
+    enabled: !!editingLocation?.id && editingLocation.canonical_location_key === 'gateway_house',
+  });
+
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [residentSearch, setResidentSearch] = useState("");
@@ -1156,6 +1163,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           residentialUnits={form.residential_units}
           residentCharacterIds={form.resident_character_ids}
           allCharacters={allCharacters}
+          maxUnits={sharedResidencyConfig?.max_units || 0}
           onChange={(units) => update("residential_units", units)}
           {...(form.category === 'hotel' ? {
             sectionLabel: "Rooms / Units",
