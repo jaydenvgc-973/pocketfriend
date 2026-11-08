@@ -1,0 +1,52 @@
+{
+  "name": "SharedResidency",
+  "type": "object",
+  "description": "Administrator configuration for an administrator-shared residential property (Gateway House) \u2014 the only place where characters belonging to different user accounts may live together. Capacity limits are optional and set only by the administrator.",
+  "rls": {
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "read": true,
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  },
+  "properties": {
+    "location_id": {
+      "type": "string",
+      "description": "ID of the LocationReference this shared residency configures"
+    },
+    "location_name": {
+      "type": "string",
+      "description": "Display name of the shared residency property"
+    },
+    "canonical_location_key": {
+      "type": "string",
+      "description": "Stable identity of the shared property (gateway_house)"
+    },
+    "max_residents": {
+      "type": "number",
+      "description": "Administrator-set maximum number of resident characters. Empty or 0 means no limit \u2014 never assume a default limit."
+    },
+    "max_units": {
+      "type": "number",
+      "description": "Administrator-set maximum number of residential apartment units. Empty or 0 means no limit \u2014 never assume a default limit."
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Administrator account that owns this configuration"
+    }
+  },
+  "required": [
+    "location_id"
+  ]
+}

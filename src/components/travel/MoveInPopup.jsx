@@ -59,6 +59,11 @@ export default function MoveInPopup({
   const [selectedIds, setSelectedIds] = useState(() => new Set(candidates.map(c => c.id)));
   const [destinationName, setDestinationName] = useState(destinationHome?.name || "");
   const [showRename, setShowRename] = useState(false);
+  // Gateway House is administrator-shared: its name is not a resident's to change,
+  // and its apartments are where a new resident is placed.
+  const isSharedResidency = destinationHome?.canonical_location_key === "gateway_house";
+  const availableUnits = isSharedResidency ? (destinationHome?.residential_units || []) : [];
+  const [selectedUnitId, setSelectedUnitId] = useState("");
 
   // Sync when popup opens with different data
   useEffect(() => {
@@ -89,7 +94,7 @@ export default function MoveInPopup({
       .filter(c => c.isNpc && selectedIds.has(c.id))
       .map(c => ({ name: c.name, relationship_type: c.fmData?.relationship_type, source_character_id: c.fmData?.source_character_id, isNPC: c.fmData?.isNPC }));
 
-    onApprove({ moversToMove: realMovers, npcMovers, newHomeName: destinationName });
+    onApprove({ moversToMove: realMovers, npcMovers, newHomeName: isSharedResidency ? destinationHome?.name : destinationName, destinationUnitId: selectedUnitId || null });
   };
 
   // The "moving from" label — use source home name if available, fall back to character's known home
@@ -144,7 +149,12 @@ export default function MoveInPopup({
           </div>
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Moving to</p>
-            {showRename ? (
+            {isSharedResidency ? (
+              <div className="p-3 rounded-lg bg-secondary/50 border border-border">
+                <p className="text-sm font-medium text-foreground">{destinationHome?.name}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Shared residence</p>
+              </div>
+            ) : showRename ? (
               <div className="flex gap-1.5">
                 <Input
                   value={destinationName}
@@ -165,6 +175,30 @@ export default function MoveInPopup({
             )}
           </div>
         </div>
+
+        {/* Apartment within a shared residence — optional placement */}
+        {availableUnits.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+              Apartment (optional)
+            </p>
+            <select
+              value={selectedUnitId}
+              onChange={e => setSelectedUnitId(e.target.value)}
+              className="w-full h-10 px-3 rounded-lg bg-secondary/50 border border-border text-sm text-foreground outline-none focus:border-primary/50"
+            >
+              <option value="">No specific apartment</option>
+              {availableUnits.map(unit => {
+                const count = (unit.occupant_character_ids || []).length;
+                return (
+                  <option key={unit.unit_id} value={unit.unit_id}>
+                    {unit.unit_name}{count ? ` · ${count} resident${count === 1 ? "" : "s"}` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
 
         {/* Who's moving */}
         <div>

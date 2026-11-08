@@ -26,13 +26,36 @@ Deno.serve(async (req) => {
       moversToMove = [],
       npcMovers = [],
       newHomeName,
+      destinationUnitId,
     } = await req.json();
 
     if (!destinationHomeId) return Response.json({ error: 'Missing destinationHomeId' }, { status: 400 });
 
     const destHomes = await base44.entities.LocationReference.filter({ id: destinationHomeId });
     if (destHomes.length === 0) return Response.json({ error: 'Destination home not found' }, { status: 404 });
-    const dest = destHomes[0];
+    let dest = destHomes[0];
+
+    // ── SHARED RESIDENCY (Gateway House) ──────────────────────────────────
+    // Characters from different accounts may live here. The property is read
+    // authoritatively and its resident list is written with service role: that
+    // list is the cross-account record every user sees, so it cannot depend on
+    // the caller's write access (the property belongs to the administrator).
+    // Capacity is optional and administrator-set — absent or 0 means no limit.
+    const isSharedResidency = dest.canonical_location_key === 'gateway_house';
+    let sharedConfig = null;
+    let destUnits = [...(dest.residential_units || [])];
+    if (isSharedResidency) {
+      const fresh = await base44.asServiceRole.entities.LocationReference.filter({ id: destinationHomeId }, null, 1).catch(() => []);
+      if (fresh[0]) { dest = fresh[0]; destUnits = [...(dest.residential_units || [])]; }
+      const cfg = await base44.asServiceRole.entities.SharedResidency.filter({ location_id: destinationHomeId }, null, 1).catch(() => []);
+      sharedConfig = cfg[0] || null;
+    }
+    const residentCapacity = isSharedResidency && Number(sharedConfig?.max_residents) > 0
+      ? Number(sharedConfig.max_residents)
+      : null;
+    const targetUnit = (isSharedResidency && destinationUnitId)
+      ? destUnits.find(u => u.unit_id === destinationUnitId) || null
+      : null;
 
     let source = null;
     if (sourceHomeId) {
@@ -65,6 +88,16 @@ Deno.serve(async (req) => {
         if (moverChar.owner_email !== user.email) {
           charResult.status = 'failed';
           charResult.error = 'Ownership mismatch';
+          failureCount++;
+          perCharacterResults.push(charResult);
+          continue;
+        }
+
+        // Administrator capacity for the shared residence. Checked before any
+        // write so a refused move leaves the character exactly where they were.
+        if (residentCapacity != null && !destResidents.has(moverId) && destResidents.size >= residentCapacity) {
+          charResult.status = 'failed';
+          charResult.error = `${dest.name} has no residency openings right now — ${destResidents.size} of ${residentCapacity} residents.`;
           failureCount++;
           perCharacterResults.push(charResult);
           continue;
@@ -189,14 +222,37 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── APARTMENT UNIT ASSIGNMENT (shared residency only) ─────────────────
+    // A resident belongs to at most one apartment: removed from every unit of
+    // the property first, then placed in the unit the user selected.
+    const movedIds = perCharacterResults.filter(r => r.status === 'success').map(r => r.character_id);
+    let updatedUnits = destUnits;
+    if (isSharedResidency && movedIds.length > 0) {
+      updatedUnits = destUnits.map(u => ({
+        ...u,
+        occupant_character_ids: (u.occupant_character_ids || []).filter(id => !movedIds.includes(id)),
+      }));
+      if (targetUnit) {
+        updatedUnits = updatedUnits.map(u => u.unit_id === targetUnit.unit_id
+          ? { ...u, occupant_character_ids: [...(u.occupant_character_ids || []), ...movedIds] }
+          : u);
+      }
+    }
+
     // Update destination home resident lists
     try {
-      await base44.entities.LocationReference.update(destinationHomeId, {
-        name: newHomeName || dest.name,
+      // The shared property keeps its administrator-given name and is written
+      // with service role so every account sees the same resident list.
+      const destPayload = {
         resident_character_ids: Array.from(destResidents),
         resident_character_names: Array.from(destNames),
         resident_family_members: destFamilyMembers,
-      });
+      };
+      if (!isSharedResidency) destPayload.name = newHomeName || dest.name;
+      if (isSharedResidency) destPayload.residential_units = updatedUnits;
+
+      const destWriter = isSharedResidency ? base44.asServiceRole.entities.LocationReference : base44.entities.LocationReference;
+      await destWriter.update(destinationHomeId, destPayload);
     } catch (locErr) {
       console.warn(`[moveCharactersToNewHome] destination resident-list update failed: ${locErr.message}`);
     }
@@ -208,11 +264,22 @@ Deno.serve(async (req) => {
         const sourceNames = (source.resident_character_names || []).filter(name => !perCharacterResults.some(r => r.character_name === name));
         const npcMoverNames = new Set(npcMovers.map(n => n.name));
         const sourceFamilyMembers = (source.resident_family_members || []).filter(fm => !npcMoverNames.has(fm.name));
-        await base44.entities.LocationReference.update(sourceHomeId, {
+        const sourcePayload = {
           resident_character_ids: sourceResidents,
           resident_character_names: sourceNames,
           resident_family_members: sourceFamilyMembers,
-        });
+        };
+        // Leaving a shared residence also vacates its apartment unit.
+        if (source.canonical_location_key === 'gateway_house') {
+          sourcePayload.residential_units = (source.residential_units || []).map(u => ({
+            ...u,
+            occupant_character_ids: (u.occupant_character_ids || []).filter(id => !moversToMove.includes(id)),
+          }));
+        }
+        const sourceWriter = source.canonical_location_key === 'gateway_house'
+          ? base44.asServiceRole.entities.LocationReference
+          : base44.entities.LocationReference;
+        await sourceWriter.update(sourceHomeId, sourcePayload);
       } catch (locErr) {
         console.warn(`[moveCharactersToNewHome] source resident-list update failed: ${locErr.message}`);
       }

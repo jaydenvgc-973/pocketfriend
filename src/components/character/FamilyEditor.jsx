@@ -660,8 +660,38 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
       photo_url: char.avatar_url || null,
       age_at_creation: char.age ?? null,
       age_set_date: new Date().toISOString(),
+      // The real character id — for a character on another account this is the
+      // only reference used. No copy of that character is ever created.
       _linked_character_id: char.id,
+      _cross_account: char._cross_account === true ? true : undefined,
     }]);
+  };
+
+  // ── CROSS-ACCOUNT FAMILY (Gateway House residents) ────────────────────────
+  // A character living at the shared residence may have family on another user's
+  // account. The candidate list comes from the server (sanitized projection) and
+  // every pick references that character's actual record.
+  const [crossAccount, setCrossAccount] = useState({ open: false, loading: false, eligible: null, people: [], locationName: null, search: "" });
+
+  const openCrossAccount = async () => {
+    setShowAddMenu(false);
+    setCrossAccount(prev => ({ ...prev, open: true }));
+    if (crossAccount.eligible !== null || crossAccount.loading) return;
+    setCrossAccount(prev => ({ ...prev, loading: true }));
+    try {
+      const res = await base44.functions.invoke("fetchSharedResidencyCandidates", { source_character_id: character.id });
+      const data = res?.data || {};
+      setCrossAccount(prev => ({
+        ...prev,
+        loading: false,
+        eligible: data.eligible === true,
+        people: data.people || [],
+        locationName: data.location_name || null,
+      }));
+    } catch (err) {
+      console.warn("[FamilyEditor] Cross-account people unavailable:", err.message);
+      setCrossAccount(prev => ({ ...prev, loading: false, eligible: false }));
+    }
   };
 
   const addSelf = () => {

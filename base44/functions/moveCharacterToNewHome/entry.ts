@@ -35,6 +35,23 @@ Deno.serve(async (req) => {
     const toLocation = locations.find(l => l.id === toLocationId);
     if (!toLocation) return Response.json({ error: 'Destination location not found' }, { status: 404 });
 
+    // Administrator capacity for the shared residence (Gateway House).
+    // Optional limit; absent or 0 means no limit. Checked before any write.
+    if (toLocation.canonical_location_key === 'gateway_house') {
+      const cfg = await base44.asServiceRole.entities.SharedResidency
+        .filter({ location_id: toLocationId }, null, 1)
+        .catch(() => []);
+      const capacity = Number(cfg[0]?.max_residents) > 0 ? Number(cfg[0].max_residents) : null;
+      const residents = new Set(toLocation.resident_character_ids || []);
+      if (capacity != null && !residents.has(characterId) && residents.size >= capacity) {
+        return Response.json({
+          success: false,
+          error: 'shared_residency_capacity',
+          reason: `${toLocation.name} has no residency openings right now — ${residents.size} of ${capacity} residents.`,
+        });
+      }
+    }
+
     const oldHomeId = fromLocationId || character.current_home_location_id;
     const oldLocation = oldHomeId ? locations.find(l => l.id === oldHomeId) : null;
 

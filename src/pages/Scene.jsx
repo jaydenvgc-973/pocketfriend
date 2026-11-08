@@ -188,6 +188,9 @@ export default function Scene() {
 
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
+  // Gateway House — the administrator-shared residence where characters from
+  // different accounts may live. Only this property accepts move-ins while shared.
+  const isGatewayHouse = location?.canonical_location_key === 'gateway_house';
   const isVGCTowers = location?.name === 'VGC Towers';
   const homeResidents = isHomeLocation ? characters.filter((c) => c.current_home_location_id === location.id) : [];
   const homeResidentsPresent = homeResidents.filter((c) => isCharacterHome(c, locationMap));
@@ -522,9 +525,28 @@ export default function Scene() {
   useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
   const stableOnSend = useRef((text) => { if (narratorModeRef.current) sendNarrationRef.current?.(text); else sendMessageRef.current?.(text); }).current;
 
-  const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName }) => {
+  const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName, destinationUnitId = null }) => {
     if (!location) return; setIsMoveInLoading(true);
-    try { await base44.functions.invoke("moveCharactersToNewHome", { sourceHomeId: broughtCharacters[0]?.current_home_location_id || null, destinationHomeId: location.id, moversToMove, npcMovers, newHomeName }); setShowMoveInPopup(false); queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Move-in complete. ${newHomeName || location.name} is now home.`, timestamp: new Date().toISOString() }]); } catch (err) { console.error("Move-in failed:", err); } finally { setIsMoveInLoading(false); }
+    try {
+      const res = await base44.functions.invoke("moveCharactersToNewHome", {
+        sourceHomeId: broughtCharacters[0]?.current_home_location_id || null,
+        destinationHomeId: location.id,
+        moversToMove,
+        npcMovers,
+        newHomeName,
+        destinationUnitId,
+      });
+      const failures = (res?.data?.per_character_results || []).filter(r => r.status === 'failed');
+      setShowMoveInPopup(false);
+      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      if (res?.data?.success === false && failures.length > 0) {
+        // A refused move is reported plainly — the character did not move.
+        setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: failures.map(f => f.error).filter(Boolean).join(" ") || "That move could not be completed.", timestamp: new Date().toISOString() }]);
+      } else {
+        setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Move-in complete. ${newHomeName || location.name} is now home.`, timestamp: new Date().toISOString() }]);
+      }
+    } catch (err) { console.error("Move-in failed:", err); } finally { setIsMoveInLoading(false); }
   };
 
   const handleMoveOut = async () => {
@@ -580,7 +602,7 @@ export default function Scene() {
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
         <button onClick={() => setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title="Leave location"><ArrowLeft className="w-5 h-5" /></button>
         <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
-        {isHomeLocation && !isSharedLocation && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
+        {isHomeLocation && (!isSharedLocation || isGatewayHouse) && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
         {isSharedResidence && sharedResidenceParticipants.length > 1 && (
           <button onClick={() => { setShowSharedConversation(true); setUserLocation(location.id, location.name).then(() => queryClient.invalidateQueries({ queryKey: ["sharedResidenceParticipants", location.id] })).catch(() => {}); }} className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium flex-shrink-0" title="Talk with everyone here">
             <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
@@ -657,7 +679,7 @@ export default function Scene() {
 
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
-      <AnimatePresence>{showMoveInPopup && !isSharedLocation && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
+      <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
