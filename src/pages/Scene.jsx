@@ -414,10 +414,16 @@ export default function Scene() {
     return list;
   }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id]);
 
-  const observeCastIdList = observeCastIds || observeCandidates.map((c) => c.id);
+  // The characters who were sent are the ones in the moment by default. Everyone
+  // else already here is offered, not assumed — the user picks who they came to see.
+  const observeSentIds = useMemo(
+    () => broughtCharacters.filter((c) => !c.isNpc && c.id).map((c) => c.id),
+    [broughtCharacters.map((c) => c.id).join(',')]
+  );
+  const observeCastIdList = observeCastIds || observeSentIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
   const toggleObserveCast = (id) => setObserveCastIds((prev) => {
-    const base = prev || observeCandidates.map((c) => c.id);
+    const base = prev || observeSentIds;
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
 
@@ -425,7 +431,7 @@ export default function Scene() {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
     if (cast.length < 2) {
-      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Another character needs to be here for them to interact. Send someone else, or invite someone who is here.", timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Pick who they're here to see above — add at least one more person to start the moment.", timestamp: new Date().toISOString() }]);
       return;
     }
     setIsObservingTurn(true);
@@ -526,20 +532,28 @@ export default function Scene() {
   // Selects a subset of sceneParticipants by stable ID. The user is already a participant.
   const selectImageParticipants = () => {
     const userId = userParticipant?.id;
+    // Observed scene: the people actually in the moment are the ones in the image.
+    if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id)).slice(0, 4);
     if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
     if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
     const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
     return sceneParticipants.filter((p) => selectedIds.has(p.id)).slice(0, 4);
   };
 
+  // Changing who is in the observed moment re-renders the scene with those people.
+  useEffect(() => {
+    if (!observeMode || !participantsReady) return;
+    setSceneImage(null);
+  }, [observeCastIdList.join(',')]);
+
   // Scene image auto-loads when key data is ready.
   useEffect(() => {
     if (!hasUserRequestedImage) return;
     if (!participantsReady) return;
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap });
+      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode });
     }
-  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady]);
+  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady, observeCastIdList.join(',')]);
 
   useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
@@ -656,6 +670,28 @@ export default function Scene() {
 
   const handleAskToLeave = (type, narrativeText) => { setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: narrativeText || `You ask the ${type} to leave.`, timestamp: new Date().toISOString() }]); };
 
+  // In a watched scene the observer does nothing themselves: choosing something from
+  // the strip is what the people in the scene do, and the scene re-renders with it.
+  const handleObserveAction = (action) => {
+    if (actionCooldown) return;
+    setActionCooldown(true);
+    try {
+      const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
+      const involved = observeCast.length > 0 ? observeCast : sceneParticipants;
+      const whoDesc = involved.length > 0 ? involved.map((c) => c.name).join(" and ") : "no one — the space is empty";
+      if (actionImageFn) {
+        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
+      }
+      if (observeCast.length >= 2) {
+        runObserveBeat({ direction: `[${action.emoji} ${action.label}]` });
+      } else {
+        setMessages((prev) => [...prev, { id: `obs_act_${Date.now()}`, sender: "narrative", content: `${observeCast.map((c) => c.name).join(" and ") || "They"} ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+      }
+    } finally {
+      setTimeout(() => setActionCooldown(false), 600);
+    }
+  };
+
   const handleAction = async (action) => {
     if (actionCooldown) return; setActionCooldown(true);
     try {
@@ -767,12 +803,12 @@ export default function Scene() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons — user participation controls, hidden while observing */}
-      <div className={`px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden ${observeMode ? "hidden" : ""}`}>
+      {/* Action strip — everything available here. In a watched scene it is what they do. */}
+      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
-          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title="Change your outfit"><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
+          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
           {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name; const isDisabled = action.disabled || actionCooldown; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}

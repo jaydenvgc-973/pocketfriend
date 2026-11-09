@@ -59,6 +59,7 @@ export function useSceneImageGenerator() {
       characters,
       locationMap,
       actionOverridePrompt = null,
+      strictCastOnly = false,
     } = opts;
 
     if (!location || isGeneratingImage) return;
@@ -131,7 +132,7 @@ export function useSceneImageGenerator() {
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
-      const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
+      const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
 
       if (!isGlobal) {
         if (finalParticipants.length === 0) {
@@ -160,7 +161,7 @@ export function useSceneImageGenerator() {
 
     const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
     const activeZoneName = currentZoneForAction?.zone_name || "this area";
-    const isGlobal = !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
+    const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
     const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
     const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
 
