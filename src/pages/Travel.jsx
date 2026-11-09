@@ -529,7 +529,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
    * The scene opens in observe mode, where the characters interact with each other.
    */
   const handleSendCharacters = async () => {
-    if (!selectedLocation || selectedCharacterIds.length < 2) return;
+    if (!selectedLocation || selectedCharacterIds.length < 1) return;
     const isOpen = isLocationActiveNow(selectedLocation);
     const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, isOpen);
     if (isOpen === false && !selectedEnvAccessible) {
@@ -962,14 +962,14 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                         <Navigation className="w-4 h-4" />
                         {travelLabel}
                       </Button>
-                      {selectedCharacterIds.length >= 2 && (
+                      {selectedCharacterIds.length >= 1 && (
                         <>
                           <Button onClick={handleSendCharacters} disabled={isTraveling} variant="outline" className="w-full h-10 rounded-xl gap-2 mt-2">
                             <Eye className="w-4 h-4" />
                             Send them without going
                           </Button>
                           <p className="text-[10px] text-muted-foreground text-center leading-tight">
-                            They go together and interact with each other. You stay where you are and watch from outside.
+                            They go on their own and interact with whoever is there. You stay where you are and watch from outside.
                           </p>
                         </>
                       )}

@@ -28,7 +28,7 @@ import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import ObserveStageControls from "@/components/scene/ObserveStageControls";
-import { generateObserveBeat, recordObserveBeatMemories } from "@/lib/observeInteraction";
+import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
@@ -391,29 +391,64 @@ export default function Scene() {
   }, [location?.id, broughtCharacters.length, observeMode]);
 
   // ── OBSERVED CHARACTER-TO-CHARACTER EXCHANGE ──
-  // The characters talk to each other. The observer is absent: their direction
-  // shapes the moment but is never spoken or performed by them.
+  // One character is enough to send: whoever is already at the location joins the
+  // moment. The observer is absent — their direction only shapes the circumstances,
+  // and when they speak as a character those words belong to that character.
   const [isObservingTurn, setIsObservingTurn] = useState(false);
-  const [directionText, setDirectionText] = useState("");
+  const [observeCastIds, setObserveCastIds] = useState(null);
   const observeAutoStartedRef = useRef(false);
 
-  const runObserveBeat = async (direction = null) => {
+  // Everybody real who is here: those sent ahead, plus whoever was already here.
+  const observeCandidates = useMemo(() => {
+    if (!observeMode) return [];
+    const seen = new Set();
+    const list = [];
+    [...broughtCharacters, ...sceneParticipants].forEach((p) => {
+      if (!p?.id || p.isNpc) return;
+      if (String(p.id).startsWith('npc_')) return;
+      if (p.id === currentUser?.id) return;
+      if (seen.has(p.id)) return;
+      seen.add(p.id);
+      list.push(p);
+    });
+    return list;
+  }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id]);
+
+  const observeCastIdList = observeCastIds || observeCandidates.map((c) => c.id);
+  const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
+  const toggleObserveCast = (id) => setObserveCastIds((prev) => {
+    const base = prev || observeCandidates.map((c) => c.id);
+    return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+  });
+
+  const runObserveBeat = async ({ direction = null, voiceAs = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
-    const cast = broughtCharacters.filter((c) => !c.isNpc && c.id);
+    const cast = observeCast;
     if (cast.length < 2) {
-      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Two characters need to be here for them to interact with each other.", timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Another character needs to be here for them to interact. Send someone else, or invite someone who is here.", timestamp: new Date().toISOString() }]);
       return;
     }
     setIsObservingTurn(true);
     const note = (direction || "").trim();
-    if (note) {
-      setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
-      setDirectionText("");
+    if (note) setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
+
+    // Words the observer spoke as a character ARE that character's words:
+    // shown as their line and remembered by them as something they said.
+    let priorLine = null;
+    const speaker = voiceAs?.character;
+    const spoken = (voiceAs?.content || "").trim();
+    if (speaker?.id && spoken) {
+      priorLine = { id: `voiced_${Date.now()}`, sender: "character", senderName: speaker.name, characterId: speaker.id, avatarUrl: speaker.avatar_url, content: spoken, timestamp: new Date().toISOString() };
+      setMessages((prev) => [...prev, priorLine]);
+      recordVoicedLineMemory({ speaker, listeners: cast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
     }
+
+    const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
     try {
       const lines = await generateObserveBeat({
-        participants: cast, location, activeZone, messages, direction: note || null,
-        displayName, ownerEmail: currentUser?.email,
+        participants: cast, responders, location, activeZone,
+        messages: priorLine ? [...messages, priorLine] : messages,
+        direction: note || null, ownerEmail: currentUser?.email,
       });
       if (lines.length === 0) {
         setMessages((prev) => [...prev, { id: `obs_quiet_${Date.now()}`, sender: "narrative", content: "The moment passes quietly between them.", timestamp: new Date().toISOString() }]);
@@ -422,7 +457,7 @@ export default function Scene() {
           setMessages((prev) => [...prev, line]);
           await new Promise((r) => setTimeout(r, 450));
         }
-        recordObserveBeatMemories({ lines, participants: cast })
+        recordObserveBeatMemories({ lines, participants: cast, priorLine })
           .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
           .catch(() => {});
       }
@@ -437,10 +472,10 @@ export default function Scene() {
   useEffect(() => {
     if (!observeMode || !location?.id || !participantsReady) return;
     if (observeAutoStartedRef.current) return;
-    if (broughtCharacters.filter((c) => !c.isNpc && c.id).length < 2) return;
+    if (observeCast.length < 2) return;
     observeAutoStartedRef.current = true;
     runObserveBeat();
-  }, [observeMode, location?.id, participantsReady, broughtCharacters.length]);
+  }, [observeMode, location?.id, participantsReady, observeCastIdList.join(',')]);
 
   usePageContext({ page: 'scene', locationId: locationId || null });
 
@@ -711,7 +746,7 @@ export default function Scene() {
         <div className="text-center space-y-2">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             {observeMode
-              ? `Watching ${traveledWithChars.map((c) => c.name).join(", ") || "them"} at ${location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
+              ? `Watching ${observeCast.map((c) => c.name).join(", ") || "them"} at ${location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
               : `You arrive at ${location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
           </span>
           {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
@@ -757,9 +792,11 @@ export default function Scene() {
       <NPCEvolutionTracker messages={messages} selectedNpcs={selectedNpcs} currentUser={currentUser} locationName={location.name} onNpcSaved={(name) => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${name} has been saved to your world.`, timestamp: new Date().toISOString() }])} />
       {observeMode ? (
         <ObserveStageControls
-          value={directionText}
-          onChange={setDirectionText}
-          onDirect={() => runObserveBeat(directionText)}
+          candidates={observeCandidates}
+          castIds={observeCastIdList}
+          onToggleCast={toggleObserveCast}
+          onDirect={(text) => runObserveBeat({ direction: text })}
+          onVoice={(character, text) => runObserveBeat({ voiceAs: { character, content: text } })}
           onContinue={() => runObserveBeat()}
           isGenerating={isObservingTurn}
         />

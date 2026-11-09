@@ -6,6 +6,10 @@
  * addressed, and never written into the transcript. Direction supplied by the
  * observer is authorial circumstance, never dialogue or a physical action.
  *
+ * The observer may also speak AS one of the characters. Those words are that
+ * character's own words: they are attributed to the character, answered by the
+ * others, and remembered by the character as something they themselves said.
+ *
  * Uses the existing character context + memory pathways so each participant
  * keeps their own record of what actually happened between them.
  */
@@ -23,9 +27,18 @@ RULES FOR THIS DIRECTION:
 - Never mention a director, an observer, an author, an audience, or a prompt.
 ===`;
 
-export async function generateObserveBeat({ participants, location, activeZone, messages, direction, displayName, ownerEmail }) {
-  const cast = (participants || []).filter((c) => c && c.id && c.name && !c.isNpc);
+function realCast(list) {
+  return (list || []).filter((c) => c && c.id && c.name && !c.isNpc && !String(c.id).startsWith('npc_'));
+}
+
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, ownerEmail }) {
+  const cast = realCast(participants);
   if (cast.length < 1 || !location) return [];
+
+  // Who may speak in this beat. Everyone else in the cast is present but listens.
+  const requested = responders ? realCast(responders).map((c) => c.id) : null;
+  const speaking = requested ? cast.filter((c) => requested.includes(c.id)) : cast;
+  if (speaking.length === 0) return [];
 
   const canonicalCtx = {};
   const memoryCtx = {};
@@ -50,7 +63,8 @@ export async function generateObserveBeat({ participants, location, activeZone, 
     .map((m) => `${m.senderName}: ${m.content}`)
     .join('\n');
 
-  const nameList = cast.map((c) => c.name).join(' and ');
+  const nameList = speaking.map((c) => c.name).join(' and ');
+  const silent = cast.filter((c) => !speaking.some((s) => s.id === c.id));
   const canonicalSection = cast
     .filter((c) => canonicalCtx[c.id])
     .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`)
@@ -63,6 +77,10 @@ export async function generateObserveBeat({ participants, location, activeZone, 
     .map((c) => `- ${c.name} (${c.personality_summary?.split('.')[0] || c.archetype || 'character'}; mood: ${c.emotional_state || 'calm'})`)
     .join('\n');
 
+  const silentRule = silent.length > 0
+    ? `\nONLY THESE MAY SPEAK THIS BEAT: ${nameList}.\n${silent.map((c) => c.name).join(', ')} ${silent.length === 1 ? 'is' : 'are'} present and part of the scene, but do not give ${silent.length === 1 ? 'them' : 'them'} a spoken line this beat — they may only be shown listening or reacting without words.`
+    : '';
+
   const prompt = `You are writing a scene that takes place between the characters themselves at ${location.name}${activeZone ? `, in the ${activeZone}` : ''} (${location.category}).
 
 THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
@@ -71,8 +89,9 @@ THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - Never write dialogue, thoughts, or actions for anyone who is not a listed participant.
 - Nobody here is aware of being observed. Nothing may hint at an audience or a narrator.
 
-PARTICIPANTS (only these people may speak):
+PARTICIPANTS (only these people are in this moment):
 ${castLines}
+${silentRule}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody in this scene addresses, names, or plays to anyone outside the participant list.\n${canonicalSection}\n===` : ''}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
@@ -84,7 +103,7 @@ WRITE THE NEXT MOMENT:
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
-- Give each participant at most one turn, 1-2 sentences, natural and in-character.
+- Give each speaking participant at most one turn, 1-2 sentences, natural and in-character.
 - Characters do not say their own name out loud when speaking about themselves.
 - No narration of the observer. No summary of the scene.
 
@@ -109,7 +128,7 @@ Return JSON only.`;
     },
   });
 
-  const allowed = new Map(cast.map((c) => [c.name.trim().toLowerCase(), c]));
+  const allowed = new Map(speaking.map((c) => [c.name.trim().toLowerCase(), c]));
   const stamp = Date.now();
   return (res?.lines || [])
     .map((line, i) => {
@@ -132,12 +151,15 @@ Return JSON only.`;
  * Writes each participant's own memory of what happened between them, through the
  * existing turn-memory pathway. The counterpart is passed as the played character,
  * so memories record the other character — never the observing user.
+ * `priorLine` is a line that already happened but is not in `lines` (a line the
+ * observer spoke as one of the characters), so the first reply still remembers it.
  */
-export async function recordObserveBeatMemories({ lines, participants }) {
+export async function recordObserveBeatMemories({ lines, participants, priorLine }) {
   const cast = (participants || []).filter((p) => p && p.id);
-  for (let i = 1; i < (lines || []).length; i++) {
-    const previous = lines[i - 1];
-    const current = lines[i];
+  const sequence = priorLine ? [priorLine, ...(lines || [])] : (lines || []);
+  for (let i = 1; i < sequence.length; i++) {
+    const previous = sequence[i - 1];
+    const current = sequence[i];
     if (!previous?.characterId || !current?.characterId) continue;
     if (previous.characterId === current.characterId) continue;
     const witnesses = cast
@@ -153,4 +175,28 @@ export async function recordObserveBeatMemories({ lines, participants }) {
       });
     } catch { /* memory write failure must not stop the scene */ }
   }
+}
+
+/**
+ * A line the observer spoke AS one of the characters is that character's own
+ * words. It is recorded through the existing play-as memory pathway, so the
+ * character remembers saying it themselves — never as something the observer said.
+ */
+export async function recordVoicedLineMemory({ speaker, listeners, content, location }) {
+  if (!speaker?.id || !content?.trim()) return;
+  const present = (listeners || []).filter((l) => l && l.id && l.id !== speaker.id);
+  const target = present[0];
+  if (!target) return;
+  try {
+    await base44.functions.invoke('recordPlayAsInteraction', {
+      playingAsCharacterId: speaker.id,
+      playingAsCharacterName: speaker.name,
+      targetCharacterId: target?.id || speaker.id,
+      targetCharacterName: target?.name || 'the people here',
+      userAction: content.trim(),
+      targetResponse: present.map((p) => p.name).join(', ') || 'no one else was there',
+      emotionalReaction: 'neutral',
+      locationName: location?.name || null,
+    });
+  } catch { /* memory write failure must not stop the scene */ }
 }
