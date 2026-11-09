@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench, Map } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench, Map, Eye } from "lucide-react";
 import LivePresenceMap from "@/components/travel/LivePresenceMap";
 import { ensureLocationsMapped } from "@/lib/mapCoordinates";
 import FixLocationsButton from "@/components/home/FixLocationsButton";
@@ -521,6 +521,44 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     navigate(`/scene?${params.toString()}`);
   };
 
+  /**
+   * SEND WITHOUT GOING
+   *
+   * The selected characters travel to the chosen location on their own. The user
+   * does not relocate: their authoritative location and presence are untouched.
+   * The scene opens in observe mode, where the characters interact with each other.
+   */
+  const handleSendCharacters = async () => {
+    if (!selectedLocation || selectedCharacterIds.length < 2) return;
+    const isOpen = isLocationActiveNow(selectedLocation);
+    const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, isOpen);
+    if (isOpen === false && !selectedEnvAccessible) {
+      const hoursStr = formatOperatingHours(selectedLocation);
+      setUnavailablePopup([{
+        character: { id: "closed", name: selectedLocation.name, avatar_url: null },
+        reason: { iconType: "out", message: `${selectedLocation.name} is closed right now.`, color: "text-amber-400" },
+        availableAt: hoursStr ? `Hours: ${hoursStr}` : "Check back later",
+      }]);
+      return;
+    }
+    const unavailable = selectedCharacterIds
+      .filter(id => !convincedCharacterIds.includes(id))
+      .map(id => {
+        const char = verifiedTravelCompanions.find(c => c.id === id);
+        if (!char) return null;
+        const avail = getCharacterTravelAvailability(char, locationMap);
+        return avail.available ? null : { character: char, reason: avail.reason, availableAt: avail.availableAt };
+      })
+      .filter(Boolean);
+    if (unavailable.length > 0) { setUnavailablePopup(unavailable); return; }
+    setIsTraveling(true);
+    const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(","), observe: "1" });
+    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    if (envZone) params.set("zoneName", envZone);
+    if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
+    navigate(`/scene?${params.toString()}`);
+  };
+
   const handleSoloTravel = async (locationId) => {
     const location = locationsData.find(l => l.id === locationId);
     if (!location) return;
@@ -924,6 +962,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                         <Navigation className="w-4 h-4" />
                         {travelLabel}
                       </Button>
+                      {selectedCharacterIds.length >= 2 && (
+                        <>
+                          <Button onClick={handleSendCharacters} disabled={isTraveling} variant="outline" className="w-full h-10 rounded-xl gap-2 mt-2">
+                            <Eye className="w-4 h-4" />
+                            Send them without going
+                          </Button>
+                          <p className="text-[10px] text-muted-foreground text-center leading-tight">
+                            They go together and interact with each other. You stay where you are and watch from outside.
+                          </p>
+                        </>
+                      )}
                     </>
                   );
                 })()}

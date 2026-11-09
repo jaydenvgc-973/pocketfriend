@@ -27,6 +27,8 @@ import ProductPurchaseModal from "@/components/scene/ProductPurchaseModal";
 import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
+import ObserveStageControls from "@/components/scene/ObserveStageControls";
+import { generateObserveBeat, recordObserveBeatMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
@@ -64,6 +66,9 @@ export default function Scene() {
   const characterIds = (urlParams.get("characterIds") || "").split(",").filter(Boolean);
   const initialZoneName = urlParams.get("zoneName") || null;
   const initialEnvironmentId = urlParams.get("environmentId") || null;
+  // OBSERVE MODE — the user is watching characters interact with each other.
+  // They are not a participant, not present, and not written into the scene.
+  const observeMode = urlParams.get("observe") === "1" && characterIds.length > 0;
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -102,6 +107,8 @@ export default function Scene() {
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const userParticipant = useMemo(() => {
+    // Observing means absent: no user participant, no user in prompts or images.
+    if (observeMode) return null;
     const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null;
     if (!userAvatar) return null;
     return {
@@ -109,7 +116,7 @@ export default function Scene() {
       reference_image_urls: currentUser?.reference_image_urls || [], appearance_lock: settings?.appearance_lock || null,
       user_race: settings?.user_race || null, gender: settings?.user_gender || currentUser?.gender || null, isUser: true,
     };
-  }, [currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
+  }, [observeMode, currentUser?.id, currentUser?.generated_avatar_urls, currentUser?.reference_image_urls, currentUser?.avatar_url, displayName, settings?.appearance_lock, settings?.user_gender, currentUser?.gender]);
 
   const { data: locationsData = [], isFetching: isLocationsFetching } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -145,9 +152,10 @@ export default function Scene() {
   // Arriving at a shared residence IS the user's presence there — the existing
   // user-presence authority records it, so co-present users can see each other.
   useEffect(() => {
-    if (!isSharedResidence || !location?.id) return;
+    // Observing never relocates the user — their authoritative location is untouched.
+    if (!isSharedResidence || !location?.id || observeMode) return;
     setUserLocation(location.id, location.name).catch(() => {});
-  }, [isSharedResidence, location?.id]);
+  }, [isSharedResidence, location?.id, observeMode]);
 
   const locationMap = Object.fromEntries(locationsData.map((l) => [l.id, l]));
   const locationZones = location?.zones || [];
@@ -293,6 +301,8 @@ export default function Scene() {
     const presentEntities = getPresenceAtLocation(location, unifiedPresenceEntities);
     for (const entity of presentEntities) {
       if (!entity || !entity.id || seenIds.has(entity.id)) continue;
+      // The observer is never a participant in an observed scene.
+      if (observeMode && entity.id === currentUser?.id) continue;
       seenIds.add(entity.id);
       const char = characters.find((c) => c.id === entity.id); const full = char || {};
       participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: full.reference_image_urls || [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
@@ -370,12 +380,67 @@ export default function Scene() {
     broughtCharacters.forEach((char) => {
       base44.functions.invoke('enforceCharacterLocationPresence', {
         character_id: char.id, owner_email: currentUser?.email,
-        requested_presence_status: _isHomeCat ? 'home' : 'visiting',
+        requested_presence_status: observeMode
+          ? (char.current_home_location_id === location.id ? 'home' : 'visiting')
+          : (_isHomeCat ? 'home' : 'visiting'),
         requested_location_id: location.id, requested_location_name: location.name,
-        requested_source_reason: 'user_travel', requested_authority: 'SceneArrival'
+        requested_source_reason: observeMode ? 'user_sent_ahead' : 'user_travel',
+        requested_authority: observeMode ? 'ObserveArrival' : 'SceneArrival'
       }).catch(() => {});
     });
-  }, [location?.id, broughtCharacters.length]);
+  }, [location?.id, broughtCharacters.length, observeMode]);
+
+  // ── OBSERVED CHARACTER-TO-CHARACTER EXCHANGE ──
+  // The characters talk to each other. The observer is absent: their direction
+  // shapes the moment but is never spoken or performed by them.
+  const [isObservingTurn, setIsObservingTurn] = useState(false);
+  const [directionText, setDirectionText] = useState("");
+  const observeAutoStartedRef = useRef(false);
+
+  const runObserveBeat = async (direction = null) => {
+    if (!observeMode || !location || isObservingTurn) return;
+    const cast = broughtCharacters.filter((c) => !c.isNpc && c.id);
+    if (cast.length < 2) {
+      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Two characters need to be here for them to interact with each other.", timestamp: new Date().toISOString() }]);
+      return;
+    }
+    setIsObservingTurn(true);
+    const note = (direction || "").trim();
+    if (note) {
+      setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
+      setDirectionText("");
+    }
+    try {
+      const lines = await generateObserveBeat({
+        participants: cast, location, activeZone, messages, direction: note || null,
+        displayName, ownerEmail: currentUser?.email,
+      });
+      if (lines.length === 0) {
+        setMessages((prev) => [...prev, { id: `obs_quiet_${Date.now()}`, sender: "narrative", content: "The moment passes quietly between them.", timestamp: new Date().toISOString() }]);
+      } else {
+        for (const line of lines) {
+          setMessages((prev) => [...prev, line]);
+          await new Promise((r) => setTimeout(r, 450));
+        }
+        recordObserveBeatMemories({ lines, participants: cast })
+          .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
+          .catch(() => {});
+      }
+    } catch {
+      setMessages((prev) => [...prev, { id: `obs_err_${Date.now()}`, sender: "narrative", content: "The moment did not continue.", timestamp: new Date().toISOString() }]);
+    } finally {
+      setIsObservingTurn(false);
+    }
+  };
+
+  // The first beat of an observed scene opens on its own — no user turn required.
+  useEffect(() => {
+    if (!observeMode || !location?.id || !participantsReady) return;
+    if (observeAutoStartedRef.current) return;
+    if (broughtCharacters.filter((c) => !c.isNpc && c.id).length < 2) return;
+    observeAutoStartedRef.current = true;
+    runObserveBeat();
+  }, [observeMode, location?.id, participantsReady, broughtCharacters.length]);
 
   usePageContext({ page: 'scene', locationId: locationId || null });
 
@@ -600,23 +665,34 @@ export default function Scene() {
   return (
     <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
-        <button onClick={() => setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title="Leave location"><ArrowLeft className="w-5 h-5" /></button>
-        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
-        {isHomeLocation && (!isSharedLocation || isGatewayHouse) && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
-        {isSharedResidence && sharedResidenceParticipants.length > 1 && (
+        <button onClick={() => observeMode ? navigate("/travel") : setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title={observeMode ? "Stop watching" : "Leave location"}><ArrowLeft className="w-5 h-5" /></button>
+        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {observeMode ? "watching · " : ""}{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
+        {isHomeLocation && !observeMode && (!isSharedLocation || isGatewayHouse) && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
+        {!observeMode && isSharedResidence && sharedResidenceParticipants.length > 1 && (
           <button onClick={() => { setShowSharedConversation(true); setUserLocation(location.id, location.name).then(() => queryClient.invalidateQueries({ queryKey: ["sharedResidenceParticipants", location.id] })).catch(() => {}); }} className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium flex-shrink-0" title="Talk with everyone here">
             <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
           </button>
         )}
-        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
-        <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
-        <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
+        {!observeMode && (
+          <>
+            <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
+            <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
+            <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
+          </>
+        )}
       </div>
 
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
       {/* Scene media area — extracted component with collapse/expand (no side effects) */}
-      <SceneMediaArea location={location} locationZones={locationZones} activeZone={activeZone} onZoneChange={handleZoneChange} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
+      <SceneMediaArea location={location} locationZones={locationZones} activeZone={activeZone} onZoneChange={(zoneName) => {
+        // Observing the characters does not move the user: the view follows the zone,
+        // but no "you move" moment is written into their scene.
+        if (!observeMode) return handleZoneChange(zoneName);
+        setActiveZone(zoneName);
+        setHasUserRequestedImage(true);
+        setTimeout(() => setSceneImage(null), 50);
+      }} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
         watchVideoActive={watchVideoActive} onToggleWatchVideo={() => { setWatchVideoActive(false); setWatchContext(null); }} watchContext={watchContext} displayName={displayName}
         onWatchStarted={(ctx) => { setWatchContext(ctx); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`, timestamp: new Date().toISOString() }]); }}
         onWatchAnalysisComplete={({ linkAnalysisContext, linkData, title }) => { setWatchContext((prev) => ({ ...prev, linkAnalysisContext, title: title || prev?.title })); if (linkData?.title && !title) setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Now playing: ${linkData.title}.`, timestamp: new Date().toISOString() }]); }}
@@ -625,35 +701,39 @@ export default function Scene() {
 
       {/* Character presence strip */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
-        <div className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">{currentUser?.generated_avatar_urls?.[0] ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>}</div><span className="text-[9px] text-primary font-medium">{displayName}</span></div>
+        {!observeMode && <div className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">{currentUser?.generated_avatar_urls?.[0] ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>}</div><span className="text-[9px] text-primary font-medium">{displayName}</span></div>}
         {[...traveledWithChars, ...selectedNpcs, ...extraNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).map((char) => (<div key={char.id} className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">{char.avatar_url ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>}</div><span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span></div>))}
-        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">You're here alone</span>}
+        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">{observeMode ? "No one is here yet" : "You're here alone"}</span>}
       </div>
 
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         <div className="text-center space-y-2">
-          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">You arrive at {location.name}{activeZone ? ` · ${activeZone}` : ""}{traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}</span>
+          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
+            {observeMode
+              ? `Watching ${traveledWithChars.map((c) => c.name).join(", ") || "them"} at ${location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
+              : `You arrive at ${location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
+          </span>
           {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
           {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">{homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away</span></div>}
           {workerCharacters.length > 0 && <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">{workerCharacters.map((c) => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working</span></div>}
-          {(() => { const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)); return presentHere.length > 0 ? <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">{presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact</span></div> : null; })()}
+          {!observeMode && (() => { const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)); return presentHere.length > 0 ? <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">{presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact</span></div> : null; })()}
         </div>
 
         <AnimatePresence>
           {messages.map((msg) => (
-            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
+            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
+              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
             </motion.div>
           ))}
         </AnimatePresence>
 
-        {isTyping && <div className="flex gap-2"><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"><span className="text-xs">...</span></div><div className="bg-card border border-border rounded-2xl px-3 py-2"><div className="flex gap-1"><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" /></div></div></div>}
+        {(isTyping || (observeMode && isObservingTurn)) && <div className="flex gap-2"><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"><span className="text-xs">...</span></div><div className="bg-card border border-border rounded-2xl px-3 py-2"><div className="flex gap-1"><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" /></div></div></div>}
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons */}
-      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
+      {/* Action buttons — user participation controls, hidden while observing */}
+      <div className={`px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden ${observeMode ? "hidden" : ""}`}>
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title="Change your outfit"><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
           {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name; const isDisabled = action.disabled || actionCooldown; return (
@@ -675,7 +755,17 @@ export default function Scene() {
       )}
 
       <NPCEvolutionTracker messages={messages} selectedNpcs={selectedNpcs} currentUser={currentUser} locationName={location.name} onNpcSaved={(name) => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${name} has been saved to your world.`, timestamp: new Date().toISOString() }])} />
-      <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
+      {observeMode ? (
+        <ObserveStageControls
+          value={directionText}
+          onChange={setDirectionText}
+          onDirect={() => runObserveBeat(directionText)}
+          onContinue={() => runObserveBeat()}
+          isGenerating={isObservingTurn}
+        />
+      ) : (
+        <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
+      )}
 
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
