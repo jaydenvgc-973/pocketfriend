@@ -27,6 +27,8 @@ import ReligiousMemberSection from "@/components/location/ReligiousMemberSection
 import { Link } from "react-router-dom";
 import EnvironmentManager from "@/components/location/EnvironmentManager";
 import ApartmentManager from "@/components/location/ApartmentManager";
+import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
+import { isSharedResidencyLocation } from "@/lib/sharedResidency";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
@@ -87,7 +89,7 @@ const CATEGORIES = [
   { value: "transportation", label: "Transportation", icon: MapPin, emoji: "🚉" },
 ];
 
-function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate }) {
+function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, onLocationUpdate, sharedOccupancy = null, onManageResidency = null }) {
   const isShared = location.scope === 'shared';
   const isAdmin = currentUser?.role === 'admin';
   // OWNERSHIP-AWARE PERMISSIONS: Sharing does NOT transfer ownership.
@@ -95,6 +97,10 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
   // Admin can manage any location. Other users cannot manage someone else's location.
   const isOwner = location.owner_email === currentUser?.email;
   const canEdit = isOwner || isAdmin;
+  // The administrator-shared residence is structural property held by the admin.
+  // Other users may only place their own characters in its existing apartments.
+  const isSharedResidency = isSharedResidencyLocation(location);
+  const canManageResidency = isSharedResidency && !canEdit && !!onManageResidency;
   const [expanded, setExpanded] = useState(false);
 
   const handleUniformSave = async (updatedLocation) => {
@@ -116,10 +122,14 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-card border rounded-2xl overflow-hidden transition-colors border-border"
+      className={`border rounded-2xl overflow-hidden transition-colors bg-card ${
+        isSharedResidency ? "border-purple-500/40 bg-gradient-to-br from-purple-950/50 to-card" : "border-border"
+      }`}
     >
       <div className="flex items-center gap-3 p-4">
-        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 text-lg">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-lg ${
+          isSharedResidency ? "bg-purple-500/20 ring-1 ring-purple-400/30" : "bg-primary/10"
+        }`}>
           {catDef.emoji}
         </div>
         <div className="flex-1 min-w-0">
@@ -230,8 +240,19 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
           </div>
         </div>
         <div className="flex items-center gap-1">
-          {isShared && (
+          {isSharedResidency ? (
+            <span className="text-[9px] text-purple-200 bg-purple-500/25 px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap">🏛 Shared Residence</span>
+          ) : isShared && (
             <span className="text-[9px] text-amber-400/80 bg-amber-400/10 px-1.5 py-0.5 rounded-full font-medium">🔗 Shared</span>
+          )}
+          {canManageResidency && (
+            <button
+              onClick={() => onManageResidency(location)}
+              title="Move your characters in"
+              className="p-1.5 text-purple-300 hover:text-purple-200 rounded-lg transition-colors"
+            >
+              <Home className="w-4 h-4" />
+            </button>
           )}
           {canEdit && (
             <button onClick={() => onEdit(location)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
@@ -257,8 +278,8 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} onResidentsChanged={onLocationUpdate} />
-                    {isShared && !isOwner && !isAdmin && (
+            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} onResidentsChanged={onLocationUpdate} sharedOccupancy={isSharedResidency ? sharedOccupancy : null} />
+                    {isShared && !isSharedResidency && !isOwner && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
                         <p className="text-xs text-amber-400">🔒 This is a shared location owned by another account. Your characters can visit but cannot be permanently assigned here.</p>
                       </div>
@@ -1583,6 +1604,20 @@ export default function Locations() {
     enabled: !!currentUser?.email,
   });
 
+  // Shared residence occupancy — every account sees the same residents and
+  // apartment assignments. Read on the server because Character reads are
+  // owner-scoped and would otherwise drop residents on other accounts.
+  const gatewayHouseLocation = locations.find(l => l.canonical_location_key === 'gateway_house') || null;
+  const { data: gatewayOccupancy = null } = useQuery({
+    queryKey: ["sharedResidencyOccupancy", gatewayHouseLocation?.id],
+    queryFn: async () => {
+      const res = await base44.functions.invoke("fetchSharedResidencyOccupancy", {});
+      return res?.data || null;
+    },
+    enabled: !!gatewayHouseLocation?.id,
+  });
+  const [residencyLocation, setResidencyLocation] = useState(null);
+
   const getNPCAge = (name) => {
     for (const char of characters) {
       const familyMember = (char.family_members || []).find(fm => fm.name?.toLowerCase() === name.toLowerCase());
@@ -1977,7 +2012,32 @@ export default function Locations() {
 
   const renderLocationCard = (loc) => (
     <React.Fragment key={loc.id}>
-      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} onLocationUpdate={() => { queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
+      <LocationCard
+        location={loc}
+        onDelete={handleDelete}
+        onEdit={handleEdit}
+        characters={characters}
+        currentUser={currentUser}
+        sharedOccupancy={gatewayOccupancy}
+        onManageResidency={(l) => setResidencyLocation(l)}
+        onLocationUpdate={() => {
+          queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+        }}
+      />
+      {residencyLocation?.id === loc.id && (
+        <GatewayResidencyModal
+          location={loc}
+          occupancy={gatewayOccupancy}
+          characters={characters}
+          onClose={() => setResidencyLocation(null)}
+          onChanged={() => {
+            queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ["sharedResidencyOccupancy", loc.id] });
+          }}
+        />
+      )}
       {inlineEditId === loc.id && (
         <LocationForm
           key={`edit-${loc.id}`}

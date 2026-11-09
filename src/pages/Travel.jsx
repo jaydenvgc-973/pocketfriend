@@ -79,6 +79,18 @@ export default function Travel() {
   // Shared stable location hook — same LKG rules and cache key as Home
   const { locationsData } = useStableLocationReferences(currentUser?.email);
 
+  // Shared residence (Gateway House) residency — its residents span accounts, so
+  // names are resolved on the server rather than from this account's characters.
+  const gatewayHouse = locationsData.find(l => l.canonical_location_key === 'gateway_house') || null;
+  const { data: gatewayOccupancy = null } = useQuery({
+    queryKey: ["sharedResidencyOccupancy", gatewayHouse?.id],
+    queryFn: async () => {
+      const res = await base44.functions.invoke("fetchSharedResidencyOccupancy", {});
+      return res?.data || null;
+    },
+    enabled: !!gatewayHouse?.id,
+  });
+
   // Gathering Rooms — globally shared cross-account social spaces
   const { data: gatheringRooms = [] } = useQuery({
     queryKey: ["gatheringRooms"],
@@ -714,6 +726,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             }}
             characters={mapCharacters}
             presenceEntities={allPresenceEntities}
+            sharedOccupancy={gatewayOccupancy}
           />
           <Button onClick={() => setShowRealLocationModal(true)} variant="outline" size="sm" className="w-full rounded-xl gap-2">
             <Plus className="w-4 h-4" />

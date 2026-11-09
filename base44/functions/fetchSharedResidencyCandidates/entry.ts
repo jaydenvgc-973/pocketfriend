@@ -29,21 +29,27 @@ Deno.serve(async (req) => {
     }
 
     // The relationship is added to the caller's own character only.
-    const sourceChars = await base44.entities.Character.filter({ id: source_character_id }, null, 1).catch(() => []);
-    const source = sourceChars[0];
+    const sourceRes = await base44.entities.Character.filter({ id: source_character_id }).catch(() => []);
+    const source = (Array.isArray(sourceRes) ? sourceRes : (sourceRes?.items || []))[0];
     if (!source || source.owner_email !== user.email) {
       return Response.json({ eligible: false, reason: 'source_character_not_yours', people: [] });
     }
 
-    // Residence authority: the character's home location.
-    const homeIds = [source.current_home_location_id, source.resolved_current_location_id].filter(Boolean);
-    if (homeIds.length === 0) {
-      return Response.json({ eligible: false, reason: 'no_home_location', people: [] });
-    }
-    const homes = await base44.asServiceRole.entities.LocationReference
-      .filter({ id: { $in: homeIds } }, null, 5)
+    // Residence authority — resolved from the shared property itself, not from the
+    // character's home field alone. The shared property keeps its resident list with
+    // service role, so a resident is also identified by being listed in it (or in one
+    // of its apartments). Missing home metadata never makes an actual resident
+    // ineligible.
+    const gwRes = await base44.asServiceRole.entities.LocationReference
+      .filter({ canonical_location_key: GATEWAY_HOUSE_KEY })
       .catch(() => []);
-    const home = homes.find((h) => h.canonical_location_key === GATEWAY_HOUSE_KEY) || null;
+    const sharedHomes = Array.isArray(gwRes) ? gwRes : (gwRes?.items || []);
+    const homeIds = [source.current_home_location_id, source.resolved_current_location_id].filter(Boolean);
+    const home = sharedHomes.find((h) =>
+      homeIds.includes(h.id) ||
+      (h.resident_character_ids || []).includes(source.id) ||
+      (h.residential_units || []).some((u) => (u.occupant_character_ids || []).includes(source.id))
+    ) || null;
     if (!home) {
       return Response.json({ eligible: false, reason: 'not_a_shared_residency_resident', people: [] });
     }

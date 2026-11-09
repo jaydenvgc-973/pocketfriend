@@ -25,7 +25,7 @@ function SectionHeader({ icon: Icon, label }) {
   );
 }
 
-export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null, onLocationUpdate = null }) {
+export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null, onLocationUpdate = null, sharedOccupancy = null }) {
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
   const [workerUpdateTick, setWorkerUpdateTick] = useState(0);
@@ -44,10 +44,24 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
     ? Object.values(location.utility_costs).reduce((s, v) => s + (v || 0), 0)
     : 0;
 
+  // The shared residence's resident list spans accounts, so its names/avatars come
+  // from the server projection. Character reads are owner-scoped and cannot resolve
+  // a resident on another account here.
+  const sharedResidents = sharedOccupancy?.residents || [];
+  const sharedResidentById = new Map(sharedResidents.map(r => [r.id, r]));
+  const hasSharedResidents = sharedOccupancy?.found === true;
+
   // Hydrate resident character IDs to full character objects with names and avatars
-  const activeResidents = (location.resident_character_ids || [])
-    .map(id => hydrateCharacterReference(id, characters, currentUserId, currentUserEmail))
-    .filter(Boolean);
+  const activeResidents = hasSharedResidents
+    ? sharedResidents.map(r => ({
+        id: r.id,
+        name: r.name,
+        avatarUrl: r.avatar_url || null,
+        initials: r.name?.[0]?.toUpperCase() || '?',
+      }))
+    : (location.resident_character_ids || [])
+      .map(id => hydrateCharacterReference(id, characters, currentUserId, currentUserEmail))
+      .filter(Boolean);
   
   // Normalize NPC/family residents with avatar resolution
   // Fallback order: matched character entity avatar_url → embedded photo_url/avatar_url → initials
@@ -208,6 +222,9 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
               <div className="space-y-1.5">
                 {(location.residential_units || []).map(unit => {
                   const occupants = (unit.occupant_character_ids || []).map(id => {
+                    // Residents on another account resolve from the shared projection.
+                    const shared = sharedResidentById.get(id);
+                    if (shared) return { id: shared.id, name: shared.name, avatar_url: shared.avatar_url };
                     const char = characters.find(c => c.id === id);
                     return char ? { id: char.id, name: char.name, avatar_url: char.avatar_url } : null;
                   }).filter(Boolean);
