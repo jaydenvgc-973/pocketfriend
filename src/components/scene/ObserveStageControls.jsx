@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Eye, Play, Send, MessageSquare, Wand2 } from "lucide-react";
+import { Eye, Play, Send, MessageSquare, Wand2, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ObserveCastPicker from "@/components/scene/ObserveCastPicker";
 
@@ -7,12 +7,12 @@ import ObserveCastPicker from "@/components/scene/ObserveCastPicker";
  * ObserveStageControls
  *
  * The control strip for an observed character-to-character scene.
- * The observer is never in the scene. They can direct the moment as circumstance,
- * or speak AS one of the characters present — those words belong to that character,
- * not to the observer.
+ * The observer is never in the scene. They can write narrative for the scene,
+ * direct the moment as circumstance, or speak AS one of the characters present —
+ * those words belong to that character, not to the observer.
  */
-export default function ObserveStageControls({ candidates, castIds, onToggleCast, onDirect, onVoice, onContinue, isGenerating }) {
-  const [mode, setMode] = useState("direct");
+export default function ObserveStageControls({ candidates, castIds, onToggleCast, onDirect, onNarrate, onVoice, onContinue, isGenerating }) {
+  const [mode, setMode] = useState("narrate");
   const [text, setText] = useState("");
   const [speakAsId, setSpeakAsId] = useState(null);
 
@@ -24,9 +24,16 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
     const body = text.trim();
     if (!body || isGenerating) return;
     if (speaking) onVoice(speaker, body);
-    else onDirect(body);
+    else if (mode === "direct") onDirect(body);
+    else onNarrate(body);
     setText("");
   };
+
+  const placeholder = speaking
+    ? `What ${speaker?.name?.split(" ")[0]} says`
+    : mode === "direct"
+      ? "Nudge the moment — direction, not something you say"
+      : "Write what happens — the scene's own narration";
 
   return (
     <div className="border-t border-border bg-card/60 flex-shrink-0">
@@ -39,8 +46,14 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
 
       <div className="flex items-center gap-1.5 px-3 pt-1.5">
         <button
+          onClick={() => setMode("narrate")}
+          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${mode === "narrate" ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-muted-foreground"}`}
+        >
+          <BookOpen className="w-3 h-3" /> Narrate
+        </button>
+        <button
           onClick={() => setMode("direct")}
-          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${!speaking ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-muted-foreground"}`}
+          className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${mode === "direct" ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-muted-foreground"}`}
         >
           <Wand2 className="w-3 h-3" /> Direct
         </button>
@@ -72,7 +85,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-          placeholder={speaking ? `What ${speaker?.name?.split(" ")[0]} says` : "Nudge the moment — direction, not something you say"}
+          placeholder={placeholder}
           className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
           disabled={isGenerating}
         />
@@ -81,7 +94,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           onClick={submit}
           disabled={isGenerating || !text.trim() || (mode === "speak" && !speaker)}
           className="h-10 w-10 rounded-xl flex-shrink-0"
-          title={speaking ? `Say it as ${speaker?.name}` : "Direct the moment"}
+          title={speaking ? `Say it as ${speaker?.name}` : mode === "direct" ? "Direct the moment" : "Add narration"}
         >
           <Send className="w-4 h-4" />
         </Button>

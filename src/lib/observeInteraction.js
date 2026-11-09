@@ -31,7 +31,7 @@ function realCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && !c.isNpc && !String(c.id).startsWith('npc_'));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, ownerEmail }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, ownerEmail, watchNote = null }) {
   const cast = realCast(participants);
   if (cast.length < 1 || !location) return [];
 
@@ -97,6 +97,7 @@ ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'They are together for the first time in this moment.'}
+${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThey are watching this together, in the same room. They may talk about it, react to it, or ignore it like real people do.\n===` : ''}
 ${direction ? OFF_SCREEN_DIRECTION(direction) : ''}
 
 WRITE THE NEXT MOMENT:

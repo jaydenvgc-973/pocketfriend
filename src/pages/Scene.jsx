@@ -427,7 +427,7 @@ export default function Scene() {
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
 
-  const runObserveBeat = async ({ direction = null, voiceAs = null } = {}) => {
+  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
     if (cast.length < 2) {
@@ -435,8 +435,16 @@ export default function Scene() {
       return;
     }
     setIsObservingTurn(true);
-    const note = (direction || "").trim();
-    if (note) setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
+    let note = (direction || "").trim();
+    // A narrative the observer writes becomes the scene's own description: it is
+    // shown as narration, and the characters live through it as their circumstances.
+    const narration = (narrative || "").trim();
+    if (narration) {
+      setMessages((prev) => [...prev, { id: `nar_${Date.now()}`, sender: "narrative", content: narration, timestamp: new Date().toISOString() }]);
+      note = narration;
+    } else if (note) {
+      setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
+    }
 
     // Words the observer spoke as a character ARE that character's words:
     // shown as their line and remembered by them as something they said.
@@ -455,6 +463,9 @@ export default function Scene() {
         participants: cast, responders, location, activeZone,
         messages: priorLine ? [...messages, priorLine] : messages,
         direction: note || null, ownerEmail: currentUser?.email,
+        watchNote: watchContext
+          ? (buildWatchContextLabel(watchContext) || watchContext.linkAnalysisContext || (watchContext.title ? `They are watching "${watchContext.title}" together.` : "They are watching a video together."))
+          : null,
       });
       if (lines.length === 0) {
         setMessages((prev) => [...prev, { id: `obs_quiet_${Date.now()}`, sender: "narrative", content: "The moment passes quietly between them.", timestamp: new Date().toISOString() }]);
@@ -535,16 +546,31 @@ export default function Scene() {
     // Observed scene: the people actually in the moment are the ones in the image.
     if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id)).slice(0, 4);
     if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
+    // At a public venue the chosen cast still decides the picture: whoever the user
+    // brought or picked is who appears. Other people present only fill in when the
+    // user has chosen nobody.
+    const chosenIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
+    const chosen = sceneParticipants.filter((p) => chosenIds.has(p.id));
+    if (chosen.length > 0) return chosen.slice(0, 4);
     if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
     const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
     return sceneParticipants.filter((p) => selectedIds.has(p.id)).slice(0, 4);
   };
 
   // Changing who is in the observed moment re-renders the scene with those people.
+  // If a picture is already being generated, the refresh waits for it to finish so
+  // the new cast is never replaced by the previous one.
+  const pendingObserveImageRef = useRef(false);
   useEffect(() => {
     if (!observeMode || !participantsReady) return;
+    if (isGeneratingImage) { pendingObserveImageRef.current = true; return; }
     setSceneImage(null);
   }, [observeCastIdList.join(',')]);
+  useEffect(() => {
+    if (!pendingObserveImageRef.current || isGeneratingImage || !participantsReady) return;
+    pendingObserveImageRef.current = false;
+    setSceneImage(null);
+  }, [isGeneratingImage]);
 
   // Scene image auto-loads when key data is ready.
   useEffect(() => {
@@ -745,12 +771,10 @@ export default function Scene() {
           </button>
         )}
         {!observeMode && (
-          <>
-            <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
-            <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
-            <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
-          </>
+          <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
         )}
+        <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
+        <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
       </div>
 
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
@@ -765,7 +789,7 @@ export default function Scene() {
         setTimeout(() => setSceneImage(null), 50);
       }} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
         watchVideoActive={watchVideoActive} onToggleWatchVideo={() => { setWatchVideoActive(false); setWatchContext(null); }} watchContext={watchContext} displayName={displayName}
-        onWatchStarted={(ctx) => { setWatchContext(ctx); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${displayName} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together with everyone.`, timestamp: new Date().toISOString() }]); }}
+        onWatchStarted={(ctx) => { setWatchContext(ctx); const who = observeMode ? (observeCast.map((c) => c.name).join(" and ") || "They") : displayName; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${who} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together${observeMode ? "" : " with everyone"}.`, timestamp: new Date().toISOString() }]); }}
         onWatchAnalysisComplete={({ linkAnalysisContext, linkData, title }) => { setWatchContext((prev) => ({ ...prev, linkAnalysisContext, title: title || prev?.title })); if (linkData?.title && !title) setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `Now playing: ${linkData.title}.`, timestamp: new Date().toISOString() }]); }}
         onWatchStopped={() => { setWatchContext(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `The watch party ended.`, timestamp: new Date().toISOString() }]); }}
       />
@@ -773,8 +797,8 @@ export default function Scene() {
       {/* Character presence strip */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
         {!observeMode && <div className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">{currentUser?.generated_avatar_urls?.[0] ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>}</div><span className="text-[9px] text-primary font-medium">{displayName}</span></div>}
-        {[...traveledWithChars, ...selectedNpcs, ...extraNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).map((char) => (<div key={char.id} className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">{char.avatar_url ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>}</div><span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span></div>))}
-        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">{observeMode ? "No one is here yet" : "You're here alone"}</span>}
+        {(observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs, ...extraNpcs]).filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).map((char) => (<div key={char.id} className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">{char.avatar_url ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>}</div><span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span></div>))}
+        {observeMode ? (observeCast.length === 0 && <span className="text-xs text-muted-foreground ml-1">Pick who to watch</span>) : (traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">You're here alone</span>)}
       </div>
 
       {/* Chat area */}
@@ -832,6 +856,7 @@ export default function Scene() {
           castIds={observeCastIdList}
           onToggleCast={toggleObserveCast}
           onDirect={(text) => runObserveBeat({ direction: text })}
+          onNarrate={(text) => runObserveBeat({ narrative: text })}
           onVoice={(character, text) => runObserveBeat({ voiceAs: { character, content: text } })}
           onContinue={() => runObserveBeat()}
           isGenerating={isObservingTurn}
@@ -840,7 +865,7 @@ export default function Scene() {
         <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
       )}
 
-      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
+      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 

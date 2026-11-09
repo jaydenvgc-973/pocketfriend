@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { buildPhotoGenerationPrompt, extractPhotoAvatarUrls, validatePhotoGenerationInput, logPhotoGenerationState } from "@/lib/scenePhotoIdentityLock";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 
-export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage }) {
+export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage, excludeUser = false }) {
   // Build the full selectable participant list from the canonical scene list (same source as Who's here)
   const allSceneParticipants = (() => {
     const combined = [...(characters || [])];
@@ -28,7 +28,7 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
   const generatePrompt = async () => {
     setIsGeneratingPrompt(true);
     const selectedChars = allCharacters.filter(c => participants.includes(c.id));
-    const allNames = [displayName, ...selectedChars.map(c => c.name)].join(", ");
+    const allNames = [...(excludeUser ? [] : [displayName]), ...selectedChars.map(c => c.name)].join(", ");
     try {
       const result = await base44.integrations.Core.InvokeLLM({
         prompt: `Write a short, creative photo caption/description (1 sentence) for a candid photo taken at ${location.name} featuring ${allNames}. Make it feel natural and spontaneous, like what you'd write as a photo prompt. No hashtags.`,
@@ -50,7 +50,7 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     const autoPrompt = prompt.trim() || `Candid group photo at ${location.name}, natural lighting, realistic moment`;
 
     // STRICT IDENTITY LOCK: Extract user + character avatars as hard references
-    const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+    const userAvatar = excludeUser ? null : (currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null);
     const avatarUrls = extractPhotoAvatarUrls(selectedChars, userAvatar);
     
     // Validate generation input
@@ -80,23 +80,25 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     charOutfitResults.forEach((r) => {
       if (r.text) resolvedOutfitLines.push(`${r.name}: ${r.text}`);
     });
-    try {
-      const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
-        ownerEmail: currentUser?.email,
-        locationCategory: location?.category,
-        locationId: location?.id,
-      });
-      const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
-      if (userOutfitText) {
-        resolvedOutfitLines.push(`${displayName}: ${userOutfitText}`);
+    if (!excludeUser) {
+      try {
+        const userOutfitRes = await base44.functions.invoke('resolveUserOutfitContext', {
+          ownerEmail: currentUser?.email,
+          locationCategory: location?.category,
+          locationId: location?.id,
+        });
+        const userOutfitText = userOutfitRes?.data?.text || userOutfitRes?.text || null;
+        if (userOutfitText) {
+          resolvedOutfitLines.push(`${displayName}: ${userOutfitText}`);
+        }
+      } catch (e) {
+        // non-blocking — null user outfit is a valid preference
       }
-    } catch (e) {
-      // non-blocking — null user outfit is a valid preference
     }
 
     try {
       // Build prompt with STRICT identity lock enforcement
-      const finalPrompt = buildPhotoGenerationPrompt(autoPrompt, selectedChars, location, displayName, currentUser, {}, resolvedOutfitLines);
+      const finalPrompt = buildPhotoGenerationPrompt(autoPrompt, selectedChars, location, excludeUser ? "" : displayName, excludeUser ? null : currentUser, {}, resolvedOutfitLines);
       
       console.log('[Photo] Generating with strict identity lock:', {
         avatarCount: avatarUrls.length,
@@ -183,12 +185,14 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Who's in the photo?</p>
           <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => {/* user always included */}}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border bg-primary/10 border-primary text-primary"
-            >
-              <Check className="w-3 h-3" /> {displayName}
-            </button>
+            {!excludeUser && (
+              <button
+                onClick={() => {/* user always included */}}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border bg-primary/10 border-primary text-primary"
+              >
+                <Check className="w-3 h-3" /> {displayName}
+              </button>
+            )}
             {allSceneParticipants.map(char => (
               <button
                 key={char.id}

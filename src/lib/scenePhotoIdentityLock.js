@@ -111,7 +111,7 @@ export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, 
     ? selectedChars.map(c => `${c.name}${c.age ? ` (${c.age})` : ''}`).join(', ')
     : '';
 
-  const allNames = displayName + (charSummary ? `, ${charSummary}` : '');
+  const allNames = [displayName, charSummary].filter(Boolean).join(', ');
 
   const fullPrompt = `${basePrompt}
 
