@@ -29,6 +29,7 @@ import EnvironmentManager from "@/components/location/EnvironmentManager";
 import ApartmentManager from "@/components/location/ApartmentManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
+import { describeCharacterResidence } from "@/lib/residenceDisplay";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
@@ -563,7 +564,7 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
   };
 }
 
-function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null, sharedOccupancy = null }) {
   const queryClient = useQueryClient();
   // Active characters via RLS
   // LEGACY COMPATIBILITY: Do NOT filter by character_type here.
@@ -601,6 +602,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       return c.status !== 'deleted' && c.status !== 'moved_away' && c.status !== 'merged';
     });
   }, [rlsActiveChars, allNpcsRaw]);
+
+  // Display names for residents on another account (shared residence) — read from
+  // the shared occupancy projection. Used everywhere instead of falling back to an ID.
+  const characterNameById = React.useMemo(() => {
+    const map = {};
+    (sharedOccupancy?.residents || []).forEach(r => { if (r?.id && r?.name) map[r.id] = r.name; });
+    allCharacters.forEach(c => { if (c?.id && c?.name) map[c.id] = c.name; });
+    return map;
+  }, [sharedOccupancy, allCharacters]);
 
   // Build lists — all scoped correctly by fetchNPCsForUser (service role)
   const activeChars = rlsActiveChars
@@ -973,7 +983,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   {form.resident_character_ids.map((resId, idx) => {
                     const isUser = resId === currentUser?.id;
                     const resChar = isUser ? null : (allCharacters.find(c => c.id === resId) || characters.find(c => c.id === resId));
-                    const displayName = isUser ? (currentUser?.full_name || "You") : (resChar?.name || resId);
+                    const displayName = isUser
+                      ? (currentUser?.full_name || "You")
+                      : (resChar?.name || characterNameById[resId] || "Unknown resident");
                     const housingContext = (form.resident_housing_context || {})[resId];
                     return (
                       <div key={idx} className="space-y-2 p-3 rounded-lg bg-secondary/50 border border-border">
@@ -1122,8 +1134,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                           <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
                             className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
                             <CharacterAvatar character={char} size="sm" />
-                            <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-foreground font-medium truncate">{char.name}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {describeCharacterResidence(char, allLocations, editingLocation?.id).label}
+                              </p>
+                            </div>
+                            {alreadyResident && <span className="text-xs text-primary font-medium flex-shrink-0">✓ Resident</span>}
                           </button>
                         );
                       })}
@@ -1140,8 +1157,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                           <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
                             className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
                             <CharacterAvatar character={npc} size="sm" />
-                            <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
-                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-foreground font-medium truncate">{npc.name}</p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {describeCharacterResidence(npc, allLocations, editingLocation?.id).label}
+                              </p>
+                            </div>
+                            {alreadyResident && <span className="text-xs text-primary font-medium flex-shrink-0">✓ Resident</span>}
                           </button>
                         );
                       })}
@@ -1158,9 +1180,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                           <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
                             className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
                             <CharacterAvatar character={npc} size="sm" />
-                            <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
-                            <span className="text-[10px] text-muted-foreground/60">Family</span>
-                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm text-foreground font-medium truncate">
+                                {npc.name}
+                                <span className="text-[10px] text-muted-foreground/60 font-normal ml-1.5">Family</span>
+                              </p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {describeCharacterResidence(npc, allLocations, editingLocation?.id).label}
+                              </p>
+                            </div>
+                            {alreadyResident && <span className="text-xs text-primary font-medium flex-shrink-0">✓ Resident</span>}
                           </button>
                         );
                       })}
@@ -1184,6 +1213,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           residentialUnits={form.residential_units}
           residentCharacterIds={form.resident_character_ids}
           allCharacters={allCharacters}
+          nameById={characterNameById}
           maxUnits={sharedResidencyConfig?.max_units || 0}
           onChange={(units) => update("residential_units", units)}
           {...(form.category === 'hotel' ? {
@@ -1207,7 +1237,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               {form.worker_character_ids.map((workerId, idx) => {
                 const isUserWorker = workerId === currentUser?.id;
                 const worker = isUserWorker ? null : allCharacters.find(c => c.id === workerId);
-                const workerName = isUserWorker ? worldName : (worker?.name || workerId);
+                const workerName = isUserWorker
+                  ? worldName
+                  : (worker?.name || characterNameById[workerId] || "Unknown character");
                 return (
                   <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
                     <div className="flex items-center gap-2 justify-between">
@@ -2030,6 +2062,7 @@ export default function Locations() {
           location={loc}
           occupancy={gatewayOccupancy}
           characters={characters}
+          locations={locations}
           onClose={() => setResidencyLocation(null)}
           onChanged={() => {
             queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
@@ -2051,6 +2084,7 @@ export default function Locations() {
           getNPCAge={getNPCAge}
           currentUser={currentUser}
           userSettings={userSettings}
+          sharedOccupancy={gatewayOccupancy}
         />
       )}
     </React.Fragment>

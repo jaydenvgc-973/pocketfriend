@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Plus, X, Pencil, Trash2, UserPlus, ArrowRight } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 
+const UNKNOWN_NAME = "Unknown resident";
+
 /**
  * ApartmentManager — manages apartments within a Building venue type.
  *
@@ -26,6 +28,7 @@ export default function ApartmentManager({
   addPlaceholder = "e.g. Apartment 1, Unit 4B...",
   emptyHint = "Add residents to the building first, then create apartments to organize them.",
   maxUnits = 0,
+  nameById = {},
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -42,6 +45,7 @@ export default function ApartmentManager({
   const unassignedIds = (residentCharacterIds || []).filter(id => !assignedIds.has(id));
 
   const resolveChar = (id) => allCharacters.find(c => c.id === id);
+  const resolveName = (id) => resolveChar(id)?.name || nameById[id] || UNKNOWN_NAME;
 
   const generateUnitId = () => {
     if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
@@ -200,7 +204,7 @@ export default function ApartmentManager({
                               ?
                             </div>
                           )}
-                          <span className="text-xs text-foreground flex-1">{char?.name || charId}</span>
+                          <span className="text-xs text-foreground flex-1">{resolveName(charId)}</span>
                           {/* Move dropdown */}
                           {units.length > 1 && (
                             <select
@@ -246,7 +250,7 @@ export default function ApartmentManager({
                               {char ? <CharacterAvatar character={char} size="sm" /> : (
                                 <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[8px] font-bold text-muted-foreground flex-shrink-0">?</div>
                               )}
-                              <span className="text-xs text-foreground">{char?.name || charId}</span>
+                              <span className="text-xs text-foreground">{resolveName(charId)}</span>
                             </button>
                           );
                         })}
@@ -317,7 +321,7 @@ export default function ApartmentManager({
               return (
                 <div key={charId} className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-secondary/60 border border-border">
                   {char?.avatar_url && <img src={char.avatar_url} alt={char.name} className="w-3.5 h-3.5 rounded-full object-cover" />}
-                  <span className="text-[10px] text-muted-foreground">{char?.name || charId}</span>
+                  <span className="text-[10px] text-muted-foreground">{resolveName(charId)}</span>
                 </div>
               );
             })}

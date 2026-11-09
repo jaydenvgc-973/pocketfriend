@@ -310,7 +310,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 {workerIds.map(id => {
                     const isUser = id === currentUserId;
                     const char = isUser ? null : characters.find(c => c.id === id);
-                    const displayName = isUser ? (currentUserEmail || 'You') : (char?.name || (id.length > 20 ? 'Unknown Employee' : id));
+                    const displayName = isUser ? (currentUserEmail || 'You') : (char?.name || 'Unknown character');
                     const jobTitle = location.worker_job_titles?.[id];
                     const payRate = location.worker_pay_rates?.[id];
                     const payType = location.worker_pay_type?.[id] || 'hourly';
@@ -439,7 +439,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 return (
                   <div key={id} className="flex items-center gap-2 py-0.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{char?.name || (id.length > 20 ? 'Unknown Employee' : id)}</span>
+                    <span className="text-xs text-foreground">{char?.name || 'Unknown character'}</span>
                     {location.worker_job_titles?.[id] && (
                      <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
                     )}
@@ -536,7 +536,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                 return (
                   <div key={id} className="flex items-center gap-2 py-0.5">
                     <div className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
-                    <span className="text-xs text-foreground">{char?.name || (id.length > 20 ? 'Unknown Employee' : id)}</span>
+                    <span className="text-xs text-foreground">{char?.name || 'Unknown character'}</span>
                     {location.worker_job_titles?.[id] && (
                      <span className="text-[10px] text-muted-foreground ml-auto">{location.worker_job_titles[id]}</span>
                     )}

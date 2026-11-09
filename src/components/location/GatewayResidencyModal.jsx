@@ -5,6 +5,7 @@ import { X, Building, AlertCircle, Check } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import { describeCharacterResidence } from "@/lib/residenceDisplay";
 
 /**
  * GatewayResidencyModal — the ONE thing a non-owner may do at the shared
@@ -14,7 +15,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
  * stays with the administrator. Units are only ever chosen from the existing
  * list; nothing structural is created, renamed or removed from here.
  */
-export default function GatewayResidencyModal({ location, occupancy, characters = [], onClose, onChanged }) {
+export default function GatewayResidencyModal({ location, occupancy, characters = [], locations = [], onClose, onChanged }) {
   const units = occupancy?.units || [];
   const residents = occupancy?.residents || [];
   const maxResidents = Number(occupancy?.max_residents) || 0;
@@ -128,7 +129,7 @@ export default function GatewayResidencyModal({ location, occupancy, characters 
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {characters.map(char => {
                 const isSelected = selectedIds.includes(char.id);
-                const currentUnit = residents.find(r => r.id === char.id)?.unit_name;
+                const residence = describeCharacterResidence(char, locations, location?.id);
                 return (
                   <button
                     key={char.id}
@@ -141,9 +142,7 @@ export default function GatewayResidencyModal({ location, occupancy, characters 
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">{char.name}</p>
                       <p className="text-[10px] text-muted-foreground">
-                        {char.current_home_location_id === location?.id
-                          ? (currentUnit ? `Lives here · ${currentUnit}` : "Lives here")
-                          : "Not living here"}
+                        {residence.label}
                       </p>
                     </div>
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
