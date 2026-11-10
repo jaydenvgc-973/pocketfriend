@@ -12,10 +12,25 @@ Deno.serve(async (req) => {
       narrative_trigger,
       shiftContext = null,
     } = body;
-    // A completed scheduled shift is signalled by the existing enforcement pathway.
+    // A completed scheduled activity is signalled by the existing enforcement path.
     // `trigger` is a reserved key in a mediated server-to-server invoke, so the
-    // caller also names the same completed-shift occurrence in narrative_trigger.
+    // caller also names the same completed occurrence in narrative_trigger.
     const trigger = narrative_trigger || triggerParam;
+
+    // ── SCHEDULE COMPLETION OCCURRENCES ──────────────────────────────────────
+    // The existing scheduled-activity mechanism (work shift, school day, class,
+    // or the return-home transition it commits) has just reached its established
+    // boundary and hands that ONE occurrence here. A completed scheduled activity
+    // is a discrete occurrence, not a repeating instance of an ongoing state: the
+    // interval and same-instance gates exist to stop the SAME ongoing state being
+    // re-narrated, and they must never swallow a completed scheduled activity.
+    // Location type is irrelevant — the boundary is the trigger.
+    const isWorkEnd = trigger === 'work_end';
+    const isSchoolEnd = trigger === 'school_end' || trigger === 'class_end';
+    const isReturnHome = trigger === 'return_home';
+    const isScheduleCompletion = isWorkEnd || isSchoolEnd;
+    const isDiscreteOccurrence = isScheduleCompletion || isReturnHome;
+    const completionEventType = isWorkEnd ? 'work_end' : isSchoolEnd ? 'school_end' : isReturnHome ? 'return_home' : 'passive_time';
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -60,19 +75,32 @@ Deno.serve(async (req) => {
 
     console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
 
-    // SCHEDULED SHIFT COMPLETION is a discrete occurrence, not a repeating
-    // instance: the existing enforcement pathway detected that the character's
-    // scheduled shift reached its end time and handed that occurrence here.
-    // It must not be suppressed by the interval or same-instance gates — those
-    // exist to stop the same ongoing state being re-narrated, and a completed
-    // shift is exactly the transition they must not swallow.
-    const isWorkEnd = trigger === 'work_end';
-
-    // ── CHECK INTERVAL (skip for manual triggers) ─────────────────────────
+    // ── CHECK INTERVAL (skip for manual triggers and discrete occurrences) ──
     const NOW = new Date();
     const isManual = trigger === 'manual_right_now';
 
-    if (!forceGenerate && !isManual && !isWorkEnd) {
+    // ONE OCCURRENCE, ONE NARRATIVE. The enforcement path fires this once per
+    // established schedule boundary. A second delivery of that same boundary
+    // (a duplicate workflow invoke, a retried call) must not write a second
+    // narrative for the same completed activity.
+    if (isDiscreteOccurrence) {
+      const _dupWindowMs = 5 * 60 * 1000;
+      const _recentSame = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+        { character_id: characterId, event_type: completionEventType },
+        '-timestamp',
+        1
+      ).catch(() => []);
+      const _recent = _recentSame?.[0];
+      if (_recent?.timestamp && (NOW.getTime() - new Date(_recent.timestamp).getTime()) < _dupWindowMs) {
+        console.log(`[generateAutomaticNarrative] ⏭️ Skipped: ${completionEventType} already narrated at ${_recent.timestamp}`);
+        return Response.json({
+          success: false, skipped: true, reason: 'duplicate_occurrence',
+          event_type: completionEventType, lastNarrativeTime: _recent.timestamp,
+        });
+      }
+    }
+
+    if (!forceGenerate && !isManual && !isDiscreteOccurrence) {
       const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
         { character_id: characterId },
         '-timestamp',
@@ -310,10 +338,10 @@ Deno.serve(async (req) => {
     // entry when the character is still at work/school creates duplicate entries.
     // Skip if: same location, same sleep/work/travel state, within 60 minutes,
     // AND no manual trigger (manual_right_now always generates).
-    // A completed scheduled shift always generates: presence can still read
-    // 'at_work' when the shift ends, so the state comparison would otherwise
-    // treat the shift end as "unchanged" and drop the narrative.
-    if (!isManual && !isWorkEnd) {
+    // A completed scheduled activity always generates: presence can still read
+    // 'at_work' / 'at_school' when the activity ends, so the state comparison
+    // would otherwise treat the completion as "unchanged" and drop the narrative.
+    if (!isManual && !isDiscreteOccurrence) {
       try {
         const lastTwoNarrs = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
           { character_id: characterId },
@@ -550,6 +578,30 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the shift.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
 - Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
+    }
+
+    // SCHEDULED SCHOOL / CLASS COMPLETION overrides the school-state framing with
+    // the same rule: the completed activity is the fact, the authoritative location
+    // is where they are — never a destination this narrative invents.
+    if (isSchoolEnd) {
+      const _schoolLabel = trigger === 'class_end' ? 'scheduled class' : 'school day';
+      situationBlock = `SITUATION: ${character.name}'s ${_schoolLabel} has ENDED for today.
+- The scheduled school activity is COMPLETE. Classes are over.
+- Do NOT describe ${character.name} as still in class, still on campus studying, still in a lecture, or in the middle of schoolwork.
+- Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the ${_schoolLabel} ends.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
+- Write the first moments after it ends: what they do immediately after, how the day settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
+    }
+
+    // RETURN HOME — the existing scheduled transition committed an actual arrival.
+    // The narrative describes that transition because it really happened; it never
+    // invents a commute or a homecoming that did not occur.
+    if (isReturnHome) {
+      situationBlock = `SITUATION: ${character.name} has RETURNED HOME. The scheduled activity ended and the existing transition committed their arrival at ${resolvedLocationName}.
+- They are physically here now. This is a completed transition, not a journey in progress.
+- Do NOT describe them commuting, in transit, between places, or still on their way.
+- Do NOT place them back at work, school, or anywhere other than ${resolvedLocationName}.
+- Write the first moments after arriving home: settling back in, the ordinary details of being back.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -1346,7 +1398,7 @@ If no actions occur, return empty action_effects array.`;
       character_name: character.name,
       owner_user_id: ownerUser,
       owner_email: ownerEmail,
-      event_type: isWorkEnd ? 'work_end' : 'passive_time',
+      event_type: completionEventType,
       narrative_text: narrativeText,
       memory_summary: memorySummary,
       timestamp: NOW.toISOString(),
@@ -1358,6 +1410,7 @@ If no actions occur, return empty action_effects array.`;
       sleep_state: isAsleep ? 'asleep' : 'awake',
       travel_state: isTraveling ? 'traveling' : 'at_location',
       work_state: isWorkEnd ? 'off_work' : workState,
+
       needs_snapshot: updatedNeeds,
       emotional_state: character.emotional_state || 'calm',
       triggered_by: isManual ? 'manual' : 'scheduled',

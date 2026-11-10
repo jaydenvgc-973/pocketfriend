@@ -809,6 +809,23 @@ Deno.serve(async (req) => {
               }
             } catch (e) { /* non-fatal — movement already committed */ }
           }
+          // ── THE RETURN-HOME TRANSITION IS THE TRIGGER ─────────────────────
+          // The existing work-end pathway just committed an actual arrival at the
+          // character's home. That committed transition — not the schedule alone —
+          // is what the return-home narrative describes. If nothing moved, no
+          // return-home narrative is written.
+          const _committedHomeId = authRes?.committed_result?.resolved_current_location_id || null;
+          if (authRes?.disposition === 'accepted' && _committedHomeId && _committedHomeId === character.current_home_location_id && resolvedLocId !== _committedHomeId) {
+            try {
+              const _homeRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+                characterId,
+                narrative_trigger: 'return_home',
+              });
+              _shiftEndNarrative = { ...(_shiftEndNarrative || {}), return_home: _homeRes?.data || _homeRes || null };
+            } catch (_homeErr) {
+              console.error(`[enforceCharacterWorkSchedule] ${character.name}: return-home narrative FAILED — ${_homeErr.message}`);
+            }
+          }
           return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false, shift_end_narrative: _shiftEndNarrative, next_execution_time: singleNextExecTime });
         }
       }

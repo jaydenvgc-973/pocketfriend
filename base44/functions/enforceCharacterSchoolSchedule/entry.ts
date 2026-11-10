@@ -157,6 +157,7 @@ Deno.serve(async (req) => {
       // schedule change. The validation converts the expected occurrence to Eastern
       // Time and checks whether the current school schedule has a boundary (start or
       // end) at that exact ET time on that day.
+      let _isEndBoundary = false;
       if (expected_occurrence_time) {
         const _expectedDate = new Date(expected_occurrence_time);
         const _expEtStr = _expectedDate.toLocaleString('en-US', {
@@ -182,6 +183,9 @@ Deno.serve(async (req) => {
         if (!((_expSchedule.startMin === _expMin || _expSchedule.endMin === _expMin) && _expIsValidDay)) {
           return Response.json({ updated: false, reason: 'stale_occurrence_superseded', expected_occurrence_time, next_execution_time: null });
         }
+        // This run IS the school day's established end boundary, resolved from the
+        // same enrollment/operating-hours schedule used for every school transition.
+        _isEndBoundary = _expSchedule.endMin === _expMin;
       }
 
       let updated = false;
