@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { X, Sparkles, Send, Check, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildPhotoGenerationPrompt, extractPhotoAvatarUrls, validatePhotoGenerationInput, logPhotoGenerationState } from "@/lib/scenePhotoIdentityLock";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
+import ImageShareSelector from "@/components/sharing/ImageShareSelector";
+import { buildOwnShareCharacters, loadCrossAccountContacts, alphabetizeByName } from "@/lib/imageShareCharacters";
 
 export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage, excludeUser = false }) {
   // Build the full selectable participant list from the canonical scene list (same source as Who's here)
@@ -24,6 +26,30 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sendError, setSendError] = useState(null);
+  const [senderId, setSenderId] = useState("user");
+  const [otherAccountCharacters, setOtherAccountCharacters] = useState([]);
+
+  // Recipients use the same alphabetical order and account labels everywhere.
+  const ownShareCharacters = buildOwnShareCharacters((allCharacters || []).filter(c => !c.isNpc), currentUser?.email);
+  const senderOptions = [
+    { id: "user", name: displayName, avatar_url: excludeUser ? null : (currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null) },
+    ...ownShareCharacters,
+  ];
+
+  const characterKey = (allCharacters || []).map(c => c.id).sort().join(",");
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    let cancelled = false;
+    loadCrossAccountContacts({
+      characterRecords: (allCharacters || []).filter(c => !c.isNpc),
+      ownerEmail: currentUser.email,
+      excludeIds: ownShareCharacters.map(c => c.id),
+    })
+      .then(list => { if (!cancelled) setOtherAccountCharacters(list); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [characterKey, currentUser?.email]);
 
   const generatePrompt = async () => {
     setIsGeneratingPrompt(true);
@@ -127,44 +153,72 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     }
   };
 
+  const allShareRecipients = [...ownShareCharacters, ...otherAccountCharacters];
+
   const sendToChats = async () => {
     if (!generatedImage || recipients.length === 0) return;
     setIsSending(true);
+    setSendError(null);
 
-    for (const charId of recipients) {
-      const char = allCharacters.find(c => c.id === charId);
-      if (!char) continue;
+    const senderIsUser = senderId === "user";
+    const senderCharacter = ownShareCharacters.find(c => c.id === senderId) || null;
+    const caption = prompt.trim() || `A photo from ${location.name}`;
 
-      // CANONICAL RESOLVER: Use the single authoritative conversation-identity
-      // resolver shared with Chat loading and forwarding. This guarantees the
-      // image is written to the same conversation the Chat page will load —
-      // no inline duplicate filters, no divergence.
-      const convoId = await resolveOrCreateConversation({
-        characterId: charId,
-        characterName: char.name,
-        chatType: "direct",
-        ownerEmail: currentUser.email,
-      });
+    try {
+      for (const personId of recipients) {
+        const person = allShareRecipients.find(p => p.id === personId);
+        if (!person || person.id === senderId) continue;
 
-      // Create image message in chat
-      await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "user",
-        content: `📸 from ${location.name}`,
-        image_url: generatedImage,
-        timestamp: new Date().toISOString(),
-      });
+        if (senderIsUser) {
+          // User-sent image — unchanged existing chat delivery path.
+          if (person.is_other_account) continue;
+          const convoId = await resolveOrCreateConversation({
+            characterId: person.id,
+            characterName: person.name,
+            chatType: "direct",
+            ownerEmail: currentUser.email,
+          });
 
-      // Update conversation preview
-      base44.entities.Conversation.update(convoId, {
-        last_message_preview: `📸 Photo from ${location.name}`,
-        last_message_date: new Date().toISOString(),
-      }).catch(() => {});
+          await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "user",
+            content: `📸 from ${location.name}`,
+            image_url: generatedImage,
+            timestamp: new Date().toISOString(),
+          });
+
+          base44.entities.Conversation.update(convoId, {
+            last_message_preview: `📸 Photo from ${location.name}`,
+            last_message_date: new Date().toISOString(),
+          }).catch(() => {});
+        } else {
+          // Character-sent image — the existing World Phone image pathway used by
+          // the Media Gallery, which is also the cross-account character pathway.
+          const res = await base44.functions.invoke("sendWorldPhoneMessage", {
+            sender_character_id: senderCharacter.id,
+            recipient_identifier: person.id,
+            requested_message: "",
+            image_url: generatedImage,
+            image_description: caption,
+            image_analysis_status: "complete",
+            image_analysis_is_transport_metadata: false,
+            message_type: "image",
+            source: "scene_image_share",
+            owner_email: currentUser?.email,
+          });
+          if (!res?.data?.success) {
+            throw new Error(res?.data?.error || `Could not send to ${person.name}`);
+          }
+        }
+      }
+
+      setSent(true);
+      setTimeout(onClose, 1200);
+    } catch (err) {
+      setSendError(err.message || "Send failed");
+    } finally {
+      setIsSending(false);
     }
-
-    setIsSending(false);
-    setSent(true);
-    setTimeout(onClose, 1500);
   };
 
   return (
@@ -193,7 +247,7 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
                 <Check className="w-3 h-3" /> {displayName}
               </button>
             )}
-            {allSceneParticipants.map(char => (
+            {alphabetizeByName(allSceneParticipants).map(char => (
               <button
                 key={char.id}
                 onClick={() => toggleParticipant(char.id)}
@@ -243,24 +297,21 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
           </div>
         )}
 
-        {/* Recipients */}
+        {/* Sender + recipients */}
         {generatedImage && (
           <div>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Send to</p>
-            <div className="flex flex-wrap gap-2">
-              {allCharacters.filter(c => !c.isNpc).map(char => (
-                <button
-                  key={char.id}
-                  onClick={() => toggleRecipient(char.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs border transition-colors ${
-                    recipients.includes(char.id) ? "bg-primary/10 border-primary text-primary" : "bg-card border-border text-muted-foreground"
-                  }`}
-                >
-                  {recipients.includes(char.id) && <Check className="w-3 h-3" />}
-                  {char.name}
-                </button>
-              ))}
-            </div>
+            <ImageShareSelector
+              senders={senderOptions}
+              senderId={senderId}
+              onSenderChange={setSenderId}
+              ownCharacters={ownShareCharacters}
+              otherAccountCharacters={otherAccountCharacters}
+              selectedIds={recipients}
+              onToggle={toggleRecipient}
+              disabled={isSending || sent}
+              userLabel={displayName}
+            />
+            {sendError && <p className="text-xs text-destructive mt-2">{sendError}</p>}
             <Button
               onClick={sendToChats}
               disabled={isSending || recipients.length === 0 || sent}

@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Share2, Send, Users, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { base44 } from "@/api/base44Client";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
+import ImageShareSelector from "@/components/sharing/ImageShareSelector";
+import { alphabetizeByName } from "@/lib/imageShareCharacters";
 
 /**
  * GatheringRoomImageShare
@@ -15,16 +16,14 @@ import { resolveOrCreateConversation } from "@/lib/conversationResolver";
  *   1. "Share to Room" — sends the image as a GatheringRoomMessage with
  *      image_url. All room participants see it in the live room transcript.
  *      Uses the existing sendGatheringRoomMessage backend function.
- *   2. "Send to Character" — resolves/creates the canonical direct conversation
- *      with a character (via resolveOrCreateConversation) and sends the image
- *      as a Message with image_url. Uses the exact same chat delivery path
- *      as normal Chat/Text image sends.
- *
- * Recipients:
- *   - Room participants (other users' characters visible in the room)
- *   - Characters the user came with (from mySession.character_ids)
- *   - The room itself (all participants see it)
+ *   2. "Send to Character" — the existing sender selection applies: the image is
+ *      sent either as the user (canonical direct conversation, as before) or as
+ *      one of the user's characters through the existing World Phone image
+ *      pathway, which is also how characters reach characters on another account.
  */
+
+const sortByName = (list) => alphabetizeByName(list);
+
 export default function GatheringRoomImageShare({
   imageUrl,
   roomName,
@@ -36,8 +35,31 @@ export default function GatheringRoomImageShare({
   const [caption, setCaption] = useState("");
   const [sendingTo, setSendingTo] = useState(null); // 'room' | character_id | null
   const [error, setError] = useState(null);
+  const [user, setUser] = useState(null);
+  const [senderId, setSenderId] = useState("user");
+  const [recipients, setRecipients] = useState([]);
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {});
+  }, []);
 
   if (!imageUrl) return null;
+
+  const ownCharacters = sortByName(myCharacters || []);
+  const otherAccountCharacters = sortByName(
+    (roomParticipants || [])
+      .filter((p) => !p.is_self && !p.is_owned && p.participant_name && p.participant_type !== "user")
+      .map((p) => ({ id: p.participant_id || p.id, name: p.participant_name, avatar_url: p.avatar_url || null, is_other_account: true }))
+  );
+
+  const senderOptions = [
+    { id: "user", name: user?.full_name || "You", avatar_url: null },
+    ...ownCharacters,
+  ];
+  const allRecipients = [...ownCharacters, ...otherAccountCharacters];
+
+  const toggleRecipient = (id) =>
+    setRecipients((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const handleShareToRoom = async () => {
     setSendingTo("room");
@@ -55,40 +77,65 @@ export default function GatheringRoomImageShare({
     setSendingTo(null);
   };
 
-  const handleSendToCharacter = async (characterId, characterName) => {
-    setSendingTo(characterId);
+  const handleSend = async () => {
+    if (recipients.length === 0) return;
     setError(null);
+    setSendingTo("characters");
+
+    const senderIsUser = senderId === "user";
+    const senderCharacter = ownCharacters.find((c) => c.id === senderId) || null;
+
     try {
-      const me = await base44.auth.me();
-      if (!me?.email) throw new Error("Not authenticated");
+      for (const personId of recipients) {
+        const person = allRecipients.find((p) => p.id === personId);
+        if (!person || person.id === senderId) continue;
 
-      const conversationId = await resolveOrCreateConversation({
-        characterId,
-        characterName,
-        chatType: "direct",
-        ownerEmail: me.email,
-      });
+        if (senderIsUser) {
+          // User-sent image — unchanged existing chat delivery path.
+          if (person.is_other_account) continue;
+          const me = user || (await base44.auth.me());
+          if (!me?.email) throw new Error("Not authenticated");
 
-      await base44.entities.Message.create({
-        conversation_id: conversationId,
-        sender_type: "user",
-        content: caption.trim() || `Shared a moment from ${roomName}`,
-        image_url: imageUrl,
-        timestamp: new Date().toISOString(),
-      });
+          const conversationId = await resolveOrCreateConversation({
+            characterId: person.id,
+            characterName: person.name,
+            chatType: "direct",
+            ownerEmail: me.email,
+          });
+
+          await base44.entities.Message.create({
+            conversation_id: conversationId,
+            sender_type: "user",
+            content: caption.trim() || `Shared a moment from ${roomName}`,
+            image_url: imageUrl,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          // Character-sent image — existing World Phone image pathway.
+          const res = await base44.functions.invoke("sendWorldPhoneMessage", {
+            sender_character_id: senderCharacter.id,
+            recipient_identifier: person.id,
+            requested_message: "",
+            image_url: imageUrl,
+            image_description: caption.trim() || `Shared a moment from ${roomName}`,
+            image_analysis_status: "complete",
+            image_analysis_is_transport_metadata: false,
+            message_type: "image",
+            source: "gathering_room_image_share",
+            owner_email: user?.email,
+          });
+          if (!res?.data?.success) {
+            throw new Error(res?.data?.error || `Failed to send to ${person.name}`);
+          }
+        }
+      }
 
       onClose();
     } catch (err) {
-      setError(err?.message || `Failed to send to ${characterName}`);
+      setError(err?.message || "Failed to send image");
     }
     setSendingTo(null);
   };
-
-  // Build recipient list: user's own characters + other room participants' characters
-  const ownCharacterRecipients = myCharacters || [];
-  const otherRoomCharacters = (roomParticipants || [])
-    .filter((p) => !p.is_self && !p.is_owned && p.participant_name)
-    .map((p) => ({ id: p.id, name: p.participant_name }));
 
   return (
     <AnimatePresence>
@@ -103,7 +150,7 @@ export default function GatheringRoomImageShare({
           initial={{ y: 50 }}
           animate={{ y: 0 }}
           exit={{ y: 50 }}
-          className="bg-card border border-border rounded-2xl w-full max-w-sm max-h-[80vh] overflow-hidden flex flex-col"
+          className="bg-card border border-border rounded-2xl w-full max-w-sm max-h-[85vh] overflow-hidden flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -137,9 +184,8 @@ export default function GatheringRoomImageShare({
             />
           </div>
 
-          {/* Recipients */}
           <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-3">
-            {/* Share to Room */}
+            {/* Share to Room — unchanged */}
             <div>
               <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
                 <Users className="w-3 h-3" /> Share to Room
@@ -152,8 +198,8 @@ export default function GatheringRoomImageShare({
                 <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                   <Users className="w-4 h-4 text-primary" />
                 </div>
-                <div className="flex-1 text-left">
-                  <p className="text-sm font-medium">Everyone in {roomName || "Room"}</p>
+                <div className="flex-1 text-left min-w-0">
+                  <p className="text-sm font-medium truncate">Everyone in {roomName || "Room"}</p>
                   <p className="text-[10px] text-muted-foreground">All participants see it here</p>
                 </div>
                 {sendingTo === "room" ? (
@@ -164,73 +210,35 @@ export default function GatheringRoomImageShare({
               </button>
             </div>
 
-            {/* User's own characters */}
-            {ownCharacterRecipients.length > 0 && (
-              <div>
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                  Your Characters
-                </p>
-                <div className="space-y-1">
-                  {ownCharacterRecipients.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => handleSendToCharacter(c.id, c.name)}
-                      disabled={sendingTo !== null}
-                      className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-secondary transition-colors disabled:opacity-50"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden">
-                        {c.avatar_url ? (
-                          <img src={c.avatar_url} alt={c.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                        )}
-                      </div>
-                      <span className="text-sm flex-1 text-left">{c.name}</span>
-                      {sendingTo === c.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                      ) : (
-                        <Send className="w-3.5 h-3.5 text-muted-foreground" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Other room participants' characters */}
-            {otherRoomCharacters.length > 0 && (
-              <div>
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                  Others in Room
-                </p>
-                <div className="space-y-1">
-                  {otherRoomCharacters.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => handleSendToCharacter(c.id, c.name)}
-                      disabled={sendingTo !== null}
-                      className="w-full flex items-center gap-2 p-2 rounded-lg hover:bg-secondary transition-colors disabled:opacity-50"
-                    >
-                      <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden">
-                        <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                      </div>
-                      <span className="text-sm flex-1 text-left">{c.name}</span>
-                      {sendingTo === c.id ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-                      ) : (
-                        <Send className="w-3.5 h-3.5 text-muted-foreground" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Send to a character — sender + alphabetical recipient list */}
+            <div>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
+                Send to a character
+              </p>
+              <ImageShareSelector
+                senders={senderOptions}
+                senderId={senderId}
+                onSenderChange={setSenderId}
+                ownCharacters={ownCharacters}
+                otherAccountCharacters={otherAccountCharacters}
+                selectedIds={recipients}
+                onToggle={toggleRecipient}
+                disabled={sendingTo !== null}
+                userLabel={user?.full_name || "You"}
+              />
+              <button
+                onClick={handleSend}
+                disabled={sendingTo !== null || recipients.length === 0}
+                className="w-full mt-2 flex items-center justify-center gap-2 p-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+              >
+                {sendingTo === "characters" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {sendingTo === "characters" ? "Sending..." : `Send${recipients.length > 0 ? ` (${recipients.length})` : ""}`}
+              </button>
+            </div>
           </div>
 
           {error && (
-            <div className="px-4 py-2 text-[10px] text-destructive border-t border-border">
-              {error}
-            </div>
+            <div className="px-4 py-2 text-[10px] text-destructive border-t border-border">{error}</div>
           )}
         </motion.div>
       </motion.div>
