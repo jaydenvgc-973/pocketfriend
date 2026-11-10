@@ -198,7 +198,6 @@ Deno.serve(async (req) => {
         timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
       }).format(d);
       const _deliverShiftCompletion = async (occurrenceKey, shiftEndLabel) => {
-        console.log(`[diag-deliver] enter key=${occurrenceKey} lease=${_lease?.id || 'none'} last=${_lease?.last_completion_occurrence || 'none'}`);
         if (_lease?.last_completion_occurrence === occurrenceKey) {
           return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
         }
@@ -216,7 +215,6 @@ Deno.serve(async (req) => {
         } catch (e) {
           res = { success: false, error: e.message };
         }
-        console.log(`[diag-deliver] result=${JSON.stringify(res)?.slice(0, 400)}`);
         if (res?.success === true && _lease?.id) {
           await base44.asServiceRole.entities.ScheduleLoopLease
             .update(_lease.id, { last_completion_occurrence: occurrenceKey })
@@ -496,7 +494,6 @@ Deno.serve(async (req) => {
             }
           }
         }
-        console.log(`[diag-boundary] expMin=${_expMin} isShiftEnd=${_occurrenceIsShiftEnd} matchedEnd=${_matchedShiftEnd} jobs=${singleOrderedJobs.length} valid=${_occurrenceValid}`);
         if (!_occurrenceValid) {
           return Response.json({
             updated: false,

@@ -332,7 +332,9 @@ Deno.serve(async (req) => {
       // that committed transition instead of a bare "classes ended".
       let _schoolEndNarrative = null;
       if (_isEndBoundary) {
-        const _eventType = schedule.source === 'enrollment_override' ? 'class_end' : 'school_end';
+        // The completed school activity is named with the canonical event type the
+        // narrative pathway recognizes, whatever schedule source resolved it.
+        const _eventType = 'school_end';
         _schoolEndNarrative = await _deliverSchoolCompletion(_boundaryOccurrenceKey, _eventType);
         if (_schoolEndNarrative?.success !== true) {
           console.error(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative FAILED at ${expected_occurrence_time} — ${_schoolEndNarrative?.error || _schoolEndNarrative?.reason || 'unknown'}`);
