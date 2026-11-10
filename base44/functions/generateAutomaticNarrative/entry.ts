@@ -14,8 +14,9 @@ Deno.serve(async (req) => {
     } = body;
     // A completed scheduled activity is signalled by the existing enforcement path.
     // `trigger` is a reserved key in a mediated server-to-server invoke, so the
-    // caller also names the same completed occurrence in narrative_trigger.
-    const trigger = narrative_trigger || triggerParam;
+    // caller also names the same completed occurrence in narrative_trigger, and
+    // again in completion_event so the occurrence is never lost to payload routing.
+    const trigger = narrative_trigger || body?.completion_event || triggerParam;
 
     // ── SCHEDULE COMPLETION OCCURRENCES ──────────────────────────────────────
     // The existing scheduled-activity mechanism (work shift, school day, class,

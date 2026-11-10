@@ -261,7 +261,9 @@ Deno.serve(async (req) => {
         try {
           const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
             characterId: targetCharId,
+            forceGenerate: true,
             narrative_trigger: _trigger,
+            completion_event: _trigger,
           });
           _schoolEndNarrative = _narrRes?.data || _narrRes || null;
         } catch (_narrErr) {

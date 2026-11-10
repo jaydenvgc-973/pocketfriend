@@ -448,6 +448,7 @@ Deno.serve(async (req) => {
               forceGenerate: true,
               trigger: 'work_end',
               narrative_trigger: 'work_end',
+              completion_event: 'work_end',
               shiftContext: { shift_end_time: _matchedShiftEnd },
             });
             _shiftEndNarrative = _narrRes?.data || _narrRes || null;
@@ -491,7 +492,9 @@ Deno.serve(async (req) => {
           try {
             const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
               characterId,
+              forceGenerate: true,
               narrative_trigger: 'work_end',
+              completion_event: 'work_end',
               shiftContext: { shift_end_time: _jobShift.end },
             });
             _shiftEndNarrative = _narrRes?.data || _narrRes || null;
@@ -864,7 +867,9 @@ Deno.serve(async (req) => {
             try {
               const _homeRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
                 characterId,
+                forceGenerate: true,
                 narrative_trigger: 'return_home',
+                completion_event: 'return_home',
               });
               _shiftEndNarrative = { ...(_shiftEndNarrative || {}), return_home: _homeRes?.data || _homeRes || null };
             } catch (_homeErr) {
