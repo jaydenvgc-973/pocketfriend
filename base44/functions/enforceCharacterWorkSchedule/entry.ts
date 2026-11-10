@@ -221,6 +221,19 @@ Deno.serve(async (req) => {
             .catch(() => {});
           _lease.last_completion_occurrence = occurrenceKey;
         }
+        // The completed shift is what was recorded. The narrative record is read
+        // back and, if it was labeled as anything other than this completion, it is
+        // corrected to the completion it actually is — a finished shift is never
+        // left recorded as passive time.
+        if (res?.success === true && res?.narrativeId) {
+          const _rec = await base44.asServiceRole.entities.CharacterAutomaticNarrative
+            .get(res.narrativeId).catch(() => null);
+          if (_rec && _rec.event_type !== 'work_end') {
+            await base44.asServiceRole.entities.CharacterAutomaticNarrative
+              .update(res.narrativeId, { event_type: 'work_end' }).catch(() => {});
+            res.event_type_corrected = true;
+          }
+        }
         return res;
       };
 

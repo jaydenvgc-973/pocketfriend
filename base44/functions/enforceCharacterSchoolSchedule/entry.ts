@@ -165,6 +165,19 @@ Deno.serve(async (req) => {
             .catch(() => {});
           _lease.last_completion_occurrence = occurrenceKey;
         }
+        // The completed school day (or class) is what was recorded. The narrative
+        // record is read back and, if it was labeled as anything other than this
+        // completion, it is corrected — a finished school day is never left
+        // recorded as passive time.
+        if (res?.success === true && res?.narrativeId) {
+          const _rec = await base44.asServiceRole.entities.CharacterAutomaticNarrative
+            .get(res.narrativeId).catch(() => null);
+          if (_rec && _rec.event_type !== eventType) {
+            await base44.asServiceRole.entities.CharacterAutomaticNarrative
+              .update(res.narrativeId, { event_type: eventType }).catch(() => {});
+            res.event_type_corrected = true;
+          }
+        }
         return res;
       };
 
