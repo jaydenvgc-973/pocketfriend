@@ -1,35 +1,26 @@
 {
+  "name": "Work Schedule Enforcement",
+  "description": "Execution-only Workflow. Fires when a character's authoritative employment configuration or presence status changes and runs enforceCharacterWorkSchedule immediately, which routes the character where the schedule says they belong, wakes them for a shift, and records the schedule's next established boundary. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
   "definition": {
     "document": {
       "dsl": "1.0.0",
       "name": "work_schedule_enforcement",
-      "version": "5.0",
+      "version": "4.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "classify_update": {
-          "switch": [
-            {
-              "when": "${ any((.trigger.changed_fields // [])[]; IN(\"work_start_time\",\"work_end_time\",\"work_days\",\"occupation_location_id\",\"additional_occupation_locations\",\"work_details\",\"resolved_presence_status\")) }",
-              "then": "enforce_schedule",
-              "x-base44": {
-                "title": "Schedule or presence changed"
-              }
-            },
-            {
-              "when": "${ true }",
-              "then": "arm_schedule"
-            }
-          ],
-          "x-base44": {
-            "title": "What changed",
-            "description": "Attendance change or unrelated update"
-          }
-        }
-      },
-      {
-        "enforce_schedule": {
+        "enforce": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterWorkSchedule",
@@ -46,39 +37,7 @@
             "description": "Routes per schedule and records the next boundary"
           }
         }
-      },
-      {
-        "arm_schedule": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterWorkSchedule",
-            "args": {
-              "event": {
-                "entity_id": "${ .trigger.entity_id }"
-              },
-              "system_mode": true,
-              "arm_only": true
-            }
-          },
-          "then": "end",
-          "x-base44": {
-            "title": "Record missing boundary",
-            "description": "Arms the recurring chain, moves nobody"
-          }
-        }
       }
     ]
-  },
-  "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Runs on every character update. When the update changed the authoritative employment configuration or presence status, it runs enforceCharacterWorkSchedule immediately, which routes the character where the schedule says they belong, wakes them for a shift, and records the schedule's next established boundary. When the update touched something unrelated (a need value, an activity, a memory), it records only the missing boundary \u2014 no moving, no attendance, no narrative \u2014 so a schedule established before the chain existed still receives its next boundary and starts its own recurrence. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
-  "trigger": {
-    "condition": null,
-    "config": {
-      "trigger_type": "entity",
-      "events": [
-        "update"
-      ],
-      "entity_name": "Character"
-    }
   }
 }

@@ -1,35 +1,26 @@
 {
+  "name": "School Schedule Enforcement \u2014 Entity Trigger",
+  "description": "Fires when a character's school/enrollment fields or presence status change and runs enforceCharacterSchoolSchedule immediately, which routes the character to or from school per the authoritative schedule and records the schedule's next established boundary. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
+  "trigger": {
+    "condition": "${ ((.trigger.changed_fields | index(\"student_status\") != null) or (.trigger.changed_fields | index(\"education_location_id\") != null) or (.trigger.changed_fields | index(\"current_school_location_id\") != null) or (.trigger.changed_fields | index(\"education_enrollments\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
   "definition": {
     "document": {
       "dsl": "1.0.0",
       "name": "school_schedule_enforcement_entity_trigger",
-      "version": "5.0",
+      "version": "4.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "classify_update": {
-          "switch": [
-            {
-              "when": "${ any((.trigger.changed_fields // [])[]; IN(\"student_status\",\"education_location_id\",\"current_school_location_id\",\"education_enrollments\",\"resolved_presence_status\")) }",
-              "then": "enforce_schedule",
-              "x-base44": {
-                "title": "School or presence changed"
-              }
-            },
-            {
-              "when": "${ true }",
-              "then": "arm_schedule"
-            }
-          ],
-          "x-base44": {
-            "title": "What changed",
-            "description": "Attendance change or unrelated update"
-          }
-        }
-      },
-      {
-        "enforce_schedule": {
+        "enforce": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterSchoolSchedule",
@@ -45,38 +36,7 @@
             "description": "Routes per schedule and records the next boundary"
           }
         }
-      },
-      {
-        "arm_schedule": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterSchoolSchedule",
-            "args": {
-              "event": {
-                "entity_id": "${ .trigger.entity_id }"
-              },
-              "arm_only": true
-            }
-          },
-          "then": "end",
-          "x-base44": {
-            "title": "Record missing boundary",
-            "description": "Arms the recurring chain, moves nobody"
-          }
-        }
       }
     ]
-  },
-  "name": "School Schedule Enforcement \u2014 Entity Trigger",
-  "description": "Runs on every character update. When the update changed the authoritative school/enrollment configuration or presence status, it runs enforceCharacterSchoolSchedule immediately, which routes the student to or from school per the authoritative schedule and records the schedule's next established boundary. When the update touched something unrelated, it records only the missing boundary \u2014 no moving, no attendance, no narrative \u2014 so a schedule established before the chain existed still receives its next boundary and starts its own recurrence. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
-  "trigger": {
-    "condition": null,
-    "config": {
-      "trigger_type": "entity",
-      "events": [
-        "update"
-      ],
-      "entity_name": "Character"
-    }
   }
 }
