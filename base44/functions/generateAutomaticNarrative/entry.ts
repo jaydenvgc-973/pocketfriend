@@ -1360,6 +1360,7 @@ If no actions occur, return empty action_effects array.`;
       }
     }
 
+    console.log(`[diag-type] trigger=${trigger} workEnd=${isWorkEnd} schoolEnd=${isSchoolEnd} eventType=${completionEventType}`);
     // ── SAVE TO CharacterAutomaticNarrative (same table as automatic system) ──
     const narrative = await base44.asServiceRole.entities.CharacterAutomaticNarrative.create({
       character_id: characterId,
