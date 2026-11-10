@@ -535,17 +535,21 @@ Deno.serve(async (req) => {
           }
         }
       } else {
-        // ── THE BOUNDARY RUN IS THE COMPLETION EVENT ──────────────────────
-        // The durable schedule run lands exactly on the shift's established end
-        // time. No expected occurrence was echoed back, so the completed shift is
-        // read from the same per-job schedule resolution every transition uses:
-        // a job whose end time is this minute (within scheduler-drift tolerance)
-        // has just completed. Rabbit-hole and linked jobs alike — the boundary is
-        // the trigger, never the location type. A repeated run in the same minute
-        // cannot double-write: the narrative generator refuses a second narrative
-        // for the same completed occurrence.
-        const DRIFT_TOLERANCE_MIN = 2;
+        // ── THE COMPLETED SHIFT IS THE TRIGGER — OCCURRENCE, NEVER A CLOCK WINDOW ──
+        // The existing scheduling mechanism establishes that a job's scheduled end
+        // time for TODAY has passed, using the same per-job schedule resolution every
+        // transition uses (linked workplace or rabbit-hole, multi-job aware). That
+        // completed occurrence directly triggers the existing narrative generator.
+        // Delivery is keyed to the occurrence itself (Eastern day + that shift's end),
+        // so a run that observes the completion late still delivers it, while a repeat
+        // of the same occurrence is refused by the occurrence record. A clock window
+        // lost the completion permanently whenever no run landed inside it — that is
+        // the failure being corrected. Location type, presence status and movement are
+        // irrelevant here: a shift ending is not a movement instruction.
         const _clockMin = singleClock.getHours() * 60 + singleClock.getMinutes();
+        const _todayDow = singleClock.getDay();
+        const _yesterdayDow = (_todayDow + 6) % 7;
+        const _yesterdayET = new Date(singleNowET.getTime() - 86400000);
         for (const _job of singleOrderedJobs) {
           let _jobShift = _job.shift;
           if (_job.type === 'linked') {
@@ -554,23 +558,42 @@ Deno.serve(async (req) => {
             if (_locShift && _locShift.start && _locShift.end) _jobShift = _locShift;
           }
           if (!_jobShift || !_jobShift.start || !_jobShift.end) continue;
+          // A continuous all-day claim never genuinely completes.
+          if (isContinuousShift(_jobShift)) continue;
+          const [_jobStartH, _jobStartM] = _jobShift.start.split(':').map(Number);
           const [_endH, _endM] = _jobShift.end.split(':').map(Number);
+          const _jobStartMinutes = _jobStartH * 60 + _jobStartM;
           const _endMinutes = _endH * 60 + _endM;
-          let _drift = _clockMin - _endMinutes;
-          if (_drift < 0) _drift += 1440;
-          if (_drift > DRIFT_TOLERANCE_MIN) continue;
+          const _isCrossMidnight = _endMinutes < _jobStartMinutes;
           const _jobDays = _jobShift.days && _jobShift.days.length > 0 ? _jobShift.days : null;
-          // The boundary run happens AT the end moment, so the end belongs to today.
-          if (_jobDays && !_jobDays.includes(singleClock.getDay())) continue;
+
+          let _endReached = false;
+          let _occurrenceDay = null;
+          if (_isCrossMidnight) {
+            // Overnight shift: its end lands just after midnight, so the occurrence
+            // belongs to the shift's start day (yesterday) and is reached only while
+            // the clock sits between the end time and the start time.
+            if (_jobDays && !_jobDays.includes(_yesterdayDow)) continue;
+            _endReached = _clockMin >= _endMinutes && _clockMin < _jobStartMinutes;
+            _occurrenceDay = _etDay(_yesterdayET);
+          } else {
+            if (_jobDays && !_jobDays.includes(_todayDow)) continue;
+            _endReached = _clockMin >= _endMinutes;
+            _occurrenceDay = _etDay(singleNowET);
+          }
+          if (!_endReached) continue;
+
           _shiftEndNarrative = await _deliverShiftCompletion(
-            `work_end:${_etDay(singleNowET)}:${_jobShift.end}`,
+            `work_end:${_occurrenceDay}:${_jobShift.end}`,
             _jobShift.end
           );
-          if (_shiftEndNarrative?.success !== true) {
-            console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at clock boundary (end=${_jobShift.end}) — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
-          } else {
-            console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated at clock boundary (end=${_jobShift.end}, id=${_shiftEndNarrative.narrativeId})`);
+          if (_shiftEndNarrative?.success !== true && _shiftEndNarrative?.reason !== 'occurrence_already_delivered') {
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED (end=${_jobShift.end}) — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
+          } else if (_shiftEndNarrative?.success === true) {
+            console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated for completed shift (end=${_jobShift.end}, id=${_shiftEndNarrative.narrativeId})`);
           }
+          // One completed occurrence per run: successive runs deliver the remaining
+          // completions of the day, and the same occurrence is never delivered twice.
           break;
         }
       }
@@ -926,7 +949,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      return Response.json({ updated: false, reason: 'No schedule change needed', next_execution_time: singleNextExecTime });
+      return Response.json({ updated: false, reason: 'No schedule change needed', shift_end_narrative: _shiftEndNarrative, next_execution_time: singleNextExecTime });
     }
 
     // --- GLOBAL SCHEDULER MODE (no session) ---

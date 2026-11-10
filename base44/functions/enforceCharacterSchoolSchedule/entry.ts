@@ -152,6 +152,10 @@ Deno.serve(async (req) => {
           const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
             characterId: targetCharId,
             forceGenerate: true,
+            // The completion kind travels under every alias the narrative pathway
+            // recognises, matching the proven work-completion call — a completion must
+            // be GENERATED as a completion, never written as passive time and relabelled.
+            trigger: eventType,
             narrative_trigger: eventType,
             completion_event: eventType,
           });
@@ -272,18 +276,19 @@ Deno.serve(async (req) => {
           _boundaryOccurrenceKey = `school_end:${_expParsed[4]}-${_expParsed[2]}-${_expParsed[3]}:${_minToHHMM(_expSchedule.endMin)}`;
         }
       } else if (schedule.endMin !== null && isValidDay) {
-        // ── THE BOUNDARY RUN IS THE COMPLETION EVENT ──────────────────────────
-        // The durable schedule run lands exactly on the school day's established
-        // end time. No expected occurrence was echoed back, so the completed school
-        // day is read from the same authoritative schedule every school transition
-        // uses: the end time is this minute (within scheduler-drift tolerance).
-        // Location type is never a condition — the boundary is the trigger. A
-        // repeated run in the same minute cannot double-write: the narrative
-        // generator refuses a second narrative for the same completed occurrence.
-        const SCHOOL_DRIFT_TOLERANCE_MIN = 2;
-        let _endDrift = nowMin - schedule.endMin;
-        if (_endDrift < 0) _endDrift += 1440;
-        _isEndBoundary = _endDrift <= SCHOOL_DRIFT_TOLERANCE_MIN;
+        // ── THE COMPLETED SCHOOL DAY IS THE TRIGGER — OCCURRENCE, NOT A CLOCK WINDOW ──
+        // The existing school schedule mechanism establishes that today's school day
+        // (or class) has reached its established end time, using the same authoritative
+        // schedule every school transition uses. That completed occurrence directly
+        // triggers the existing narrative pathway. Delivery is keyed to the occurrence
+        // itself (Eastern day + that end time), so a run that observes the completion
+        // late still delivers it, while a repeat of the same occurrence is refused. A
+        // clock window lost the completion permanently whenever no run landed inside it.
+        // Location type, presence status and movement are never conditions here: a
+        // class ending is not a movement instruction. A class may end while the
+        // character remains in the same building, on campus, in a dormitory, or at an
+        // entirely different valid location — the completion still delivers.
+        _isEndBoundary = nowMin >= schedule.endMin;
         if (_isEndBoundary) {
           _boundaryOccurrenceKey = `school_end:${_etDay(now)}:${_minToHHMM(schedule.endMin)}`;
         }
