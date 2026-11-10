@@ -282,6 +282,13 @@ Deno.serve(async (req) => {
         return false;
       };
 
+      // A transient attendance state (protected recovery, callout) must never end the
+      // recurring chain. The schedule's next boundary is re-armed further below for
+      // every invocation, and the original result is returned after that. Attendance
+      // and the existence of the chain are independent facts.
+      let _blockedPayload = null;
+      let _calloutPayload = null;
+
       if (isBlockedFromWork(character)) {
         // The work lock is a temporary, re-validatable claim. When the existing
         // authoritative state (resolved_presence_status / isBlockedFromWork)
@@ -316,14 +323,13 @@ Deno.serve(async (req) => {
             console.error(`[enforceCharacterWorkSchedule] ${character.name}: stale work lock release FAILED: ${releaseErr.message}`);
           }
         }
-        return Response.json({
+        _blockedPayload = {
           updated: false,
           reason: 'Character blocked from work (protected recovery state)',
           stale_work_lock_present: hasStaleWorkLock,
           stale_work_lock_released: releaseSucceeded,
           stale_work_lock_release_error: releaseError,
-          next_execution_time: null,
-        });
+        };
       }
 
       // Work is an authorized wake source. Track if character was sleeping so the
@@ -348,7 +354,7 @@ Deno.serve(async (req) => {
       };
       const todayET = `${_sEtParsed[4]}-${_sEtParsed[2].padStart(2,'0')}-${_sEtParsed[3].padStart(2,'0')}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
-        return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed', next_execution_time: null });
+        _calloutPayload = { updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' };
       }
 
       // Load all active employment records for this character. A character may hold
@@ -455,6 +461,14 @@ Deno.serve(async (req) => {
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
       await _armNextBoundary(singleNextExecTime);
+
+      // The next boundary is now recorded, so the recurring run owns this character's
+      // chain again. Attendance states return their original result from here — after
+      // the chain has been handed forward — so a sick day or a callout cannot silently
+      // end a character's schedule, and the chain never needs a later unrelated update
+      // to restart.
+      if (_blockedPayload) return Response.json({ ..._blockedPayload, next_execution_time: singleNextExecTime });
+      if (_calloutPayload) return Response.json({ ..._calloutPayload, next_execution_time: singleNextExecTime });
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is

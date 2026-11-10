@@ -189,9 +189,10 @@ Deno.serve(async (req) => {
       // school schedule and enrollment records remain intact; only enforcement
       // is skipped. The character remains free to travel and participate
       // normally. Switching Vacation Mode OFF resumes normal enforcement.
-      if (char.vacation_mode === true) {
-        return Response.json({ updated: false, reason: 'vacation_mode_active', next_execution_time: null });
-      }
+      // Vacation Mode exempts attendance, never the recurring chain: the schedule's
+      // next boundary is still recorded further below, then the vacation result is
+      // returned. A vacation therefore cannot silently end the character's chain.
+      const _vacationMode = char.vacation_mode === true;
 
       if (char.student_status !== 'enrolled') {
         return Response.json({ updated: false, reason: 'not_enrolled', next_execution_time: null });
@@ -234,6 +235,12 @@ Deno.serve(async (req) => {
         }
       }
       await _armNextBoundary(nextExecutionTime);
+
+      // The chain is handed forward — only now does the vacation exemption take effect,
+      // before any attendance routing or completion delivery.
+      if (_vacationMode) {
+        return Response.json({ updated: false, reason: 'vacation_mode_active', next_execution_time: nextExecutionTime });
+      }
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
