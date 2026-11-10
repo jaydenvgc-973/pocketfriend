@@ -156,6 +156,76 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
+      // ── RECURRING BOUNDARY RECORD ──────────────────────────────────────────
+      // This record carries the schedule's own next established boundary. A run that
+      // wakes on a boundary recomputes the following one and writes it here, which
+      // hands that boundary to the next durable run. The schedule therefore carries
+      // its own recurrence: nothing is polled, and no unrelated event is required.
+      const _leaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
+        .filter({ character_id: characterId, schedule_kind: 'work' }, '-created_date', 1)
+        .catch(() => []);
+      let _lease = _leaseRows?.[0] || null;
+      if (!_lease) {
+        _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+          character_id: characterId,
+          schedule_kind: 'work',
+          owner_email: character.owner_email || null,
+        }).catch(() => null);
+      }
+      // Boundary times are normalized to the minute so the same boundary is never
+      // written twice, while a genuinely different one always advances the chain.
+      const _boundaryKey = (iso) => {
+        if (!iso) return null;
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return null;
+        d.setSeconds(0, 0);
+        return d.toISOString();
+      };
+      const _armNextBoundary = async (nextIso) => {
+        const _next = _boundaryKey(nextIso);
+        if (!_lease?.id || _lease.next_boundary_at === _next) return;
+        await base44.asServiceRole.entities.ScheduleLoopLease
+          .update(_lease.id, { next_boundary_at: _next })
+          .catch(() => {});
+        _lease.next_boundary_at = _next;
+      };
+
+      // ONE OCCURRENCE, ONE NARRATIVE — keyed to the completed occurrence itself
+      // (its own Eastern day and end time), never to a span of clock time. A repeat
+      // delivery of that same occurrence is skipped; a different occurrence is
+      // always delivered.
+      const _etDay = (d) => new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(d);
+      const _deliverShiftCompletion = async (occurrenceKey, shiftEndLabel) => {
+        console.log(`[diag-deliver] enter key=${occurrenceKey} lease=${_lease?.id || 'none'} last=${_lease?.last_completion_occurrence || 'none'}`);
+        if (_lease?.last_completion_occurrence === occurrenceKey) {
+          return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
+        }
+        let res = null;
+        try {
+          const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+            characterId,
+            forceGenerate: true,
+            trigger: 'work_end',
+            narrative_trigger: 'work_end',
+            completion_event: 'work_end',
+            shiftContext: { shift_end_time: shiftEndLabel },
+          });
+          res = r?.data || r || null;
+        } catch (e) {
+          res = { success: false, error: e.message };
+        }
+        console.log(`[diag-deliver] result=${JSON.stringify(res)?.slice(0, 400)}`);
+        if (res?.success === true && _lease?.id) {
+          await base44.asServiceRole.entities.ScheduleLoopLease
+            .update(_lease.id, { last_completion_occurrence: occurrenceKey })
+            .catch(() => {});
+          _lease.last_completion_occurrence = occurrenceKey;
+        }
+        return res;
+      };
+
       // SYSTEM MODE: internal automations act on one character without a user
       // session — the same work the global (no-id) mode already performs for
       // every character without a session. User calls keep the ownership check.
@@ -373,6 +443,7 @@ Deno.serve(async (req) => {
       }
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
+      await _armNextBoundary(singleNextExecTime);
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
@@ -425,6 +496,7 @@ Deno.serve(async (req) => {
             }
           }
         }
+        console.log(`[diag-boundary] expMin=${_expMin} isShiftEnd=${_occurrenceIsShiftEnd} matchedEnd=${_matchedShiftEnd} jobs=${singleOrderedJobs.length} valid=${_occurrenceValid}`);
         if (!_occurrenceValid) {
           return Response.json({
             updated: false,
@@ -442,19 +514,10 @@ Deno.serve(async (req) => {
         // generator, once. Nothing is re-detected, nothing is polled, and no
         // location change is involved.
         if (_occurrenceIsShiftEnd) {
-          try {
-            const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-              characterId,
-              forceGenerate: true,
-              trigger: 'work_end',
-              narrative_trigger: 'work_end',
-              completion_event: 'work_end',
-              shiftContext: { shift_end_time: _matchedShiftEnd },
-            });
-            _shiftEndNarrative = _narrRes?.data || _narrRes || null;
-          } catch (_narrErr) {
-            _shiftEndNarrative = { success: false, error: _narrErr.message };
-          }
+          _shiftEndNarrative = await _deliverShiftCompletion(
+            `work_end:${_etDay(_expectedDate)}:${_matchedShiftEnd}`,
+            _matchedShiftEnd
+          );
           if (_shiftEndNarrative?.success !== true) {
             console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at ${expected_occurrence_time} — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
           } else {
@@ -489,18 +552,10 @@ Deno.serve(async (req) => {
           const _jobDays = _jobShift.days && _jobShift.days.length > 0 ? _jobShift.days : null;
           // The boundary run happens AT the end moment, so the end belongs to today.
           if (_jobDays && !_jobDays.includes(singleClock.getDay())) continue;
-          try {
-            const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-              characterId,
-              forceGenerate: true,
-              narrative_trigger: 'work_end',
-              completion_event: 'work_end',
-              shiftContext: { shift_end_time: _jobShift.end },
-            });
-            _shiftEndNarrative = _narrRes?.data || _narrRes || null;
-          } catch (_narrErr) {
-            _shiftEndNarrative = { success: false, error: _narrErr.message };
-          }
+          _shiftEndNarrative = await _deliverShiftCompletion(
+            `work_end:${_etDay(singleNowET)}:${_jobShift.end}`,
+            _jobShift.end
+          );
           if (_shiftEndNarrative?.success !== true) {
             console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at clock boundary (end=${_jobShift.end}) — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
           } else {
@@ -856,25 +911,6 @@ Deno.serve(async (req) => {
                 }
               }
             } catch (e) { /* non-fatal — movement already committed */ }
-          }
-          // ── THE RETURN-HOME TRANSITION IS THE TRIGGER ─────────────────────
-          // The existing work-end pathway just committed an actual arrival at the
-          // character's home. That committed transition — not the schedule alone —
-          // is what the return-home narrative describes. If nothing moved, no
-          // return-home narrative is written.
-          const _committedHomeId = authRes?.committed_result?.resolved_current_location_id || null;
-          if (authRes?.disposition === 'accepted' && _committedHomeId && _committedHomeId === character.current_home_location_id && resolvedLocId !== _committedHomeId) {
-            try {
-              const _homeRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-                characterId,
-                forceGenerate: true,
-                narrative_trigger: 'return_home',
-                completion_event: 'return_home',
-              });
-              _shiftEndNarrative = { ...(_shiftEndNarrative || {}), return_home: _homeRes?.data || _homeRes || null };
-            } catch (_homeErr) {
-              console.error(`[enforceCharacterWorkSchedule] ${character.name}: return-home narrative FAILED — ${_homeErr.message}`);
-            }
           }
           return Response.json({ updated: authRes?.disposition === 'accepted', oldLocation: resolvedLocId, newLocation: authRes?.committed_result?.resolved_current_location_id, reason: `Shift ended — authority resolved (${finalStatus})`, disposition: authRes?.disposition, must_resubmit_sleep: authRes?.must_resubmit_sleep || false, shift_end_narrative: _shiftEndNarrative, next_execution_time: singleNextExecTime });
         }

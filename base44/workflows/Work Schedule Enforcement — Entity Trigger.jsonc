@@ -1,6 +1,6 @@
 {
   "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details) and by the authoritative presence status the schedule itself writes at every boundary. The backend (enforceCharacterWorkSchedule) remains authoritative for multi-job resolution, shift resolution, rabbit-hole canonical presence, and the completed-shift occurrence. The durable wait lands exactly on the next established boundary; that boundary run is the completion event and directly initiates the automatic narrative for the shift that just ended. No interval checks, no polling of schedule state.",
+  "description": "Execution-only Workflow. Fires when a character's authoritative employment configuration or presence status changes and runs enforceCharacterWorkSchedule immediately, which routes the character where the schedule says they belong, wakes them for a shift, and records the schedule's next established boundary. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
   "trigger": {
     "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
     "config": {
@@ -15,7 +15,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "work_schedule_enforcement",
-      "version": "2.0",
+      "version": "4.0",
       "namespace": "base44"
     },
     "do": [
@@ -31,71 +31,10 @@
               "system_mode": true
             }
           },
-          "then": "route",
-          "x-base44": {
-            "title": "Enforce schedule",
-            "description": "Authoritative boundary for this character"
-          }
-        }
-      },
-      {
-        "route": {
-          "switch": [
-            {
-              "when": "${ .enforce.next_execution_time != null and .enforce.next_execution_time != \"\" and .enforce.reason != \"stale_occurrence_superseded\" }",
-              "then": "delay"
-            },
-            {
-              "when": "${ true }",
-              "then": "end"
-            }
-          ],
-          "x-base44": {
-            "title": "Check next boundary",
-            "description": "End when no boundary remains"
-          }
-        }
-      },
-      {
-        "delay": {
-          "call": "compute_seconds_until",
-          "with": {
-            "target_iso": "${ .enforce.next_execution_time }"
-          },
-          "then": "pause",
-          "x-base44": {
-            "title": "Compute seconds to boundary",
-            "description": "Duration of the durable wait"
-          }
-        }
-      },
-      {
-        "pause": {
-          "wait": "PT${ .delay.seconds | floor | tostring }S",
-          "then": "enforce_at_boundary",
-          "x-base44": {
-            "title": "Wait for the boundary",
-            "description": "Durable wait to the established time"
-          }
-        }
-      },
-      {
-        "enforce_at_boundary": {
-          "call": "invoke_backend_function",
-          "with": {
-            "function_name": "enforceCharacterWorkSchedule",
-            "args": {
-              "event": {
-                "entity_id": "${ .trigger.entity_id }"
-              },
-              "expected_occurrence_time": "${ .enforce.next_execution_time }",
-              "system_mode": true
-            }
-          },
           "then": "end",
           "x-base44": {
-            "title": "Enforce completed boundary",
-            "description": "This run is the completion event"
+            "title": "Enforce schedule",
+            "description": "Routes per schedule and records the next boundary"
           }
         }
       }

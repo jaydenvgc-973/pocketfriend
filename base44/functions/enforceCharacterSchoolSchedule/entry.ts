@@ -101,6 +101,73 @@ Deno.serve(async (req) => {
       const char = chars?.[0];
       if (!char) return Response.json({ error: 'Character not found' }, { status: 404 });
 
+      // ── RECURRING BOUNDARY RECORD ──────────────────────────────────────────
+      // This record carries the schedule's own next established boundary. A run that
+      // wakes on a boundary recomputes the following one and writes it here, which
+      // hands that boundary to the next durable run. The schedule therefore carries
+      // its own recurrence: nothing is polled, and no unrelated event is required.
+      const _leaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
+        .filter({ character_id: targetCharId, schedule_kind: 'school' }, '-created_date', 1)
+        .catch(() => []);
+      let _lease = _leaseRows?.[0] || null;
+      if (!_lease) {
+        _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+          character_id: targetCharId,
+          schedule_kind: 'school',
+          owner_email: char.owner_email || null,
+        }).catch(() => null);
+      }
+      // Boundary times are normalized to the minute so the same boundary is never
+      // written twice, while a genuinely different one always advances the chain.
+      const _boundaryKey = (iso) => {
+        if (!iso) return null;
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return null;
+        d.setSeconds(0, 0);
+        return d.toISOString();
+      };
+      const _armNextBoundary = async (nextIso) => {
+        const _next = _boundaryKey(nextIso);
+        if (!_lease?.id || _lease.next_boundary_at === _next) return;
+        await base44.asServiceRole.entities.ScheduleLoopLease
+          .update(_lease.id, { next_boundary_at: _next })
+          .catch(() => {});
+        _lease.next_boundary_at = _next;
+      };
+
+      // ONE OCCURRENCE, ONE NARRATIVE — keyed to the completed occurrence itself
+      // (its own Eastern day and end time), never to a span of clock time. A repeat
+      // delivery of that same occurrence is skipped; a different occurrence is
+      // always delivered.
+      const _etDay = (d) => new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(d);
+      const _minToHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+      const _deliverSchoolCompletion = async (occurrenceKey, eventType) => {
+        if (_lease?.last_completion_occurrence === occurrenceKey) {
+          return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
+        }
+        let res = null;
+        try {
+          const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+            characterId: targetCharId,
+            forceGenerate: true,
+            narrative_trigger: eventType,
+            completion_event: eventType,
+          });
+          res = r?.data || r || null;
+        } catch (e) {
+          res = { success: false, error: e.message };
+        }
+        if (res?.success === true && _lease?.id) {
+          await base44.asServiceRole.entities.ScheduleLoopLease
+            .update(_lease.id, { last_completion_occurrence: occurrenceKey })
+            .catch(() => {});
+          _lease.last_completion_occurrence = occurrenceKey;
+        }
+        return res;
+      };
+
       // Vacation Mode — temporary exemption from school attendance. Existing
       // school schedule and enrollment records remain intact; only enforcement
       // is skipped. The character remains free to travel and participate
@@ -149,6 +216,7 @@ Deno.serve(async (req) => {
           nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
         }
       }
+      await _armNextBoundary(nextExecutionTime);
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
@@ -158,6 +226,7 @@ Deno.serve(async (req) => {
       // Time and checks whether the current school schedule has a boundary (start or
       // end) at that exact ET time on that day.
       let _isEndBoundary = false;
+      let _boundaryOccurrenceKey = null;
       if (expected_occurrence_time) {
         const _expectedDate = new Date(expected_occurrence_time);
         const _expEtStr = _expectedDate.toLocaleString('en-US', {
@@ -186,6 +255,9 @@ Deno.serve(async (req) => {
         // This run IS the school day's established end boundary, resolved from the
         // same enrollment/operating-hours schedule used for every school transition.
         _isEndBoundary = _expSchedule.endMin === _expMin;
+        if (_isEndBoundary) {
+          _boundaryOccurrenceKey = `school_end:${_expParsed[4]}-${_expParsed[2]}-${_expParsed[3]}:${_minToHHMM(_expSchedule.endMin)}`;
+        }
       } else if (schedule.endMin !== null && isValidDay) {
         // ── THE BOUNDARY RUN IS THE COMPLETION EVENT ──────────────────────────
         // The durable schedule run lands exactly on the school day's established
@@ -199,6 +271,9 @@ Deno.serve(async (req) => {
         let _endDrift = nowMin - schedule.endMin;
         if (_endDrift < 0) _endDrift += 1440;
         _isEndBoundary = _endDrift <= SCHOOL_DRIFT_TOLERANCE_MIN;
+        if (_isEndBoundary) {
+          _boundaryOccurrenceKey = `school_end:${_etDay(now)}:${_minToHHMM(schedule.endMin)}`;
+        }
       }
 
       let updated = false;
@@ -257,22 +332,12 @@ Deno.serve(async (req) => {
       // that committed transition instead of a bare "classes ended".
       let _schoolEndNarrative = null;
       if (_isEndBoundary) {
-        const _trigger = _committedHome ? 'return_home' : (schedule.source === 'enrollment_override' ? 'class_end' : 'school_end');
-        try {
-          const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-            characterId: targetCharId,
-            forceGenerate: true,
-            narrative_trigger: _trigger,
-            completion_event: _trigger,
-          });
-          _schoolEndNarrative = _narrRes?.data || _narrRes || null;
-        } catch (_narrErr) {
-          _schoolEndNarrative = { success: false, error: _narrErr.message };
-        }
+        const _eventType = schedule.source === 'enrollment_override' ? 'class_end' : 'school_end';
+        _schoolEndNarrative = await _deliverSchoolCompletion(_boundaryOccurrenceKey, _eventType);
         if (_schoolEndNarrative?.success !== true) {
           console.error(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative FAILED at ${expected_occurrence_time} — ${_schoolEndNarrative?.error || _schoolEndNarrative?.reason || 'unknown'}`);
         } else {
-          console.log(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative generated (trigger=${_trigger}, id=${_schoolEndNarrative.narrativeId})`);
+          console.log(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative generated (trigger=${_eventType}, id=${_schoolEndNarrative.narrativeId})`);
         }
       }
 

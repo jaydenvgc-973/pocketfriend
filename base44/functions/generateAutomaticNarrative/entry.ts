@@ -28,10 +28,9 @@ Deno.serve(async (req) => {
     // Location type is irrelevant — the boundary is the trigger.
     const isWorkEnd = trigger === 'work_end';
     const isSchoolEnd = trigger === 'school_end' || trigger === 'class_end';
-    const isReturnHome = trigger === 'return_home';
     const isScheduleCompletion = isWorkEnd || isSchoolEnd;
-    const isDiscreteOccurrence = isScheduleCompletion || isReturnHome;
-    const completionEventType = isWorkEnd ? 'work_end' : isSchoolEnd ? 'school_end' : isReturnHome ? 'return_home' : 'passive_time';
+    const isDiscreteOccurrence = isScheduleCompletion;
+    const completionEventType = isWorkEnd ? 'work_end' : isSchoolEnd ? 'school_end' : 'passive_time';
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -79,27 +78,6 @@ Deno.serve(async (req) => {
     // ── CHECK INTERVAL (skip for manual triggers and discrete occurrences) ──
     const NOW = new Date();
     const isManual = trigger === 'manual_right_now';
-
-    // ONE OCCURRENCE, ONE NARRATIVE. The enforcement path fires this once per
-    // established schedule boundary. A second delivery of that same boundary
-    // (a duplicate workflow invoke, a retried call) must not write a second
-    // narrative for the same completed activity.
-    if (isDiscreteOccurrence) {
-      const _dupWindowMs = 5 * 60 * 1000;
-      const _recentSame = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
-        { character_id: characterId, event_type: completionEventType },
-        '-timestamp',
-        1
-      ).catch(() => []);
-      const _recent = _recentSame?.[0];
-      if (_recent?.timestamp && (NOW.getTime() - new Date(_recent.timestamp).getTime()) < _dupWindowMs) {
-        console.log(`[generateAutomaticNarrative] ⏭️ Skipped: ${completionEventType} already narrated at ${_recent.timestamp}`);
-        return Response.json({
-          success: false, skipped: true, reason: 'duplicate_occurrence',
-          event_type: completionEventType, lastNarrativeTime: _recent.timestamp,
-        });
-      }
-    }
 
     if (!forceGenerate && !isManual && !isDiscreteOccurrence) {
       const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
@@ -592,17 +570,6 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the ${_schoolLabel} ends.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
 - Write the first moments after it ends: what they do immediately after, how the day settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
-    }
-
-    // RETURN HOME — the existing scheduled transition committed an actual arrival.
-    // The narrative describes that transition because it really happened; it never
-    // invents a commute or a homecoming that did not occur.
-    if (isReturnHome) {
-      situationBlock = `SITUATION: ${character.name} has RETURNED HOME. The scheduled activity ended and the existing transition committed their arrival at ${resolvedLocationName}.
-- They are physically here now. This is a completed transition, not a journey in progress.
-- Do NOT describe them commuting, in transit, between places, or still on their way.
-- Do NOT place them back at work, school, or anywhere other than ${resolvedLocationName}.
-- Write the first moments after arriving home: settling back in, the ordinary details of being back.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
