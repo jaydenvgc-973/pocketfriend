@@ -62,7 +62,32 @@ Deno.serve(async (req) => {
 
     // owner_email is the sole source of truth — created_by is permanently forbidden
     const ownerEmail = character.owner_email;
-    const ownerUser = character.owner_user_id || null;
+    // owner_user_id is a required string on the narrative record. A character created
+    // before that field existed carries it as null, and writing null makes the record
+    // REJECT the write outright ("Input should be a valid string") — the narrative is
+    // generated, the write throws, and the completion is lost. It is therefore derived
+    // from the character's own ownership authority, owner_email. The character record
+    // is never modified. The resolved id is also what makes the record readable by the
+    // owning account, so a generated narrative actually reaches the existing display.
+    let ownerUser = character.owner_user_id || null;
+    if (!ownerUser) {
+      try {
+        const ownerList = await base44.asServiceRole.entities.User.filter({ email: ownerEmail }, null, 1);
+        ownerUser = ownerList?.[0]?.id || null;
+        if (ownerUser) {
+          console.log(`[generateAutomaticNarrative] owner_user_id derived from owner_email ${ownerEmail}: ${ownerUser}`);
+        }
+      } catch (ownerErr) {
+        console.error(`[generateAutomaticNarrative] owner_user_id lookup FAILED for ${ownerEmail}: ${ownerErr.message}`);
+      }
+    }
+    if (!ownerUser) {
+      return Response.json({
+        success: false,
+        error: `Cannot record a narrative for "${character.name}" (id=${characterId}): owner_user_id is missing on the character and could not be resolved from owner_email "${ownerEmail}".`,
+        reason: 'owner_user_id_unresolved',
+      }, { status: 422 });
+    }
 
     if (!ownerEmail) {
       console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);

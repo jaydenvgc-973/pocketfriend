@@ -219,6 +219,24 @@ Deno.serve(async (req) => {
         if (_lease?.last_completion_occurrence === occurrenceKey) {
           return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
         }
+        // THE OCCURRENCE IS CLAIMED BEFORE ANYTHING IS GENERATED.
+        // Two runs can be live for one occurrence (the boundary run and an enforcement
+        // run), and generation takes many seconds — a check that only re-reads before
+        // generating lets both proceed, which is how one shift end produced two
+        // narratives. The claim is written first, so the second run reads it and refuses.
+        // The claim carries the occurrence itself (Eastern day + that shift's end time),
+        // so a genuinely different completion is never suppressed.
+        const _priorClaim = _lease?.last_completion_occurrence || '';
+        if (_lease?.id) {
+          try {
+            await base44.asServiceRole.entities.ScheduleLoopLease
+              .update(_lease.id, { last_completion_occurrence: occurrenceKey });
+            _lease.last_completion_occurrence = occurrenceKey;
+          } catch (e) {
+            // Without the claim a concurrent run can duplicate this occurrence. Reported.
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to claim occurrence ${occurrenceKey} — ${e.message}`);
+          }
+        }
         // This boundary IS the completion event, and the chain re-arms to the NEXT
         // boundary as soon as this run ends — so a delivery that does not complete
         // would be lost permanently, with nothing left to revisit it. The same run
@@ -242,11 +260,17 @@ Deno.serve(async (req) => {
           if (res?.success === true) break;
           console.error(`[enforceCharacterWorkSchedule] ${character.name}: completion delivery attempt ${_attempt} failed (${res?.error || res?.reason || 'unknown'}) occurrence=${occurrenceKey}`);
         }
-        if (res?.success === true && _lease?.id) {
-          await base44.asServiceRole.entities.ScheduleLoopLease
-            .update(_lease.id, { last_completion_occurrence: occurrenceKey })
-            .catch(() => {});
-          _lease.last_completion_occurrence = occurrenceKey;
+        if (res?.success !== true && _lease?.id) {
+          // The claim is released so this same legitimate occurrence can still be
+          // delivered by a later run instead of being permanently swallowed by a
+          // failed generation. A released claim never suppresses a different occurrence.
+          try {
+            await base44.asServiceRole.entities.ScheduleLoopLease
+              .update(_lease.id, { last_completion_occurrence: _priorClaim });
+            _lease.last_completion_occurrence = _priorClaim;
+          } catch (e) {
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to release occurrence claim ${occurrenceKey} — ${e.message}`);
+          }
         }
         // The completed shift is what was recorded. The narrative record is read
         // back and, if it was labeled as anything other than this completion, it is
@@ -488,6 +512,21 @@ Deno.serve(async (req) => {
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
       await _armNextBoundary(singleNextExecTime);
+
+      // ARMING ONLY — the activation pass.
+      // An unrelated Character update (a need value, an activity, a memory) carries no
+      // attendance intent. It exists so a schedule that has no chain yet gets its next
+      // boundary recorded, exactly as the boundary run records it — the chain then
+      // carries itself. Nothing is routed, nothing is delivered, and no Character field
+      // is written: a character is never moved to arm a schedule.
+      if (body.arm_only === true) {
+        return Response.json({
+          updated: false,
+          arm_only: true,
+          boundary: _lease?.next_boundary_at || null,
+          next_execution_time: singleNextExecTime,
+        });
+      }
 
       // The next boundary is now recorded, so the recurring run owns this character's
       // chain again. Attendance states return their original result from here — after
