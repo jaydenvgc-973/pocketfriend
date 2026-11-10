@@ -1,8 +1,8 @@
 {
   "name": "School Schedule Enforcement \u2014 Entity Trigger",
-  "description": "Fires when a character's school/enrollment fields change (student_status, education_location_id, current_school_location_id, education_enrollments). Invokes enforceCharacterSchoolSchedule which evaluates the authoritative school schedule, routes the character to/from school via the canonical writer, and returns next_execution_time for the Workflow delay step. Replaces any polling-based school enforcement with an event-driven Workflow.",
+  "description": "Fires when a character's school/enrollment fields change (student_status, education_location_id, current_school_location_id, education_enrollments) and when the authoritative presence status the school schedule writes changes. Invokes enforceCharacterSchoolSchedule, which evaluates the authoritative school schedule, routes the character to/from school via the canonical writer, and \u2014 when the run IS the school day's established end boundary \u2014 directly initiates the automatic narrative. The durable wait lands exactly on that boundary; there is no polling and no location-type condition.",
   "trigger": {
-    "condition": "${ ((.trigger.changed_fields | index(\"student_status\") != null) or (.trigger.changed_fields | index(\"education_location_id\") != null) or (.trigger.changed_fields | index(\"current_school_location_id\") != null) or (.trigger.changed_fields | index(\"education_enrollments\") != null)) }",
+    "condition": "${ ((.trigger.changed_fields | index(\"student_status\") != null) or (.trigger.changed_fields | index(\"education_location_id\") != null) or (.trigger.changed_fields | index(\"current_school_location_id\") != null) or (.trigger.changed_fields | index(\"education_enrollments\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
     "config": {
       "trigger_type": "entity",
       "events": [
@@ -15,18 +15,86 @@
     "document": {
       "dsl": "1.0.0",
       "name": "school_schedule_enforcement_entity_trigger",
-      "version": "1.0",
+      "version": "2.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "run_function": {
+        "enforce": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterSchoolSchedule",
-            "args": {}
+            "args": {
+              "event": {
+                "entity_id": "${ .trigger.entity_id }"
+              }
+            }
           },
-          "then": "end"
+          "then": "route",
+          "x-base44": {
+            "title": "Enforce school schedule",
+            "description": "Authoritative boundary for this character"
+          }
+        }
+      },
+      {
+        "route": {
+          "switch": [
+            {
+              "when": "${ .enforce.next_execution_time != null and .enforce.next_execution_time != \"\" and .enforce.reason != \"stale_occurrence_superseded\" }",
+              "then": "delay"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ],
+          "x-base44": {
+            "title": "Check next boundary",
+            "description": "End when no boundary remains"
+          }
+        }
+      },
+      {
+        "delay": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .enforce.next_execution_time }"
+          },
+          "then": "pause",
+          "x-base44": {
+            "title": "Compute seconds to boundary",
+            "description": "Duration of the durable wait"
+          }
+        }
+      },
+      {
+        "pause": {
+          "wait": "PT${ .delay.seconds | floor | tostring }S",
+          "then": "enforce_at_boundary",
+          "x-base44": {
+            "title": "Wait for the boundary",
+            "description": "Durable wait to the established time"
+          }
+        }
+      },
+      {
+        "enforce_at_boundary": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterSchoolSchedule",
+            "args": {
+              "event": {
+                "entity_id": "${ .trigger.entity_id }"
+              },
+              "expected_occurrence_time": "${ .enforce.next_execution_time }"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Enforce completed boundary",
+            "description": "This run is the completion event"
+          }
         }
       }
     ]

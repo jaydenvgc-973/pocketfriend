@@ -460,6 +460,53 @@ Deno.serve(async (req) => {
             console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated at ${expected_occurrence_time} (id=${_shiftEndNarrative.narrativeId})`);
           }
         }
+      } else {
+        // ── THE BOUNDARY RUN IS THE COMPLETION EVENT ──────────────────────
+        // The durable schedule run lands exactly on the shift's established end
+        // time. No expected occurrence was echoed back, so the completed shift is
+        // read from the same per-job schedule resolution every transition uses:
+        // a job whose end time is this minute (within scheduler-drift tolerance)
+        // has just completed. Rabbit-hole and linked jobs alike — the boundary is
+        // the trigger, never the location type. A repeated run in the same minute
+        // cannot double-write: the narrative generator refuses a second narrative
+        // for the same completed occurrence.
+        const DRIFT_TOLERANCE_MIN = 2;
+        const _clockMin = singleClock.getHours() * 60 + singleClock.getMinutes();
+        for (const _job of singleOrderedJobs) {
+          let _jobShift = _job.shift;
+          if (_job.type === 'linked') {
+            const _loc = singleLocMap[_job.locId];
+            const _locShift = _loc?.worker_shifts?.[characterId];
+            if (_locShift && _locShift.start && _locShift.end) _jobShift = _locShift;
+          }
+          if (!_jobShift || !_jobShift.start || !_jobShift.end) continue;
+          const [_endH, _endM] = _jobShift.end.split(':').map(Number);
+          const _endMinutes = _endH * 60 + _endM;
+          let _drift = _clockMin - _endMinutes;
+          if (_drift < 0) _drift += 1440;
+          if (_drift > DRIFT_TOLERANCE_MIN) continue;
+          const _jobDays = _jobShift.days && _jobShift.days.length > 0 ? _jobShift.days : null;
+          const _endDay = _endMinutes < (_jobShift.start.split(':').map(Number)[0] * 60 + _jobShift.start.split(':').map(Number)[1])
+            ? (_job.type === 'linked' ? singleClock.getDay() : singleClock.getDay())
+            : singleClock.getDay();
+          if (_jobDays && !_jobDays.includes(_endDay)) continue;
+          try {
+            const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+              characterId,
+              narrative_trigger: 'work_end',
+              shiftContext: { shift_end_time: _jobShift.end },
+            });
+            _shiftEndNarrative = _narrRes?.data || _narrRes || null;
+          } catch (_narrErr) {
+            _shiftEndNarrative = { success: false, error: _narrErr.message };
+          }
+          if (_shiftEndNarrative?.success !== true) {
+            console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at clock boundary (end=${_jobShift.end}) — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
+          } else {
+            console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated at clock boundary (end=${_jobShift.end}, id=${_shiftEndNarrative.narrativeId})`);
+          }
+          break;
+        }
       }
 
       // Evaluate jobs in order. First active shift wins.

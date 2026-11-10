@@ -186,10 +186,25 @@ Deno.serve(async (req) => {
         // This run IS the school day's established end boundary, resolved from the
         // same enrollment/operating-hours schedule used for every school transition.
         _isEndBoundary = _expSchedule.endMin === _expMin;
+      } else if (schedule.endMin !== null && isValidDay) {
+        // ── THE BOUNDARY RUN IS THE COMPLETION EVENT ──────────────────────────
+        // The durable schedule run lands exactly on the school day's established
+        // end time. No expected occurrence was echoed back, so the completed school
+        // day is read from the same authoritative schedule every school transition
+        // uses: the end time is this minute (within scheduler-drift tolerance).
+        // Location type is never a condition — the boundary is the trigger. A
+        // repeated run in the same minute cannot double-write: the narrative
+        // generator refuses a second narrative for the same completed occurrence.
+        const SCHOOL_DRIFT_TOLERANCE_MIN = 2;
+        let _endDrift = nowMin - schedule.endMin;
+        if (_endDrift < 0) _endDrift += 1440;
+        _isEndBoundary = _endDrift <= SCHOOL_DRIFT_TOLERANCE_MIN;
       }
 
       let updated = false;
       let routeResult = null;
+      let _authorityError = null;
+      let _committedHome = false;
 
       if (isSchoolInSession && !isAtSchool) {
         // Route to school through the canonical writer
@@ -206,7 +221,7 @@ Deno.serve(async (req) => {
           routeResult = invokeRes?.data || invokeRes;
           updated = routeResult?.disposition === 'accepted' || routeResult?.disposition === 'redirected' || routeResult?.disposition === 'modified';
         } catch (invokeErr) {
-          return Response.json({ updated: false, reason: 'authority_invoke_failed', error: invokeErr.message, next_execution_time: null });
+          _authorityError = invokeErr.message;
         }
       } else if (!isSchoolInSession && isAtSchool) {
         // School ended — route home through the canonical writer
@@ -224,10 +239,43 @@ Deno.serve(async (req) => {
             });
             routeResult = invokeRes?.data || invokeRes;
             updated = routeResult?.disposition === 'accepted' || routeResult?.disposition === 'redirected';
+            const _committedId = routeResult?.committed_result?.resolved_current_location_id || null;
+            _committedHome = updated && !!_committedId && _committedId === homeLocId;
           } catch (invokeErr) {
-            return Response.json({ updated: false, reason: 'authority_invoke_failed', error: invokeErr.message, next_execution_time: null });
+            _authorityError = invokeErr.message;
           }
         }
+      }
+
+      // ── THE COMPLETED SCHOOL BOUNDARY IS THE TRIGGER ──────────────────────
+      // The existing schedule mechanism has just established that this run IS the
+      // school day's established end. That occurrence directly initiates the
+      // existing automatic-narrative pathway — once. Nothing is polled, and no
+      // location type gates it: a rabbit-hole destination, a workplace, a
+      // residence, or any other location is equally valid. When this same
+      // occurrence committed an actual home arrival, the narrative describes
+      // that committed transition instead of a bare "classes ended".
+      let _schoolEndNarrative = null;
+      if (_isEndBoundary) {
+        const _trigger = _committedHome ? 'return_home' : (schedule.source === 'enrollment_override' ? 'class_end' : 'school_end');
+        try {
+          const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+            characterId: targetCharId,
+            narrative_trigger: _trigger,
+          });
+          _schoolEndNarrative = _narrRes?.data || _narrRes || null;
+        } catch (_narrErr) {
+          _schoolEndNarrative = { success: false, error: _narrErr.message };
+        }
+        if (_schoolEndNarrative?.success !== true) {
+          console.error(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative FAILED at ${expected_occurrence_time} — ${_schoolEndNarrative?.error || _schoolEndNarrative?.reason || 'unknown'}`);
+        } else {
+          console.log(`[enforceCharacterSchoolSchedule] ${char.name}: school-end narrative generated (trigger=${_trigger}, id=${_schoolEndNarrative.narrativeId})`);
+        }
+      }
+
+      if (_authorityError) {
+        return Response.json({ updated: false, reason: 'authority_invoke_failed', error: _authorityError, school_end_narrative: _schoolEndNarrative, next_execution_time: null });
       }
 
       return Response.json({
@@ -237,6 +285,7 @@ Deno.serve(async (req) => {
           : (isSchoolInSession ? 'School in session' : 'School not in session'),
         schedule_source: schedule.source,
         disposition: routeResult?.disposition || null,
+        school_end_narrative: _schoolEndNarrative,
         next_execution_time: nextExecutionTime,
       });
     }

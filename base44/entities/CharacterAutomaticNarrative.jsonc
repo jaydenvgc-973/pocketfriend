@@ -59,6 +59,8 @@
         "wake",
         "work_start",
         "work_end",
+        "school_end",
+        "return_home",
         "travel_arrival",
         "travel_departure",
         "needs_warning",
@@ -66,7 +68,7 @@
         "catch_up_summary",
         "location_change"
       ],
-      "description": "Type of narrative event"
+      "description": "Type of narrative event. work_end / school_end / return_home are written only when the existing scheduled-activity mechanism reached its established completion boundary."
     },
     "narrative_text": {
       "type": "string",
