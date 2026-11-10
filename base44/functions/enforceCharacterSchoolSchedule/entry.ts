@@ -111,11 +111,17 @@ Deno.serve(async (req) => {
         .catch(() => []);
       let _lease = _leaseRows?.[0] || null;
       if (!_lease) {
-        _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
-          character_id: targetCharId,
-          schedule_kind: 'school',
-          owner_email: char.owner_email || null,
-        }).catch(() => null);
+        try {
+          _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+            character_id: targetCharId,
+            schedule_kind: 'school',
+            owner_email: char.owner_email || null,
+          });
+        } catch (e) {
+          // Without this record the school schedule has no chain at all. Reported,
+          // never swallowed — a missing chain must never look like a healthy schedule.
+          console.error(`[enforceCharacterSchoolSchedule] ${char.name}: FAILED to create school recurrence record — ${e.message}`);
+        }
       }
       // Boundary times are normalized to the minute so the same boundary is never
       // written twice, while a genuinely different one always advances the chain.
@@ -129,10 +135,15 @@ Deno.serve(async (req) => {
       const _armNextBoundary = async (nextIso) => {
         const _next = _boundaryKey(nextIso);
         if (!_lease?.id || _lease.next_boundary_at === _next) return;
-        await base44.asServiceRole.entities.ScheduleLoopLease
-          .update(_lease.id, { next_boundary_at: _next })
-          .catch(() => {});
-        _lease.next_boundary_at = _next;
+        try {
+          await base44.asServiceRole.entities.ScheduleLoopLease
+            .update(_lease.id, { next_boundary_at: _next });
+          _lease.next_boundary_at = _next;
+        } catch (e) {
+          // A boundary that was not recorded leaves this schedule with no chain,
+          // and nothing else would ever retry it. Reported, never swallowed.
+          console.error(`[enforceCharacterSchoolSchedule] ${char.name}: FAILED to record next boundary ${_next} — ${e.message}`);
+        }
       };
 
       // ONE OCCURRENCE, ONE NARRATIVE — keyed to the completed occurrence itself
@@ -144,24 +155,40 @@ Deno.serve(async (req) => {
       }).format(d);
       const _minToHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
       const _deliverSchoolCompletion = async (occurrenceKey, eventType) => {
+        // The recorded delivery is re-read first: an entity-triggered run and the
+        // boundary run can both be live for the same occurrence, and the second one
+        // must see the delivery already recorded instead of generating it again.
+        const _freshLease = await base44.asServiceRole.entities.ScheduleLoopLease
+          .filter({ character_id: targetCharId, schedule_kind: 'school' }, '-created_date', 1)
+          .catch(() => []);
+        if (_freshLease?.[0]?.id) _lease = _freshLease[0];
         if (_lease?.last_completion_occurrence === occurrenceKey) {
           return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
         }
+        // This boundary IS the completion event, and the chain re-arms to the NEXT
+        // boundary as soon as this run ends — so a delivery that does not complete
+        // would be lost permanently, with nothing left to revisit it. The same run
+        // therefore retries its own occurrence before reporting failure. No later
+        // run, timer, or repeated condition check is involved.
         let res = null;
-        try {
-          const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-            characterId: targetCharId,
-            forceGenerate: true,
-            // The completion kind travels under every alias the narrative pathway
-            // recognises, matching the proven work-completion call — a completion must
-            // be GENERATED as a completion, never written as passive time and relabelled.
-            trigger: eventType,
-            narrative_trigger: eventType,
-            completion_event: eventType,
-          });
-          res = r?.data || r || null;
-        } catch (e) {
-          res = { success: false, error: e.message };
+        for (let _attempt = 1; _attempt <= 3; _attempt++) {
+          try {
+            const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+              characterId: targetCharId,
+              forceGenerate: true,
+              // The completion kind travels under every alias the narrative pathway
+              // recognises, matching the proven work-completion call — a completion must
+              // be GENERATED as a completion, never written as passive time and relabelled.
+              trigger: eventType,
+              narrative_trigger: eventType,
+              completion_event: eventType,
+            });
+            res = r?.data || r || null;
+          } catch (e) {
+            res = { success: false, error: e.message };
+          }
+          if (res?.success === true) break;
+          console.error(`[enforceCharacterSchoolSchedule] ${char.name}: completion delivery attempt ${_attempt} failed (${res?.error || res?.reason || 'unknown'}) occurrence=${occurrenceKey}`);
         }
         if (res?.success === true && _lease?.id) {
           await base44.asServiceRole.entities.ScheduleLoopLease
@@ -425,6 +452,33 @@ Deno.serve(async (req) => {
         const minsToStart = getMinutesUntilNextSchoolStart(schedule.startMin, nowMin, dayOfWeek, schoolLoc);
         if (minsToStart !== null) {
           nextExecutionTime = new Date(now.getTime() + minsToStart * 60 * 1000).toISOString();
+        }
+      }
+
+      // ── RECURRENCE ARMING IN THE ALL-CHARACTER PASS ─────────────────────
+      // The chain carries itself once a boundary is recorded, and this pass already
+      // runs for every enrolled character. So a school schedule whose boundary was
+      // never recorded (or whose record was never created) gets it recorded here —
+      // the same record and the same computed boundary the boundary run maintains.
+      // Nothing new is scheduled: an armed schedule is left exactly as it is.
+      if (nextExecutionTime) {
+        try {
+          const _gLeaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
+            .filter({ character_id: char.id, schedule_kind: 'school' }, '-created_date', 1);
+          let _gLease = _gLeaseRows?.[0] || null;
+          if (!_gLease) {
+            _gLease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+              character_id: char.id,
+              schedule_kind: 'school',
+              owner_email: char.owner_email || null,
+            });
+          }
+          if (_gLease && !_gLease.next_boundary_at) {
+            await base44.asServiceRole.entities.ScheduleLoopLease
+              .update(_gLease.id, { next_boundary_at: nextExecutionTime });
+          }
+        } catch (_gArmErr) {
+          console.error(`[enforceCharacterSchoolSchedule] ${char.name}: school recurrence arming FAILED — ${_gArmErr.message}`);
         }
       }
 

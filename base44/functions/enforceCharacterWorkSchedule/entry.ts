@@ -166,11 +166,17 @@ Deno.serve(async (req) => {
         .catch(() => []);
       let _lease = _leaseRows?.[0] || null;
       if (!_lease) {
-        _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
-          character_id: characterId,
-          schedule_kind: 'work',
-          owner_email: character.owner_email || null,
-        }).catch(() => null);
+        try {
+          _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+            character_id: characterId,
+            schedule_kind: 'work',
+            owner_email: character.owner_email || null,
+          });
+        } catch (e) {
+          // Without this record the schedule has no chain at all. Reported, never
+          // swallowed — a missing chain must never look like a healthy schedule.
+          console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to create recurrence record — ${e.message}`);
+        }
       }
       // Boundary times are normalized to the minute so the same boundary is never
       // written twice, while a genuinely different one always advances the chain.
@@ -184,10 +190,15 @@ Deno.serve(async (req) => {
       const _armNextBoundary = async (nextIso) => {
         const _next = _boundaryKey(nextIso);
         if (!_lease?.id || _lease.next_boundary_at === _next) return;
-        await base44.asServiceRole.entities.ScheduleLoopLease
-          .update(_lease.id, { next_boundary_at: _next })
-          .catch(() => {});
-        _lease.next_boundary_at = _next;
+        try {
+          await base44.asServiceRole.entities.ScheduleLoopLease
+            .update(_lease.id, { next_boundary_at: _next });
+          _lease.next_boundary_at = _next;
+        } catch (e) {
+          // A boundary that was not recorded leaves this schedule with no chain,
+          // and nothing else would ever retry it. Reported, never swallowed.
+          console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to record next boundary ${_next} — ${e.message}`);
+        }
       };
 
       // ONE OCCURRENCE, ONE NARRATIVE — keyed to the completed occurrence itself
@@ -198,22 +209,38 @@ Deno.serve(async (req) => {
         timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
       }).format(d);
       const _deliverShiftCompletion = async (occurrenceKey, shiftEndLabel) => {
+        // The recorded delivery is re-read first: an entity-triggered run and the
+        // boundary run can both be live for the same occurrence, and the second one
+        // must see the delivery already recorded instead of generating it again.
+        const _freshLease = await base44.asServiceRole.entities.ScheduleLoopLease
+          .filter({ character_id: characterId, schedule_kind: 'work' }, '-created_date', 1)
+          .catch(() => []);
+        if (_freshLease?.[0]?.id) _lease = _freshLease[0];
         if (_lease?.last_completion_occurrence === occurrenceKey) {
           return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
         }
+        // This boundary IS the completion event, and the chain re-arms to the NEXT
+        // boundary as soon as this run ends — so a delivery that does not complete
+        // would be lost permanently, with nothing left to revisit it. The same run
+        // therefore retries its own occurrence before reporting failure. No later
+        // run, timer, or repeated condition check is involved.
         let res = null;
-        try {
-          const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-            characterId,
-            forceGenerate: true,
-            trigger: 'work_end',
-            narrative_trigger: 'work_end',
-            completion_event: 'work_end',
-            shiftContext: { shift_end_time: shiftEndLabel },
-          });
-          res = r?.data || r || null;
-        } catch (e) {
-          res = { success: false, error: e.message };
+        for (let _attempt = 1; _attempt <= 3; _attempt++) {
+          try {
+            const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+              characterId,
+              forceGenerate: true,
+              trigger: 'work_end',
+              narrative_trigger: 'work_end',
+              completion_event: 'work_end',
+              shiftContext: { shift_end_time: shiftEndLabel },
+            });
+            res = r?.data || r || null;
+          } catch (e) {
+            res = { success: false, error: e.message };
+          }
+          if (res?.success === true) break;
+          console.error(`[enforceCharacterWorkSchedule] ${character.name}: completion delivery attempt ${_attempt} failed (${res?.error || res?.reason || 'unknown'}) occurrence=${occurrenceKey}`);
         }
         if (res?.success === true && _lease?.id) {
           await base44.asServiceRole.entities.ScheduleLoopLease
@@ -1187,6 +1214,38 @@ Deno.serve(async (req) => {
             }
           }
         }
+        // ── RECURRENCE ARMING IN THE ALL-CHARACTER PASS ─────────────────────
+        // The chain carries itself once a boundary is recorded, and this pass already
+        // runs for every character. So a schedule whose boundary was never recorded
+        // (or whose record was never created) gets it recorded here — the same record
+        // and the same computed boundary the boundary run maintains. Nothing new is
+        // scheduled: an armed schedule is left exactly as it is.
+        if (orderedJobs.length > 0) {
+          try {
+            const _gLeaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
+              .filter({ character_id: char.id, schedule_kind: 'work' }, '-created_date', 1);
+            let _gLease = _gLeaseRows?.[0] || null;
+            if (!_gLease) {
+              _gLease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
+                character_id: char.id,
+                schedule_kind: 'work',
+                owner_email: char.owner_email || null,
+              });
+            }
+            if (_gLease && !_gLease.next_boundary_at) {
+              const _gNextIso = computeNextWorkExecutionTime(char, orderedJobs, locMap, globalClock, nowET);
+              if (_gNextIso) {
+                await base44.asServiceRole.entities.ScheduleLoopLease
+                  .update(_gLease.id, { next_boundary_at: _gNextIso });
+                issues_found.push(`${char.name}: recurrence boundary recorded (${_gNextIso})`);
+              }
+            }
+          } catch (_gArmErr) {
+            console.error(`[enforceCharacterWorkSchedule] ${char.name}: recurrence arming FAILED — ${_gArmErr.message}`);
+            issues_found.push(`${char.name}: recurrence arming FAILED — ${_gArmErr.message}`);
+          }
+        }
+
         // Evaluate jobs in order. First active shift wins.
         let activeJob = null;
         for (const job of orderedJobs) {
