@@ -486,10 +486,8 @@ Deno.serve(async (req) => {
           if (_drift < 0) _drift += 1440;
           if (_drift > DRIFT_TOLERANCE_MIN) continue;
           const _jobDays = _jobShift.days && _jobShift.days.length > 0 ? _jobShift.days : null;
-          const _endDay = _endMinutes < (_jobShift.start.split(':').map(Number)[0] * 60 + _jobShift.start.split(':').map(Number)[1])
-            ? (_job.type === 'linked' ? singleClock.getDay() : singleClock.getDay())
-            : singleClock.getDay();
-          if (_jobDays && !_jobDays.includes(_endDay)) continue;
+          // The boundary run happens AT the end moment, so the end belongs to today.
+          if (_jobDays && !_jobDays.includes(singleClock.getDay())) continue;
           try {
             const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
               characterId,
