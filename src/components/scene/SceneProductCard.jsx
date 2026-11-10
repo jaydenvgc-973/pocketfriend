@@ -30,8 +30,14 @@ export default function SceneProductCard({
     const category = msg.item_category;
 
     switch (category) {
-      case "drink":
-        return `Professional bar photography of a ${itemLabel}, beautifully presented in a glass on a bar surface, close-up, clean background, high detail, no food items`;
+      case "drink": {
+        // Coffee and cocktails are both beverages but never interchangeable —
+        // the image must depict the exact drink being offered.
+        const isBrewed = /\b(coffee|espresso|latte|cappuccino|americano|macchiato|mocha|flat white|cold brew|iced coffee|tea|chai|matcha|hot chocolate)\b/i.test(itemLabel);
+        return isBrewed
+          ? `Professional café photography of a ${itemLabel}, served in a ceramic mug or cup on a café counter, close-up, warm natural light, clean background, high detail, no food items, no cocktails`
+          : `Professional bar photography of a ${itemLabel}, beautifully presented in a glass on a bar surface, close-up, clean background, high detail, no food items, no coffee`;
+      }
       case "food":
         return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
       case "clothing":
@@ -209,7 +215,7 @@ export default function SceneProductCard({
         onClick={handleAskAnother}
         className="w-full text-[10px] text-primary/70 hover:text-primary underline transition-colors"
       >
-        Show me another {msg.item_label ? msg.item_label.split(" ").slice(-1)[0] : "option"}
+        Show me another {msg.item_label ? msg.item_label.toLowerCase() : "option"}
       </button>
     </div>
   );
