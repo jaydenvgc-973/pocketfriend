@@ -42,8 +42,17 @@ export default function SceneProductCard({
         }
         return `Professional bar photography of a ${itemLabel}, beautifully presented in a glass on a bar surface, close-up, clean background, high detail, no food items`;
       }
-      case "food":
+      case "food": {
+        const f = itemLabel.toLowerCase();
+        if (/buffet/.test(f)) {
+          // Buffet format: one loaded plate from the spread, not a single à la carte dish.
+          return `Professional food photography of a loaded buffet plate — rice, vegetables, crab legs, pizza, seafood, grilled chicken and pasta — warm buffet counter lighting, close-up, high detail, no drinks`;
+        }
+        if (msg.is_free) {
+          return `Professional food photography of ${itemLabel}, served generously in a simple bowl or on a tray at a community meal service, warm natural light, close-up, high detail, no drinks`;
+        }
         return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
+      }
       case "clothing":
         return `Professional retail product photography of ${itemLabel}, isolated on clean white background, studio lighting, high detail, no people`;
       case "home_goods":
@@ -164,7 +173,7 @@ export default function SceneProductCard({
           </div>
         )}
         <p className="text-xs font-semibold text-foreground">{msg.item_label || "Item"}</p>
-        <p className="text-sm font-bold text-green-400">✓ Purchased · ${msg.price}</p>
+        <p className="text-sm font-bold text-green-400">{msg.is_free ? "✓ Received · Free" : `✓ Purchased · $${msg.price}`}</p>
       </div>
     );
   }
@@ -191,7 +200,7 @@ export default function SceneProductCard({
       {/* Item info */}
       <div className="text-center">
         <p className="text-xs font-semibold text-foreground leading-tight">{msg.item_label || "Item"}</p>
-        <p className="text-sm font-bold text-primary mt-0.5">${msg.price}</p>
+        <p className="text-sm font-bold text-primary mt-0.5">{msg.is_free ? "Free" : `$${msg.price}`}</p>
         {msg.locationName && (
           <p className="text-[10px] text-muted-foreground">{msg.locationName}</p>
         )}
@@ -210,7 +219,7 @@ export default function SceneProductCard({
           disabled={isLoadingImage}
           className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
-          <Check className="w-3 h-3" /> {msg.purchase_type === "clothing" ? "Buy" : "Order"}
+          <Check className="w-3 h-3" /> {msg.purchase_type === "clothing" ? "Buy" : (msg.is_free ? "Take" : "Order")}
         </button>
       </div>
 

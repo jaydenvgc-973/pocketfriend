@@ -42,6 +42,7 @@ export function checkImageTrigger({
   actionCategory = null,
   explicitPrice = null,
   purchaseSource = null,
+  isFreeOffering = false,
   location,
   messages,
   generateFocusedImage,
@@ -67,7 +68,10 @@ export function checkImageTrigger({
   // This is set ONLY by handleAction when action.action_class === 'purchase' && action.cost > 0.
   // Free actions, services, fees, social, navigation, environment, and narrative actions
   // NEVER reach this branch — they always pass actionCategory=null.
-  if (actionCategory && explicitPrice != null && Number(explicitPrice) > 0) {
+  // FREE OFFERING: an explicitly free food action (soup kitchen meal, complimentary
+  // bar snack). The card appears with no price and no transaction.
+  const isPaidPurchase = actionCategory && explicitPrice != null && Number(explicitPrice) > 0;
+  if (isPaidPurchase || (isFreeOffering && actionCategory)) {
     const resolved = extractSceneItemLabel(text, messages, actionCategory, location);
     const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(actionCategory)
       ? 'purchase'
@@ -76,9 +80,10 @@ export function checkImageTrigger({
     setMessages(prev => [...prev, {
       id: `product_${Date.now()}`,
       sender: 'product',
-      price: Number(explicitPrice), // Real price only — never invented
-      action_class: 'purchase',
-      purchase_source: purchaseSource || 'menu',
+      price: isPaidPurchase ? Number(explicitPrice) : 0, // Real price only — never invented
+      is_free: !isPaidPurchase,
+      action_class: isPaidPurchase ? 'purchase' : 'free_offering',
+      purchase_source: isPaidPurchase ? (purchaseSource || 'menu') : 'complimentary',
       locationName: location.name,
       preview_image_url: null,
       purchase_type: purchaseType,

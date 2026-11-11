@@ -588,11 +588,11 @@ export default function Scene() {
     base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
   };
 
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, location, messages, generateFocusedImage, setMessages }); };
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, location, messages, generateFocusedImage, setMessages }); };
 
   const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, timestamp: new Date().toISOString() }]); };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false) => {
     if (!text.trim() || !location) return; setInputText("");
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
@@ -603,7 +603,7 @@ export default function Scene() {
       if (wpSender) base44.functions.invoke('sendWorldPhoneMessage', { sender_character_id: wpSender.id, recipient_identifier: wpIntent.recipient, requested_message: wpIntent.message, user_instruction_context: wpIntent.message ? null : text, source: 'user_instruction', owner_email: currentUser?.email }).catch(err => console.warn('[Scene] World Phone send failed:', err?.message));
     }
 
-    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource);
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering);
     setIsTyping(true);
 
     const _memIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
@@ -725,13 +725,16 @@ export default function Scene() {
       const payer = action.payer || "user"; const cost = Number(action.cost) || 0;
       const isPaidClass = actionClass && ['purchase', 'service', 'fee'].includes(actionClass);
       const isProductCardAction = actionClass === 'purchase' && cost > 0 && payer === 'user' && !!action.action_category && action.purchase_source != null;
-      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch'];
+      // Explicitly free food (soup kitchen meal, complimentary bar snack) — shown in the
+      // Shopfeed card at no charge, never through the purchase path.
+      const isFreeOfferingAction = !!action.free_offering && !!action.action_category;
+      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch', 'sk_soup', 'sk_sandwich', 'sk_hot_meal', 'sk_pasta', 'sk_bread', 'sk_fruit', 'buffet_plate', 'bar_food_tacos', 'bar_food_sliders', 'bar_food_burger', 'bar_food_wings', 'bar_food_nachos', 'bar_food_pizza', 'bar_food_sandwich', 'bar_food_fries', 'bar_food_hotdog'];
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
       if (actionImageFn) { const presentPeople = [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoDesc = presentPeople.length > 0 ? presentPeople.map((c) => c.name).join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, isProductCardAction ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : null);
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
     } finally { setActionCooldown(false); }
   };

@@ -69,6 +69,8 @@ const CATEGORY_FALLBACKS = {
  * Order matters — the first matching venue family wins.
  */
 const VENUE_ITEM_FALLBACKS = [
+  { pattern: /(soup kitchen|free food|free meal|community meal|meal program|meal distribution|food pantry|food bank)/i, drink: 'Water', food: 'Hot Meal' },
+  { pattern: /(buffet|all you can eat|all you can eat buffet)/i, drink: 'Soft Drink', food: 'Buffet Plate' },
   { pattern: /(caf|coffee|espresso|roaster|teahouse|tea house|bakery|patisserie|diner|breakfast|brunch|juice|smoothie)/i, drink: 'Coffee', food: 'Pastry' },
   { pattern: /(bar|pub|lounge|tavern|club|brewery|winery|distiller|cocktail|speakeasy|rooftop)/i, drink: 'Cocktail', food: 'Bar Snack' },
   { pattern: /(restaurant|bistro|grill|kitchen|eatery|steakhouse|pizzeria|trattoria|cantina|food truck)/i, drink: 'Soft Drink', food: 'Meal' },
@@ -79,7 +81,8 @@ const VENUE_ITEM_FALLBACKS = [
  * Never returns an item from an unrelated venue family.
  */
 export function venueAppropriateItem(category, location) {
-  const venueText = `${location?.name || ''} ${location?.category || ''} ${location?.venue_identity || ''} ${location?.club_theme || ''}`;
+  const subtypeText = Array.isArray(location?.subtype) ? location.subtype.join(' ') : (location?.subtype || '');
+  const venueText = `${location?.name || ''} ${location?.category || ''} ${subtypeText} ${location?.venue_identity || ''} ${location?.club_theme || ''}`;
   const match = VENUE_ITEM_FALLBACKS.find((v) => v.pattern.test(venueText));
   if (category === 'drink') return match?.drink || 'Drink';
   if (category === 'food') return match?.food || 'Meal';

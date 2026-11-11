@@ -352,7 +352,7 @@ const SUBTYPE_OPTIONS = {
   home: ["apartment", "house", "condo", "studio", "building"],
   hotel: ["budget_motel", "standard_hotel", "boutique_hotel", "extended_stay", "hostel"],
   shelter: ["emergency_shelter", "transitional_shelter", "womens_shelter", "family_shelter", "overflow_shelter"],
-  food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub"],
+  food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub", "all_you_can_eat_buffet", "free_food_soup_kitchen"],
   social: ["cocktail_bar", "dive_bar", "sports_bar", "beer_hall", "gay_bar", "lesbian_bar", "queer_bar", "upscale_lounge", "neighborhood_bar", "wine_bar", "tiki_bar", "house_music_club", "hip_hop_club", "electronic_club", "punk_venue", "rock_venue", "latin_dance_club", "country_bar", "jazz_club", "karaoke_bar", "nightclub", "dance_club", "rave_venue", "rooftop_bar", "lounge_club"],
   gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
   outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza"],
@@ -368,6 +368,12 @@ const SUBTYPE_OPTIONS = {
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
   jail_prison: ["jail", "prison", "detention_center", "holding_cell", "correctional_facility", "juvenile_detention", "halfway_house", "confinement_facility", "pretrial_detention", "adult_detention", "immigration_detention"],
   transportation: ["train_station", "bus_terminal", "transit_center", "airport", "subway_metro_station", "light_rail_station", "ferry_terminal", "boarding_dock", "cruise_terminal", "marina", "port_terminal", "taxi_stand", "ride_share_pickup", "park_and_ride", "tram_station", "cable_car_station"],
+};
+
+// Display labels where the raw subtype name would read poorly as a venue type.
+const SUBTYPE_LABELS = {
+  free_food_soup_kitchen: "Free Food / Soup Kitchen",
+  all_you_can_eat_buffet: "All-You-Can-Eat Buffet",
 };
 
 function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
@@ -681,6 +687,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
     subtype: Array.isArray(editingLocation?.subtype) ? editingLocation.subtype : (editingLocation?.subtype ? [editingLocation.subtype] : []),
+    features: editingLocation?.features || [],
     description: editingLocation?.description || "",
     keywords: editingLocation?.keywords?.join(", ") || "",
     zones: editingLocation?.zones || [],
@@ -890,10 +897,33 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <button key={subtype}
                 onClick={() => update("subtype", form.subtype.includes(subtype) ? form.subtype.filter(s => s !== subtype) : [...form.subtype, subtype])}
                 className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype.includes(subtype) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                {subtype.replace(/_/g, ' ')}
+                {SUBTYPE_LABELS[subtype] || subtype.replace(/_/g, ' ')}
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {form.category === 'social' && (
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Food Service</label>
+          <button
+            onClick={() => {
+              const features = form.features || [];
+              update("features", features.includes("serves_food")
+                ? features.filter(f => f !== "serves_food")
+                : [...features, "serves_food"]);
+            }}
+            className={`w-full py-2 px-3 rounded-xl text-xs border transition-colors text-left ${
+              (form.features || []).includes("serves_food")
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-card border-border text-muted-foreground hover:border-primary/40"
+            }`}
+          >
+            {(form.features || []).includes("serves_food")
+              ? "Serves food — bar meals and complimentary snacks available"
+              : "Drinks only — no food service"}
+          </button>
         </div>
       )}
 

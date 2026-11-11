@@ -157,6 +157,47 @@ const RESTAURANT_ACTIONS = classifyAll([
   { id: "flirt_server", label: "Flirt with server", emoji: "😉", cost: 0, type: "social", requires_staff: true },
 ]);
 
+// ── FREE FOOD / SOUP KITCHEN ──────────────────────────────────────────────────
+// Food here is provided at no charge. Every food action is a free offering:
+// the Shopfeed card still shows the meal — with no price and no transaction.
+const SOUP_KITCHEN_ACTIONS = classifyAll([
+  { id: "sk_soup", label: "Get soup", emoji: "🍲", cost: 0, type: "functional", action_category: "food", free_offering: true, suggested_zone: "Dining Area" },
+  { id: "sk_sandwich", label: "Get a sandwich", emoji: "🥪", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "sk_hot_meal", label: "Get a hot meal", emoji: "🍽️", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "sk_pasta", label: "Get pasta", emoji: "🍝", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "sk_bread", label: "Get bread", emoji: "🍞", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "sk_fruit", label: "Get fruit", emoji: "🍎", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "sk_sit", label: "Sit and eat", emoji: "🪑", cost: 0, type: "functional", suggested_zone: "Dining Area" },
+  { id: "sk_volunteers", label: "Talk to the volunteers", emoji: "💬", cost: 0, type: "social" },
+]);
+
+// ── ALL-YOU-CAN-EAT BUFFET ───────────────────────────────────────────────────
+// Paid dining through the existing purchase mechanism — one plate price,
+// never a per-item charge. Seconds are included in that plate.
+const BUFFET_ACTIONS = classifyAll([
+  { id: "buffet_plate", label: "Get a buffet plate", emoji: "🍽️", cost: 18, type: "functional", payer: "user", action_category: "food", purchase_source: "buffet", suggested_zone: "Buffet" },
+  { id: "buffet_spread", label: "Look over the spread", emoji: "👀", cost: 0, type: "observational", suggested_zone: "Buffet" },
+  { id: "buffet_server", label: "Chat with the server", emoji: "🗣️", cost: 0, type: "social", requires_staff: true },
+  { id: "buffet_water", label: "Get a glass of water", emoji: "🥤", cost: 0, type: "functional", action_category: "drink", free_offering: true },
+]);
+
+// ── BAR FOOD (only when the bar offers food service) ─────────────────────────
+// Sold items use the existing purchase mechanism. Complimentary snacks stay free:
+// peanuts and pretzels are never charged just because the bar sells meals.
+const BAR_FOOD_ACTIONS = classifyAll([
+  { id: "bar_food_tacos", label: "Order tacos", emoji: "🌮", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_sliders", label: "Order sliders", emoji: "🍔", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_burger", label: "Order a burger", emoji: "🍔", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_wings", label: "Order wings", emoji: "🍗", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_nachos", label: "Order nachos", emoji: "🧀", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_pizza", label: "Order a pizza", emoji: "🍕", cost: 12, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_sandwich", label: "Order a sandwich", emoji: "🥪", cost: 8, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_fries", label: "Order french fries", emoji: "🍟", cost: 8, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_hotdog", label: "Order a hotdog", emoji: "🌭", cost: 8, type: "functional", payer: "user", action_category: "food", purchase_source: "menu", requires_staff: true, suggested_zone: "Bar" },
+  { id: "bar_food_pretzels", label: "Grab complimentary pretzels", emoji: "🥨", cost: 0, type: "functional", action_category: "food", free_offering: true, suggested_zone: "Bar" },
+  { id: "bar_food_peanuts", label: "Grab complimentary peanuts", emoji: "🥜", cost: 0, type: "functional", action_category: "food", free_offering: true, suggested_zone: "Bar" },
+]);
+
 // ── HOME ──────────────────────────────────────────────────────────────────────
 // ALL home actions are free. eat/drink at home use household resources, not a purchase.
 const HOME_ACTIONS = classifyAll([
@@ -359,6 +400,15 @@ const ACTION_LIBRARY_BY_CATEGORY = {
 // ── SUBTYPE → ACTION LIBRARY (overrides category, checked first) ──────────────
 // Keys: lowercase, spaces/hyphens normalized to underscores
 const ACTION_LIBRARY_BY_SUBTYPE = {
+  // Free food / soup kitchen — food is provided at no charge
+  free_food_soup_kitchen: SOUP_KITCHEN_ACTIONS,
+  soup_kitchen:     SOUP_KITCHEN_ACTIONS,
+  free_food_venue:  SOUP_KITCHEN_ACTIONS,
+  community_meal:   SOUP_KITCHEN_ACTIONS,
+  // All-you-can-eat buffet
+  all_you_can_eat_buffet: BUFFET_ACTIONS,
+  buffet:           BUFFET_ACTIONS,
+  buffet_restaurant: BUFFET_ACTIONS,
   // Coffee shop
   coffee_shop:    COFFEE_SHOP_ACTIONS,
   coffee:         COFFEE_SHOP_ACTIONS,
@@ -485,6 +535,58 @@ function resolveActionLibrary(location) {
   return ACTION_LIBRARY_BY_CATEGORY[category] || DEFAULT_ACTIONS;
 }
 
+// ── VENUE-SPECIFIC FOOD ADDITIONS ────────────────────────────────────────────
+// Restaurant type informs which dishes the venue actually serves. These actions
+// are ADDED to the venue's existing actions; no existing action or price changes.
+// Price uses the established restaurant food price — no new price points.
+const VENUE_DISH_MENU = {
+  fine_dining_restaurant: ["Ribeye Steak", "Filet Mignon", "Lobster Tail", "Crab Legs"],
+  fine_dining:            ["Ribeye Steak", "Filet Mignon", "Lobster Tail"],
+  steakhouse:             ["Ribeye Steak", "Filet Mignon", "Lamb Chops"],
+  seafood_restaurant:     ["Lobster", "Crab Legs", "Seafood Platter"],
+  pizza_place:            ["Margherita Pizza", "Pepperoni Pizza"],
+  sushi_restaurant:       ["Sushi Platter", "Salmon Nigiri"],
+  taco_stand:             ["Tacos", "Burrito"],
+  burger_joint:           ["Cheeseburger", "French Fries"],
+  bbq_place:              ["Brisket Plate", "Pulled Pork Sandwich"],
+  ramen_shop:             ["Tonkotsu Ramen", "Gyoza"],
+  thai_restaurant:        ["Pad Thai", "Green Curry"],
+  mexican_restaurant:     ["Enchiladas", "Carnitas Tacos"],
+  italian_restaurant:     ["Spaghetti Carbonara", "Chicken Parmigiana"],
+  asian_fusion:           ["Poke Bowl", "Korean Fried Chicken"],
+  vegan_restaurant:       ["Buddha Bowl", "Vegan Burger"],
+  gastropub:              ["Burger", "Fish and Chips"],
+};
+
+function normalizeSubtypes(location) {
+  const raw = Array.isArray(location?.subtype) ? location.subtype : [location?.subtype];
+  return raw
+    .filter(Boolean)
+    .map(s => String(s).toLowerCase().replace(/[\s\-&]+/g, '_').replace(/_+/g, '_'));
+}
+
+/** True when a Night Out / bar location has food service enabled by the user. */
+function offersFoodService(location) {
+  return (location?.features || []).map(f => String(f).toLowerCase()).includes('serves_food');
+}
+
+/** Dish actions for the venue's restaurant type (empty when the type has no menu). */
+function buildVenueDishActions(location) {
+  const dishes = normalizeSubtypes(location).map(s => VENUE_DISH_MENU[s]).find(Boolean);
+  if (!dishes) return [];
+  return classifyAll(dishes.map((dish) => ({
+    id: `dish_${dish.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+    label: `Order ${dish}`,
+    emoji: "🍽️",
+    cost: 18,
+    type: "functional",
+    payer: "user",
+    action_category: "food",
+    purchase_source: "menu",
+    requires_staff: true,
+  })));
+}
+
 /**
  * generateLocationActions — authoritative entry point
  *
@@ -502,7 +604,14 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   if (!location) return DEFAULT_ACTIONS;
   if (options.isCharacterAsleep) return [];
 
-  const actions = resolveActionLibrary(location);
+  let actions = resolveActionLibrary(location);
+
+  // Venue food additions — additive only. Existing actions and prices are untouched.
+  // Bars offer food only when the user enabled food service on that location.
+  const venueExtras = [];
+  if (actions === BAR_CLUB_ACTIONS && offersFoodService(location)) venueExtras.push(...BAR_FOOD_ACTIONS);
+  venueExtras.push(...buildVenueDishActions(location));
+  if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
 
   // Caffeine filter: only restrict within 2 hours of character's scheduled sleep.
   // The old arbitrary 1:00 PM Eastern cutoff has been removed — it was incorrect.
