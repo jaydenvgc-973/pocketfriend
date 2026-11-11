@@ -1079,7 +1079,10 @@ export default function Scene() {
   const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false) && !observeMode;
 
   const renderNpc = (npc) => {
-    const isSelected = (selectedNpcIds || []).includes(npc.id);
+    // The effective selection is the authority: a caregiver the supervision system has on
+    // duty in this household is selected from the first render, so Who's Here must show it
+    // as selected rather than requiring the user to pick them by hand.
+    const isSelected = selectedNpcIdList.includes(npc.id);
     return (
       <button key={npc.id} onClick={() => { setSelectedNpcIds((prev) => { const current = prev || []; return isSelected ? current.filter((id) => id !== npc.id) : [...current, npc.id]; }); setShowNpcDropdown(false); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-secondary ${isSelected ? "bg-primary/10" : ""}`}>
         <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">{npc.avatar_url ? <img src={npc.avatar_url} alt={npc.name} className="w-full h-full object-cover" /> : <span className="text-[9px] font-bold text-foreground">{npc.name?.[0]}</span>}</div>
