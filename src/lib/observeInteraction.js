@@ -16,6 +16,7 @@
 import { base44 } from '@/api/base44Client';
 import { filterDashes } from '@/lib/dashFilter';
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from '@/lib/sceneBackgroundResponse';
+import { buildSceneCircumstances } from '@/lib/sceneCircumstances';
 
 // NARRATIVE — events that have ALREADY HAPPENED. Canon, not an instruction.
 const ESTABLISHED_NARRATIVE = (narrative) => `
@@ -129,6 +130,15 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
     .map((c) => `- ${c.name} (${c.personality_summary?.split('.')[0] || c.archetype || 'character'}; mood: ${c.emotional_state || 'calm'})`)
     .join('\n');
 
+  // Who these people are here, from their existing records: an employee knows this is
+  // their workplace, a student knows they are here for school. Only a genuine visitor
+  // speaks like a visitor.
+  const circumstancesBlock = buildSceneCircumstances({
+    location,
+    participants: cast,
+    backgroundPeople: bgSpeaking.map((n) => ({ id: n.id, name: n.name, role: n.role })),
+  });
+
   const silentRule = silent.length > 0
     ? `\nONLY THESE MAY SPEAK THIS BEAT: ${nameList}.\n${silent.map((c) => c.name).join(', ')} ${silent.length === 1 ? 'is' : 'are'} present and part of the scene, but do not give ${silent.length === 1 ? 'them' : 'them'} a spoken line this beat — they may only be shown listening or reacting without words.`
     : '';
@@ -146,6 +156,7 @@ ${castLines || '(no established Pocketfriend character is in this moment)'}
 ${silentRule}
 
 ${placeBlock}
+${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
 ${backgroundRule}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody in this scene addresses, names, or plays to anyone outside the participant list.\n${canonicalSection}\n===` : ''}

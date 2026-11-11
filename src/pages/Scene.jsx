@@ -50,6 +50,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
+import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter } from "@/lib/characterAgeStage";
 import { getCharacterAge } from "@/lib/characterAgeSystem";
 import { buildBackgroundPopulation, describeBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
@@ -835,7 +836,14 @@ export default function Scene() {
     await Promise.all(_canonicalCharIds.map(async (id) => { try { const charRecord = characters.find((c) => c.id === id); const r = await base44.functions.invoke('buildCanonicalCharacterContext', { characterId: id, interactionContext: 'scene', ownerEmailHint: charRecord?.owner_email || currentUser?.email || null }); if (r?.data?.systemPrompt) canonicalCtx[id] = r.data.systemPrompt; } catch {} }));
 
     try {
-      const conversationHistory = messages.slice(-12).map((m) => `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`).join("\n");
+      // Established events stay canon: a narrative line is something that has ALREADY
+      // happened, never a character speaking or a new event.
+      const conversationHistory = messages.slice(-12).map((m) => {
+        if (m.is_canon_event) return `(already happened, before this moment) ${m.content}`;
+        if (m.sender === "narrative") return `(situation) ${m.content}`;
+        if (m.sender === "stage") return `(already played out) ${m.content}`;
+        return `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`;
+      }).join("\n");
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
       const selectedCharIds = selectedNpcIds || [];
       // A directed interaction is answered by the chosen person only — never by someone else.
@@ -867,8 +875,19 @@ export default function Scene() {
 
       const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n- A kiss or a flirt is an offer, not a guarantee. Reciprocating must fit this character; hesitating, deflecting, being caught off guard, or turning it down is a valid response.\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
 
+      // Who is here and why, from their existing records: employment and job title,
+      // school enrollment, residence, or genuine visitation. This is what stops an
+      // employee speaking like a customer and a student speaking like a loiterer.
+      const circumstancesBlock = buildSceneCircumstances({
+        location,
+        participants: sceneParticipants,
+        backgroundPeople: selectedNpcs.filter((n) => n.isNpc === true).map((n) => ({ id: n.id, name: n.name, role: n.role })),
+        onShiftAtLocationIds: onShiftIds,
+        homeResidentIds,
+      });
+
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
