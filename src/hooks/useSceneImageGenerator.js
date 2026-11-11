@@ -13,6 +13,7 @@ import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
+import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 
 /**
  * useSceneImageGenerator
@@ -78,7 +79,10 @@ export function useSceneImageGenerator() {
     const lightingDesc = getLightingDescriptor(hour);
 
     // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──
-    const finalParticipants = selectImageParticipants(actionFocusIds);
+    // Exactly one subject per person: the same individual reaching the cast twice (their own
+    // record plus a placeholder, or a duplicate caregiver record) is collapsed here, so the
+    // prompt can never ask for two of them — and a role is never part of a prompt name.
+    const finalParticipants = dedupeSceneCast(selectImageParticipants(actionFocusIds));
 
     // ── USER APPEARANCE BLOCK ──
     const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';
