@@ -40,6 +40,7 @@ export function resolveTravelPresenceEntities({
   activeCharacters = [],
   npcFictitious = [],
   npcFamilyMembers = [],
+  npcRegular = [],
   allCharacters = [],
   locations = [],
   sharedLocationEmployees = [],
@@ -123,6 +124,23 @@ export function resolveTravelPresenceEntities({
       effective_presence_type: 'npc_fictitious',
     };
     debugLog(`+ npc_fictitious: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
+  });
+
+  // 2b. Assigned child-care caregivers (npc_regular records assigned by the existing
+  // child-supervision system). A caregiver supervising a child at a residence is a
+  // legitimate member of that household, not a random residential NPC. It resolves
+  // through the same authoritative presence engine as every other Character record,
+  // so it stays present at the home regardless of who is viewing the scene.
+  npcRegular.forEach(char => {
+    if (seenIds.has(char.id)) return;
+    seenIds.add(char.id);
+    const normalized_entity = {
+      ...normalizeCharacterToPresenceEntity(char, locationMap),
+      source_type: 'character_record',
+      effective_presence_type: 'npc_regular',
+    };
+    debugLog(`+ npc_regular: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
     normalized.push(normalized_entity);
   });
 

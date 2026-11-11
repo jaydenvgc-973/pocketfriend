@@ -118,6 +118,11 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
   const status = person.resolved_presence_status || '';
   const jobTitle = jobTitleAt(person, location);
   const text = [];
+  // The household's assigned child-care caregiver (existing child-supervision system).
+  // They are a separate person present in the home looking after the children — the
+  // children of this household are supervised, never alone.
+  const isCaregiver = person.is_sitter === true ||
+    /babysit|caregiver|nanny|sitter/i.test(String(person.occupation || ''));
 
   const employedHere = worksHere(person, location);
   const onShift = employedHere && onShiftHere(person, location, onShiftAtLocationIds);
@@ -129,6 +134,8 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
     text.push(`${name} is a PATIENT here, receiving care.`);
   } else if (['incarcerated', 'confined', 'house_arrest'].includes(status)) {
     text.push(`${name} is CONFINED here.`);
+  } else if (residentHere && isCaregiver && !onShift && !classNow) {
+    text.push(`${name} LIVES HERE as the household's CAREGIVER ON DUTY: they are here looking after the children of this home. The children are supervised and are not alone — any child at home with them is being cared for, not left by themselves.`);
   } else if (residentHere && !onShift && !classNow) {
     // A campus residence is still a home. Living on school property does not mean
     // attending class while at home.

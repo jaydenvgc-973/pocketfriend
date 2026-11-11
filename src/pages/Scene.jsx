@@ -157,7 +157,7 @@ export default function Scene() {
     enabled: !!locationId && !locationsData.find((l) => l.id === locationId),
   });
 
-  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
+  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
 
@@ -207,6 +207,8 @@ export default function Scene() {
       currentUser, userSettings: settings || null, activeCharacters: activeChars,
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
+      // Assigned child-care caregivers are part of the household they supervise.
+      npcRegular: sceneCaregivers,
       allCharacters: characters, sharedLocationEmployees, sharedLocationVisitors, locations: locationsData
     });
     const withBrought = resolved.map((entity) => {
@@ -219,8 +221,11 @@ export default function Scene() {
       }
     });
     return withBrought;
-  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
+  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
 
+  // The household's assigned child-care caregiver — a legitimate person in this home,
+  // never a random residential NPC.
+  const isAssignedCaregiverHere = (c) => c?.is_sitter === true && c?.sitter_assigned_to_location_id === location?.id;
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   // Gateway House — the administrator-shared residence where characters from
@@ -303,7 +308,7 @@ export default function Scene() {
     const npcs = [];
     if (isHomeLocation) {
       vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.character_type === 'family_npc' ? 'Family' : 'Resident', isNpc: true, npcType: 'resident', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); });
-      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state }); });
+      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: isAssignedCaregiverHere(c) ? 'Caregiver' : 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state }); });
       (location.resident_family_members || []).forEach((fm) => { if (!fm.name) return; const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); if (alreadyAdded) return; const sourceChar = fm.source_character_id ? characters.find((c) => c.id === fm.source_character_id) : homeResidents.find((c) => c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())); const familyMemberRecord = sourceChar?.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); npcs.push({ id: `npc_${fm.name.replace(/\s+/g, "_")}`, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, npcType: "resident", avatar_url: familyMemberRecord?.photo_url || null }); });
     }
     if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
@@ -429,7 +434,15 @@ export default function Scene() {
 
   useEffect(() => { if (location) { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); } }, [location?.id, activeZone]);
 
-  useEffect(() => { if (!isHomeLocation || !location?.id || !currentUser?.email) return; base44.functions.invoke('ensureChildCaregiverPresence', { locationId: location.id }).catch(() => {}); }, [isHomeLocation, location?.id, currentUser?.email]);
+  // Existing child-supervision check, unchanged in scope: a residence only. When it has
+  // assigned (or reused) a caregiver, that caregiver is part of this household, so the
+  // scene reads it again — opening the page must never leave a supervised child unseen.
+  useEffect(() => {
+    if (!isHomeLocation || !location?.id || !currentUser?.email) return;
+    base44.functions.invoke('ensureChildCaregiverPresence', { locationId: location.id })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["sceneCaregivers", currentUser.email] }))
+      .catch(() => {});
+  }, [isHomeLocation, location?.id, currentUser?.email]);
 
   useEffect(() => {
     if (!location || broughtCharacters.length === 0) return;
@@ -491,7 +504,13 @@ export default function Scene() {
       ? observeSentIds
       : observeCandidates.filter((c) => !c.isNpc).slice(0, 4).map((c) => c.id);
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
-    return [...new Set([...base, ...chosenBackground])];
+    // The household's assigned caregiver is part of a watched residence: the child they
+    // supervise is never in the moment alone, and the caregiver is never replaced by an
+    // unrelated background person.
+    const supervision = observeCandidates
+      .filter((c) => c.isNpc !== true && isAssignedCaregiverHere(c))
+      .map((c) => c.id);
+    return [...new Set([...base, ...chosenBackground, ...supervision])];
   }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(',')]);
   const observeCastIdList = observeCastIds || observeDefaultIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));

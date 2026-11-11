@@ -77,6 +77,29 @@ export function useSceneCharacters(currentUser) {
     staleTime: 0,
   });
 
+  // ASSIGNED CHILD-CARE CAREGIVERS
+  // The existing child-supervision system (ensureChildCaregiverPresence) assigns a
+  // caregiver as this account's own npc_regular Character record (is_sitter = true,
+  // sitter_assigned_to_location_id = the home). That caregiver is a legitimate member
+  // of the household, so it must be part of the Scene character pool — otherwise
+  // presence, Who's Here and scene dialogue cannot see it and an under-16 child is
+  // shown and described as alone while supervised.
+  // Scoped to caregiver records only: no general npc_regular scan.
+  const { data: sceneCaregivers = [] } = useQuery({
+    queryKey: ["sceneCaregivers", currentUser?.email],
+    queryFn: async () => {
+      const rows = await base44.entities.Character.filter(
+        { owner_email: currentUser.email, character_type: 'npc_regular' },
+        '-created_date', 100
+      );
+      return (rows || []).filter((c) =>
+        c.is_sitter === true || /babysit|caregiver|nanny|sitter/i.test(String(c.occupation || ''))
+      );
+    },
+    enabled,
+    staleTime: 0,
+  });
+
   const characters = useMemo(() => {
     const seenNpc = new Set();
     const npcFictitious = [...backendNpcFictitious, ...rlsNpcFictitious].filter(c => {
@@ -95,7 +118,14 @@ export function useSceneCharacters(currentUser) {
     // seenFam already cover npc_fictitious and npc_family_member; activeChars
     // are deduped separately). Include them so the Scene presence resolver
     // can show them at those shared locations.
-    const seenShared = new Set([...activeChars, ...npcFictitious, ...npcFamily].map(c => c.id));
+    // Assigned caregivers are real household members — included unless already present.
+    const seenCare = new Set([...activeChars, ...npcFictitious, ...npcFamily].map(c => c.id));
+    const caregivers = sceneCaregivers.filter(c => {
+      if (seenCare.has(c.id)) return false;
+      seenCare.add(c.id);
+      return true;
+    });
+    const seenShared = new Set([...activeChars, ...npcFictitious, ...npcFamily, ...caregivers].map(c => c.id));
     const sharedEmployees = sharedLocationEmployees.filter(c => {
       if (seenShared.has(c.id)) return false;
       seenShared.add(c.id);
@@ -106,13 +136,13 @@ export function useSceneCharacters(currentUser) {
       seenShared.add(c.id);
       return true;
     });
-    return [...activeChars, ...npcFictitious, ...npcFamily, ...sharedEmployees, ...sharedVisitors].filter(c =>
+    return [...activeChars, ...npcFictitious, ...npcFamily, ...caregivers, ...sharedEmployees, ...sharedVisitors].filter(c =>
       c.is_test_character !== true &&
       c.diagnostic_only !== true &&
       c.exclude_from_default_scene_queries !== true
     );
-  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors]);
+  }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors]);
 
   // Return all source arrays so Scene can track dependency-per-query, not just final count
-  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sharedLocationEmployees, sharedLocationVisitors };
+  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors };
 }
