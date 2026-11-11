@@ -19,9 +19,9 @@ const WHOLE_MSG_PRONOUN = /^(it now|yes please|sure|go ahead|i'll take it|give i
 
 // ── VENUE-CATEGORY ITEM PATTERNS ────────────────────────────────────────────
 
-const KNOWN_DRINK_PATTERN = /\b(Long Beach Iced Tea|Long Island Iced Tea|Margarita|Mojito|Cosmopolitan|Old Fashioned|Whiskey Sour|Gin and Tonic|Vodka Soda|Rum and Coke|Sangria|Moscow Mule|Daiquiri|Martini|Pina Colada|Mai Tai|Negroni|Aperol Spritz|Lager|IPA|Pale Ale|Stout|Cider|Red Wine|White Wine|Champagne|Prosecco|Tequila Shot|Scotch|Bourbon|Brandy|Whiskey|Vodka Shot|Beer|Coffee|Latte|Espresso|Cappuccino|Americano|Macchiato|Mocha|Flat White|Iced Coffee|Cold Brew|Juice|Soda|Water|Tea|Iced Tea|Chai|Matcha|Lemonade|Hot Chocolate|Smoothie|Milkshake|Bottle Service)\b/i;
+const KNOWN_DRINK_PATTERN = /\b(Long Beach Iced Tea|Long Island Iced Tea|Margarita|Mojito|Cosmopolitan|Old Fashioned|Whiskey Sour|Gin and Tonic|Vodka Soda|Rum and Coke|Sangria|Moscow Mule|Daiquiri|Martini|Pina Colada|Mai Tai|Negroni|Aperol Spritz|Lager|IPA|Pale Ale|Stout|Cider|Red Wine|White Wine|Champagne|Prosecco|Tequila Shot|Scotch|Bourbon|Brandy|Whiskey|Vodka Shot|Beer|Coffee|Latte|Espresso|Cappuccino|Iced Coffee|Cold Brew|Juice|Soda|Water|Tea|Smoothie|Milkshake)\b/i;
 
-const KNOWN_FOOD_PATTERN = /\b(Hamburger|Cheeseburger|Burger|Hotdog|Hot Dog|Sandwich|Pizza|Tacos|Taco|Salad|Wings|Buffalo Wings|Fries|French Fries|Nachos|Pasta|Steak|Chicken|Fish|Shrimp|Lobster|Sushi|Ramen|Soup|Appetizer|Dessert|Cheesecake|Ice Cream|Waffle|Pancakes|Omelette|Burrito|Quesadilla|Ribs|Brisket|Pulled Pork|Bagel|Croissant|Muffin|Donut|Pastry|Scone|Danish|Pie|Toast|Breakfast|Comfort Food|Cupcake|Brownie|Wrap|Bowl|Platter)\b/i;
+const KNOWN_FOOD_PATTERN = /\b(Cheeseburger|Burger|Sandwich|Pizza|Tacos|Taco|Salad|Wings|Buffalo Wings|Fries|French Fries|Nachos|Pasta|Steak|Chicken|Fish|Shrimp|Lobster|Sushi|Ramen|Soup|Appetizer|Dessert|Cheesecake|Ice Cream|Waffle|Pancakes|Omelette|Burrito|Quesadilla|Hot Dog|Ribs|Brisket|Pulled Pork|Bagel|Croissant|Muffin|Donut|Wrap|Bowl|Platter)\b/i;
 
 const KNOWN_CLOTHING_PATTERN = /\b(shirt|t-shirt|tee|blouse|top|jacket|coat|hoodie|sweater|sweatshirt|cardigan|blazer|suit|dress|skirt|pants|jeans|shorts|leggings|joggers|trousers|sneakers|shoes|boots|heels|sandals|loafers|bag|purse|handbag|backpack|wallet|belt|hat|cap|beanie|scarf|gloves|socks|underwear|bra|boxers|briefs|outfit|accessory|jewelry|necklace|bracelet|ring|earrings|sunglasses|watch)\b/i;
 
@@ -55,7 +55,7 @@ const CATEGORY_PATTERN_MAP = {
  */
 const CATEGORY_FALLBACKS = {
   food:        'meal',
-  drink:       'drink',
+  drink:       'cocktail',
   clothing:    'clothing item',
   home_goods:  'home item',
   hardware:    'tool',
@@ -63,69 +63,6 @@ const CATEGORY_FALLBACKS = {
   pharmacy:    'health item',
   electronics: 'electronics item',
 };
-
-// ── ACTION STRIP LABEL → ITEM ───────────────────────────────────────────────
-// A paid strip action posts its own label as the message text, e.g. "[☕ Order coffee — $5]".
-// That label names the item the user actually chose, so it is the authority for the
-// Shopfeed item. A blind category default is only used when the label names no item.
-
-const ACTION_MESSAGE_FORM = /^\s*\[[^\]]+\]\s*$/;
-const ACTION_LEAD_VERBS = /^(?:order|get|grab|have|buy|purchase|pick up|bring|try|take|dine at|dine on|split|share|another)\s+/i;
-const GENERIC_ITEM_NOUNS = /^(?:food|drink|drinks|something|anything|items?|stuff|meal|bite|snack|round|service|order|takeout|breakfast|comfort food|lunch)\s*$/i;
-
-/**
- * Pull the chosen item out of a strip action's own label.
- * "[☕ Order coffee — $5]" → "coffee";  "[🌭 Order hotdog]" → "hotdog".
- * Returns null when the label names no concrete item (e.g. "Order food").
- */
-function extractItemFromActionLabel(rawText) {
-  if (!rawText || !ACTION_MESSAGE_FORM.test(rawText)) return null;
-  let inner = rawText.trim().slice(1, -1);
-  inner = inner.replace(/^[^A-Za-z0-9]+/, '');            // leading emoji/symbols
-  inner = inner.replace(/\s*\([^)]*pays\)\s*$/i, '');     // " (Ethan pays)"
-  inner = inner.replace(/\s*[—–-]\s*\$[\d.,]+\s*$/, '');  // " — $5"
-  inner = inner.trim();
-  if (!inner) return null;
-
-  let candidate = inner;
-  for (let i = 0; i < 4 && ACTION_LEAD_VERBS.test(candidate); i++) {
-    candidate = candidate.replace(ACTION_LEAD_VERBS, '');
-  }
-  candidate = candidate.replace(/^(?:a|an|the|some)\s+/i, '').trim().replace(/[.!?]+$/, '');
-  if (!candidate) return null;
-  if (GENERIC_ITEM_NOUNS.test(candidate)) return null;
-  return candidate;
-}
-
-/** A label only counts as the item when it belongs to the action's own category. */
-function isItemOfCategory(candidate, actionCategory) {
-  if (!candidate) return false;
-  if (!actionCategory) return true;
-  const pattern = CATEGORY_PATTERN_MAP[actionCategory];
-  if (!pattern) return true;
-  return pattern.test(candidate);
-}
-
-const COFFEE_VENUE = /caf[eé]|coffee|espresso|roast|bean|brewer|tea house|bakery|patisserie|bistro/i;
-const BAR_VENUE = /\bbar\b|lounge|club|pub|tavern|cocktail|nightclub|speakeasy|grill/i;
-
-/**
- * Venue-appropriate generic item, used only when the action names no concrete item.
- * Keeps the offering consistent with the establishment the action was taken in.
- */
-function resolveGenericItem(actionCategory, location) {
-  const where = `${location?.name || ''} ${location?.venue_identity || ''} ${location?.category || ''}`;
-  if (actionCategory === 'drink') {
-    if (COFFEE_VENUE.test(where)) return 'coffee';
-    if (BAR_VENUE.test(where)) return 'cocktail';
-    return 'house drink';
-  }
-  if (actionCategory === 'food') {
-    if (COFFEE_VENUE.test(where)) return 'pastry';
-    return 'meal';
-  }
-  return CATEGORY_FALLBACKS[actionCategory] || 'item';
-}
 
 /**
  * Derive the best category from a candidate string.
@@ -218,22 +155,11 @@ function isCandidateValidForCategory(candidate, actionCategory) {
  * @param {string|null} actionCategory - Explicit category from strip action (food/drink/clothing/home_goods/hardware/grocery/pharmacy/electronics)
  * @returns {{ label: string, category: string }}
  */
-export function extractSceneItemLabel(rawText, messages, actionCategory = null, location = null) {
+export function extractSceneItemLabel(rawText, messages, actionCategory = null) {
   // ── STEP 1: Check if the whole message is a pronoun confirmation ─────────
   const isWholePronoun = WHOLE_MSG_PRONOUN.test(rawText.trim());
 
-  // ── STEP 2: A strip action's own label names the item the user chose ─────
-  // "Order coffee" must offer coffee — never an unrelated item from the same
-  // broad category (coffee and cocktails are both drinks, not interchangeable).
-  const actionItem = extractItemFromActionLabel(rawText);
-  if (actionItem && isItemOfCategory(actionItem, actionCategory)) {
-    return {
-      label: actionItem.charAt(0).toUpperCase() + actionItem.slice(1, 60),
-      category: actionCategory || deriveCategoryFromCandidate(actionItem) || 'food',
-    };
-  }
-
-  // ── STEP 3: Try to extract a real noun phrase from the message ───────────
+  // ── STEP 2: Try to extract a real noun phrase from the message ───────────
   let candidate = null;
   if (!isWholePronoun) {
     const tryMatch = rawText.match(/(?:i'll (?:have|take|get|order)|can i (?:get|have|order)|give me|i want|i'd like|show me|let me see|i'll take|bring me|get me|looking for|i need|i want to buy|i'd like to buy|i'll buy)\s+(?:a |an |some |the |one )?(.+)/i);
@@ -244,27 +170,26 @@ export function extractSceneItemLabel(rawText, messages, actionCategory = null, 
     }
   }
 
-  // ── STEP 4: Validate the candidate matches the action category ───────────
+  // ── STEP 3: Validate the candidate matches the action category ───────────
   if (candidate && actionCategory && !isCandidateValidForCategory(candidate, actionCategory)) {
     console.log(`[Scene] Candidate "${candidate}" rejected — cross-category mismatch with action=${actionCategory}`);
     candidate = null; // force context resolution
   }
 
-  // ── STEP 5: If no valid candidate, resolve from conversation context ─────
+  // ── STEP 4: If no valid candidate, resolve from conversation context ─────
   if (!candidate) {
     const contextItem = resolveActiveItemFromContext(messages, actionCategory);
     if (contextItem) {
       console.log(`[Scene] Pronoun resolved: "${rawText}" → "${contextItem.label}" (category=${contextItem.category})`);
       return { label: contextItem.label, category: actionCategory || contextItem.category };
     }
-    // No context at all — venue-appropriate generic for this category
-    const genericLabel = resolveGenericItem(actionCategory, location);
-    const fallbackLabel = genericLabel.charAt(0).toUpperCase() + genericLabel.slice(1);
+    // No context at all — use category-correct generic fallback
+    const fallbackLabel = CATEGORY_FALLBACKS[actionCategory] || 'item';
     const fallbackCategory = actionCategory || 'food';
     return { label: fallbackLabel, category: fallbackCategory };
   }
 
-  // ── STEP 6: Derive category from candidate if not action-locked ──────────
+  // ── STEP 5: Derive category from candidate if not action-locked ──────────
   const category = actionCategory || deriveCategoryFromCandidate(candidate) || 'food';
 
   return { label: candidate.slice(0, 60), category };

@@ -37,13 +37,8 @@ Deno.serve(async (req) => {
 
       if (hasWork) {
         try {
-          // An update that writes a field's own current value does not change that field,
-          // so it is not guaranteed to fire the entity trigger — records whose watched
-          // fields already held their values never started their chain. Invoke the same
-          // enforcement the trigger would invoke, so the first boundary is actually armed.
-          await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', {
-            characterId: char.id,
-            system_mode: true,
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            work_details: char.work_details || {},
           });
           results.work++;
         } catch (e) {
@@ -54,10 +49,8 @@ Deno.serve(async (req) => {
       // ── 2. SCHOOL: touch enrollment fields for enrolled students ──
       if (char.student_status === 'enrolled' && (char.education_location_id || char.current_school_location_id)) {
         try {
-          // Same reason as work: start the chain by invoking the enforcement the trigger
-          // would invoke, rather than relying on a value-identical update firing it.
-          await base44.asServiceRole.functions.invoke('enforceCharacterSchoolSchedule', {
-            characterId: char.id,
+          await base44.asServiceRole.entities.Character.update(char.id, {
+            education_enrollments: char.education_enrollments || [],
           });
           results.school++;
         } catch (e) {

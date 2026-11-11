@@ -162,12 +162,41 @@ function isLocationOpen(location) {
 }
 
 // ── PROTECTED ARRIVAL COMMITMENT PREDICATE (read-only) ──────────────────────
-// True only while confirmMovementCommitment's own registration is live: commitment
-// type 'arrival', status 'active' (or 'arrived' once the destination matches),
-// interruptible=false, and the character's pending_scheduled_relocation_at and
-// next_location_id agreeing with it inside the arrival window. No movement, no
-// writes, no transitions; processScheduledRelocations remains the sole lifecycle
-// owner. Timestamps validated (NaN rejected); query failure = no protection.
+// Determines ONLY whether an authoritative promised-arrival commitment currently
+// protects this character from non-emergency autonomous relocation. It performs
+// no movement, no commitment writes, and no status transitions.
+//
+// confirmMovementCommitment writes BOTH:
+//   CharacterCommitment: { commitment_type:'arrival', status:'active',
+//     interruptible:false, destination_location_id, expected_arrival_time,
+//     expected_arrival_window_minutes }
+//   Character: { pending_scheduled_relocation_at, next_location_id }
+// processScheduledRelocations owns those pending fields and clears them when the
+// relocation is fulfilled or abandoned — that authoritative registration IS the
+// lifecycle. No invented timer/expiration is added.
+//
+// Active pending arrival — protective when ALL hold:
+//   commitment_type === 'arrival', status === 'active', interruptible === false,
+//   destination_location_id exists,
+//   character.pending_scheduled_relocation_at exists,
+//   character.next_location_id === commitment.destination_location_id,
+//   expected_arrival_time is valid, pending_scheduled_relocation_at is valid,
+//   both timestamps represent the same scheduled instant,
+//   now >= expected_arrival_time - expected_arrival_window_minutes (window has opened).
+// The window OPENS protection; it does NOT close it. If the pending registration is
+// cleared, a stale 'active' commitment no longer protects — no symmetric post-ETA
+// expiration is invented.
+//
+// Fulfilled arrival — protective while:
+//   commitment_type === 'arrival', status === 'arrived', interruptible === false,
+//   destination_location_id === character.resolved_current_location_id.
+// Ends automatically when an authorized system changes the character's location.
+//
+// Work/school authority is NOT re-evaluated here. Tier 3.5 dispatch runs before
+// this predicate is computed and continues on its own authority, so a mandatory
+// shift/session naturally overrides the commitment without a competing check.
+// Timestamps are validated (NaN rejected). Query failures are logged and treated
+// as "no protection found" (non-fatal — does not crash the run).
 async function getProtectedArrivalCommitment(base44, char) {
   if (!char?.id || !char?.owner_email) return null;
   let cs = null;

@@ -1,8 +1,8 @@
 {
   "name": "School Schedule Enforcement \u2014 Entity Trigger",
-  "description": "Fires when a character's school/enrollment fields or presence status change and runs enforceCharacterSchoolSchedule immediately, which routes the character to or from school per the authoritative schedule and records the schedule's next established boundary. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
+  "description": "Fires when a character's school/enrollment fields change (student_status, education_location_id, current_school_location_id, education_enrollments). Invokes enforceCharacterSchoolSchedule which evaluates the authoritative school schedule, routes the character to/from school via the canonical writer, and returns next_execution_time for the Workflow delay step. Replaces any polling-based school enforcement with an event-driven Workflow.",
   "trigger": {
-    "condition": "${ ((.trigger.changed_fields | index(\"student_status\") != null) or (.trigger.changed_fields | index(\"education_location_id\") != null) or (.trigger.changed_fields | index(\"current_school_location_id\") != null) or (.trigger.changed_fields | index(\"education_enrollments\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
+    "condition": "${ ((.trigger.changed_fields | index(\"student_status\") != null) or (.trigger.changed_fields | index(\"education_location_id\") != null) or (.trigger.changed_fields | index(\"current_school_location_id\") != null) or (.trigger.changed_fields | index(\"education_enrollments\") != null)) }",
     "config": {
       "trigger_type": "entity",
       "events": [
@@ -15,26 +15,18 @@
     "document": {
       "dsl": "1.0.0",
       "name": "school_schedule_enforcement_entity_trigger",
-      "version": "4.0",
+      "version": "1.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "enforce": {
+        "run_function": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterSchoolSchedule",
-            "args": {
-              "event": {
-                "entity_id": "${ .trigger.entity_id }"
-              }
-            }
+            "args": {}
           },
-          "then": "end",
-          "x-base44": {
-            "title": "Enforce school schedule",
-            "description": "Routes per schedule and records the next boundary"
-          }
+          "then": "end"
         }
       }
     ]

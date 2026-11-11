@@ -156,138 +156,6 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
-      // ── RECURRING BOUNDARY RECORD ──────────────────────────────────────────
-      // This record carries the schedule's own next established boundary. A run that
-      // wakes on a boundary recomputes the following one and writes it here, which
-      // hands that boundary to the next durable run. The schedule therefore carries
-      // its own recurrence: nothing is polled, and no unrelated event is required.
-      const _leaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
-        .filter({ character_id: characterId, schedule_kind: 'work' }, '-created_date', 1)
-        .catch(() => []);
-      let _lease = _leaseRows?.[0] || null;
-      if (!_lease) {
-        try {
-          _lease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
-            character_id: characterId,
-            schedule_kind: 'work',
-            owner_email: character.owner_email || null,
-          });
-        } catch (e) {
-          // Without this record the schedule has no chain at all. Reported, never
-          // swallowed — a missing chain must never look like a healthy schedule.
-          console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to create recurrence record — ${e.message}`);
-        }
-      }
-      // Boundary times are normalized to the minute so the same boundary is never
-      // written twice, while a genuinely different one always advances the chain.
-      const _boundaryKey = (iso) => {
-        if (!iso) return null;
-        const d = new Date(iso);
-        if (Number.isNaN(d.getTime())) return null;
-        d.setSeconds(0, 0);
-        return d.toISOString();
-      };
-      const _armNextBoundary = async (nextIso) => {
-        const _next = _boundaryKey(nextIso);
-        if (!_lease?.id || _lease.next_boundary_at === _next) return;
-        try {
-          await base44.asServiceRole.entities.ScheduleLoopLease
-            .update(_lease.id, { next_boundary_at: _next });
-          _lease.next_boundary_at = _next;
-        } catch (e) {
-          // A boundary that was not recorded leaves this schedule with no chain,
-          // and nothing else would ever retry it. Reported, never swallowed.
-          console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to record next boundary ${_next} — ${e.message}`);
-        }
-      };
-
-      // ONE OCCURRENCE, ONE NARRATIVE — keyed to the completed occurrence itself
-      // (its own Eastern day and end time), never to a span of clock time. A repeat
-      // delivery of that same occurrence is skipped; a different occurrence is
-      // always delivered.
-      const _etDay = (d) => new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-      }).format(d);
-      const _deliverShiftCompletion = async (occurrenceKey, shiftEndLabel) => {
-        // The recorded delivery is re-read first: an entity-triggered run and the
-        // boundary run can both be live for the same occurrence, and the second one
-        // must see the delivery already recorded instead of generating it again.
-        const _freshLease = await base44.asServiceRole.entities.ScheduleLoopLease
-          .filter({ character_id: characterId, schedule_kind: 'work' }, '-created_date', 1)
-          .catch(() => []);
-        if (_freshLease?.[0]?.id) _lease = _freshLease[0];
-        if (_lease?.last_completion_occurrence === occurrenceKey) {
-          return { success: false, skipped: true, reason: 'occurrence_already_delivered', occurrence: occurrenceKey };
-        }
-        // THE OCCURRENCE IS CLAIMED BEFORE ANYTHING IS GENERATED.
-        // Two runs can be live for one occurrence (the boundary run and an enforcement
-        // run), and generation takes many seconds — a check that only re-reads before
-        // generating lets both proceed, which is how one shift end produced two
-        // narratives. The claim is written first, so the second run reads it and refuses.
-        // The claim carries the occurrence itself (Eastern day + that shift's end time),
-        // so a genuinely different completion is never suppressed.
-        const _priorClaim = _lease?.last_completion_occurrence || '';
-        if (_lease?.id) {
-          try {
-            await base44.asServiceRole.entities.ScheduleLoopLease
-              .update(_lease.id, { last_completion_occurrence: occurrenceKey });
-            _lease.last_completion_occurrence = occurrenceKey;
-          } catch (e) {
-            // Without the claim a concurrent run can duplicate this occurrence. Reported.
-            console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to claim occurrence ${occurrenceKey} — ${e.message}`);
-          }
-        }
-        // This boundary IS the completion event, and the chain re-arms to the NEXT
-        // boundary as soon as this run ends — so a delivery that does not complete
-        // would be lost permanently, with nothing left to revisit it. The same run
-        // therefore retries its own occurrence before reporting failure. No later
-        // run, timer, or repeated condition check is involved.
-        let res = null;
-        for (let _attempt = 1; _attempt <= 3; _attempt++) {
-          try {
-            const r = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
-              characterId,
-              forceGenerate: true,
-              trigger: 'work_end',
-              narrative_trigger: 'work_end',
-              completion_event: 'work_end',
-              shiftContext: { shift_end_time: shiftEndLabel },
-            });
-            res = r?.data || r || null;
-          } catch (e) {
-            res = { success: false, error: e.message };
-          }
-          if (res?.success === true) break;
-          console.error(`[enforceCharacterWorkSchedule] ${character.name}: completion delivery attempt ${_attempt} failed (${res?.error || res?.reason || 'unknown'}) occurrence=${occurrenceKey}`);
-        }
-        if (res?.success !== true && _lease?.id) {
-          // The claim is released so this same legitimate occurrence can still be
-          // delivered by a later run instead of being permanently swallowed by a
-          // failed generation. A released claim never suppresses a different occurrence.
-          try {
-            await base44.asServiceRole.entities.ScheduleLoopLease
-              .update(_lease.id, { last_completion_occurrence: _priorClaim });
-            _lease.last_completion_occurrence = _priorClaim;
-          } catch (e) {
-            console.error(`[enforceCharacterWorkSchedule] ${character.name}: FAILED to release occurrence claim ${occurrenceKey} — ${e.message}`);
-          }
-        }
-        // The completed shift is what was recorded. The narrative record is read
-        // back and, if it was labeled as anything other than this completion, it is
-        // corrected to the completion it actually is — a finished shift is never
-        // left recorded as passive time.
-        if (res?.success === true && res?.narrativeId) {
-          const _rec = await base44.asServiceRole.entities.CharacterAutomaticNarrative
-            .get(res.narrativeId).catch(() => null);
-          if (_rec && _rec.event_type !== 'work_end') {
-            await base44.asServiceRole.entities.CharacterAutomaticNarrative
-              .update(res.narrativeId, { event_type: 'work_end' }).catch(() => {});
-            res.event_type_corrected = true;
-          }
-        }
-        return res;
-      };
-
       // SYSTEM MODE: internal automations act on one character without a user
       // session — the same work the global (no-id) mode already performs for
       // every character without a session. User calls keep the ownership check.
@@ -333,13 +201,6 @@ Deno.serve(async (req) => {
         return false;
       };
 
-      // A transient attendance state (protected recovery, callout) must never end the
-      // recurring chain. The schedule's next boundary is re-armed further below for
-      // every invocation, and the original result is returned after that. Attendance
-      // and the existence of the chain are independent facts.
-      let _blockedPayload = null;
-      let _calloutPayload = null;
-
       if (isBlockedFromWork(character)) {
         // The work lock is a temporary, re-validatable claim. When the existing
         // authoritative state (resolved_presence_status / isBlockedFromWork)
@@ -374,13 +235,14 @@ Deno.serve(async (req) => {
             console.error(`[enforceCharacterWorkSchedule] ${character.name}: stale work lock release FAILED: ${releaseErr.message}`);
           }
         }
-        _blockedPayload = {
+        return Response.json({
           updated: false,
           reason: 'Character blocked from work (protected recovery state)',
           stale_work_lock_present: hasStaleWorkLock,
           stale_work_lock_released: releaseSucceeded,
           stale_work_lock_release_error: releaseError,
-        };
+          next_execution_time: null,
+        });
       }
 
       // Work is an authorized wake source. Track if character was sleeping so the
@@ -405,7 +267,7 @@ Deno.serve(async (req) => {
       };
       const todayET = `${_sEtParsed[4]}-${_sEtParsed[2].padStart(2,'0')}-${_sEtParsed[3].padStart(2,'0')}`;
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
-        _calloutPayload = { updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' };
+        return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed', next_execution_time: null });
       }
 
       // Load all active employment records for this character. A character may hold
@@ -511,30 +373,6 @@ Deno.serve(async (req) => {
       }
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
-      await _armNextBoundary(singleNextExecTime);
-
-      // ARMING ONLY — the activation pass.
-      // An unrelated Character update (a need value, an activity, a memory) carries no
-      // attendance intent. It exists so a schedule that has no chain yet gets its next
-      // boundary recorded, exactly as the boundary run records it — the chain then
-      // carries itself. Nothing is routed, nothing is delivered, and no Character field
-      // is written: a character is never moved to arm a schedule.
-      if (body.arm_only === true) {
-        return Response.json({
-          updated: false,
-          arm_only: true,
-          boundary: _lease?.next_boundary_at || null,
-          next_execution_time: singleNextExecTime,
-        });
-      }
-
-      // The next boundary is now recorded, so the recurring run owns this character's
-      // chain again. Attendance states return their original result from here — after
-      // the chain has been handed forward — so a sick day or a callout cannot silently
-      // end a character's schedule, and the chain never needs a later unrelated update
-      // to restart.
-      if (_blockedPayload) return Response.json({ ..._blockedPayload, next_execution_time: singleNextExecTime });
-      if (_calloutPayload) return Response.json({ ..._calloutPayload, next_execution_time: singleNextExecTime });
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is
@@ -604,77 +442,23 @@ Deno.serve(async (req) => {
         // generator, once. Nothing is re-detected, nothing is polled, and no
         // location change is involved.
         if (_occurrenceIsShiftEnd) {
-          _shiftEndNarrative = await _deliverShiftCompletion(
-            `work_end:${_etDay(_expectedDate)}:${_matchedShiftEnd}`,
-            _matchedShiftEnd
-          );
+          try {
+            const _narrRes = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+              characterId,
+              forceGenerate: true,
+              trigger: 'work_end',
+              narrative_trigger: 'work_end',
+              shiftContext: { shift_end_time: _matchedShiftEnd },
+            });
+            _shiftEndNarrative = _narrRes?.data || _narrRes || null;
+          } catch (_narrErr) {
+            _shiftEndNarrative = { success: false, error: _narrErr.message };
+          }
           if (_shiftEndNarrative?.success !== true) {
             console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED at ${expected_occurrence_time} — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
           } else {
             console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated at ${expected_occurrence_time} (id=${_shiftEndNarrative.narrativeId})`);
           }
-        }
-      } else {
-        // ── THE COMPLETED SHIFT IS THE TRIGGER — OCCURRENCE, NEVER A CLOCK WINDOW ──
-        // The existing scheduling mechanism establishes that a job's scheduled end
-        // time for TODAY has passed, using the same per-job schedule resolution every
-        // transition uses (linked workplace or rabbit-hole, multi-job aware). That
-        // completed occurrence directly triggers the existing narrative generator.
-        // Delivery is keyed to the occurrence itself (Eastern day + that shift's end),
-        // so a run that observes the completion late still delivers it, while a repeat
-        // of the same occurrence is refused by the occurrence record. A clock window
-        // lost the completion permanently whenever no run landed inside it — that is
-        // the failure being corrected. Location type, presence status and movement are
-        // irrelevant here: a shift ending is not a movement instruction.
-        const _clockMin = singleClock.getHours() * 60 + singleClock.getMinutes();
-        const _todayDow = singleClock.getDay();
-        const _yesterdayDow = (_todayDow + 6) % 7;
-        const _yesterdayET = new Date(singleNowET.getTime() - 86400000);
-        for (const _job of singleOrderedJobs) {
-          let _jobShift = _job.shift;
-          if (_job.type === 'linked') {
-            const _loc = singleLocMap[_job.locId];
-            const _locShift = _loc?.worker_shifts?.[characterId];
-            if (_locShift && _locShift.start && _locShift.end) _jobShift = _locShift;
-          }
-          if (!_jobShift || !_jobShift.start || !_jobShift.end) continue;
-          // A continuous all-day claim never genuinely completes.
-          if (isContinuousShift(_jobShift)) continue;
-          const [_jobStartH, _jobStartM] = _jobShift.start.split(':').map(Number);
-          const [_endH, _endM] = _jobShift.end.split(':').map(Number);
-          const _jobStartMinutes = _jobStartH * 60 + _jobStartM;
-          const _endMinutes = _endH * 60 + _endM;
-          const _isCrossMidnight = _endMinutes < _jobStartMinutes;
-          const _jobDays = _jobShift.days && _jobShift.days.length > 0 ? _jobShift.days : null;
-
-          let _endReached = false;
-          let _occurrenceDay = null;
-          if (_isCrossMidnight) {
-            // Overnight shift: its end lands just after midnight, so the occurrence
-            // belongs to the shift's start day (yesterday) and is reached only while
-            // the clock sits between the end time and the start time.
-            if (_jobDays && !_jobDays.includes(_yesterdayDow)) continue;
-            _endReached = _clockMin >= _endMinutes && _clockMin < _jobStartMinutes;
-            _occurrenceDay = _etDay(_yesterdayET);
-          } else {
-            if (_jobDays && !_jobDays.includes(_todayDow)) continue;
-            _endReached = _clockMin >= _endMinutes;
-            _occurrenceDay = _etDay(singleNowET);
-          }
-          if (!_endReached) continue;
-
-          _shiftEndNarrative = await _deliverShiftCompletion(
-            `work_end:${_occurrenceDay}:${_jobShift.end}`,
-            _jobShift.end
-          );
-          if (_shiftEndNarrative?.success !== true && _shiftEndNarrative?.reason !== 'occurrence_already_delivered') {
-            console.error(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative FAILED (end=${_jobShift.end}) — ${_shiftEndNarrative?.error || _shiftEndNarrative?.reason || 'unknown'}`);
-          } else if (_shiftEndNarrative?.success === true) {
-            console.log(`[enforceCharacterWorkSchedule] ${character.name}: shift-end narrative generated for completed shift (end=${_jobShift.end}, id=${_shiftEndNarrative.narrativeId})`);
-          }
-          // One completed occurrence per run: successive runs deliver the remaining
-          // completions of the day, and the same occurrence is never delivered twice.
-          break;
         }
       }
 
@@ -1029,7 +813,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      return Response.json({ updated: false, reason: 'No schedule change needed', shift_end_narrative: _shiftEndNarrative, next_execution_time: singleNextExecTime });
+      return Response.json({ updated: false, reason: 'No schedule change needed', next_execution_time: singleNextExecTime });
     }
 
     // --- GLOBAL SCHEDULER MODE (no session) ---
@@ -1253,38 +1037,6 @@ Deno.serve(async (req) => {
             }
           }
         }
-        // ── RECURRENCE ARMING IN THE ALL-CHARACTER PASS ─────────────────────
-        // The chain carries itself once a boundary is recorded, and this pass already
-        // runs for every character. So a schedule whose boundary was never recorded
-        // (or whose record was never created) gets it recorded here — the same record
-        // and the same computed boundary the boundary run maintains. Nothing new is
-        // scheduled: an armed schedule is left exactly as it is.
-        if (orderedJobs.length > 0) {
-          try {
-            const _gLeaseRows = await base44.asServiceRole.entities.ScheduleLoopLease
-              .filter({ character_id: char.id, schedule_kind: 'work' }, '-created_date', 1);
-            let _gLease = _gLeaseRows?.[0] || null;
-            if (!_gLease) {
-              _gLease = await base44.asServiceRole.entities.ScheduleLoopLease.create({
-                character_id: char.id,
-                schedule_kind: 'work',
-                owner_email: char.owner_email || null,
-              });
-            }
-            if (_gLease && !_gLease.next_boundary_at) {
-              const _gNextIso = computeNextWorkExecutionTime(char, orderedJobs, locMap, globalClock, nowET);
-              if (_gNextIso) {
-                await base44.asServiceRole.entities.ScheduleLoopLease
-                  .update(_gLease.id, { next_boundary_at: _gNextIso });
-                issues_found.push(`${char.name}: recurrence boundary recorded (${_gNextIso})`);
-              }
-            }
-          } catch (_gArmErr) {
-            console.error(`[enforceCharacterWorkSchedule] ${char.name}: recurrence arming FAILED — ${_gArmErr.message}`);
-            issues_found.push(`${char.name}: recurrence arming FAILED — ${_gArmErr.message}`);
-          }
-        }
-
         // Evaluate jobs in order. First active shift wins.
         let activeJob = null;
         for (const job of orderedJobs) {

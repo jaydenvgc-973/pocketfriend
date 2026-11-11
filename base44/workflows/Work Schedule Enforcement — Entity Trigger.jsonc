@@ -1,8 +1,8 @@
 {
   "name": "Work Schedule Enforcement",
-  "description": "Execution-only Workflow. Fires when a character's authoritative employment configuration or presence status changes and runs enforceCharacterWorkSchedule immediately, which routes the character where the schedule says they belong, wakes them for a shift, and records the schedule's next established boundary. That recorded boundary is then waited on by the recurring boundary run, which enforces it \u2014 the boundary itself is the completion event and delivers the automatic narrative. No polling, no interval checks.",
+  "description": "Execution-only Workflow. Triggered by authoritative employment configuration changes (work_start_time, work_end_time, work_days, occupation_location_id, additional_occupation_locations, work_details). First cycle: invoke (no expected_occurrence_time) \u2192 receive next_execution_time A \u2192 wait until A \u2192 invoke(expected_occurrence_time=A) \u2192 enforce boundary \u2192 receive next_execution_time B. The backend (enforceCharacterWorkSchedule) remains authoritative for multi-job resolution, shift resolution, rabbit-hole canonical presence, and stale-occurrence validation. Invocations pass event.entity_id so the backend resolves the character via base44.asServiceRole (trusted workflow execution context). If next_execution_time is null/empty or reason is stale_occurrence_superseded, the run ends without committing a stale transition. Indefinite continuation beyond the first cycle requires a mechanism not yet authorized \u2014 see implementation notes.",
   "trigger": {
-    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null) or (.trigger.changed_fields | index(\"resolved_presence_status\") != null)) }",
+    "condition": "${ ((.trigger.changed_fields | index(\"work_start_time\") != null) or (.trigger.changed_fields | index(\"work_end_time\") != null) or (.trigger.changed_fields | index(\"work_days\") != null) or (.trigger.changed_fields | index(\"occupation_location_id\") != null) or (.trigger.changed_fields | index(\"additional_occupation_locations\") != null) or (.trigger.changed_fields | index(\"work_details\") != null)) }",
     "config": {
       "trigger_type": "entity",
       "events": [
@@ -15,12 +15,71 @@
     "document": {
       "dsl": "1.0.0",
       "name": "work_schedule_enforcement",
-      "version": "4.0",
+      "version": "1.0",
       "namespace": "base44"
     },
     "do": [
       {
-        "enforce": {
+        "invoke_1": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "event": {
+                "entity_id": "${ .trigger.entity_id }"
+              }
+            }
+          },
+          "then": "check_1",
+          "x-base44": {
+            "title": "Invoke enforcement (initial)",
+            "description": "Receive next_execution_time A"
+          }
+        }
+      },
+      {
+        "check_1": {
+          "switch": [
+            {
+              "when": "${ .invoke_1.next_execution_time != null and .invoke_1.next_execution_time != \"\" and .invoke_1.reason != \"stale_occurrence_superseded\" }",
+              "then": "compute_1"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ],
+          "x-base44": {
+            "title": "Check A validity",
+            "description": "End if null or stale"
+          }
+        }
+      },
+      {
+        "compute_1": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .invoke_1.next_execution_time }"
+          },
+          "then": "wait_1",
+          "x-base44": {
+            "title": "Compute seconds until A",
+            "description": "Durable delay duration"
+          }
+        }
+      },
+      {
+        "wait_1": {
+          "wait": "PT${ .compute_1.seconds | floor | tostring }S",
+          "then": "invoke_2",
+          "x-base44": {
+            "title": "Wait until A",
+            "description": "Durable wait to boundary"
+          }
+        }
+      },
+      {
+        "invoke_2": {
           "call": "invoke_backend_function",
           "with": {
             "function_name": "enforceCharacterWorkSchedule",
@@ -28,13 +87,31 @@
               "event": {
                 "entity_id": "${ .trigger.entity_id }"
               },
-              "system_mode": true
+              "expected_occurrence_time": "${ .invoke_1.next_execution_time }"
             }
           },
-          "then": "end",
+          "then": "check_2",
           "x-base44": {
-            "title": "Enforce schedule",
-            "description": "Routes per schedule and records the next boundary"
+            "title": "Invoke enforcement (expected=A)",
+            "description": "Enforce boundary, receive B"
+          }
+        }
+      },
+      {
+        "check_2": {
+          "switch": [
+            {
+              "when": "${ .invoke_2.next_execution_time != null and .invoke_2.next_execution_time != \"\" and .invoke_2.reason != \"stale_occurrence_superseded\" }",
+              "then": "end"
+            },
+            {
+              "when": "${ true }",
+              "then": "end"
+            }
+          ],
+          "x-base44": {
+            "title": "Check B validity",
+            "description": "First cycle complete"
           }
         }
       }

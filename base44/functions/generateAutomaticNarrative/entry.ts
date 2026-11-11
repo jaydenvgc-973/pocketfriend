@@ -12,25 +12,10 @@ Deno.serve(async (req) => {
       narrative_trigger,
       shiftContext = null,
     } = body;
-    // A completed scheduled activity is signalled by the existing enforcement path.
+    // A completed scheduled shift is signalled by the existing enforcement pathway.
     // `trigger` is a reserved key in a mediated server-to-server invoke, so the
-    // caller also names the same completed occurrence in narrative_trigger, and
-    // again in completion_event so the occurrence is never lost to payload routing.
-    const trigger = narrative_trigger || body?.completion_event || triggerParam;
-
-    // ── SCHEDULE COMPLETION OCCURRENCES ──────────────────────────────────────
-    // The existing scheduled-activity mechanism (work shift, school day, class,
-    // or the return-home transition it commits) has just reached its established
-    // boundary and hands that ONE occurrence here. A completed scheduled activity
-    // is a discrete occurrence, not a repeating instance of an ongoing state: the
-    // interval and same-instance gates exist to stop the SAME ongoing state being
-    // re-narrated, and they must never swallow a completed scheduled activity.
-    // Location type is irrelevant — the boundary is the trigger.
-    const isWorkEnd = trigger === 'work_end';
-    const isSchoolEnd = trigger === 'school_end' || trigger === 'class_end';
-    const isScheduleCompletion = isWorkEnd || isSchoolEnd;
-    const isDiscreteOccurrence = isScheduleCompletion;
-    const completionEventType = isWorkEnd ? 'work_end' : isSchoolEnd ? 'school_end' : 'passive_time';
+    // caller also names the same completed-shift occurrence in narrative_trigger.
+    const trigger = narrative_trigger || triggerParam;
 
     if (!characterId) {
       return Response.json({ error: 'characterId required' }, { status: 400 });
@@ -62,24 +47,32 @@ Deno.serve(async (req) => {
 
     // owner_email is the sole source of truth — created_by is permanently forbidden
     const ownerEmail = character.owner_email;
-    // The narrative record carries the character's own established ownership value,
-    // passed through exactly as the established pathway has always passed it. No
-    // resolution, no derivation, no substitute authority.
     const ownerUser = character.owner_user_id || null;
+
     if (!ownerEmail) {
-      // Ownership is NOT an eligibility condition for this narrative. It is used
-      // only to locate the established conversation, and delivery falls back to the
-      // character's own conversation record below when it is absent or stale.
-      console.warn(`[generateAutomaticNarrative] ${character.name}: owner_email absent — narrative still generated and delivered`);
+      console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
+      return Response.json({
+        success: false,
+        error: `Character "${character.name}" (id=${characterId}) is missing owner_email. Narrative generation stopped. Fix ownership data before retrying.`,
+        reason: 'missing_owner_email',
+      }, { status: 422 });
     }
 
     console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
 
-    // ── CHECK INTERVAL (skip for manual triggers and discrete occurrences) ──
+    // SCHEDULED SHIFT COMPLETION is a discrete occurrence, not a repeating
+    // instance: the existing enforcement pathway detected that the character's
+    // scheduled shift reached its end time and handed that occurrence here.
+    // It must not be suppressed by the interval or same-instance gates — those
+    // exist to stop the same ongoing state being re-narrated, and a completed
+    // shift is exactly the transition they must not swallow.
+    const isWorkEnd = trigger === 'work_end';
+
+    // ── CHECK INTERVAL (skip for manual triggers) ─────────────────────────
     const NOW = new Date();
     const isManual = trigger === 'manual_right_now';
 
-    if (!forceGenerate && !isManual && !isDiscreteOccurrence) {
+    if (!forceGenerate && !isManual && !isWorkEnd) {
       const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
         { character_id: characterId },
         '-timestamp',
@@ -317,10 +310,10 @@ Deno.serve(async (req) => {
     // entry when the character is still at work/school creates duplicate entries.
     // Skip if: same location, same sleep/work/travel state, within 60 minutes,
     // AND no manual trigger (manual_right_now always generates).
-    // A completed scheduled activity always generates: presence can still read
-    // 'at_work' / 'at_school' when the activity ends, so the state comparison
-    // would otherwise treat the completion as "unchanged" and drop the narrative.
-    if (!isManual && !isDiscreteOccurrence) {
+    // A completed scheduled shift always generates: presence can still read
+    // 'at_work' when the shift ends, so the state comparison would otherwise
+    // treat the shift end as "unchanged" and drop the narrative.
+    if (!isManual && !isWorkEnd) {
       try {
         const lastTwoNarrs = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
           { character_id: characterId },
@@ -557,19 +550,6 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the shift.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
 - Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
-    }
-
-    // SCHEDULED SCHOOL / CLASS COMPLETION overrides the school-state framing with
-    // the same rule: the completed activity is the fact, the authoritative location
-    // is where they are — never a destination this narrative invents.
-    if (isSchoolEnd) {
-      const _schoolLabel = trigger === 'class_end' ? 'scheduled class' : 'school day';
-      situationBlock = `SITUATION: ${character.name}'s ${_schoolLabel} has ENDED for today.
-- The scheduled school activity is COMPLETE. Classes are over.
-- Do NOT describe ${character.name} as still in class, still on campus studying, still in a lecture, or in the middle of schoolwork.
-- Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the ${_schoolLabel} ends.
-- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
-- Write the first moments after it ends: what they do immediately after, how the day settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -1360,88 +1340,13 @@ If no actions occur, return empty action_effects array.`;
       }
     }
 
-    let recordError = null;
-
-    // ── ESTABLISHED NARRATIVE DELIVERY ───────────────────────────────────────
-    // A narrative reaches the user the way this app already delivers narratives:
-    // an is_narrative message in the character's most recent direct conversation,
-    // with the conversation preview updated. Same conversation rule and same message
-    // fields the established narrative pathway already uses. The completed schedule
-    // boundary is the only trigger — no location, presence, movement or ownership
-    // condition is involved.
-    let deliveredMessageId = null;
-    let deliveryError = null;
-    if (isScheduleCompletion) {
-      try {
-        const [byOwner, byCreator] = await Promise.all([
-          base44.asServiceRole.entities.Conversation.filter({ type: 'direct', owner_email: ownerEmail }, '-last_message_date', 100).catch(() => []),
-          base44.asServiceRole.entities.Conversation.filter({ type: 'direct', created_by: ownerEmail }, '-last_message_date', 100).catch(() => []),
-        ]);
-        const seenConvos = new Set();
-        let convo = [...byOwner, ...byCreator]
-          .filter((c) => {
-            if (seenConvos.has(c.id)) return false;
-            seenConvos.add(c.id);
-            return true;
-          })
-          .filter((c) =>
-            Array.isArray(c.character_ids) &&
-            c.character_ids.includes(characterId) &&
-            c.channel !== 'world_phone'
-          )
-          .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))[0] || null;
-
-        // Ownership data only helps locate the conversation. It never decides whether
-        // this narrative exists: the character's own conversation record is enough.
-        if (!convo) {
-          const recentDirects = await base44.asServiceRole.entities.Conversation
-            .filter({ type: 'direct' }, '-last_message_date', 100).catch(() => []);
-          const seenAll = new Set();
-          convo = (Array.isArray(recentDirects) ? recentDirects : [])
-            .filter((c) => {
-              if (seenAll.has(c.id)) return false;
-              seenAll.add(c.id);
-              return true;
-            })
-            .filter((c) => Array.isArray(c.character_ids) && c.character_ids.includes(characterId) && c.channel !== 'world_phone')
-            .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))[0] || null;
-        }
-        if (!convo) {
-          deliveryError = 'no direct conversation found for this character';
-          console.error(`[generateAutomaticNarrative] ${character.name}: no direct conversation — narrative not delivered`);
-        } else {
-          const delivered = await base44.asServiceRole.entities.Message.create({
-            conversation_id: convo.id,
-            sender_type: 'character',
-            character_id: characterId,
-            character_name: character.name,
-            content: narrativeText,
-            is_narrative: true,
-            is_read: false,
-            timestamp: NOW.toISOString(),
-          });
-          deliveredMessageId = delivered?.id || null;
-          await base44.asServiceRole.entities.Conversation.update(convo.id, {
-            last_message_preview: narrativeText.substring(0, 100),
-            last_message_date: NOW.toISOString(),
-          }).catch(() => {});
-          console.log(`[generateAutomaticNarrative] ✓ Delivered to conversation ${convo.id} as message ${deliveredMessageId}`);
-        }
-      } catch (deliverErr) {
-        deliveryError = deliverErr.message;
-        console.error(`[generateAutomaticNarrative] NARRATIVE DELIVERY FAILED for ${character.name}: ${deliverErr.message}`);
-      }
-    }
-
     // ── SAVE TO CharacterAutomaticNarrative (same table as automatic system) ──
-    // This record is the side store, not the delivery. A write this contract
-    // rejects must never remove a narrative the user has already received.
     const narrative = await base44.asServiceRole.entities.CharacterAutomaticNarrative.create({
       character_id: characterId,
       character_name: character.name,
       owner_user_id: ownerUser,
       owner_email: ownerEmail,
-      event_type: completionEventType,
+      event_type: isWorkEnd ? 'work_end' : 'passive_time',
       narrative_text: narrativeText,
       memory_summary: memorySummary,
       timestamp: NOW.toISOString(),
@@ -1453,20 +1358,13 @@ If no actions occur, return empty action_effects array.`;
       sleep_state: isAsleep ? 'asleep' : 'awake',
       travel_state: isTraveling ? 'traveling' : 'at_location',
       work_state: isWorkEnd ? 'off_work' : workState,
-
       needs_snapshot: updatedNeeds,
       emotional_state: character.emotional_state || 'calm',
       triggered_by: isManual ? 'manual' : 'scheduled',
       visibility: isManual ? 'visible_in_chat' : 'visible_in_chat',
-    }).catch((recErr) => {
-      // This record is the side store. A payload it rejects must never undo a
-      // narrative that has already been delivered to the user.
-      recordError = recErr?.message || 'record write rejected';
-      console.error(`[generateAutomaticNarrative] record write REJECTED for ${character.name}: ${recordError} — delivery is unaffected`);
-      return null;
     });
 
-    console.log(`[generateAutomaticNarrative] ✓ ${narrative ? `Saved ${narrative.id}` : 'Record not stored'} for ${character.name} | message=${deliveredMessageId || 'none'} | trigger=${trigger}`);
+    console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
 
     // Save to Memory so character remembers it. Failure is reported explicitly —
     // never silently swallowed — but does not invalidate the already-saved narrative.
@@ -1489,10 +1387,7 @@ If no actions occur, return empty action_effects array.`;
 
     return Response.json({
       success: true,
-      narrativeId: narrative?.id || null,
-      delivered_message_id: deliveredMessageId,
-      delivery_error: deliveryError,
-      record_error: recordError,
+      narrativeId: narrative.id,
       characterName: character.name,
       narrativeText,
       memorySummary,

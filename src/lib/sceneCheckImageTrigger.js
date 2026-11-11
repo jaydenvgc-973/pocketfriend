@@ -68,7 +68,7 @@ export function checkImageTrigger({
   // Free actions, services, fees, social, navigation, environment, and narrative actions
   // NEVER reach this branch — they always pass actionCategory=null.
   if (actionCategory && explicitPrice != null && Number(explicitPrice) > 0) {
-    const resolved = extractSceneItemLabel(text, messages, actionCategory, location);
+    const resolved = extractSceneItemLabel(text, messages, actionCategory);
     const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(actionCategory)
       ? 'purchase'
       : 'consumable';
