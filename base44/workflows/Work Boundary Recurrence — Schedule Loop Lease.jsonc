@@ -1,0 +1,66 @@
+{
+  "name": "Work Boundary Recurrence \u2014 Schedule Loop Lease",
+  "description": "The recurring work schedule's own boundary chain. Every time a character's schedule records its next established boundary, this run waits durably for that instant and then enforces it. The boundary run recomputes the following boundary, which records again and hands the next occurrence to a fresh run. Successive shift completions therefore continue on their own \u2014 no polling, no repeated condition checks, and no dependence on any other event.",
+  "trigger": {
+    "condition": "${ .trigger.data.schedule_kind == \"work\" and (.trigger.changed_fields | index(\"next_boundary_at\") != null) and .trigger.data.next_boundary_at != null and .trigger.data.next_boundary_at != \"\" }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create",
+        "update"
+      ],
+      "entity_name": "ScheduleLoopLease"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "work_boundary_recurrence",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "compute": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .trigger.data.next_boundary_at }"
+          },
+          "then": "pause",
+          "x-base44": {
+            "title": "Compute seconds to boundary",
+            "description": "Duration of the durable wait"
+          }
+        }
+      },
+      {
+        "pause": {
+          "wait": "PT${ .compute.seconds | floor | tostring }S",
+          "then": "boundary",
+          "x-base44": {
+            "title": "Wait for the boundary",
+            "description": "Durable wait to the established time"
+          }
+        }
+      },
+      {
+        "boundary": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.data.character_id }",
+              "expected_occurrence_time": "${ .trigger.data.next_boundary_at }",
+              "system_mode": true
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Enforce completed boundary",
+            "description": "The completion event delivers its narrative"
+          }
+        }
+      }
+    ]
+  }
+}
