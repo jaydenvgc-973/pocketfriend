@@ -6,13 +6,13 @@
     "config": {
       "trigger_type": "scheduled",
       "events": [],
-      "schedule_mode": "interval",
-      "cron_expression": null,
+      "schedule_mode": "recurring",
+      "cron_expression": "* * * * *",
       "one_time_date": null,
       "timezone": "America/New_York",
-      "interval_value": 1,
-      "interval_unit": "minutes",
-      "interval_anchor": "2026-11-11T21:59:00.000000",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
       "ends_type": "never",
       "ends_on_date": null,
       "ends_after_count": null
