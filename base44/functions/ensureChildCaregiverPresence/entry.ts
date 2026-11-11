@@ -16,7 +16,11 @@ const SAFE_ALONE_AGE = 16; // children under this need supervision
 const CAREGIVER_ROLE = 'babysitter';
 
 function resolveAge(character) {
-  if (character.age && typeof character.age === 'number' && character.age > 0) return character.age;
+  // age 0 is a REAL age (an infant). It must never be treated as missing, or a newborn
+  // is invisible to supervision and left without a caregiver.
+  const raw = character?.age;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) return parseInt(raw.trim(), 10);
   if (character.age_range) {
     const r = character.age_range.toLowerCase();
     if (r.includes('early 20')) return 21;
@@ -101,7 +105,8 @@ Deno.serve(async (req) => {
   ).catch(() => []);
 
   const hasAnyChildren = quickChildCheck.some(c => {
-    if (c.age && typeof c.age === 'number' && c.age > 0 && c.age < SAFE_ALONE_AGE) return true;
+    const age = resolveAge(c);
+    if (age !== null) return age < SAFE_ALONE_AGE;
     if (c.age_range) {
       const r = c.age_range.toLowerCase();
       // Only flag actual child age ranges
@@ -247,6 +252,18 @@ Deno.serve(async (req) => {
     );
 
     if (existingSitter) {
+      // The caregiver belongs in the household they supervise. If a stale record leaves
+      // them elsewhere, the assignment stays authoritative and presence is corrected to it.
+      if (existingSitter.resolved_current_location_id !== home.id || existingSitter.resolved_presence_status !== 'home') {
+        await base44.entities.Character.update(existingSitter.id, {
+          resolved_current_location_id: home.id,
+          resolved_current_location_name: home.name,
+          resolved_location_type: 'supervision_home',
+          resolved_presence_status: 'home',
+          resolved_source_reason: 'child_supervision_assignment',
+          resolved_last_updated_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
       results.push({ home: home.name, status: 'caregiver_already_present', caregiver: existingSitter.name });
       continue;
     }
