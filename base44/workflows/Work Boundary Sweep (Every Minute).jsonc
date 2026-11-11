@@ -1,0 +1,45 @@
+{
+  "name": "Work Boundary Sweep (Every Minute)",
+  "description": "Runs every minute and enforces every work boundary whose recorded instant has arrived \u2014 shift ends send the character home, shift starts dispatch them to work. The schedule authority records each character's next boundary; this sweep consumes each one at its minute, retries a boundary that the entity read budget refuses, and self-heals a character who is present at work with no boundary held. Boundaries are never enforced before their instant.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "America/New_York",
+      "interval_value": 1,
+      "interval_unit": "minutes",
+      "interval_anchor": "2026-11-11T21:59:00.000000",
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "work_boundary_sweep_every_minute",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "sweep": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceDueWorkBoundaries",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Enforce due work boundaries",
+            "description": "Shift starts and shift ends, at their minute"
+          }
+        }
+      }
+    ]
+  }
+}
