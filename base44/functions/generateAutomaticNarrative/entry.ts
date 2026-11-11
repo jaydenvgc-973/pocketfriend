@@ -67,12 +67,10 @@ Deno.serve(async (req) => {
     // resolution, no derivation, no substitute authority.
     const ownerUser = character.owner_user_id || null;
     if (!ownerEmail) {
-      console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
-      return Response.json({
-        success: false,
-        error: `Character "${character.name}" (id=${characterId}) is missing owner_email. Narrative generation stopped. Fix ownership data before retrying.`,
-        reason: 'missing_owner_email',
-      }, { status: 422 });
+      // Ownership is NOT an eligibility condition for this narrative. It is used
+      // only to locate the established conversation, and delivery falls back to the
+      // character's own conversation record below when it is absent or stale.
+      console.warn(`[generateAutomaticNarrative] ${character.name}: owner_email absent — narrative still generated and delivered`);
     }
 
     console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
@@ -1380,7 +1378,7 @@ If no actions occur, return empty action_effects array.`;
           base44.asServiceRole.entities.Conversation.filter({ type: 'direct', created_by: ownerEmail }, '-last_message_date', 100).catch(() => []),
         ]);
         const seenConvos = new Set();
-        const convo = [...byOwner, ...byCreator]
+        let convo = [...byOwner, ...byCreator]
           .filter((c) => {
             if (seenConvos.has(c.id)) return false;
             seenConvos.add(c.id);
@@ -1393,6 +1391,21 @@ If no actions occur, return empty action_effects array.`;
           )
           .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))[0] || null;
 
+        // Ownership data only helps locate the conversation. It never decides whether
+        // this narrative exists: the character's own conversation record is enough.
+        if (!convo) {
+          const recentDirects = await base44.asServiceRole.entities.Conversation
+            .filter({ type: 'direct' }, '-last_message_date', 100).catch(() => []);
+          const seenAll = new Set();
+          convo = (Array.isArray(recentDirects) ? recentDirects : [])
+            .filter((c) => {
+              if (seenAll.has(c.id)) return false;
+              seenAll.add(c.id);
+              return true;
+            })
+            .filter((c) => Array.isArray(c.character_ids) && c.character_ids.includes(characterId) && c.channel !== 'world_phone')
+            .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))[0] || null;
+        }
         if (!convo) {
           deliveryError = 'no direct conversation found for this character';
           console.error(`[generateAutomaticNarrative] ${character.name}: no direct conversation — narrative not delivered`);
