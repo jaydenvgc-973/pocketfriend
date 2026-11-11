@@ -69,6 +69,9 @@ Deno.serve(async (req) => {
     // from the character's own ownership authority, owner_email. The character record
     // is never modified. The resolved id is also what makes the record readable by the
     // owning account, so a generated narrative actually reaches the existing display.
+    // Legacy characters carry owner_user_id as null; that is the ONLY difference
+    // between a completion that records and one that is lost. Resolved from
+    // owner_email above, never by modifying the character record.
     let ownerUser = character.owner_user_id || null;
     if (!ownerUser) {
       try {
