@@ -134,10 +134,16 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
     // 1. AVATAR — PRIMARY visual identity image (always included when present).
     //    The avatar is the main established image of this person. It is NOT a
     //    fallback and is NOT displaced by additional reference images.
+    //
+    // ⛔ REGRESSION FIX: the avatar is NEVER filtered out. Every established character's
+    // avatar is stored as "<hash>_generated_image.png". Excluding URLs containing
+    // "generated_image" therefore excluded EVERY character's avatar — the only identity
+    // reference most of them have — so the model was handed no face for them at all and
+    // filled the frame with invented/background people. The avatar is the established
+    // visual identity image and is always passed when present.
     const avatarUrl = p.avatar_url || p.image_avatar_url || null;
     if (avatarUrl &&
         avatarUrl.trim().length > 0 &&
-        !avatarUrl.includes('generated_image') &&
         !visualRefs.includes(avatarUrl)) {
       personRefs.push(avatarUrl);
       hasAvatar = true;
@@ -146,9 +152,10 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
     // 2. ADDITIONAL reference_image_urls — SUPPLEMENTS to the avatar (up to 2).
     //    These provide more visual evidence, angles, hair detail, facial structure,
     //    or body type. They strengthen identity coverage; they do NOT replace the avatar.
+    // Established appearance references are authoritative for this person — never
+    // filtered by file-name pattern (same regression as the avatar above).
     const refUrls = (p.reference_image_urls || []).filter(u =>
       u && u.trim().length > 0 &&
-      !u.includes('generated_image') &&
       !visualRefs.includes(u) &&
       !personRefs.includes(u)
     );
@@ -166,12 +173,28 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
       ranges.push({ id: p.id, name: p.name, start: null, end: null, hasAvatar: false, hasAdditionalRefs: false });
     }
   }
-  const envStart = visualRefs.length + 1;
+  let envStart = visualRefs.length + 1;
   for (const url of (envRefs || [])) {
     if (url && url.trim().length > 0 && !visualRefs.includes(url)) {
       visualRefs.push(url);
     }
   }
+  // Provider-safe reference budget (same limit the proven image path uses). Participant
+  // identities come first, so trimming only ever removes environment images — a person's
+  // established appearance references are never dropped to make room for a room.
+  const MAX_VISUAL_REFS = 10;
+  if (visualRefs.length > MAX_VISUAL_REFS) {
+    visualRefs.length = MAX_VISUAL_REFS;
+  }
+  for (const r of ranges) {
+    if (r.start !== null && r.start > visualRefs.length) {
+      r.start = null;
+      r.end = null;
+    } else if (r.end !== null && r.end > visualRefs.length) {
+      r.end = visualRefs.length;
+    }
+  }
+  if (envStart > visualRefs.length) envStart = null;
   const envEnd = visualRefs.length;
   return { visualRefs, ranges, envStart, envEnd };
 }

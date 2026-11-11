@@ -141,10 +141,14 @@ export function useSceneImageGenerator() {
     // A public venue is populated when characters are in it. The named people stay the
     // only identifiable subjects; ordinary staff and patrons may be visible behind them.
     // Private residences and restricted zones never get this.
-    const ambientList = (Array.isArray(ambientPopulation) ? ambientPopulation : []).filter((p) => p && p.name);
+    const ambientList = (Array.isArray(ambientPopulation) ? ambientPopulation : []).filter((p) => p && (p.name || p.role));
     const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv;
+    // ⛔ Background people are NEVER named in the prompt. A name makes them a named subject
+    // competing for the supplied reference images — that is how a random student, teacher,
+    // or bartender could end up rendered in place of the actual character. They are
+    // described only by role, so they can never be taken for a named participant.
     const ambientText = allowBackgroundExtras
-      ? ambientList.slice(0, 3).map((p) => (p.role ? `${p.name} (${String(p.role).toLowerCase()})` : p.name)).join(', ')
+      ? ambientList.slice(0, 3).map((p) => (p.role ? String(p.role).toLowerCase() : 'person')).join(', ')
       : '';
     // The real people taking part outrank the place's background population in every
     // prompt, so the frame is never left to choose a generic crowd over the character
@@ -154,7 +158,7 @@ export function useSceneImageGenerator() {
       ? `Only these people are identifiable: ${people.map((c) => c.name).join(', ')} — each one present exactly once, never duplicated, never replaced by an invented or background person.`
       : `No named person is the subject of this frame.`);
     const ambientRule = allowBackgroundExtras
-      ? ` The venue is populated as it really is right now: ${ambientText}. They are ordinary background people going about their own business — small, softly out of focus, at a natural distance toward the edges of the frame behind the named people. They never stand in the foreground, never occupy the center, never obscure or replace the named people, and are never the subject of the photograph.`
+      ? ` The venue is populated as it really is right now by ordinary background people: ${ambientText}. They are anonymous strangers with no name, no identity, and NO reference images — none of the reference images supplied with this request belongs to any of them. They go about their own business, small, softly out of focus, at a natural distance toward the edges of the frame behind the named subjects. They never stand in the foreground, never occupy the center, never obscure, stand in for, or replace a named subject, and are never the subject of the photograph.`
       : '';
     // ── BACKGROUND IDENTITY SEPARATION ──
     // A background person of the venue is a DIFFERENT person with their own face and
@@ -165,7 +169,7 @@ export function useSceneImageGenerator() {
       ? ` ⛔ BACKGROUND PEOPLE ARE SEPARATE IDENTITIES, NOT THE NAMED PEOPLE: ${focusNames.join(', ')} ${focusNames.length === 1 ? 'is' : 'are'} a specific ${focusNames.length === 1 ? 'person' : 'people'} whose face comes only from ${focusNames.length === 1 ? 'their own reference images' : 'their own reference images'}. The background people are unrelated strangers with different faces — never ${focusNames.join(' or ')}, never a version of ${focusNames.length === 1 ? 'them' : 'them'}, never a look-alike, never ${focusNames.length === 1 ? 'their' : 'their'} replacement. If a background face would be mistaken for ${focusNames.length === 1 ? 'them' : 'any of them'}, that background person is wrong.`
       : '';
     const primaryFocusRule = focusNames.length > 0
-      ? ` PRIMARY SUBJECT (mandatory): ${focusNames.join(' and ')} ${focusNames.length === 1 ? 'is' : 'are'} the subject of this photograph. ${focusNames.length === 1 ? 'They are' : 'They are all'} present in the frame — close to medium framing, centered, clearly visible, faces unobscured, in the sharpest focus and the brightest light, rendered from ${focusNames.length === 1 ? 'their' : 'their'} own reference image${focusNames.length === 1 ? '' : 's'}. ⛔ No named participant may be omitted, and none may be exchanged for a background person. No background person outranks them in size, position, sharpness, or focus.${backgroundSeparationRule}`
+      ? ` PRIMARY SUBJECT (mandatory): ${focusNames.join(' and ')} ${focusNames.length === 1 ? 'is' : 'are'} the subject of this photograph. ${focusNames.length === 1 ? 'They are' : 'They are all'} present in the frame — close to medium framing, centered, clearly visible, faces unobscured, in the sharpest focus and the brightest light, rendered from ${focusNames.length === 1 ? 'their' : 'their'} own reference image${focusNames.length === 1 ? '' : 's'} — those references are supplied for ${focusNames.length === 1 ? 'them' : 'them'} alone and may never be given to anyone else in the frame. ⛔ No named participant may be omitted, and none may be exchanged for a background person. No background person outranks them in size, position, sharpness, or focus.${backgroundSeparationRule}`
       : '';
 
     // If an action triggered this, use the action's specific prompt
