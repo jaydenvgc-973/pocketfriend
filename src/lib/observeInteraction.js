@@ -44,14 +44,21 @@ function realCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && !c.isNpc && !String(c.id).startsWith('npc_'));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null }) {
+function backgroundCast(list) {
+  return (list || []).filter((c) => c && c.id && c.name && (c.isNpc === true || String(c.id).startsWith('npc_')));
+}
+
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [] }) {
   const cast = realCast(participants);
   if (cast.length < 1 || !location) return [];
 
   // Who may speak in this beat. Everyone else in the cast is present but listens.
-  const requested = responders ? realCast(responders).map((c) => c.id) : null;
+  const requested = responders ? responders.map((c) => c.id) : null;
   const speaking = requested ? cast.filter((c) => requested.includes(c.id)) : cast;
-  if (speaking.length === 0) return [];
+  // Background people of the venue can join the conversation when they were chosen
+  // from Who's Here. They have no canonical record — they speak in role only.
+  const bgSpeaking = backgroundCast(npcSpeakers).filter((n) => !requested || requested.includes(n.id));
+  if (speaking.length === 0 && bgSpeaking.length === 0) return [];
 
   const canonicalCtx = {};
   const memoryCtx = {};
@@ -78,8 +85,30 @@ export async function generateObserveBeat({ participants, responders, location, 
     .map((m) => (m.is_canon_event ? `(already happened, before this moment) ${m.content}` : `${m.senderName}: ${m.content}`))
     .join('\n');
 
-  const nameList = speaking.map((c) => c.name).join(' and ');
+  const nameList = [...speaking.map((c) => c.name), ...bgSpeaking.map((n) => n.name)].join(', ');
   const silent = cast.filter((c) => !speaking.some((s) => s.id === c.id));
+
+  // The place is populated: ordinary staff and patrons are here doing their own
+  // thing. They are part of the scene, never the focus, and never stand in for the
+  // established people in it.
+  const ambientLine = (ambient || []).filter((a) => a && a.name);
+  const placeBlock = `=== THE PLACE THEY ARE IN (RIGHT NOW) ===
+${location.name}${activeZone ? ` — ${activeZone}` : ''} (${location.category?.replace(/_/g, ' ') || 'venue'}) is a real, working place, not an empty stage.
+${ambientLine.length > 0
+  ? `Other people are here, living their ordinary day:
+${ambientLine.map((a) => `- ${a.name}${a.role ? `, ${String(a.role).toLowerCase()}` : ''}`).join('\n')}
+They go about their own business, and they may act or speak briefly and in character when it is natural (a bartender asks what someone wants, an instructor addresses the room, a receptionist greets a visitor). They are never the focus, never take over the moment, and never become one of the main participants.`
+  : 'No one else is around right now.'}
+${bgSpeaking.length > 0
+  ? `${bgSpeaking.map((n) => `${n.name}${n.role ? ` (${String(n.role).toLowerCase()})` : ''}`).join(', ')} ${bgSpeaking.length === 1 ? 'is' : 'are'} part of this conversation and may speak directly when it fits. They speak in role, from what this place and their job actually are.`
+  : ''}
+===
+
+=== THEY ARE ALREADY HERE ===
+Everyone in this scene is already at this place${activeZone ? `, in the ${activeZone}` : ''}. Being here is not an arrival.
+- Nobody says they just got here, just arrived, just made it, finally got there, or announces walking in.
+- Nobody re-enters the room, discovers where they are, or is surprised to be here.
+- The moment continues from what these people were already doing before it began.`;
   const canonicalSection = cast
     .filter((c) => canonicalCtx[c.id])
     .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`)
@@ -101,17 +130,19 @@ export async function generateObserveBeat({ participants, responders, location, 
 THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - Nobody is watching this. There is no observer in the room, nearby, or at the edge of it.
 - A person who is not part of this scene may read it afterwards. That person does not exist in this moment: their name must never appear, and no character may address, greet, name, glance toward, speak to, think about, or perform for anyone outside the participant list below.
-- Never write dialogue, thoughts, or actions for anyone who is not a listed participant.
+- Never write dialogue, thoughts, or actions for anyone who is not the people listed here or in THE PLACE below.
 - Nobody here is aware of being observed. Nothing may hint at an audience or a narrator.
 
-PARTICIPANTS (only these people are in this moment):
+PARTICIPANTS (the people this moment is about):
 ${castLines}
 ${silentRule}
+
+${placeBlock}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody in this scene addresses, names, or plays to anyone outside the participant list.\n${canonicalSection}\n===` : ''}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
 
-${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'They are together for the first time in this moment.'}
+${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'Nothing has passed between them yet in this scene. It opens from where they already are.'}
 ${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThey are watching this together, in the same room. They may talk about it, react to it, or ignore it like real people do.\n===` : ''}
 ${narrative ? ESTABLISHED_NARRATIVE(narrative) : ''}
 ${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
@@ -125,6 +156,7 @@ ${direction ? `- Now play out the directed moment above: the people named take t
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
 - Give each speaking participant at most one turn, 1-2 sentences, natural and in-character.
 - Characters do not say their own name out loud when speaking about themselves.
+- Background people of the place stay background: they work, pass by, and may speak in role, but they never take the moment over and never replace the named participants.
 - No narration of the observer. No summary of the scene.
 
 Return JSON only.`;
@@ -148,7 +180,11 @@ Return JSON only.`;
     },
   });
 
-  const allowed = new Map(speaking.map((c) => [c.name.trim().toLowerCase(), c]));
+  const allowed = new Map([
+    ...speaking.map((c) => [c.name.trim().toLowerCase(), c]),
+    ...bgSpeaking.map((n) => [n.name.trim().toLowerCase(), n]),
+  ]);
+  const bgIds = new Set(bgSpeaking.map((n) => n.id));
   const stamp = Date.now();
   return (res?.lines || [])
     .map((line, i) => {
@@ -159,7 +195,8 @@ Return JSON only.`;
         sender: 'character',
         senderName: char.name,
         characterId: char.id,
-        avatarUrl: char.avatar_url,
+        avatarUrl: char.avatar_url || null,
+        isNpc: bgIds.has(char.id),
         content: filterDashes(line.content),
         timestamp: new Date().toISOString(),
       };
@@ -176,7 +213,8 @@ Return JSON only.`;
  */
 export async function recordObserveBeatMemories({ lines, participants, priorLine }) {
   const cast = (participants || []).filter((p) => p && p.id);
-  const sequence = priorLine ? [priorLine, ...(lines || [])] : (lines || []);
+  // Background people of the venue have no record and no memory to write.
+  const sequence = (priorLine ? [priorLine, ...(lines || [])] : (lines || [])).filter((l) => l && !l.isNpc);
   for (let i = 1; i < sequence.length; i++) {
     const previous = sequence[i - 1];
     const current = sequence[i];

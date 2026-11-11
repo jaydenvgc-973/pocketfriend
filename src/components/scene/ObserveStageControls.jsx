@@ -17,7 +17,10 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   const [speakAsId, setSpeakAsId] = useState(null);
 
   const cast = (candidates || []).filter((c) => castIds.includes(c.id));
-  const speaker = cast.find((c) => c.id === speakAsId) || cast[0] || null;
+  // Speak belongs to an established character only. Background people of the venue
+  // take part through the scene itself and are never spoken for by the observer.
+  const speakable = cast.filter((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_"));
+  const speaker = speakable.find((c) => c.id === speakAsId) || speakable[0] || null;
   const speaking = mode === "speak" && !!speaker;
 
   const submit = () => {
@@ -59,14 +62,14 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
         </button>
         <button
           onClick={() => setMode("speak")}
-          disabled={cast.length === 0}
+          disabled={speakable.length === 0}
           className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors disabled:opacity-40 ${speaking ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-muted-foreground"}`}
         >
           <MessageSquare className="w-3 h-3" /> Speak as
         </button>
-        {speaking && cast.length > 1 && (
+        {speaking && speakable.length > 1 && (
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide">
-            {cast.map((c) => (
+            {speakable.map((c) => (
               <button
                 key={c.id}
                 onClick={() => setSpeakAsId(c.id)}

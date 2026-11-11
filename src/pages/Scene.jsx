@@ -52,6 +52,7 @@ import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
 import { isInfantCharacter } from "@/lib/characterAgeStage";
 import { getCharacterAge } from "@/lib/characterAgeSystem";
+import { buildBackgroundPopulation, describeBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -67,6 +68,18 @@ const CATEGORY_EMOJIS = {
   bar: "🍸", generic: "📍", transportation: "🚉"
 };
 
+/**
+ * The user's OWN presence, as the unified presence list represents it (`user_<id>`),
+ * and the active user participant are the SAME person. Both must never become two
+ * participants in the scene, its images, or its counts.
+ */
+function isUserPresenceEntity(entity, userId) {
+  if (!entity) return false;
+  if (entity.effective_presence_type === 'user' || entity.is_user === true) return true;
+  if (userId && entity.id === userId) return true;
+  return typeof entity.id === 'string' && entity.id.startsWith('user_');
+}
+
 export default function Scene() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -77,7 +90,9 @@ export default function Scene() {
   const initialEnvironmentId = urlParams.get("environmentId") || null;
   // OBSERVE MODE — the user is watching characters interact with each other.
   // They are not a participant, not present, and not written into the scene.
-  const observeMode = urlParams.get("observe") === "1" && characterIds.length > 0;
+  // A location can be opened for viewing without sending anyone: the people already
+  // there are the scene. Opening it is not travel and is not an arrival.
+  const observeMode = urlParams.get("observe") === "1";
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -275,7 +290,11 @@ export default function Scene() {
 
   const hereNowFromPresence = useMemo(() => {
     if (!location) return [];
-    return getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)).map((entity) => ({ id: entity.id, name: entity.display_name, avatar_url: entity.avatar_url, role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now', isNpc: false, npcType: 'present', resolved_presence_status: entity.resolved_presence_status, personality_summary: entity.personality_summary, emotional_state: entity.emotional_state }));
+    return getPresenceAtLocation(location, unifiedPresenceEntities)
+      .filter((e) => e?.id && !characterIds.includes(e.id))
+      // The user is the observer, not one of the other people here.
+      .filter((e) => !isUserPresenceEntity(e, currentUser?.id))
+      .map((entity) => ({ id: entity.id, name: entity.display_name, avatar_url: entity.avatar_url, role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now', isNpc: false, npcType: 'present', resolved_presence_status: entity.resolved_presence_status, personality_summary: entity.personality_summary, emotional_state: entity.emotional_state }));
   }, [location, unifiedPresenceEntities, characterIds]);
 
   const allPossibleNpcs = (() => {
@@ -309,10 +328,15 @@ export default function Scene() {
     if (!location) return [];
     const participants = []; const seenIds = new Set();
     const presentEntities = getPresenceAtLocation(location, unifiedPresenceEntities);
+    // The user's presence as the world resolves it — the same person as userParticipant.
+    const ownUserPresence = presentEntities.find((e) => isUserPresenceEntity(e, currentUser?.id)) || null;
     for (const entity of presentEntities) {
       if (!entity || !entity.id || seenIds.has(entity.id)) continue;
       // The observer is never a participant in an observed scene.
       if (observeMode && entity.id === currentUser?.id) continue;
+      // The user is one person: their resolved presence is the user participant,
+      // never an additional body in the scene.
+      if (isUserPresenceEntity(entity, currentUser?.id)) continue;
       seenIds.add(entity.id);
       const char = characters.find((c) => c.id === entity.id); const full = char || {};
       participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: full.reference_image_urls || [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
@@ -321,7 +345,14 @@ export default function Scene() {
     for (const n of npcsTravelingHere) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: 'visitor', isNpc: true }); }
     for (const n of selectedNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
     for (const n of extraNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
-    if (userParticipant && !seenIds.has(userParticipant.id)) { seenIds.add(userParticipant.id); participants.push({ ...userParticipant, sceneRole: 'visitor' }); }
+    if (userParticipant && !seenIds.has(userParticipant.id)) {
+      seenIds.add(userParticipant.id);
+      participants.push({
+        ...userParticipant,
+        resolved_presence_status: userParticipant.resolved_presence_status || ownUserPresence?.resolved_presence_status,
+        sceneRole: 'visitor',
+      });
+    }
     return participants;
   })();
 

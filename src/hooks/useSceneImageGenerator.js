@@ -64,6 +64,10 @@ export function useSceneImageGenerator() {
       // When present, they are the cast of the image — the action is never rendered
       // without the person it was aimed at.
       actionFocusIds = null,
+      // Ordinary background people of the venue (staff, patrons) — used only where the
+      // place is genuinely public. They are never named participants and never replace
+      // an established person.
+      ambientPopulation = [],
     } = opts;
 
     if (!location || isGeneratingImage) return;
@@ -133,12 +137,30 @@ export function useSceneImageGenerator() {
     // These are prepended to ALL Scene image prompts (initial, refresh, action).
     const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}`;
 
+    // ── BACKGROUND POPULATION ──
+    // A public venue is populated when characters are in it. The named people stay the
+    // only identifiable subjects; ordinary staff and patrons may be visible behind them.
+    // Private residences and restricted zones never get this.
+    const ambientList = (Array.isArray(ambientPopulation) ? ambientPopulation : []).filter((p) => p && p.name);
+    const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv;
+    const ambientText = allowBackgroundExtras
+      ? ambientList.slice(0, 6).map((p) => (p.role ? `${p.name} (${String(p.role).toLowerCase()})` : p.name)).join(', ')
+      : '';
+    const namedSubjectsRule = (people) => (people.length > 0
+      ? `Only these people are identifiable: ${people.map((c) => c.name).join(', ')} — never duplicated, never replaced by an invented person.`
+      : `No named person is the subject of this frame.`);
+    const ambientRule = allowBackgroundExtras
+      ? ` The venue is populated as it really is right now: ${ambientText}. They are ordinary background people going about their own business, at a natural distance — never the focus, never a stand-in for the named people.`
+      : '';
+
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
       const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
 
-      if (!isGlobal) {
+      if (!isGlobal && allowBackgroundExtras) {
+        finalPrompt += ` ${namedSubjectsRule(finalParticipants)}${ambientRule}`;
+      } else if (!isGlobal) {
         if (finalParticipants.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
         } else {
@@ -201,6 +223,8 @@ export function useSceneImageGenerator() {
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+      } else if (allowBackgroundExtras) {
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else {
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
         const peopleDesc = (finalParticipants.length > 0 ?
