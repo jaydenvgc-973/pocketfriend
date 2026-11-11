@@ -1919,6 +1919,18 @@ Deno.serve(async (req) => {
     }
     const character = characters[0];
 
+    // DECEASED — presence cannot be assigned to a dead character. No scene, visit,
+    // work shift, or presence system may place them anywhere as a living person.
+    if (character.life_status === 'deceased' || character.status === 'deceased') {
+      return Response.json({
+        success: false,
+        refused: true,
+        character_id,
+        reason: 'deceased',
+        error: `${character.name} is deceased — presence is no longer applicable.`,
+      }, { status: 409 });
+    }
+
     // ── LOAD LOCATIONS ─────────────────────────────────────────────────────────
     let locations = [];
     try {

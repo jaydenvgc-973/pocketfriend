@@ -45,6 +45,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found', characterId }, { status: 404 });
     }
 
+    // DECEASED — no new first-person activity narratives for a dead character.
+    if (character.life_status === 'deceased' || character.status === 'deceased') {
+      return Response.json({ success: false, skipped: true, reason: 'deceased', characterId });
+    }
+
     // owner_email is the sole source of truth — created_by is permanently forbidden
     const ownerEmail = character.owner_email;
     const ownerUser = character.owner_user_id || null;

@@ -39,6 +39,11 @@ Deno.serve(async (req) => {
           // lives in this same field. A calendar event must not erase it.
           const [evtChar] = await base44.asServiceRole.entities.Character
             .filter({ id: charId }, null, 1).catch(() => []);
+          // A queued event must respect the death: a deceased character does not
+          // continue living activities, so nothing is written for them here.
+          if (evtChar && (evtChar.life_status === 'deceased' || evtChar.status === 'deceased')) {
+            continue;
+          }
           const _storedLife = evtChar?.current_life_event || '';
           const _pregnancyActive = /pregnan/i.test(_storedLife) &&
             !/\b(gave birth|has given birth|no longer pregnant|baby was born)\b/i.test(_storedLife);

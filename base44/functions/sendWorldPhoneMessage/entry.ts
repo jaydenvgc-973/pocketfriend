@@ -125,6 +125,11 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, error: `Sender character not found: ${sender_character_id}` });
     }
 
+    // DECEASED — a dead character cannot call, text, or send anything.
+    if (sender.life_status === 'deceased' || sender.status === 'deceased') {
+      return Response.json({ success: false, error: `${sender.name} is deceased and cannot send messages.`, reason: 'deceased' });
+    }
+
     // ── SLEEP AUTHORITY GUARD — SENDER ──────────────────────────────────────
     // Canonical rule (sleepUtils.js): "Sleep and naps are the SUSPENSION of
     // activities. Social, travel, and activity systems do NOT fire." A sleeping,

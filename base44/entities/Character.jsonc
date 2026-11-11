@@ -163,11 +163,63 @@
       "enum": [
         "active",
         "moved_away",
+        "deceased",
         "deleted",
         "soft_deleted",
         "merged"
       ],
       "default": "active"
+    },
+    "life_status": {
+      "type": "string",
+      "enum": [
+        "alive",
+        "deceased"
+      ],
+      "default": "alive",
+      "description": "Life state. deceased = this character has died. A deceased character takes no part in living activity: no travel or teleportation, no visits, no messages or World Phone, no scenes, no work or school, no purchases, and no new first-person narratives. Every existing record defaults to alive."
+    },
+    "death_category": {
+      "type": "string",
+      "enum": [
+        "natural_causes",
+        "illness_medical",
+        "accident",
+        "violence",
+        "overdose_poisoning",
+        "suicide",
+        "disaster",
+        "unknown",
+        "custom"
+      ],
+      "description": "Category of the death exactly as chosen by the user."
+    },
+    "death_cause": {
+      "type": "string",
+      "description": "The cause of death exactly as the user selected or wrote it. Never softened, reclassified, or replaced by the system."
+    },
+    "death_circumstances": {
+      "type": "string",
+      "description": "Additional context the user provided around the death."
+    },
+    "death_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the death was established."
+    },
+    "death_deletion_mode": {
+      "type": "string",
+      "enum": [
+        "immediate",
+        "after_24h",
+        "after_48h"
+      ],
+      "description": "Deletion timing chosen by the user at the time of death."
+    },
+    "death_deletion_scheduled_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the deceased character record is due to be removed through the existing deletion pathway."
     },
     "owner_user_id": {
       "type": "string"
@@ -534,9 +586,10 @@
         "house_arrest",
         "confined",
         "hospitalized",
+        "deceased",
         "rabbit_hole"
       ],
-      "description": "sleeping = voluntary/chosen sleep. passed_out = involuntary collapse from exhaustion or compound crisis. These are mechanically and visually distinct states. hospitalized = medical emergency. Do NOT use sleeping for pass-out or forced exhaustion. rabbit_hole = custom off-screen destination (user-typed, no persisted LocationReference)."
+      "description": "sleeping = voluntary/chosen sleep. passed_out = involuntary collapse from exhaustion or compound crisis. These are mechanically and visually distinct states. hospitalized = medical emergency. Do NOT use sleeping for pass-out or forced exhaustion. rabbit_hole = custom off-screen destination (user-typed, no persisted LocationReference). deceased = the character has died and is nowhere as a living participant."
     },
     "resolved_source_reason": {
       "type": "string"

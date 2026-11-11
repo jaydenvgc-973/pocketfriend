@@ -67,6 +67,15 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
 
+    // DECEASED — an alarm cannot be set for, or wake, a dead character.
+    if (character.life_status === 'deceased' || character.status === 'deceased') {
+      return Response.json({
+        success: false,
+        error: `${character.name} is deceased — alarms do not apply.`,
+        reason: 'deceased',
+      }, { status: 409 });
+    }
+
     if (character.owner_email !== user.email) {
       return Response.json({
         error: 'Forbidden — character does not belong to your account',

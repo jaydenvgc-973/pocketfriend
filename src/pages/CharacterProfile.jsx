@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -25,6 +25,7 @@ import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.js
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
+import CharacterDeathModal from "@/components/character/CharacterDeathModal.jsx";
 import HomeLocationField from "@/components/character/HomeLocationField.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
@@ -126,6 +127,7 @@ export default function CharacterProfile() {
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [showEditSettings, setShowEditSettings] = useState(false);
+  const [showDeathModal, setShowDeathModal] = useState(false);
   const [promotingNPC, setPromotingNPC] = useState(null);
   const [editingNPCPhoto, setEditingNPCPhoto] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
@@ -495,13 +497,15 @@ export default function CharacterProfile() {
       <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
         <Link to="/home" className="text-muted-foreground hover:text-foreground pointer-events-auto cursor-pointer"><ArrowLeft className="w-5 h-5" /></Link>
         <h2 className="text-sm font-semibold flex-1">{character.name}</h2>
-        <Link
-          to={`/chat/${characterId}`}
-          className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-          title="Open chat"
-        >
-          <MessageCircle className="w-4 h-4" />
-        </Link>
+        {character.life_status !== "deceased" && (
+          <Link
+            to={`/chat/${characterId}`}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="Open chat"
+          >
+            <MessageCircle className="w-4 h-4" />
+          </Link>
+        )}
         <button
           onClick={() => setShowEditSettings(true)}
           className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
@@ -531,9 +535,38 @@ export default function CharacterProfile() {
         allCharacters={allCharacters}
         currentUser={currentUser}
       />
+      <CharacterDeathModal
+        isOpen={showDeathModal}
+        character={character}
+        onClose={() => setShowDeathModal(false)}
+        onDeceased={() => {
+          queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+          setShowDeathModal(false);
+        }}
+      />
 
       <div className="max-w-lg mx-auto px-0 py-0 flex flex-col h-full">
         <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
+
+        {character.life_status === "deceased" && (
+          <div className="mx-4 mt-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 space-y-1">
+            <p className="text-sm font-semibold text-destructive flex items-center gap-2">
+              <Skull className="w-4 h-4" /> Deceased
+            </p>
+            <p className="text-xs text-foreground">{character.death_cause}</p>
+            {character.death_circumstances && (
+              <p className="text-xs text-muted-foreground">{character.death_circumstances}</p>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              {character.death_deletion_mode === "immediate"
+                ? "Record removed."
+                : character.death_deletion_scheduled_at
+                  ? `Record removal: ${new Date(character.death_deletion_scheduled_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} Eastern`
+                  : "Record removal scheduled."}
+            </p>
+          </div>
+        )}
 
         {/* ══ LOCKED TOP PROFILE AREA ══ */}
           <div className="px-6 py-6 space-y-6 border-b border-border">
@@ -689,15 +722,33 @@ export default function CharacterProfile() {
             <CharacterDashboard character={character} allCharacters={allCharacters} />
           </CollapsibleProfileSection>
 
-          <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
-            <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
-            <ManualNeedsEditor character={character} />
-            <HybridNeedsLockPanel character={character} />
-          </CollapsibleProfileSection>
+          {character.life_status !== "deceased" && (
+            <CollapsibleProfileSection icon={BarChart3} title="Life Needs">
+              <CharacterNeedsPanel character={character} onRefresh={() => refetch()} />
+              <ManualNeedsEditor character={character} />
+              <HybridNeedsLockPanel character={character} />
+            </CollapsibleProfileSection>
+          )}
 
           <CollapsibleProfileSection icon={BookOpen} title="Life Journal">
             <LifeJournal characterId={characterId} character={character} />
           </CollapsibleProfileSection>
+
+          {character.life_status !== "deceased" && (
+            <CollapsibleProfileSection icon={Skull} title="End of Life">
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  End this character's life. You choose the cause and what happens to the character record afterward.
+                </p>
+                <button
+                  onClick={() => setShowDeathModal(true)}
+                  className="w-full py-2.5 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors"
+                >
+                  Character Death
+                </button>
+              </div>
+            </CollapsibleProfileSection>
+          )}
 
           <CollapsibleProfileSection icon={Baby} title="Pregnancy & Birth">
             <PregnancyPanel character={character} onUpdated={() => refetch()} />

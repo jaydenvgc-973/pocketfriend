@@ -56,6 +56,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
+    // DECEASED — a dead character cannot be moved, teleported, or sent anywhere.
+    if (char.life_status === 'deceased' || char.status === 'deceased') {
+      return Response.json({
+        success: false,
+        error: `${char.name} is deceased and cannot travel anywhere.`,
+      }, { status: 409 });
+    }
+
     // Verify ownership
     if (char.owner_email !== owner_email) {
       return Response.json({

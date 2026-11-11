@@ -25,6 +25,15 @@ Deno.serve(async (req) => {
       invitee = allChars.find(c => c.id === inviteeId) || null;
     }
 
+    // DECEASED — a dead character cannot be invited anywhere.
+    if (invitee && (invitee.life_status === 'deceased' || invitee.status === 'deceased')) {
+      return Response.json({
+        success: false,
+        error: `${invitee.name} is deceased and cannot be invited.`,
+        reason: 'deceased',
+      }, { status: 409 });
+    }
+
     const now = new Date();
     const hourNow = now.getHours();
 

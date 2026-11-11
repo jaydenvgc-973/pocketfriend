@@ -98,6 +98,8 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
   const activeCreatedChars = deduped
     .filter(c => c.character_type === 'active_created_character')
+    // A deceased character cannot travel, so they are not offered as travel company.
+    .filter(c => c.life_status !== 'deceased' && c.status !== 'deceased')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
   const npcFictitiousChars = deduped

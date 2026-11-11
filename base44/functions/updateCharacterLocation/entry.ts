@@ -61,6 +61,15 @@ Deno.serve(async (req) => {
       }, { status: 404 });
     }
 
+    // DECEASED — a dead character is not moved or placed anywhere.
+    if (matched.life_status === 'deceased' || matched.status === 'deceased') {
+      return Response.json({
+        success: false,
+        error: `${matched.name} is deceased and cannot be moved.`,
+        reason: 'deceased',
+      }, { status: 409 });
+    }
+
     // RABBIT HOLE MODE: custom off-screen destination — skip LocationReference lookup entirely.
     // The character is placed at a named but non-persisted destination (resolved_presence_status: 'rabbit_hole').
     // No LocationHistory proof is written (requires a real location_id).

@@ -1,0 +1,79 @@
+{
+  "name": "Character Deletion \u2014 Trigger on death_deletion_scheduled_at Set",
+  "description": "Carries out the deletion a user chose when a character died (24 or 48 hours later). When a character's death_deletion_scheduled_at is set or changed, it waits until that registered instant and then invokes processDueCharacterDeletions, the executor that removes the deceased record through the existing soft-delete pathway. An already-due registration runs immediately. No new recurring schedule and no polling: the delay is read from the timestamp the app stores at death.",
+  "trigger": {
+    "condition": "${ (.trigger.changed_fields | index(\"death_deletion_scheduled_at\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "character_deletion_trigger_on_death_deletion_scheduled_at_set",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "compute_wait": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .trigger.data.death_deletion_scheduled_at // .trigger.old_data.death_deletion_scheduled_at // \"2000-01-01T00:00:00Z\" }"
+          },
+          "then": "check_due",
+          "x-base44": {
+            "title": "Time until the deletion",
+            "description": "From the time chosen at death"
+          }
+        }
+      },
+      {
+        "check_due": {
+          "switch": [
+            {
+              "when": "${ (.compute_wait.seconds // 0) <= 0 }",
+              "then": "run_process"
+            },
+            {
+              "when": "${ true }",
+              "then": "wait_until_due"
+            }
+          ],
+          "x-base44": {
+            "title": "Due already?",
+            "description": "Runs now if past due"
+          }
+        }
+      },
+      {
+        "wait_until_due": {
+          "wait": "PT${ ((.compute_wait.seconds // 0 | floor) + 5) }S",
+          "then": "run_process",
+          "x-base44": {
+            "title": "Wait for the deletion time",
+            "description": "Ends a few seconds after"
+          }
+        }
+      },
+      {
+        "run_process": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processDueCharacterDeletions",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Execute the deletion",
+            "description": "Existing soft-delete pathway"
+          }
+        }
+      }
+    ]
+  }
+}

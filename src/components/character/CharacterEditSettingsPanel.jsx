@@ -1143,14 +1143,16 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <EditableTextField character={character} field="occupation" label="Job Title" placeholder="e.g. Nurse, Barista, Software Engineer" />
               </section>
 
-              {/* Needs */}
-              <section className="space-y-4">
-                <div>
-                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
-                </div>
-                <NeedsEditor character={character} />
-              </section>
+              {/* Needs — not shown for a deceased character */}
+              {character.life_status !== "deceased" && (
+                <section className="space-y-4">
+                  <div>
+                    <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
+                  </div>
+                  <NeedsEditor character={character} />
+                </section>
+              )}
 
               {/* Sleep Debt */}
               <section className="space-y-4">

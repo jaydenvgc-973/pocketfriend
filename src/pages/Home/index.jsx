@@ -301,6 +301,9 @@ export default function Home() {
       return nameA.localeCompare(nameB);
     });
   const movedAwayChars = customChars.filter(c => c.status === "moved_away" && c.character_type === "active_created_character");
+  // Deceased characters awaiting record deletion stay reachable from here so their
+  // profile (cause of death, deletion timing) remains accessible during the window.
+  const deceasedChars = customChars.filter(c => c.status === "deceased");
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
@@ -438,7 +441,7 @@ export default function Home() {
                 </Link>
               )}
             </div>
-            {activeCustomChars.length === 0 && movedAwayChars.length === 0 ? (
+            {activeCustomChars.length === 0 && movedAwayChars.length === 0 && deceasedChars.length === 0 ? (
               <Link to="/create">
                 <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
@@ -463,6 +466,16 @@ export default function Home() {
                 ))}
                 {movedAwayChars.map(c => (
                   <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationMap={locationMap} locationData={{}} financialRecord={financialIndex[c.id] || null} isFinancialLoading={isFinancialLoading} unreadCounts={getUnreadForCharacter(c.id)} />
+                ))}
+                {deceasedChars.map(c => (
+                  <Link key={c.id} to={`/profile/${c.id}`} className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-border bg-card">
+                    <span className="text-sm text-foreground truncate">{c.display_name || c.name}</span>
+                    <span className="text-[11px] text-muted-foreground text-right flex-shrink-0">
+                      Deceased{c.death_deletion_scheduled_at
+                        ? ` · record removed ${new Date(c.death_deletion_scheduled_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} Eastern`
+                        : ""}
+                    </span>
+                  </Link>
                 ))}
                 <Link to="/create">
                   <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
