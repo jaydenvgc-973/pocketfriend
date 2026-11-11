@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
+import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -16,6 +17,7 @@ const INTENT_OPTIONS = [
   { id: "spend_time", label: "Spend Time",   emoji: "🕰️", description: "Hang out, just be present" },
   { id: "check_in",   label: "Check In",     emoji: "💬", description: "See how you're doing" },
   { id: "drama",      label: "Insert Drama", emoji: "🎭", description: "Something unexpected happens" },
+  { id: "serenity",   label: "Insert Serenity", emoji: "🌤️", description: "Something good or quietly pleasant" },
 ];
 
 export default function NarrativeActionButton({
@@ -225,7 +227,7 @@ ALLOWED — remote-only framing:
       const intentType = isFamilial ? 'FAMILIAL'
         : isMentor ? 'MENTORSHIP'
         : intent === 'confront' ? 'CONFLICT'
-        : intent === 'drama' ? 'FRIENDSHIP'
+        : intent === 'drama' || intent === 'serenity' ? 'FRIENDSHIP'
         : romanticOk ? 'ROMANTIC'
         : 'FRIENDSHIP';
 
@@ -473,6 +475,93 @@ CRAFT:
 ════════════════════════════════════════════════════════════
 ` : "";
 
+      // ── INSERT SERENITY — SPONTANEOUS GOOD ──────────────────────────────────────
+      // Insert Serenity is the same single permission Insert Drama grants, pointed the
+      // other way: one pleasant development may enter the character's life now, related
+      // to the conversation or entirely unrelated. It carries the same constraints on
+      // authoritative reality and the same prohibition on writing history for another
+      // character, so nothing here can contradict the world or create a memory elsewhere.
+      const serenityBlock = intent === 'serenity' ? `
+════════════════════════════════════════════════════════════
+INSERT SERENITY — SPONTANEOUS GOOD (SPECIAL RULE SET)
+════════════════════════════════════════════════════════════
+The selected Action is INSERT SERENITY. Something good, kind, helpful, comforting, or simply pleasant happens TO or AROUND ${character.name} — it was not being discussed and was not planned.
+
+THIS OVERRIDES THE "DO NOT AUTHORIZE UNRELATED EVENTS" LINE ABOVE — FOR THIS SELECTION ONLY.
+Every other continuity rule still applies: the scene starts exactly where the character is, and nothing already established may be contradicted.
+
+WHAT THIS SELECTION IS:
+• ONE pleasant development entering the character's life right now — good news, kindness, relief, comfort, ease, or a quietly enjoyable ordinary moment.
+• Serenity does not have to be extraordinary. Nothing going wrong is sometimes exactly what makes a moment good: a particularly good breakfast, an unbroken quiet hour, a task finally finished, laughing at something ridiculous, a comfortable night's sleep, an afternoon spent doing nothing important.
+• It may grow directly out of what is happening OR arrive completely unrelated to the current conversation.
+• You choose the situation yourself. Anything named anywhere in this prompt is an example of the KIND of thing that can happen, offered to show breadth — never a set of options to choose from.
+• It does NOT need foreshadowing. The conversation does not have to be about the subject first.
+• It is an EVENT or a genuine moment that happened — not a mood, not a reflection, not a warmer retelling of the current exchange.
+• It may leave something open: an invitation, a new interest, a reconnection, an approval that affects what comes next. It does not have to be resolved inside this narrative.
+
+WHAT THIS SELECTION IS NOT:
+✗ A restatement, summary, or happier description of what the conversation is already about
+✗ The same kind of pleasant development as an earlier Insert Serenity narrative in this conversation
+✗ An event that contradicts the authoritative location, presence, health, confinement, work, school, or relationship facts above
+✗ Extraordinary good fortune every time — a windfall, a promotion, a life-changing opportunity, or an old friend reappearing in every selection
+✗ A problem invented so that it can then be relieved. Do not open a complication in order to resolve it inside the same beat.
+✗ Romance or sexual content. Keep any physical contact ordinary and non-romantic.
+✗ A reward, a moral payoff, or a lesson. Good things do not arrive because the character earned them.
+
+PLAUSIBILITY ANCHOR — authoritative state outranks any example:
+• Location (including a rabbit hole or a specific zone) decides what is possible here. Do not relocate the character to make a pleasant moment happen, do not place them inside a business they are not in, and do NOT announce their address or narrate the location name just because it is known.
+• If the character is ASLEEP, the good thing may be a genuinely restful, uninterrupted night or what greets them on waking — it must not require them to already be active.
+• If the character is HOSPITALIZED or CONFINED, the moment must fit that reality: reassuring results, a kind nurse or cellmate, a letter, a visit, a small comfort available there.
+• At work or at school: the moment must fit that setting and their actual role — a helpful coworker, an unexpected free period, something finished early.
+• At home: a neighbor's meal, an easy morning, a forgotten thing found, a delivery that is exactly what was wanted.
+• Earlier activity is not indefinitely ongoing. If cooking happened hours ago, the food is not still on the stove now. Recency decides.
+
+PEOPLE — FICTIONAL AND UNESTABLISHED ONLY:
+• A helpful stranger, neighbor, coworker, store employee, or former acquaintance may be introduced inside this narrative. That person does NOT need to exist as a character in the application.
+• ABSOLUTE: do not create, alter, harm, require, or contradict any EXISTING established character or relationship, and do not plant a memory into another character. An act of kindness does not require anyone else's memory to change.
+• No deaths, injuries, or harm to anyone. This selection introduces nothing damaging.
+
+EMOTIONAL VARIETY — do not flatten every good thing into celebration:
+• Quiet contentment, relief, gratitude, comfort, amusement, peacefulness, affection, satisfaction, pleasant surprise, simple enjoyment, joy and celebration are all valid.
+• Match the feeling to the size of the event. An unexpectedly peaceful afternoon is not a major emotional revelation.
+• Consecutive selections must not all land as big joyful news, and must not all land as tiny pleasant nothings.
+
+ORIGINALITY AND NON-REPETITION — the most common failure of this Action:
+Every situation mentioned anywhere in this prompt is an ILLUSTRATION of range, never a menu. The strongest outcome is usually one that is not mentioned here at all. Invent.
+
+STEP A — NAME THE PREMISE BEFORE YOU WRITE (silently, every time):
+Reduce the moment you are about to write to one plain sentence of underlying premise — "money arrives unexpectedly", "a stranger is kind", "a frustration is gently helped", "an old friend reappears", "a task goes unusually easily", "food turns out wonderful", "rest finally comes", "someone says something appreciative", "a place or interest is discovered", "work is recognized".
+Reduce each development already present in the beats and conversation above the same way, then compare PREMISES, not wording.
+• If your premise already appears among those beats → discard it and invent a different premise.
+• THE AREA TEST — name the AREA OF LIFE the moment comes from: money and finances, work and opportunity, health and body, home and comfort, food and everyday pleasure, friendship and social life, family, affection, rest and routine, learning and discovery, possessions and small finds. If an earlier beat already came from that area, the area is spent: take another one, even when your premise sentence for it looks different.
+• THE OVERUSED-FAMILY TEST — these are the stories that repeat most, and are spent once used in this conversation: unexpected money or a refund; a compliment from a stranger; an old friend or former acquaintance calling to reconnect; good news from work or an opportunity approved; someone paying for the character's drink or food; a neighbor bringing food over; finding something lost; a medical result coming back reassuring. If a beat above already used one of them, choose something that is none of them.
+• COSMETIC VARIATION TEST: if one noun or amount could be swapped to turn your moment into an earlier beat, it is the same development. "A stranger buys her coffee" and "a stranger buys her lunch" are ONE development, not two. Failing this test means rewrite, not reword. Changing the person, amount, location, or wording does not make it different.
+• A new name, a new object, a new room, a different relative, or a different flavor of the same kindness is NOT a new development.
+• VARY SCALE AND TONE deliberately: tiny (a song at the right moment, a perfect peach), ordinary (an easy morning, a finished task), meaningful (an apology received, a goal reached), and joyous (wonderful news, a celebration) are all valid. Choose a different size from the last one.
+
+STEP B — CONTINUATION OR RECYCLING? Decide deliberately:
+• CONTINUATION is allowed only when an open thread is genuinely ADVANCED — the next step of something already in motion (the invitation actually arrives, the new hobby is tried for the first time, the friend follows through).
+• RECYCLING is forbidden: the same kind of pleasant thing again with different surface details.
+• If this beat would not move an open thread forward, choose an unrelated pleasant development instead.
+
+DO NOT FILTER FOR THE REMARKABLE: a good thing does not have to be surprising, statistically unlikely, or out of the ordinary. Ordinary pleasantness is a first-class outcome and belongs at least as often as unusual good fortune.
+
+REALITY IS NEVER BROKEN — the boundary on the above:
+• Every moment has an ordinary human, physical, institutional, or accidental cause. No supernatural, paranormal, prophetic, or mystical events; no omens, signs, or prayers answered as fact; no unexplained phenomena presented as more than coincidence.
+• No catastrophic or global events, no celebrity or public-figure involvement, no impossible timing, and no knowledge the character could not actually have.
+• ${character.name}'s reaction stays proportionate and grounded to who they are.
+
+CRAFT:
+• Third person, in the tense the scene already reads. 2-3 sentences — the moment, then the reaction to it.
+• One grounded concrete detail of the moment itself — what arrived, what was said, what was tasted, what was seen.
+• React through behavior, not announced feeling. The first beat is the moment; the second is what ${character.name} does with it.
+• No dialogue dumps. At most one short quoted line.
+• Restraint: do not explain why the good thing happened, and do not moralize about it.
+• Never use the word "serenity" or the word "blessed" in the narrative itself.
+• No meta commentary about "storylines", "the narrative", or "the story".
+════════════════════════════════════════════════════════════
+` : "";
+
       // Motif pool — only for romantic-eligible intents where escalation is permitted
       const motifBlock = (romanticOk && (intent === 'flirt' || intent === 'spend_time' || intent === 'comfort' || (intent === 'action' && contextTier !== 'low')))
         ? `
@@ -505,6 +594,8 @@ ${buildStyleMotifContext()}
         check_in: "CHECK IN — generate a meaningful check-in relating to the current conversation, circumstances, or emotional condition. The character demonstrates interest in how the user is doing, feeling, or coping. Gentle, casual, serious, affectionate, or concerned depending on personality and context. Do NOT ask a question that ignores information already provided in the conversation. Do NOT restart the same inquiry if already asked.",
 
         drama: "INSERT DRAMA — introduce ONE spontaneous, unexpected development that is happening to or around the character right now. It may grow out of the current conversation or be entirely unrelated to it. It must be an EVENT, not a restatement, summary, or dramatic retelling of what is already being discussed, and it needs no foreshadowing. It must be plausible for the authoritative location and circumstances, must not invent or alter any existing character, and must stay OPEN — a complication, discovery, question, or change that can continue into later conversations and decisions. Do not resolve it. Invent the premise yourself: it must not share its underlying situation, category, or severity with any earlier development already present in this conversation, and it must not be drawn from any example in this prompt.",
+
+        serenity: "INSERT SERENITY — introduce ONE spontaneous, pleasant development that is happening to or around the character right now: good news, kindness, relief, comfort, ease, or a quietly enjoyable ordinary moment. It may grow out of the current conversation or be entirely unrelated to it. It must be an EVENT or a genuine moment that happened, not a restatement, summary, or happier retelling of what is already being discussed, and it needs no foreshadowing. It must be plausible for the authoritative location and circumstances, must not invent or alter any existing character, and may leave something open that can continue into later conversations. Serenity does not have to be extraordinary — ordinary pleasantness is as valid as good fortune. Invent the premise yourself: it must not share its underlying situation or area of life with any earlier development in this conversation, and it must not be drawn from any example in this prompt.",
       };
 
       // Context tier instruction
@@ -512,6 +603,8 @@ ${buildStyleMotifContext()}
         ? "CONTEXT TIER: IGNORED — relationship type enforces non-romantic content regardless of conversation history."
         : intent === 'drama'
         ? "CONTEXT TIER: IGNORED — Insert Drama introduces circumstances surrounding the character, not intimacy. Keep any physical contact ordinary and non-romantic."
+        : intent === 'serenity'
+        ? "CONTEXT TIER: IGNORED — Insert Serenity introduces a pleasant development around the character, not intimacy. Keep any physical contact ordinary and non-romantic."
         : contextTier === "high"
           ? "CONTEXT TIER: HIGH — strong physical closeness, kissing, pulling closer allowed. Keep non-explicit but immersive."
           : contextTier === "medium"
@@ -540,7 +633,7 @@ Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction
 ${userPresenceBlock}
 ${currentMomentBlock}
 ${narrativeContinuityBlock}
-${progressionBlock}${dramaBlock}${motifBlock}
+${progressionBlock}${dramaBlock}${serenityBlock}${motifBlock}
 
 ${engineGuidanceBlock}
 
@@ -571,13 +664,17 @@ ${intent === 'spend_time' ? `
 ${intent === 'drama' ? `
   INSERT DRAMA — THERE IS NO PATTERN MENU:
   Do not pick from a list of situations. First derive the underlying premise of every development already present in the beats above (STEP A of the Insert Drama block), then INVENT one development whose premise is none of them. If you notice the result is an earlier premise wearing new surface details, discard it and invent again. Originality is the requirement here, not compliance with an example.` : ''}
+${intent === 'serenity' ? `
+  INSERT SERENITY — THERE IS NO PATTERN MENU:
+  Do not pick from a list of pleasant situations. First derive the underlying premise and area of life of every development already present in the beats above (STEP A of the Insert Serenity block), then INVENT one moment whose premise is none of them and whose area of life has not already been used. If the result is an earlier moment with a different stranger, amount, place, or flavor, discard it and invent again. Originality and variety of SIZE — from the wonderfully tiny to the genuinely joyful — are the requirements here.` : ''}
 ${intent === 'action' ? `
   LET THEM ACT PATTERNS — select ONE:
   environmental interaction with objects | micro-behaviors (glance, posture shift, physical tell) | time progression awareness | reaction to background stimuli | silent action that carries meaning` : ''}
 
 STEP 3 — APPLY ONE VARIATION HOOK (required — scene without a hook is invalid):
 ${intent === 'drama' ? `
-  Choose one: it lands at the worst possible moment | it arrives in front of other people | it is small but the timing makes it enormous | it is bigger than anything the conversation was about | they do not fully understand it yet | someone else knows before they do | it forces an immediate decision | it reveals something they were not supposed to find out` : intent === 'flirt' ? `
+  Choose one: it lands at the worst possible moment | it arrives in front of other people | it is small but the timing makes it enormous | it is bigger than anything the conversation was about | they do not fully understand it yet | someone else knows before they do | it forces an immediate decision | it reveals something they were not supposed to find out` : intent === 'serenity' ? `
+  Choose one: it arrives at a quiet moment nobody else is watching | it is smaller than they expected and that is the relief | it happens while they are alone with it | they only notice it later | someone they barely know witnesses it | it costs them nothing | it changes nothing else about the day | it arrives right after they had given up` : intent === 'flirt' ? `
   Choose one: interruption that breaks the moment | hesitation that changes direction | one person more aware than the other | escalation then deliberate pullback | signal that gets misread | external pressure at the wrong moment | timing emotionally off between them` : `
   Choose one: timing mismatch | emotional misread | expectation vs what actually happens | memory callback shaping the present | environment applying pressure | someone opens up more than intended | humor deflects before the real thing surfaces`}
 
@@ -606,19 +703,19 @@ STYLE RULES:
 - Include one grounded environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
 - Do NOT repeat descriptive patterns from recent outputs. Vary the sensory entry point each time.
 
-${intent === 'drama'
+${(intent === 'drama' || intent === 'serenity')
   ? `Return JSON only, with exactly these three fields — no other text:
 { "premise": "one plain sentence naming the underlying development you chose (STEP A)", "area_of_life": "the area of life it comes from (THE AREA TEST)", "narrative": "the 2-3 sentence narrative" }
 The premise and area must describe what you actually wrote.`
   : `Return ONLY the narrative text. No labels, no JSON, no extra commentary.`}`;
 
-// Insert Drama is the only Action validated before saving: its failure mode is
-// a repeated development wearing new surface details. The prompt already tests
-// against that, and the finished development is checked against the beats
-// already in this conversation. One replacement attempt, then accept.
+// Insert Drama and Insert Serenity are the Actions validated before saving: their
+// failure mode is a repeated development wearing new surface details. Each prompt
+// already tests against that, and the finished development is checked against the
+// beats already in this conversation. One replacement attempt, then accept.
 let result = "";
 
-if (intent !== 'drama') {
+if (intent !== 'drama' && intent !== 'serenity') {
   const raw = await base44.integrations.Core.InvokeLLM({ prompt });
   result = typeof raw === "string" ? raw.trim() : "";
 } else {
@@ -647,15 +744,26 @@ if (intent !== 'drama') {
   let attempt = await generateDrama();
 
   if (attempt.narrative && priorBeats) {
-    const duplicate = await isDuplicateDevelopment({
-      candidatePremise: attempt.premise,
-      candidateArea: attempt.area,
-      priorBeats,
-    });
+    const duplicate = intent === 'serenity'
+      ? await isRepeatedSerenity({
+          candidatePremise: attempt.premise,
+          candidateArea: attempt.area,
+          priorBeats,
+        })
+      : await isDuplicateDevelopment({
+          candidatePremise: attempt.premise,
+          candidateArea: attempt.area,
+          priorBeats,
+        });
     if (duplicate) {
-      console.log("[NarrativeButton] Insert Drama repeated an existing development — regenerating:", attempt.premise);
+      console.log(`[NarrativeButton] Insert ${intent === 'serenity' ? 'Serenity' : 'Drama'} repeated an existing development — regenerating:`, attempt.premise);
       const retry = await generateDrama(
-        `REPLACE THE DEVELOPMENT. "${attempt.premise}"${attempt.area ? ` (area of life: ${attempt.area})` : ""} repeats a storyline that already happened in this conversation.
+        intent === 'serenity'
+          ? `REPLACE THE MOMENT. "${attempt.premise}"${attempt.area ? ` (area of life: ${attempt.area})` : ""} repeats something that already happened in this conversation.
+      HARD REQUIREMENT: do not write another version of that moment, and do not stay in its area of life. Different people, amounts, places, flavors or wording do not satisfy this — the KIND of pleasant development must change.
+      Change the size as well: if the last one was a big good thing, make this an ordinary one, and the reverse.
+      Write the different moment, plausibly for their actual circumstances.`
+          : `REPLACE THE DEVELOPMENT. "${attempt.premise}"${attempt.area ? ` (area of life: ${attempt.area})` : ""} repeats a storyline that already happened in this conversation.
       HARD REQUIREMENT: do not write another version of that development, and do not stay in its concern family. If it was an administrative mix-up, do not write another mix-up, wrong record, wrong room, or someone arriving with the wrong information. Different names, objects, people or wording do not satisfy this — the KIND of development must change.
       It does not have to happen where they are. A development elsewhere that reaches them is valid: news about their home, someone they know, money, an obligation, or something that changes what happens next.
       Write the different development, plausibly for their actual circumstances.`
