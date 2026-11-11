@@ -34,7 +34,7 @@ const MAX_RUNTIME_MS = 45000;
 // Message batches are independent offset reads, so several can be in flight at once
 // while still being consumed in strict offset order. Same queries, same results —
 // only the number of sequential round trips changes.
-const SCAN_CONCURRENCY = 8;
+const SCAN_CONCURRENCY = 6;
 // A month view stops as soon as the scan passes the requested month, so it uses a
 // narrower window and never fetches far-ahead batches it will not read.
 const MONTH_SCAN_CONCURRENCY = 3;
@@ -509,7 +509,7 @@ Deno.serve(async (req) => {
       // Runtime guard
       if (Date.now() - scanStart > MAX_RUNTIME_MS) {
         terminationReason = 'runtime_limit';
-        console.warn(`[fetchMediaGalleryPage] Runtime limit at offset=${offset} images=${imageIndex.length}`);
+        console.warn(`[fetchMediaGalleryPage] Runtime limit at offset=${offset} images=${seenNormalizedUrls.size}`);
         break;
       }
 
@@ -635,7 +635,7 @@ Deno.serve(async (req) => {
         console.warn(`[fetchMediaGalleryPage] Batch ${batchCount}: ${emptyPromptCount} images have no resolvable displayPrompt`);
       }
 
-      console.log(`[fetchMediaGalleryPage] Batch ${batchCount} offset=${offset}: ${batch.length} msgs → ${imageIndex.length} unique images`);
+      console.log(`[fetchMediaGalleryPage] Batch ${batchCount} offset=${offset}: ${batch.length} msgs → ${seenNormalizedUrls.size} unique images`);
 
       // ── STOP AT THE CHOSEN MONTH'S BOUNDARY ──────────────────────────────────
       // The scan walks newest-first, so once the oldest message in a batch predates
