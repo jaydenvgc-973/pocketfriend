@@ -52,8 +52,7 @@ import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
-import { isCaregiverOnDuty } from "@/lib/childCaregiver";
-import { requiresSitter } from "@/lib/characterAgeSystem";
+import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 
@@ -347,8 +346,19 @@ export default function Scene() {
     [characters, location?.id]
   );
   const selectedNpcIdList = useMemo(
-    () => [...new Set([...(selectedNpcIdList), ...onDutyCaregiverIds])],
+    () => [...new Set([...(selectedNpcIds || []), ...onDutyCaregiverIds])],
     [selectedNpcIds, onDutyCaregiverIds.join(',')]
+  );
+
+  // The exact household the caregiver is responsible for: the children whose OWN dwelling
+  // (unit/apartment) has no adult member home. A neighbour's child is never attributed to
+  // this caregiver, and a neighbour adult never ends the supervision.
+  const supervisedChildIds = useMemo(
+    () => [...new Set(onDutyCaregiverIds.flatMap((id) => {
+      const caregiver = characters.find((c) => c.id === id);
+      return supervisedChildren(location, caregiver, characters).map((c) => c.id);
+    }))],
+    [onDutyCaregiverIds.join(','), characters, location?.id]
   );
 
   const selectedNpcs = allPossibleNpcs.filter((n) => selectedNpcIdList.includes(n.id));
@@ -478,7 +488,7 @@ export default function Scene() {
     const caregiver = characters.find((c) => c.id === onDutyCaregiverIds[0]);
     if (!caregiver) return;
     const children = characters
-      .filter((c) => c.id !== caregiver.id && c.current_home_location_id === location.id && requiresSitter(c).requiresSitter)
+      .filter((c) => supervisedChildIds.includes(c.id))
       .map((c) => c.name);
     const text = children.length > 0
       ? `${caregiver.name} is here looking after ${children.join(', ')} until an adult who lives here is back.`
@@ -546,18 +556,14 @@ export default function Scene() {
       ? observeSentIds
       : observeCandidates.filter((c) => !c.isNpc).slice(0, 4).map((c) => c.id);
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
-    // The household's assigned caregiver is part of a watched residence: the child they
-    // supervise is never in the moment alone, and the caregiver is never replaced by an
-    // unrelated background person.
+    // The household's assigned caregiver is part of a watched residence: the children they
+    // actually supervise are never in the moment alone, and the caregiver is never replaced
+    // by an unrelated background person or a neighbour from another unit.
     const supervision = observeCandidates
       .filter((c) => {
         if (c.isNpc === true) return false;
         if (isAssignedCaregiverHere(c)) return true;
-        // The children being supervised are part of the watched household moment — they
-        // are present and pictured, never missing from it.
-        return onDutyCaregiverIds.length > 0
-          && c.current_home_location_id === location?.id
-          && requiresSitter(c).requiresSitter;
+        return supervisedChildIds.includes(c.id);
       })
       .map((c) => c.id);
     return [...new Set([...base, ...chosenBackground, ...supervision])];
@@ -831,10 +837,8 @@ export default function Scene() {
     }
     if (isHomeLocation) {
       // A supervised household is pictured as it is: the caregiver on duty AND the
-      // children they are looking after. The image never shows the child alone.
-      const supervisedChildIds = onDutyCaregiverIds.length > 0
-        ? characters.filter((c) => c.current_home_location_id === location.id && requiresSitter(c).requiresSitter).map((c) => c.id)
-        : [];
+      // children they are looking after. The image never shows the child alone, and never
+      // pulls in a neighbour's child from another unit of the same building.
       const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : [])]);
       return sceneParticipants.filter((p) => selectedIds.has(p.id));
     }

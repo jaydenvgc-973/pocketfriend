@@ -33,28 +33,44 @@ function resolveAge(character) {
   return null;
 }
 
-function isChildAlone(child, homeId, allCharacters) {
-  // Household residents only. A visiting adult does not live here, so their presence
-  // never ends supervision — and the temporary caregiver is the supervision itself,
-  // never the reason it stops (its own presence must not satisfy the requirement).
-  const residents = allCharacters.filter(c =>
-    c.current_home_location_id === homeId &&
-    c.id !== child.id &&
-    !isCaregiver(c)
+/**
+ * The dwelling a character actually lives in.
+ *
+ * A multi-unit residence (residential_units) is several households, not one: each
+ * apartment/unit supervises its own children, and adults in a different unit are NOT
+ * household adults for this child. A resident assigned to no unit belongs to the
+ * property's own household.
+ */
+function householdMemberIds(home, character, allCharacters) {
+  const units = home?.residential_units || [];
+  const unit = units.find(u => (u.occupant_character_ids || []).includes(character.id));
+  if (unit) return new Set(unit.occupant_character_ids || []);
+
+  const inAnyUnit = new Set();
+  units.forEach(u => (u.occupant_character_ids || []).forEach(id => inAnyUnit.add(id)));
+  return new Set(
+    allCharacters
+      .filter(c => c.id && c.current_home_location_id === home.id && !inAnyUnit.has(c.id))
+      .map(c => c.id)
   );
+}
+
+function isChildAlone(child, home, allCharacters) {
+  // Household residents only — that is the child's OWN unit, never the whole building.
+  // A visiting adult does not live here, so their presence never ends supervision — and
+  // the temporary caregiver is the supervision itself, never the reason it stops (its own
+  // presence must not satisfy the requirement).
+  const householdIds = householdMemberIds(home, child, allCharacters);
 
   // A guardian is an adult HOUSEHOLD RESIDENT who has returned and is physically home now
-  const guardianPresent = residents.some(c => {
+  const guardianPresent = allCharacters.some(c => {
+    if (c.id === child.id || !householdIds.has(c.id)) return false;
+    if (isCaregiver(c)) return false;
     const age = resolveAge(c);
     if (age !== null && age < SAFE_ALONE_AGE) return false; // also a child
     // Check resolved location
-    const atHome = !c.resolved_current_location_id || c.resolved_current_location_id === homeId;
-    return atHome;
+    return !c.resolved_current_location_id || c.resolved_current_location_id === home.id;
   });
-
-  // Also check family_members in fictional_relationships for a parent guardian
-  // (NPCs who live here but aren't full Character entities)
-  // We check resident_family_members on the location — handled by caller
 
   return !guardianPresent;
 }
@@ -160,7 +176,7 @@ Deno.serve(async (req) => {
         child.resolved_current_location_id === home.id;
       if (!childAtHome) continue;
 
-      if (isChildAlone(child, home.id, allChars)) {
+      if (isChildAlone(child, home, allChars)) {
         needsCaregiver = true;
         break;
       }

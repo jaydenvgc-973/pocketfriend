@@ -52,18 +52,21 @@ Deno.serve(async (req) => {
 
       if (homeDependents.length === 0) continue;
 
-      // A supervising adult is an ADULT HOUSEHOLD RESIDENT who is physically home now.
-      // A visiting adult does not live here, so their presence never ends supervision,
-      // and a resident who is elsewhere has not returned yet.
-      const supervisingAdults = allCharacters.filter(c => {
-        const isAdult = !c.age || c.age >= 18;
-        const isResident = c.current_home_location_id === location.id;
-        const isHere = !c.resolved_current_location_id || c.resolved_current_location_id === location.id;
-        const isAlive = c.status !== 'deleted';
-        const isNotDependent = !(c.age && c.age < 15);
-        const isNotAsleepOrAway = c.character_type !== 'background';
-
-        return isAdult && isResident && isHere && isAlive && isNotDependent && isNotAsleepOrAway && !c.is_sitter;
+      // Supervision is HOUSEHOLD-SPECIFIC. In a multi-unit residence each apartment/unit
+      // is its own household: an adult in a neighbouring unit is not this child's
+      // supervising adult, and a visitor never is either.
+      const unsupervisedDependents = homeDependents.filter(dependent => {
+        const householdIds = householdMemberIds(location, dependent, allCharacters);
+        const guardianHome = allCharacters.some(c =>
+          c.id !== dependent.id &&
+          householdIds.has(c.id) &&
+          !c.is_sitter &&
+          (!c.age || c.age >= 18) &&
+          c.status !== 'deleted' &&
+          c.character_type !== 'background' &&
+          (!c.resolved_current_location_id || c.resolved_current_location_id === location.id)
+        );
+        return !guardianHome;
       });
 
       report.checksPerformed.push({
@@ -71,12 +74,12 @@ Deno.serve(async (req) => {
         homeName: location.name,
         dependentCount: homeDependents.length,
         dependentNames: homeDependents.map(d => d.name),
-        adultSupervisionCount: supervisingAdults.length
+        unsupervisedDependentNames: unsupervisedDependents.map(d => d.name)
       });
 
-      // If no supervising adults, assign/create sitter
-      if (supervisingAdults.length === 0) {
-        const sitterResult = await assignSitterToHome(base44, location, homeDependents, user.email);
+      // If a household has no supervising adult of its own, ensure the sitter
+      if (unsupervisedDependents.length > 0) {
+        const sitterResult = await assignSitterToHome(base44, location, unsupervisedDependents, user.email);
         report.sittersAssigned.push(sitterResult);
       }
     }
@@ -99,18 +102,24 @@ Deno.serve(async (req) => {
         return (isMinor || isProtectedNPC) && isResident && isHere && isAlive;
       });
 
-      // Only a household resident returning home ends this supervision. A visitor at the
-      // house, or the caregiver themselves, never removes the caregiver.
-      const residentGuardianPresent = allCharacters.some(c =>
-        c.id !== sitter.id &&
-        c.current_home_location_id === homeLocation.id &&
-        (!c.resolved_current_location_id || c.resolved_current_location_id === homeLocation.id) &&
-        !c.is_sitter &&
-        (!c.age || c.age >= 18) &&
-        c.status !== 'deleted'
-      );
+      // Only an eligible adult of the SAME household returning home ends this supervision.
+      // An adult coming home elsewhere in the building, a visitor at the apartment, or the
+      // caregiver themselves never removes the caregiver.
+      const householdStillUnsupervised = dependentsNeedingSitter.some(dependent => {
+        const householdIds = householdMemberIds(homeLocation, dependent, allCharacters);
+        return !allCharacters.some(c =>
+          c.id !== sitter.id &&
+          c.id !== dependent.id &&
+          householdIds.has(c.id) &&
+          !c.is_sitter &&
+          (!c.age || c.age >= 18) &&
+          c.status !== 'deleted' &&
+          c.character_type !== 'background' &&
+          (!c.resolved_current_location_id || c.resolved_current_location_id === homeLocation.id)
+        );
+      });
 
-      if (dependentsNeedingSitter.length === 0 || residentGuardianPresent) {
+      if (dependentsNeedingSitter.length === 0 || !householdStillUnsupervised) {
         // No dependents at this home anymore — remove sitter
         await base44.entities.Character.update(sitter.id, {
           is_sitter: false,
@@ -145,6 +154,27 @@ Deno.serve(async (req) => {
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
+
+/**
+ * The dwelling a character actually lives in.
+ *
+ * A multi-unit residence (residential_units) is several households, not one: each
+ * apartment/unit supervises its own children. A resident assigned to no unit belongs to
+ * the property's own household.
+ */
+function householdMemberIds(home, character, allCharacters) {
+  const units = home?.residential_units || [];
+  const unit = units.find(u => (u.occupant_character_ids || []).includes(character.id));
+  if (unit) return new Set(unit.occupant_character_ids || []);
+
+  const inAnyUnit = new Set();
+  units.forEach(u => (u.occupant_character_ids || []).forEach(id => inAnyUnit.add(id)));
+  return new Set(
+    allCharacters
+      .filter(c => c.id && c.current_home_location_id === home.id && !inAnyUnit.has(c.id))
+      .map(c => c.id)
+  );
+}
 
 async function assignSitterToHome(base44, homeLocation, dependents, userEmail) {
   // Check if a sitter is already assigned to this home

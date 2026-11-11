@@ -134,7 +134,7 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
   } else if (['incarcerated', 'confined', 'house_arrest'].includes(status)) {
     text.push(`${name} is CONFINED here.`);
   } else if (caregiverOnDuty && !onShift && !classNow) {
-    text.push(`${name} is this household's TEMPORARY CAREGIVER, here on duty: they are looking after the children of this home until an adult who actually LIVES HERE comes back. Any child at home with them is being cared for, not left alone. Being here is their job right now — they are not a guest, not a visitor, and not someone who wandered in, and an adult who only stops by to visit does not end their responsibility. If asked why they are here, that is the answer.`);
+    text.push(`${name} is the TEMPORARY CAREGIVER for the household they were assigned to, here on duty: they are looking after the children of that household until an adult who actually LIVES IN THAT HOUSEHOLD comes back. Adults in other apartments of the same building do not supervise those children, and do not end this. Any child at home with them is being cared for, not left alone. Being here is their job right now — they are not a guest, not a visitor, and not someone who wandered in, and an adult who only stops by to visit does not end their responsibility. If asked why they are here, that is the answer.`);
   } else if (residentHere && !onShift && !classNow) {
     // A campus residence is still a home. Living on school property does not mean
     // attending class while at home.
