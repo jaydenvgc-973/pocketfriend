@@ -1846,8 +1846,8 @@ Deno.serve(async (req) => {
           }
 
           if (workDispatchDone) continue;
-          // SHIFT END → existing work authority. The shift ends at its established end time, wherever the character is: presence is NOT a condition.
-          if (char.work_start_time || char.work_end_time || (Array.isArray(char.work_days) && char.work_days.length > 0)) { try { await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', { characterId: char.id, system_mode: true }); } catch { /* retried next cycle */ } continue; }
+          // SHIFT END → existing work authority sends them home
+          if (char.resolved_presence_status === 'at_work') { try { await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', { characterId: char.id, system_mode: true }); } catch { /* retried next cycle */ } continue; }
 
           // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
           // Only for enrolled students with an assigned education_location_id.
@@ -1903,9 +1903,6 @@ Deno.serve(async (req) => {
                 console.log(`[autonomousMovement] ✓ ${char.name}: SCHOOL DISPATCH → ${schoolLoc.name}`);
                 continue;
               }
-            } else {
-              // SCHOOL/CLASS END → existing school authority. The day ends at its established end time, wherever the student is: presence is NOT a condition.
-              try { await base44.asServiceRole.functions.invoke('enforceCharacterSchoolSchedule', { characterId: char.id }); } catch { /* retried next cycle */ }
             }
           }
         }
