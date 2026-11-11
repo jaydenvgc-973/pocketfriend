@@ -67,6 +67,9 @@ export default function MediaGallery() {
   const [selectedImage, setSelectedImage] = useState(null);
   const [showSendModal, setShowSendModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  // The input updates immediately; the gallery queries once the typing settles, so a
+  // word typed into the box costs one search instead of one scan per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [user, setUser] = useState(null);
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -101,6 +104,11 @@ export default function MediaGallery() {
 
   // Monotonically increasing request counter — any response with requestId < activeRequestRef is stale
   const activeRequestRef = useRef(0);
+
+  // Pages already retrieved during this visit. Moving between pages (or back to a
+  // folder/month that was open a moment ago) reuses them instead of asking the
+  // server to scan the collection again for images already on screen.
+  const pageCacheRef = useRef(new Map());
   
   // ── GALLERY INDEX PROOF (immutable floor of gallery size) ──────────────────────
   // This is the SOURCE OF TRUTH for how large the gallery actually is.
@@ -150,8 +158,29 @@ export default function MediaGallery() {
     };
   }, []);
 
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(searchTerm), 300);
+    return () => clearTimeout(id);
+  }, [searchTerm]);
+
   const fetchPage = useCallback(async (page, search, folderKey = null, monthKey = null) => {
     if (!user?.email) return;
+
+    // Already loaded in this visit — show it without another scan.
+    const cacheKey = `${folderKey || 'all'}|${monthKey || 'all'}|${(search || '').trim().toLowerCase()}|${page}`;
+    const cached = pageCacheRef.current.get(cacheKey);
+    if (cached) {
+      activeRequestRef.current++; // anything still in flight for another page is now stale
+      setPageImages(cached.images);
+      setHasMore(cached.hasMore);
+      setLastProof(cached.proof);
+      setTotalImages(cached.totalImages);
+      setLastError(null);
+      setIsLoading(false);
+      setIsRefreshing(false);
+      setInitSettled(true);
+      return;
+    }
 
     const requestId = ++activeRequestRef.current;
     const stackTrace = new Error().stack; // Capture call stack to see WHO called fetchPage
@@ -254,6 +283,13 @@ export default function MediaGallery() {
       setLastProof(data.proof || null);
       setTotalImages(typeof data.totalImages === 'number' ? data.totalImages : dedupedImages.length);
       setLastError(null);
+
+      pageCacheRef.current.set(cacheKey, {
+        images: dedupedImages,
+        hasMore: data.hasMore === true,
+        proof: data.proof || null,
+        totalImages: typeof data.totalImages === 'number' ? data.totalImages : dedupedImages.length,
+      });
       
       // Log successful write and update last-good-state
       logStateWrite(`fetchPage[OK] page=${page} requestId=${requestId}`, stateToWrite);
@@ -326,23 +362,23 @@ export default function MediaGallery() {
   }, [isCharacterFolder, fetchMonths]);
 
   // Months are shown for a character folder until a month or a search is chosen.
-  const isShowingMonths = isCharacterFolder && !activeMonth && !searchTerm.trim();
-  const isShowingImages = (!!activeFolder && !isShowingMonths) || !!searchTerm.trim();
+  const isShowingMonths = isCharacterFolder && !activeMonth && !debouncedSearch.trim();
+  const isShowingImages = (!!activeFolder && !isShowingMonths) || !!debouncedSearch.trim();
 
   useEffect(() => {
     if (!user?.email || !isShowingImages) return;
     // A month view loads only that month; search still spans the whole folder.
     fetchPage(
       currentPage,
-      searchTerm,
+      debouncedSearch,
       activeFolder?.key || null,
-      searchTerm.trim() ? null : activeMonth?.key || null
+      debouncedSearch.trim() ? null : activeMonth?.key || null
     );
-  }, [user?.email, currentPage, searchTerm, activeFolder?.key, activeMonth?.key, isShowingImages, fetchPage]);
+  }, [user?.email, currentPage, debouncedSearch, activeFolder?.key, activeMonth?.key, isShowingImages, fetchPage]);
 
   useEffect(() => {
     setInitSettled(false);
-  }, [currentPage, searchTerm, activeFolder?.key]);
+  }, [currentPage, debouncedSearch, activeFolder?.key]);
 
   // Each folder / search is its own query context with its own page floor.
   useEffect(() => {
@@ -357,7 +393,7 @@ export default function MediaGallery() {
       lastRejectedPoisonScanAt: null,
       rejectedReasons: [],
     };
-  }, [activeFolder?.key, activeMonth?.key, searchTerm]);
+  }, [activeFolder?.key, activeMonth?.key, debouncedSearch]);
 
   const handleNext = () => setCurrentPage(p => p + 1);
   const handlePrev = () => { if (currentPage > 1) setCurrentPage(p => p - 1); };
@@ -377,6 +413,7 @@ export default function MediaGallery() {
     setTotalImages(null);
     setLastError(null);
     setInitSettled(false);
+    setIsLoading(true); // shows loading, not "no matches", while the query settles
     // Clear best results on search change — new dataset
     bestResultRef.current = {};
   };
@@ -443,6 +480,7 @@ export default function MediaGallery() {
         setPageImages([]);
         setTotalImages(null);
       }
+      pageCacheRef.current = new Map();
       setFolderPendingDelete(null);
       fetchFolders();
     } catch (e) {
@@ -458,15 +496,16 @@ export default function MediaGallery() {
     const proof = galleryIndexProofRef.current;
     nukeAllGalleryCache();
     bestResultRef.current = {};
+    pageCacheRef.current = new Map();
     console.log('[MediaGallery] Manual refresh: cache busted. Immutable proof preserved:', proof);
     if (isShowingMonths) {
       fetchMonths();
     } else if (isShowingImages) {
       fetchPage(
         currentPage,
-        searchTerm,
+        debouncedSearch,
         activeFolder?.key || null,
-        searchTerm.trim() ? null : activeMonth?.key || null
+        debouncedSearch.trim() ? null : activeMonth?.key || null
       );
     } else {
       fetchFolders();
@@ -502,12 +541,13 @@ export default function MediaGallery() {
         const proof = galleryIndexProofRef.current;
         nukeAllGalleryCache();
         bestResultRef.current = {};
+        pageCacheRef.current = new Map();
         console.log('[MediaGallery] Image deleted. Immutable proof preserved:', proof);
         fetchPage(
           currentPage,
-          searchTerm,
+          debouncedSearch,
           activeFolder?.key || null,
-          searchTerm.trim() ? null : activeMonth?.key || null
+          debouncedSearch.trim() ? null : activeMonth?.key || null
         );
         fetchFolders();
         if (isCharacterFolder) fetchMonths();
@@ -544,7 +584,7 @@ export default function MediaGallery() {
                   ? `${months.length} ${months.length === 1 ? 'month' : 'months'}`
                   : activeFolder
                   ? `${totalImages ?? 0} images • Page ${currentPage}${hasMore ? '+' : ''}`
-                  : searchTerm.trim()
+                  : debouncedSearch.trim()
                   ? `${totalImages ?? 0} matching images across all folders`
                   : `${folders.length} folders • ${totalFoldersImages} images`}
                 {isRefreshing && <RefreshCw className="w-3 h-3 animate-spin opacity-50" />}
@@ -626,7 +666,7 @@ export default function MediaGallery() {
           />
         </div>
 
-        {!activeFolder && !searchTerm.trim() ? (
+        {!activeFolder && !debouncedSearch.trim() ? (
           <FolderGrid
             folders={folders}
             isLoading={foldersLoading}
@@ -660,9 +700,9 @@ export default function MediaGallery() {
               onRetry={() =>
                 fetchPage(
                   currentPage,
-                  searchTerm,
+                  debouncedSearch,
                   activeFolder?.key || null,
-                  searchTerm.trim() ? null : activeMonth?.key || null
+                  debouncedSearch.trim() ? null : activeMonth?.key || null
                 )
               }
               onOpenImage={handleSelectImage}
@@ -676,7 +716,7 @@ export default function MediaGallery() {
               onPageJump={handlePageJump}
               emptyMessage={
                 activeFolder
-                  ? searchTerm.trim()
+                  ? debouncedSearch.trim()
                     ? `No images in ${activeFolder.name} match your search.`
                     : `${activeFolder.name} has no images yet.`
                   : 'No images match your search across your folders.'

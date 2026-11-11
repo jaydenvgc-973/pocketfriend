@@ -31,6 +31,13 @@ const PAGE_SIZE = 20;
 const BATCH_SIZE = 500; // Larger batches = fewer API calls = less rate limiting
 const SCAN_FLOOR = '2023-01-01T00:00:00.000Z'; // Extended back to catch all historical images
 const MAX_RUNTIME_MS = 45000;
+// Message batches are independent offset reads, so several can be in flight at once
+// while still being consumed in strict offset order. Same queries, same results —
+// only the number of sequential round trips changes.
+const SCAN_CONCURRENCY = 8;
+// A month view stops as soon as the scan passes the requested month, so it uses a
+// narrower window and never fetches far-ahead batches it will not read.
+const MONTH_SCAN_CONCURRENCY = 3;
 
 const MONTH_PART_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
@@ -183,9 +190,17 @@ Deno.serve(async (req) => {
     const requestedFolderKey = typeof folderKey === 'string' && folderKey ? folderKey : null;
     const isMonthMode = mode === 'months';
     const requestedMonthKey = typeof monthKey === 'string' && /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : null;
-    // Folder mode indexes every folder, and a single month must report its exact
-    // image total, so neither early-exits at the requested page size.
-    const neededImages = (isFolderMode || requestedMonthKey)
+    // Folder tiles, month buckets, a chosen month and search results all report a
+    // count the user compares against what they see, so each of those scans its whole
+    // scope instead of stopping at the requested page. Only plain unfiltered paging
+    // may stop as soon as its page is filled — anything narrower would report a total
+    // and a "more pages" answer that are not true.
+    const needsCompleteScan = isFolderMode
+      || isMonthMode
+      || !!requestedFolderKey
+      || !!requestedMonthKey
+      || !!searchLower;
+    const neededImages = needsCompleteScan
       ? Number.MAX_SAFE_INTEGER
       : imageEndIndex + 1; // +1 to prove hasMore
 
@@ -284,12 +299,18 @@ Deno.serve(async (req) => {
     ])];
 
     const characterNameById = {};
+    const characterChunks = [];
     for (let i = 0; i < candidateCharacterIds.length; i += 40) {
-      const chunk = candidateCharacterIds.slice(i, i + 40);
-      // $or of exact ids — the id field does not accept $in queries.
-      const chars = await base44.entities.Character
+      characterChunks.push(candidateCharacterIds.slice(i, i + 40));
+    }
+    // Independent chunks — resolved together so folder names are ready before the scan.
+    const characterChunkResults = await Promise.all(
+      characterChunks.map((chunk) => base44.entities.Character
+        // $or of exact ids — the id field does not accept $in queries.
         .filter({ $or: chunk.map((id) => ({ id })) }, null, 40)
-        .catch(() => []);
+        .catch(() => []))
+    );
+    for (const chars of characterChunkResults) {
       for (const ch of chars || []) {
         const nm = ch.display_name || ch.name || null;
         if (nm) characterNameById[ch.id] = nm;
@@ -306,11 +327,19 @@ Deno.serve(async (req) => {
       return base;
     }
 
+    // Story Event titles are part of the searchable text, so a search needs them before
+    // the scan. Every other view only uses them when shaping the response, so the
+    // request runs alongside the scan instead of in front of it.
     const storyEventTitleById = {};
-    const storyEvents = await base44.entities.StoryEvent.filter({ owner_email: ownerEmail }, '-event_date', 500).catch(() => []);
-    for (const ev of storyEvents || []) {
-      if (ev?.id) storyEventTitleById[ev.id] = ev.title || null;
-    }
+    const storyEventsPromise = base44.entities.StoryEvent
+      .filter({ owner_email: ownerEmail }, '-event_date', 500)
+      .catch(() => []);
+    const absorbStoryEventTitles = async () => {
+      for (const ev of (await storyEventsPromise) || []) {
+        if (ev?.id) storyEventTitleById[ev.id] = ev.title || null;
+      }
+    };
+    if (searchLower) await absorbStoryEventTitles();
 
     function resolveFolderForMessage(m) {
       const gc = m.generation_context || {};
@@ -390,6 +419,34 @@ Deno.serve(async (req) => {
         rawScanned: 0, validFound: 0, batchesScanned: 0,
         currentUserEmail: ownerEmail,
       };
+      // Story Events and Miscellaneous are permanent destinations, so an account with
+      // no image-bearing conversations still gets both folder tiles instead of an
+      // empty gallery screen.
+      if (isFolderMode) {
+        let storedFolders = [];
+        try {
+          storedFolders = (await base44.entities.MediaGalleryFolder.filter({ owner_email: ownerEmail }, null, 500)) || [];
+        } catch {
+          storedFolders = [];
+        }
+        const folders = ['story_events', 'miscellaneous'].map((key) => {
+          const stored = (storedFolders || []).find((f) => f.folder_key === key) || null;
+          return {
+            key,
+            kind: key,
+            name: key === 'story_events' ? 'Story Events' : 'Miscellaneous',
+            characterId: null,
+            imageCount: 0,
+            coverImageUrl: stored?.cover_image_url || null,
+            lastImageAt: stored?.last_image_at || null,
+            canDelete: false,
+          };
+        });
+        return Response.json({ mode: 'folders', folders, totalImages: 0, currentUserEmail: ownerEmail, proof: emptyProof });
+      }
+      if (isMonthMode) {
+        return Response.json({ mode: 'months', folderKey: requestedFolderKey, months: [], totalImages: 0, currentUserEmail: ownerEmail, proof: emptyProof });
+      }
       return Response.json({ images: [], currentUserEmail: ownerEmail, page: safePage, pageSize: safePageSize, totalImages: 0, hasMore: false, enoughForRequestedPage: false, proof: emptyProof });
     }
 
@@ -406,6 +463,47 @@ Deno.serve(async (req) => {
     let exhaustedAllMessages = false;
     let terminationReason = 'in_progress';
     const scanFloorMs = new Date(SCAN_FLOOR).getTime();
+
+    // Folder tiles and month buckets are aggregates — only a page of images needs the
+    // image records collected for display.
+    const collectImagesForDisplay = !isFolderMode && !isMonthMode;
+
+    // ── ORDERED BATCH PIPELINE ───────────────────────────────────────────────
+    // Reads the same offset batches as a serial scan, but keeps a few in flight so
+    // the whole collection no longer costs one round trip per 500 images. Batches are
+    // still handed to the loop in offset order, so dedup (newest occurrence wins),
+    // folder resolution and month bucketing see exactly the same sequence as before.
+    const scanConcurrency = requestedMonthKey ? MONTH_SCAN_CONCURRENCY : SCAN_CONCURRENCY;
+    const pendingBatches = new Map();
+    let nextBatchToFetch = 0;
+
+    const fetchBatchAtOffset = async (batchOffset) => {
+      try {
+        return await fetchBatchWithRetry(base44, conversationIds, '-created_date', BATCH_SIZE, batchOffset);
+      } catch {
+        return await base44.asServiceRole.entities.Message.filter(
+          { conversation_id: { $in: conversationIds }, image_url: { $ne: null } },
+          '-created_date',
+          BATCH_SIZE,
+          batchOffset
+        );
+      }
+    };
+
+    const takeBatch = async (batchIndex) => {
+      while (nextBatchToFetch <= batchIndex + scanConcurrency - 1) {
+        const index = nextBatchToFetch++;
+        const promise = fetchBatchAtOffset(index * BATCH_SIZE);
+        // Batches past the end of the scan (month boundary / enough images) are never
+        // read. Marking them observed keeps a stray rejection from surfacing as an
+        // unhandled error; the awaited copy below still reports real failures.
+        promise.catch(() => {});
+        pendingBatches.set(index, promise);
+      }
+      const promise = pendingBatches.get(batchIndex);
+      pendingBatches.delete(batchIndex);
+      return promise;
+    };
 
     while (true) {
       // Runtime guard
@@ -424,25 +522,16 @@ Deno.serve(async (req) => {
       batchCount++;
       let batch;
       try {
-        batch = await fetchBatchWithRetry(base44, conversationIds, '-created_date', BATCH_SIZE, offset);
-      } catch {
-        try {
-          batch = await base44.asServiceRole.entities.Message.filter(
-            { conversation_id: { $in: conversationIds }, image_url: { $ne: null } },
-            '-created_date',
-            BATCH_SIZE,
-            offset
-          );
-        } catch (e2) {
-          // A partial scan would silently drop older months and older images, so
-          // an interrupted scan is reported as a failure the gallery can retry
-          // instead of being returned as if it were complete.
-          console.error(`[fetchMediaGalleryPage] Scan interrupted at offset=${offset}: ${e2.message}`);
-          return Response.json(
-            { error: `Gallery scan interrupted before completion (${e2.message}). Please retry.` },
-            { status: 503 }
-          );
-        }
+        batch = await takeBatch(batchCount - 1);
+      } catch (e2) {
+        // A partial scan would silently drop older months and older images, so
+        // an interrupted scan is reported as a failure the gallery can retry
+        // instead of being returned as if it were complete.
+        console.error(`[fetchMediaGalleryPage] Scan interrupted at offset=${offset}: ${e2.message}`);
+        return Response.json(
+          { error: `Gallery scan interrupted before completion (${e2.message}). Please retry.` },
+          { status: 503 }
+        );
       }
 
       if (!batch || batch.length === 0) {
@@ -526,12 +615,18 @@ Deno.serve(async (req) => {
         // titles, location, subjects and dates.
         if (searchLower && !buildSearchHaystack(m, folder).includes(searchLower)) continue;
 
-        imageFolderById[m.id] = folder;
-        imageIndex.push(m);
+        // Only a page of images needs the image records themselves. Folder tiles and
+        // month buckets are aggregates, so those views count each image and let the
+        // record go instead of holding and sorting the whole collection.
+        if (collectImagesForDisplay) {
+          imageFolderById[m.id] = folder;
+          imageIndex.push(m);
+        }
       }
       
-      // Diagnostic: log messages without resolvable displayPrompt
-      const emptyPromptCount = imageIndex.filter(m => {
+      // Diagnostic: log this batch's images that have no resolvable displayPrompt
+      const emptyPromptCount = batch.filter(m => {
+        if (!m.image_url || m.recovery_signal === true) return false;
         const gc = m.generation_context || {};
         const hasPrompt = gc?.original_raw_prompt || gc?.scene_prompt || m.image_description || gc?.resolved_description || (gc?.prompt && gc.prompt.length < 2000);
         return !hasPrompt;
@@ -565,6 +660,9 @@ Deno.serve(async (req) => {
     }
 
     if (terminationReason === 'in_progress') terminationReason = 'safety_cap';
+
+    // Story Event titles for the response shape (no-op when a search already read them).
+    await absorbStoryEventTitles();
 
     // Month and folder views must be complete: a time-truncated scan would show
     // only the newest months and look like older images were lost.
@@ -667,13 +765,14 @@ Deno.serve(async (req) => {
       return Response.json({
         mode: 'folders',
         folders,
-        totalImages: imageIndex.length,
+        // Every unique image the scan registered — the same set each tile is counted from.
+        totalImages: seenNormalizedUrls.size,
         currentUserEmail: ownerEmail,
         proof: {
           messagesScanned,
           terminationReason,
           runtimeMs: Date.now() - scanStart,
-          uniqueImagesCollected: imageIndex.length,
+          uniqueImagesCollected: seenNormalizedUrls.size,
         },
       });
     }
