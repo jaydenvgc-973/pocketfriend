@@ -735,17 +735,44 @@ export default function Scene() {
       if (focused.length > 0) return focused.slice(0, 4);
     }
     // Observed scene: the people actually in the moment are the ones in the image.
-    if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id) && !p.isNpc).slice(0, 4);
+    // An chosen character is resolved from the completed participant collection when it
+    // is there, and otherwise from their own character record — a character is never
+    // dropped out of the picture (and so out of the frame entirely) just because the
+    // participant collection lags behind the arrival. Background people of the venue are
+    // never part of this cast.
+    if (observeMode) {
+      const byId = new Map(sceneParticipants.map((p) => [p.id, p]));
+      return observeCast
+        .filter((c) => c?.id && c.isNpc !== true && !String(c.id).startsWith("npc_"))
+        .map((c) => {
+          const resolved = byId.get(c.id);
+          if (resolved) return resolved;
+          const rec = characters.find((x) => x.id === c.id) || {};
+          return {
+            ...rec,
+            ...c,
+            name: c.name || rec.name,
+            avatar_url: c.avatar_url || rec.avatar_url,
+            image_avatar_url: rec.image_avatar_url || c.avatar_url,
+            reference_image_urls: rec.reference_image_urls || [],
+          };
+        })
+        .slice(0, 4);
+    }
     if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
     // At a public venue the chosen cast still decides the picture: whoever the user
     // brought or picked is who appears. Other people present only fill in when the
     // user has chosen nobody.
     const chosenIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
     const chosen = sceneParticipants.filter((p) => chosenIds.has(p.id));
-    if (chosen.length > 0) return chosen.slice(0, 4);
+    // An established character always keeps a place in the frame. A background person of
+    // the venue only ever fills a remaining slot — never a slot ahead of a real character.
+    const isBackgroundPerson = (p) => p.isNpc === true || String(p.id).startsWith("npc_");
+    if (chosen.length > 0) return [...chosen.filter((p) => !isBackgroundPerson(p)), ...chosen.filter(isBackgroundPerson)].slice(0, 4);
     if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
     const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
-    return sceneParticipants.filter((p) => selectedIds.has(p.id)).slice(0, 4);
+    const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
+    return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
   };
 
   // Changing who is in the observed moment re-renders the scene with those people.
