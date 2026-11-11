@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -12,6 +12,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import NPCRelationshipEditor from "@/components/character/NPCRelationshipEditor";
+import { resolveRelationshipAvatar } from "@/lib/relationshipAvatarResolver";
 
 const LEVELS = [
   { key: "user_respect_level", label: "Respect", color: "text-blue-400" },
@@ -37,6 +38,31 @@ export default function EditCharacterRelationships() {
   });
 
   const { sections, allCharacters: characters, isLoading } = useSettingsCharacters(currentUser, "relationships");
+
+  // Linked characters that aren't in the loaded list still have an established avatar
+  // in Pocketfriend — retrieve those records so an avatar is never reported as missing.
+  const missingLinkedIds = useMemo(() => {
+    const known = new Set(characters.map((c) => c.id));
+    const ids = (selectedChar?.fictional_relationships || [])
+      .map((r) => r.related_character_id)
+      .filter((id) => id && !known.has(id));
+    return [...new Set(ids)];
+  }, [selectedChar?.fictional_relationships, characters]);
+
+  const { data: extraLinkedCharacters = [] } = useQuery({
+    queryKey: ["relationshipLinkedCharacters", missingLinkedIds.join(",")],
+    queryFn: async () => {
+      if (missingLinkedIds.length === 0) return [];
+      const res = await base44.entities.Character.filter({ id: { $in: missingLinkedIds } }).catch(() => []);
+      return Array.isArray(res) ? res : (res?.items || []);
+    },
+    enabled: missingLinkedIds.length > 0,
+  });
+
+  const avatarLookupCharacters = useMemo(
+    () => [...characters, ...extraLinkedCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
+    [characters, extraLinkedCharacters]
+  );
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -115,11 +141,16 @@ export default function EditCharacterRelationships() {
           </div>
         ) : editingNPC ? (
           <NPCRelationshipEditor
+            key={editingNPC.related_character_id || editingNPC.person_name}
             character={selectedChar}
             relationship={editingNPC}
-            onClose={() => {
+            allCharacters={avatarLookupCharacters}
+            onClose={async () => {
               setEditingNPC(null);
-              queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+              await queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+              // Reload the selected character so reopened relationships show saved values.
+              const fresh = await base44.entities.Character.filter({ id: selectedChar.id }).catch(() => []);
+              if (fresh?.[0]) setSelectedChar(fresh[0]);
             }}
           />
         ) : (
@@ -133,26 +164,30 @@ export default function EditCharacterRelationships() {
                </div>
                {(selectedChar.fictional_relationships || []).length > 0 ? (
                  <div className="space-y-2">
-                   {selectedChar.fictional_relationships.map((npc, idx) => (
-                     <button
-                       key={idx}
-                       onClick={() => setEditingNPC(npc)}
-                       className="w-full flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border hover:border-primary/40 transition-colors text-left"
-                     >
-                       {npc.avatar_url ? (
-                         <img src={npc.avatar_url} alt={npc.person_name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
-                       ) : (
-                         <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">
-                           {npc.person_name?.[0]?.toUpperCase() || "?"}
+                   {selectedChar.fictional_relationships.map((npc, idx) => {
+                     // Their established avatar, from the same identity references used everywhere else.
+                     const { avatarUrl } = resolveRelationshipAvatar(npc, avatarLookupCharacters);
+                     return (
+                       <button
+                         key={npc.related_character_id || `${npc.person_name}_${idx}`}
+                         onClick={() => setEditingNPC(npc)}
+                         className="w-full flex items-center gap-3 p-3 rounded-lg bg-secondary/50 border border-border hover:border-primary/40 transition-colors text-left"
+                       >
+                         {avatarUrl ? (
+                           <img src={avatarUrl} alt={npc.person_name} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
+                         ) : (
+                           <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">
+                             {npc.person_name?.[0]?.toUpperCase() || "?"}
+                           </div>
+                         )}
+                         <div className="flex-1 min-w-0">
+                           <p className="text-sm font-medium text-foreground">{npc.person_name}</p>
+                           <p className="text-xs text-muted-foreground">{npc.relationship_type}</p>
                          </div>
-                       )}
-                       <div className="flex-1 min-w-0">
-                         <p className="text-sm font-medium text-foreground">{npc.person_name}</p>
-                         <p className="text-xs text-muted-foreground">{npc.relationship_type}</p>
-                       </div>
-                       <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                     </button>
-                   ))}
+                         <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                       </button>
+                     );
+                   })}
                  </div>
                ) : (
                  <p className="text-xs text-muted-foreground italic">No world people added yet.</p>
