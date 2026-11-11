@@ -1,0 +1,90 @@
+{
+  "name": "WorkBoundaryLease",
+  "type": "object",
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "data.owner_email": "{{user.email}}"
+        }
+      ]
+    },
+    "read": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Character whose next established work boundary is being held."
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character, for readability of the lease record."
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Account that owns the character. Ownership scoping for the lease."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "work"
+      ],
+      "default": "work",
+      "description": "Which schedule authority this boundary belongs to."
+    },
+    "next_boundary_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The exact instant of the next established boundary (shift start or shift end) computed by enforceCharacterWorkSchedule. A durable waiting workflow wakes at this instant and enforces it. Every enforcement recomputes and records the following boundary, so successive boundaries continue on their own."
+    },
+    "armed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this boundary value was last recorded by the schedule authority."
+    }
+  },
+  "required": [
+    "character_id",
+    "kind"
+  ]
+}

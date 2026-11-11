@@ -57,6 +57,46 @@ function isWithinShiftStartWakeWindow(shift, nowET) {
   return diff >= 0 && diff <= 15;
 }
 
+// ── BOUNDARY RECURRENCE ARMING ───────────────────────────────────────────────
+// The schedule authority records its next established boundary durably so a waiting
+// workflow can wake at that exact instant and enforce it. Recording is conditional:
+// only a genuinely different boundary is recorded, so the chain neither churns nor
+// re-fires for a boundary that is already held. Successive boundaries continue on
+// their own — each enforcement records the following one.
+async function armWorkBoundaryLease(base44, character, nextIso) {
+  if (!character?.id || !character?.owner_email || !nextIso) return null;
+  const nextMs = new Date(nextIso).getTime();
+  if (!Number.isFinite(nextMs)) return null;
+  try {
+    const existing = await base44.asServiceRole.entities.WorkBoundaryLease.filter(
+      { character_id: character.id, kind: 'work' }, null, 1
+    );
+    const current = existing?.[0] || null;
+    const currentMs = current?.next_boundary_at ? new Date(current.next_boundary_at).getTime() : null;
+    // The same boundary is already held for this character — nothing to hand off.
+    if (current && currentMs !== null && Math.abs(currentMs - nextMs) <= 60000) return current;
+
+    const payload = {
+      character_id: character.id,
+      character_name: character.name || null,
+      owner_email: character.owner_email,
+      kind: 'work',
+      next_boundary_at: nextIso,
+      armed_at: new Date().toISOString(),
+    };
+    if (current) return await base44.asServiceRole.entities.WorkBoundaryLease.update(current.id, payload);
+    // First boundary for this character: create the record empty, then record the
+    // boundary as a genuine update so the recurrence is handed off exactly once.
+    const created = await base44.asServiceRole.entities.WorkBoundaryLease.create({
+      ...payload, next_boundary_at: null,
+    });
+    return await base44.asServiceRole.entities.WorkBoundaryLease.update(created.id, payload);
+  } catch (err) {
+    console.error(`[enforceCharacterWorkSchedule] ${character?.name}: boundary lease arm FAILED: ${err.message}`);
+    return null;
+  }
+}
+
 // ── NEXT WORK EXECUTION TIME HELPERS ─────────────────────────────────────────
 function getMinutesUntilNextShiftStart(shift, clock) {
   if (!shift?.start) return null;
@@ -373,6 +413,11 @@ Deno.serve(async (req) => {
       }
       // Compute next execution time for Workflow consumption.
       const singleNextExecTime = computeNextWorkExecutionTime(character, singleOrderedJobs, singleLocMap, singleClock, singleNowET);
+
+      // Hand the next established boundary to the recurrence chain. Recorded before
+      // any transition below, so every path — including a stale occurrence that
+      // supersedes an old run — leaves exactly one correct boundary held.
+      await armWorkBoundaryLease(base44, character, singleNextExecTime);
 
       // ── STALE-OCCURRENCE VALIDATION ──────────────────────────────────────
       // When a Workflow instance supplies an expected_occurrence_time, verify it is

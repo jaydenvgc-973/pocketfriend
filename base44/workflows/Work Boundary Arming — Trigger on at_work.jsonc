@@ -1,0 +1,41 @@
+{
+  "name": "Work Boundary Arming \u2014 Trigger on at_work",
+  "description": "When a character becomes present at work, the schedule authority is asked for that shift's next boundary so the end of the shift is held durably and enforced at its minute. This is what seats the boundary chain at the start of every shift; the boundary run then carries the following boundary forward on its own.",
+  "trigger": {
+    "condition": "${ .trigger.data.resolved_presence_status == \"at_work\" and (.trigger.changed_fields | index(\"resolved_presence_status\") != null) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "work_boundary_arming",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "arm": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "enforceCharacterWorkSchedule",
+            "args": {
+              "characterId": "${ .trigger.entity_id }",
+              "system_mode": true
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Record the shift boundary",
+            "description": "Arms the end of the shift that just started"
+          }
+        }
+      }
+    ]
+  }
+}
