@@ -162,41 +162,12 @@ function isLocationOpen(location) {
 }
 
 // ── PROTECTED ARRIVAL COMMITMENT PREDICATE (read-only) ──────────────────────
-// Determines ONLY whether an authoritative promised-arrival commitment currently
-// protects this character from non-emergency autonomous relocation. It performs
-// no movement, no commitment writes, and no status transitions.
-//
-// confirmMovementCommitment writes BOTH:
-//   CharacterCommitment: { commitment_type:'arrival', status:'active',
-//     interruptible:false, destination_location_id, expected_arrival_time,
-//     expected_arrival_window_minutes }
-//   Character: { pending_scheduled_relocation_at, next_location_id }
-// processScheduledRelocations owns those pending fields and clears them when the
-// relocation is fulfilled or abandoned — that authoritative registration IS the
-// lifecycle. No invented timer/expiration is added.
-//
-// Active pending arrival — protective when ALL hold:
-//   commitment_type === 'arrival', status === 'active', interruptible === false,
-//   destination_location_id exists,
-//   character.pending_scheduled_relocation_at exists,
-//   character.next_location_id === commitment.destination_location_id,
-//   expected_arrival_time is valid, pending_scheduled_relocation_at is valid,
-//   both timestamps represent the same scheduled instant,
-//   now >= expected_arrival_time - expected_arrival_window_minutes (window has opened).
-// The window OPENS protection; it does NOT close it. If the pending registration is
-// cleared, a stale 'active' commitment no longer protects — no symmetric post-ETA
-// expiration is invented.
-//
-// Fulfilled arrival — protective while:
-//   commitment_type === 'arrival', status === 'arrived', interruptible === false,
-//   destination_location_id === character.resolved_current_location_id.
-// Ends automatically when an authorized system changes the character's location.
-//
-// Work/school authority is NOT re-evaluated here. Tier 3.5 dispatch runs before
-// this predicate is computed and continues on its own authority, so a mandatory
-// shift/session naturally overrides the commitment without a competing check.
-// Timestamps are validated (NaN rejected). Query failures are logged and treated
-// as "no protection found" (non-fatal — does not crash the run).
+// True only while confirmMovementCommitment's own registration is live: commitment
+// type 'arrival', status 'active' (or 'arrived' once the destination matches),
+// interruptible=false, and the character's pending_scheduled_relocation_at and
+// next_location_id agreeing with it inside the arrival window. No movement, no
+// writes, no transitions; processScheduledRelocations remains the sole lifecycle
+// owner. Timestamps validated (NaN rejected); query failure = no protection.
 async function getProtectedArrivalCommitment(base44, char) {
   if (!char?.id || !char?.owner_email) return null;
   let cs = null;
@@ -1875,8 +1846,8 @@ Deno.serve(async (req) => {
           }
 
           if (workDispatchDone) continue;
-          // SHIFT END → existing work authority sends them home
-          if (char.resolved_presence_status === 'at_work') { try { await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', { characterId: char.id, system_mode: true }); } catch { /* retried next cycle */ } continue; }
+          // SHIFT END → existing work authority. The shift ends at its established end time, wherever the character is: presence is NOT a condition.
+          if (char.work_start_time || char.work_end_time || (Array.isArray(char.work_days) && char.work_days.length > 0)) { try { await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', { characterId: char.id, system_mode: true }); } catch { /* retried next cycle */ } continue; }
 
           // ── SCHOOL SCHEDULE CHECK ──────────────────────────────────────────
           // Only for enrolled students with an assigned education_location_id.
@@ -1932,6 +1903,9 @@ Deno.serve(async (req) => {
                 console.log(`[autonomousMovement] ✓ ${char.name}: SCHOOL DISPATCH → ${schoolLoc.name}`);
                 continue;
               }
+            } else {
+              // SCHOOL/CLASS END → existing school authority. The day ends at its established end time, wherever the student is: presence is NOT a condition.
+              try { await base44.asServiceRole.functions.invoke('enforceCharacterSchoolSchedule', { characterId: char.id }); } catch { /* retried next cycle */ }
             }
           }
         }
