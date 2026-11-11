@@ -413,7 +413,8 @@ export default function MediaGallery() {
     setTotalImages(null);
     setLastError(null);
     setInitSettled(false);
-    setIsLoading(true); // shows loading, not "no matches", while the query settles
+    // While a typed search settles, show loading rather than "no matches".
+    setIsLoading(!!val.trim());
     // Clear best results on search change — new dataset
     bestResultRef.current = {};
   };
