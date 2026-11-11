@@ -559,6 +559,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     navigate(`/scene?${params.toString()}`);
   };
 
+  /**
+   * WATCH WITHOUT SENDING ANYONE
+   *
+   * Opens the location's scene with nobody sent ahead. The people already there are
+   * the scene. Nothing moves: not the user, not a character. Opening it is a viewing
+   * act, so hours and travel availability never gate it.
+   */
+  const handleObserveLocation = () => {
+    if (!selectedLocation) return;
+    const params = new URLSearchParams({ locationId: selectedLocation.id, observe: "1" });
+    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    if (envZone) params.set("zoneName", envZone);
+    if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
+    navigate(`/scene?${params.toString()}`);
+  };
+
   const handleSoloTravel = async (locationId) => {
     const location = locationsData.find(l => l.id === locationId);
     if (!location) return;
@@ -976,6 +992,13 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     </>
                   );
                 })()}
+                <button
+                  onClick={handleObserveLocation}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  Just watch who's there
+                </button>
               </div>
             </motion.div>
           )}

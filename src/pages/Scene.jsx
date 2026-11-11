@@ -362,7 +362,9 @@ export default function Scene() {
   const participantIdsKey = baseSceneParticipants.map((p) => p.id).sort().join(',');
 
   useEffect(() => {
-    if (!location || baseSceneParticipants.length === 0) { setSceneParticipants([]); setParticipantsReady(false); return; }
+    // Nobody here is a valid, resolved scene — not a pending one. Watching an empty
+    // place must still open and say who could be seen.
+    if (!location || baseSceneParticipants.length === 0) { setSceneParticipants([]); setParticipantsReady(true); return; }
     setSceneParticipants(baseSceneParticipants.map((p) => ({ ...p, resolvedOutfit: null })));
     setParticipantsReady(false);
     let cancelled = false;
@@ -735,6 +737,8 @@ export default function Scene() {
     if (!hasUserRequestedImage) return;
     if (!participantsReady) return;
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
+      // An empty cast has no picture to compose; the view waits for the observer to pick someone.
+      if (observeMode && observeCast.length === 0) return;
       generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: observeMode ? observeAmbientPopulation : [] });
     }
   }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady, observeCastIdList.join(',')]);
@@ -905,7 +909,8 @@ export default function Scene() {
 
   // Location-level closing only blocks when the SELECTED environment is also unavailable.
   // An accessible residential environment remains reachable while business operations are closed.
-  const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false);
+  // Watching a character-only scene is not entering the place: public hours never block it.
+  const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false) && !observeMode;
 
   const renderNpc = (npc) => {
     const isSelected = (selectedNpcIds || []).includes(npc.id);
