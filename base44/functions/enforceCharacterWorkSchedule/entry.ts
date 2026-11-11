@@ -1082,6 +1082,14 @@ Deno.serve(async (req) => {
             }
           }
         }
+        // Hold this character's next boundary durably, so the boundary chain covers every
+        // work-configured character — including one that has not changed presence since the
+        // chain was restored. Conditional: only a genuinely different boundary is recorded.
+        await armWorkBoundaryLease(
+          base44, char,
+          computeNextWorkExecutionTime(char, orderedJobs, locMap, globalClock, nowET)
+        );
+
         // Evaluate jobs in order. First active shift wins.
         let activeJob = null;
         for (const job of orderedJobs) {
