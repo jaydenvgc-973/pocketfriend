@@ -419,6 +419,9 @@ export default function Scene() {
     if (!location || broughtCharacters.length === 0) return;
     const _isHomeCat = location.category === 'home';
     broughtCharacters.forEach((char) => {
+      // Opening the Scenes page is not an arrival. A character whose authoritative
+      // location is already this place keeps their established circumstances.
+      if (char.resolved_current_location_id === location.id) return;
       base44.functions.invoke('enforceCharacterLocationPresence', {
         character_id: char.id, owner_email: currentUser?.email,
         requested_presence_status: observeMode
@@ -439,34 +442,61 @@ export default function Scene() {
   const [observeCastIds, setObserveCastIds] = useState(null);
   const observeAutoStartedRef = useRef(false);
 
-  // Everybody real who is here: those sent ahead, plus whoever was already here.
+  // Everybody who is here: those sent ahead, whoever was already here, and any
+  // background person of the venue the observer picked from Who's Here. Background
+  // people never join on their own — only when chosen.
   const observeCandidates = useMemo(() => {
     if (!observeMode) return [];
+    const chosenBackground = new Set(selectedNpcIds || []);
     const seen = new Set();
     const list = [];
-    [...broughtCharacters, ...sceneParticipants].forEach((p) => {
-      if (!p?.id || p.isNpc) return;
-      if (String(p.id).startsWith('npc_')) return;
-      if (p.id === currentUser?.id) return;
-      if (seen.has(p.id)) return;
+    const push = (p) => {
+      if (!p?.id || seen.has(p.id)) return;
+      if (isUserPresenceEntity(p, currentUser?.id) || p.id === currentUser?.id) return;
+      const background = p.isNpc === true || String(p.id).startsWith('npc_');
+      if (background && !chosenBackground.has(p.id)) return;
+      if (background && !p.name) return;
       seen.add(p.id);
-      list.push(p);
-    });
+      list.push(background ? { ...p, isNpc: true } : p);
+    };
+    [...broughtCharacters, ...sceneParticipants].forEach(push);
     return list;
-  }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id]);
+  }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id, (selectedNpcIds || []).join(',')]);
 
-  // The characters who were sent are the ones in the moment by default. Everyone
-  // else already here is offered, not assumed — the user picks who they came to see.
+  // The characters who were sent are the ones in the moment by default. When nothing
+  // was sent, the people already at this place are the moment. Everyone else here is
+  // offered, not assumed — the user picks who they came to see.
   const observeSentIds = useMemo(
     () => broughtCharacters.filter((c) => !c.isNpc && c.id).map((c) => c.id),
     [broughtCharacters.map((c) => c.id).join(',')]
   );
-  const observeCastIdList = observeCastIds || observeSentIds;
+  const observeDefaultIds = useMemo(() => {
+    const base = observeSentIds.length > 0
+      ? observeSentIds
+      : observeCandidates.filter((c) => !c.isNpc).slice(0, 4).map((c) => c.id);
+    const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
+    return [...new Set([...base, ...chosenBackground])];
+  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(',')]);
+  const observeCastIdList = observeCastIds || observeDefaultIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
   const toggleObserveCast = (id) => setObserveCastIds((prev) => {
-    const base = prev || observeSentIds;
+    const base = prev || observeDefaultIds;
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
+
+  // ── THE PLACE IS POPULATED ──
+  // A public venue keeps its ordinary people while the characters are in it. Private
+  // residences and restricted/staff-only zones get none. These people are already part
+  // of the venue; nothing new is created for them.
+  const observeAmbientPopulation = useMemo(() => {
+    if (!observeMode) return [];
+    return buildBackgroundPopulation({
+      npcs: allPossibleNpcs,
+      isHomeLocation,
+      isRestrictedEnv,
+      activeZone: activeZone || locationZones[0]?.zone_name,
+    });
+  }, [observeMode, allPossibleNpcs.filter((n) => n.isNpc === true).map((n) => n.id).join(','), isHomeLocation, isRestrictedEnv, activeZone]);
 
   // ── DIRECTED CHARACTER INTERACTIONS ──
   // Kiss / Flirt With / Argue With need a target the user chooses from the people who
@@ -514,6 +544,7 @@ export default function Scene() {
         location, locationZones, activeZone, sceneParticipants, userParticipant,
         isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
         strictCastOnly: observeMode,
+        ambientPopulation: observeMode ? observeAmbientPopulation : [],
         actionFocusIds: [actor.id, target.id],
         actionOverridePrompt: buildDirectedActionPrompt({
           actionId: action.id,
@@ -538,8 +569,17 @@ export default function Scene() {
   const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
-    if (cast.length < 2) {
-      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Pick who they're here to see above — add at least one more person to start the moment.", timestamp: new Date().toISOString() }]);
+    // Established people carry identity and memory. Background people of the venue
+    // speak in role only and never write memories.
+    const characterCast = cast.filter((c) => c.id && c.isNpc !== true && !String(c.id).startsWith("npc_"));
+    const backgroundCast = cast.filter((c) => c.isNpc === true || String(c.id).startsWith("npc_"));
+    const ambientHere = observeAmbientPopulation.filter((a) => !backgroundCast.some((b) => b.id === a.id));
+    if (characterCast.length === 0) {
+      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "No one is here to watch yet — send a character here, or pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
+      return;
+    }
+    if (characterCast.length + backgroundCast.length < 2 && ambientHere.length === 0) {
+      setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Pick someone from Who's Here — no one else is in this part of the place right now.", timestamp: new Date().toISOString() }]);
       return;
     }
     setIsObservingTurn(true);
@@ -561,15 +601,17 @@ export default function Scene() {
     if (speaker?.id && spoken) {
       priorLine = { id: `voiced_${Date.now()}`, sender: "character", senderName: speaker.name, characterId: speaker.id, avatarUrl: speaker.avatar_url, content: spoken, timestamp: new Date().toISOString() };
       setMessages((prev) => [...prev, priorLine]);
-      recordVoicedLineMemory({ speaker, listeners: cast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
+      recordVoicedLineMemory({ speaker, listeners: characterCast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
     }
 
     const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
     try {
       const lines = await generateObserveBeat({
-        participants: cast, responders, location, activeZone,
+        participants: characterCast, responders, location, activeZone,
         messages: priorLine ? [...messages, priorLine] : messages,
         direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
+        ambient: ambientHere,
+        npcSpeakers: backgroundCast,
         watchNote: watchContext
           ? (buildWatchContextLabel(watchContext) || watchContext.linkAnalysisContext || (watchContext.title ? `They are watching "${watchContext.title}" together.` : "They are watching a video together."))
           : null,
@@ -581,11 +623,11 @@ export default function Scene() {
           setMessages((prev) => [...prev, line]);
           await new Promise((r) => setTimeout(r, 450));
         }
-        recordObserveBeatMemories({ lines, participants: cast, priorLine })
+        recordObserveBeatMemories({ lines, participants: characterCast, priorLine })
           .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
           .catch(() => {});
         // A narrative is canon: those events are part of what these people lived through.
-        if (narration) recordNarrativeMemories({ narrative: narration, participants: cast, lines }).catch(() => {});
+        if (narration) recordNarrativeMemories({ narrative: narration, participants: characterCast, lines }).catch(() => {});
       }
     } catch {
       setMessages((prev) => [...prev, { id: `obs_err_${Date.now()}`, sender: "narrative", content: "The moment did not continue.", timestamp: new Date().toISOString() }]);
@@ -598,7 +640,8 @@ export default function Scene() {
   useEffect(() => {
     if (!observeMode || !location?.id || !participantsReady) return;
     if (observeAutoStartedRef.current) return;
-    if (observeCast.length < 2) return;
+    // One character is enough: the place around them has its own people.
+    if (!observeCast.some((c) => c.id && c.isNpc !== true && !String(c.id).startsWith("npc_"))) return;
     observeAutoStartedRef.current = true;
     runObserveBeat();
   }, [observeMode, location?.id, participantsReady, observeCastIdList.join(',')]);
@@ -659,7 +702,7 @@ export default function Scene() {
       if (focused.length > 0) return focused.slice(0, 4);
     }
     // Observed scene: the people actually in the moment are the ones in the image.
-    if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id)).slice(0, 4);
+    if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id) && !p.isNpc).slice(0, 4);
     if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
     // At a public venue the chosen cast still decides the picture: whoever the user
     // brought or picked is who appears. Other people present only fill in when the
@@ -692,7 +735,7 @@ export default function Scene() {
     if (!hasUserRequestedImage) return;
     if (!participantsReady) return;
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode });
+      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: observeMode ? observeAmbientPopulation : [] });
     }
   }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady, observeCastIdList.join(',')]);
 
@@ -827,7 +870,7 @@ export default function Scene() {
       const involved = observeCast.length > 0 ? observeCast : sceneParticipants;
       const whoDesc = involved.length > 0 ? involved.map((c) => c.name).join(" and ") : "no one — the space is empty";
       if (actionImageFn) {
-        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
+        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: observeAmbientPopulation, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
       }
       if (observeCast.length >= 2) {
         runObserveBeat({ direction: `[${action.emoji} ${action.label}]` });
@@ -894,9 +937,7 @@ export default function Scene() {
             <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
           </button>
         )}
-        {!observeMode && (
-          <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
-        )}
+        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
         <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
         <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
       </div>
@@ -931,7 +972,7 @@ export default function Scene() {
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             {observeMode
               ? `Watching ${observeCast.map((c) => c.name).join(", ") || "them"} at ${location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
-              : `You arrive at ${location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
+              : `You're at ${location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
           </span>
           {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
           {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">{homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away</span></div>}
@@ -1001,7 +1042,7 @@ export default function Scene() {
         <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
       )}
 
-      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
+      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: observeMode ? observeAmbientPopulation : [] })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
