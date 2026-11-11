@@ -15,6 +15,7 @@
  */
 import { base44 } from '@/api/base44Client';
 import { filterDashes } from '@/lib/dashFilter';
+import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from '@/lib/sceneBackgroundResponse';
 
 // NARRATIVE — events that have ALREADY HAPPENED. Canon, not an instruction.
 const ESTABLISHED_NARRATIVE = (narrative) => `
@@ -50,14 +51,21 @@ function backgroundCast(list) {
 
 export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [] }) {
   const cast = realCast(participants);
-  if (cast.length < 1 || !location) return [];
+  const selectedBackground = backgroundCast(npcSpeakers);
+  if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
 
   // Who may speak in this beat. Everyone else in the cast is present but listens.
   const requested = responders ? responders.map((c) => c.id) : null;
   const speaking = requested ? cast.filter((c) => requested.includes(c.id)) : cast;
   // Background people of the venue can join the conversation when they were chosen
   // from Who's Here. They have no canonical record — they speak in role only.
-  const bgSpeaking = backgroundCast(npcSpeakers).filter((n) => !requested || requested.includes(n.id));
+  const bgSpeaking = selectedBackground.filter((n) => !requested || requested.includes(n.id));
+  // Whoever was just spoken to answers. A chosen background person is a real
+  // participant in this conversation, not a name in a list.
+  const lastLine = [...(messages || [])].reverse().find((m) => m.sender === 'character' && m.content && !m.is_canon_event);
+  const addressedBackground = findAddressedBackgroundPeople(lastLine?.content, selectedBackground);
+  addressedBackground.forEach((n) => { if (!bgSpeaking.some((s) => s.id === n.id)) bgSpeaking.push(n); });
+  const backgroundRule = buildBackgroundResponderRule({ addressed: addressedBackground, selected: selectedBackground });
   if (speaking.length === 0 && bgSpeaking.length === 0) return [];
 
   const canonicalCtx = {};
@@ -134,10 +142,11 @@ THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - Nobody here is aware of being observed. Nothing may hint at an audience or a narrator.
 
 PARTICIPANTS (the people this moment is about):
-${castLines}
+${castLines || '(no established Pocketfriend character is in this moment)'}
 ${silentRule}
 
 ${placeBlock}
+${backgroundRule}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody in this scene addresses, names, or plays to anyone outside the participant list.\n${canonicalSection}\n===` : ''}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
@@ -156,7 +165,7 @@ ${direction ? `- Now play out the directed moment above: the people named take t
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
 - Give each speaking participant at most one turn, 1-2 sentences, natural and in-character.
 - Characters do not say their own name out loud when speaking about themselves.
-- Background people of the place stay background: they work, pass by, and may speak in role, but they never take the moment over and never replace the named participants.
+- Background people of the place stay background unless they are the ones being spoken to: when a line is aimed at them they answer for themselves, in role; otherwise they work, pass by, and never take the moment over or replace the named participants.
 - No narration of the observer. No summary of the scene.
 
 Return JSON only.`;

@@ -144,13 +144,20 @@ export function useSceneImageGenerator() {
     const ambientList = (Array.isArray(ambientPopulation) ? ambientPopulation : []).filter((p) => p && p.name);
     const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv;
     const ambientText = allowBackgroundExtras
-      ? ambientList.slice(0, 6).map((p) => (p.role ? `${p.name} (${String(p.role).toLowerCase()})` : p.name)).join(', ')
+      ? ambientList.slice(0, 4).map((p) => (p.role ? `${p.name} (${String(p.role).toLowerCase()})` : p.name)).join(', ')
       : '';
     const namedSubjectsRule = (people) => (people.length > 0
       ? `Only these people are identifiable: ${people.map((c) => c.name).join(', ')} — never duplicated, never replaced by an invented person.`
       : `No named person is the subject of this frame.`);
     const ambientRule = allowBackgroundExtras
-      ? ` The venue is populated as it really is right now: ${ambientText}. They are ordinary background people going about their own business, at a natural distance — never the focus, never a stand-in for the named people.`
+      ? ` The venue is populated as it really is right now: ${ambientText}. They are ordinary background people going about their own business — small, softly out of focus, at a natural distance toward the edges of the frame behind the named people. They never stand in the foreground, never occupy the center, never obscure or replace the named people, and are never the subject of the photograph.`
+      : '';
+    // The real people taking part outrank the place's background population in every
+    // prompt, so the frame is never left to choose a generic crowd over the character
+    // or characters actually in the scene.
+    const focusNames = finalParticipants.filter((p) => p && p.name).map((p) => p.name);
+    const primaryFocusRule = focusNames.length > 0
+      ? ` PRIMARY SUBJECT (mandatory): ${focusNames.join(' and ')} ${focusNames.length === 1 ? 'is' : 'are'} the subject of this photograph — framed close to medium, in the center of the frame, clearly visible, faces unobscured, in the sharpest focus and the brightest light. No background person outranks ${focusNames.length === 1 ? 'them' : 'them'} in size, position, or focus.`
       : '';
 
     // If an action triggered this, use the action's specific prompt
@@ -170,6 +177,8 @@ export function useSceneImageGenerator() {
           }
         }
       }
+      // The people the action involves are the picture, whatever else is in the place.
+      finalPrompt += primaryFocusRule;
       if (envRefs.length > 0) {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
@@ -201,7 +210,7 @@ export function useSceneImageGenerator() {
         " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
         "";
       const residentialConstraint = buildResidentialImageConstraint(location, finalParticipants);
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${primaryFocusRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${identityPrefix}${prompt}`,
@@ -220,17 +229,19 @@ export function useSceneImageGenerator() {
     {
       if (isGlobal) {
         const charNames = finalParticipants.map((c) => c.name).join(", ");
-        const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
+        const peopleDesc = charNames
+          ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with ordinary patrons of this place kept as distant, out-of-focus background` : " among other patrons"}`
+          : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else if (allowBackgroundExtras) {
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else {
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
         const peopleDesc = (finalParticipants.length > 0 ?
           `Only these specific people are present: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no background figures.` :
           `The space is completely empty — no silhouettes, no background figures, nobody.`) + restrictedPrefix;
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${userAppearanceBlock}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${primaryFocusRule}${userAppearanceBlock}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       }
     }
 

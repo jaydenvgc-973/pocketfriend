@@ -53,6 +53,7 @@ import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver"
 import { isInfantCharacter } from "@/lib/characterAgeStage";
 import { getCharacterAge } from "@/lib/characterAgeSystem";
 import { buildBackgroundPopulation, describeBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
+import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -411,7 +412,19 @@ export default function Scene() {
     setTimeout(() => setSceneImage(null), 50);
   };
 
-  const toggleNpc = (npcId) => { const current = selectedNpcIds ?? []; setSelectedNpcIds(current.includes(npcId) ? current.filter((id) => id !== npcId) : [...current, npcId]); };
+  // Choosing someone from Who's Here puts them in the conversation. In a watched scene
+  // that choice is also the moment's cast, so picking a background person actually
+  // brings them into it instead of only changing a highlight.
+  const toggleNpc = (npcId) => {
+    const current = selectedNpcIds ?? [];
+    const next = current.includes(npcId) ? current.filter((id) => id !== npcId) : [...current, npcId];
+    setSelectedNpcIds(next);
+    if (!observeMode) return;
+    setObserveCastIds((prev) => {
+      const base = prev || observeDefaultIds;
+      return next.includes(npcId) ? [...new Set([...base, npcId])] : base.filter((id) => id !== npcId);
+    });
+  };
 
   useEffect(() => { if (location) { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); } }, [location?.id, activeZone]);
 
@@ -500,6 +513,22 @@ export default function Scene() {
     });
   }, [observeMode, allPossibleNpcs.filter((n) => n.isNpc === true).map((n) => n.id).join(','), isHomeLocation, isRestrictedEnv, activeZone]);
 
+  // Background people who support the picture. Whoever is chosen from Who's Here is
+  // named first so the person being spoken to is in the frame with the real people;
+  // the rest of the crowd stays behind them. They are never the main subject.
+  const sceneAmbientPopulation = useMemo(() => {
+    if (observeMode) {
+      const chosen = observeCast
+        .filter((c) => c.isNpc === true && c.name)
+        .map((c) => ({ id: c.id, name: c.name, role: c.role || c.npcType || 'person' }));
+      const rest = observeAmbientPopulation.filter((a) => !chosen.some((c) => c.id === a.id));
+      return [...chosen, ...rest];
+    }
+    return selectedNpcs
+      .filter((n) => n.isNpc === true && n.name)
+      .map((n) => ({ id: n.id, name: n.name, role: n.role || n.npcType || 'person' }));
+  }, [observeMode, observeCast.map((c) => c.id).join(','), observeAmbientPopulation, selectedNpcs.map((n) => n.id).join(',')]);
+
   // ── DIRECTED CHARACTER INTERACTIONS ──
   // Kiss / Flirt With / Argue With need a target the user chooses from the people who
   // are actually present. The list comes from the authoritative scene participants:
@@ -546,7 +575,7 @@ export default function Scene() {
         location, locationZones, activeZone, sceneParticipants, userParticipant,
         isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
         strictCastOnly: observeMode,
-        ambientPopulation: observeMode ? observeAmbientPopulation : [],
+        ambientPopulation: sceneAmbientPopulation,
         actionFocusIds: [actor.id, target.id],
         actionOverridePrompt: buildDirectedActionPrompt({
           actionId: action.id,
@@ -576,7 +605,9 @@ export default function Scene() {
     const characterCast = cast.filter((c) => c.id && c.isNpc !== true && !String(c.id).startsWith("npc_"));
     const backgroundCast = cast.filter((c) => c.isNpc === true || String(c.id).startsWith("npc_"));
     const ambientHere = observeAmbientPopulation.filter((a) => !backgroundCast.some((b) => b.id === a.id));
-    if (characterCast.length === 0) {
+    // A chosen background person is enough to hold the moment on their own — they
+    // speak for themselves in role, so selecting them is never just a highlight.
+    if (characterCast.length === 0 && backgroundCast.length === 0) {
       setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "No one is here to watch yet — send a character here, or pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
       return;
     }
@@ -739,7 +770,7 @@ export default function Scene() {
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
       // An empty cast has no picture to compose; the view waits for the observer to pick someone.
       if (observeMode && observeCast.length === 0) return;
-      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: observeMode ? observeAmbientPopulation : [] });
+      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: sceneAmbientPopulation });
     }
   }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady, observeCastIdList.join(',')]);
 
@@ -793,6 +824,12 @@ export default function Scene() {
       const eligibleKnownChars = speakingEligible.filter((c) => !c.isNpc);
       const eligibleNpcList = speakingEligible.filter((c) => c.isNpc).map((n) => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
       const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:\n- Selected characters: ${[...eligibleKnownChars.map((c) => c.name), ...(eligibleNpcList ? [eligibleNpcList] : [])].join(", ") || "none"}\nResidents, owners, and employees who are present but NOT selected must NOT respond.\nIf no one is listed, return an empty responses array. Do NOT invent responses from unselected people.${privateNote}`;
+      // A background person chosen from Who's Here is a real participant: when the line
+      // is aimed at them they answer for themselves, in role. They are never puppeted —
+      // the user keeps their own person, and this only makes the chosen person answer.
+      const selectedBackground = speakingEligible.filter((c) => c.isNpc === true);
+      const addressedBackground = findAddressedBackgroundPeople(text, selectedBackground);
+      const backgroundRule = buildBackgroundResponderRule({ addressed: addressedBackground, selected: selectedBackground });
       const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`).join('\n\n');
       const memSection = eligibleKnownChars.filter((c) => crossMem[c.id]).map((c) => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
       const infantRule = infantCharacters.length > 0
@@ -804,7 +841,7 @@ export default function Scene() {
       const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n- A kiss or a flirt is an offer, not a guarantee. Reciprocating must fit this character; hesitating, deflecting, being caught off guard, or turning it down is a valid response.\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -814,7 +851,8 @@ export default function Scene() {
         const respNameLower = resp.character_name?.trim().toLowerCase();
         const userNames = [displayName?.trim().toLowerCase(), currentUser?.full_name?.trim().toLowerCase(), currentUser?.email?.split("@")[0]?.toLowerCase(), settings?.fictional_world_name?.trim().toLowerCase(), ...(settings?.user_aliases || []).map((a) => a?.trim().toLowerCase())].filter(Boolean);
         if (userNames.includes(respNameLower)) continue;
-        const char = sceneCharacters.find((c) => c.name === resp.character_name);
+        const char = sceneCharacters.find((c) => c.name === resp.character_name)
+          || speakingEligible.find((c) => c.name?.trim().toLowerCase() === respNameLower);
         // Infants cannot speak — never render a reply attributed to a newborn.
         if (char && isInfantCharacter(char)) continue;
         let cleanedContent = filterDashes(resp.content);
@@ -874,7 +912,7 @@ export default function Scene() {
       const involved = observeCast.length > 0 ? observeCast : sceneParticipants;
       const whoDesc = involved.length > 0 ? involved.map((c) => c.name).join(" and ") : "no one — the space is empty";
       if (actionImageFn) {
-        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: observeAmbientPopulation, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
+        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: sceneAmbientPopulation, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
       }
       if (observeCast.length >= 2) {
         runObserveBeat({ direction: `[${action.emoji} ${action.label}]` });
@@ -1047,7 +1085,7 @@ export default function Scene() {
         <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
       )}
 
-      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: observeMode ? observeAmbientPopulation : [] })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
+      <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
