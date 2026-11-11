@@ -25,6 +25,19 @@ export function isInfantCharacter(character) {
 }
 
 /**
+ * Word limits for a child who HAS begun to speak. These are the existing thresholds,
+ * unchanged: under 3 → a word or two, under 6 → a short fragment. A child below the
+ * speaking age is handled by isInfantCharacter and is never given words at all.
+ * Shared by both scene dialogue pathways so they enforce the same rule.
+ */
+export function childSpeechLimit(character) {
+  const age = getCharacterAge(character);
+  if (age === null || age >= 6) return null;
+  if (age < 3) return `${character.name} is a toddler: speak ONLY 1-2 words max.`;
+  return `${character.name} is a young child: max 5 words.`;
+}
+
+/**
  * Appearance authority for image generation: an infant must be depicted with
  * infant anatomy and development, using their own established avatar and
  * appearance lock for identity — never as a fully grown adult.

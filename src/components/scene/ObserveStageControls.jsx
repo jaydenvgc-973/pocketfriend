@@ -11,7 +11,7 @@ import ObserveCastPicker from "@/components/scene/ObserveCastPicker";
  * direct the moment as circumstance, or speak AS one of the characters present —
  * those words belong to that character, not to the observer.
  */
-export default function ObserveStageControls({ candidates, castIds, onToggleCast, onDirect, onNarrate, onVoice, onContinue, isGenerating }) {
+export default function ObserveStageControls({ candidates, castIds, onToggleCast, onDirect, onNarrate, onVoice, onContinue, isGenerating, blockedSpeakIds = [] }) {
   const [mode, setMode] = useState("narrate");
   const [text, setText] = useState("");
   const [speakAsId, setSpeakAsId] = useState(null);
@@ -19,7 +19,11 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   const cast = (candidates || []).filter((c) => castIds.includes(c.id));
   // Speak belongs to an established character only. Background people of the venue
   // take part through the scene itself and are never spoken for by the observer.
-  const speakable = cast.filter((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_"));
+  // A child below speaking age cannot be made to speak, and the temporary caregiver
+  // answers for themselves — neither is ever puppeted through Speak.
+  const speakable = cast.filter((c) =>
+    !c.isNpc && c.id && !String(c.id).startsWith("npc_") && !(blockedSpeakIds || []).includes(c.id)
+  );
   const speaker = speakable.find((c) => c.id === speakAsId) || speakable[0] || null;
   const speaking = mode === "speak" && !!speaker;
 

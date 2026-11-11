@@ -34,10 +34,16 @@ function resolveAge(character) {
 }
 
 function isChildAlone(child, homeId, allCharacters) {
-  // All characters whose current_home_location_id === homeId (residents)
-  const residents = allCharacters.filter(c => c.current_home_location_id === homeId && c.id !== child.id);
+  // Household residents only. A visiting adult does not live here, so their presence
+  // never ends supervision — and the temporary caregiver is the supervision itself,
+  // never the reason it stops (its own presence must not satisfy the requirement).
+  const residents = allCharacters.filter(c =>
+    c.current_home_location_id === homeId &&
+    c.id !== child.id &&
+    !isCaregiver(c)
+  );
 
-  // A guardian is someone who is adult (age >= SAFE_ALONE_AGE) AND physically at home right now
+  // A guardian is an adult HOUSEHOLD RESIDENT who has returned and is physically home now
   const guardianPresent = residents.some(c => {
     const age = resolveAge(c);
     if (age !== null && age < SAFE_ALONE_AGE) return false; // also a child
@@ -125,10 +131,12 @@ Deno.serve(async (req) => {
 
     if (childResidents.length === 0) {
       // No children here — despawn any lingering sitters
+      // Presence follows the assignment (the resolver places an assigned caregiver at
+      // this home), so a cleared assignment is what ends supervision.
       const lingeringSitters = allChars.filter(c =>
         isCaregiver(c) &&
         c.sitter_assigned_to_location_id === home.id &&
-        c.resolved_current_location_id === home.id
+        c.is_sitter === true
       );
       for (const sitter of lingeringSitters) {
         await base44.entities.Character.update(sitter.id, {
@@ -160,10 +168,11 @@ Deno.serve(async (req) => {
 
     if (!needsCaregiver) {
       // All children have a guardian — despawn sitters no longer needed
+      // A household resident has returned: the established departure rule ends supervision.
       const unneededSitters = allChars.filter(c =>
         isCaregiver(c) &&
         c.sitter_assigned_to_location_id === home.id &&
-        c.resolved_current_location_id === home.id
+        c.is_sitter === true
       );
       for (const sitter of unneededSitters) {
         await base44.entities.Character.update(sitter.id, {
@@ -181,7 +190,7 @@ Deno.serve(async (req) => {
     // 5. Check if a caregiver is ALREADY present at this home
     const existingSitter = allChars.find(c =>
       isCaregiver(c) &&
-      c.resolved_current_location_id === home.id &&
+      c.is_sitter === true &&
       c.sitter_assigned_to_location_id === home.id
     );
 

@@ -51,9 +51,10 @@ import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
-import { isInfantCharacter } from "@/lib/characterAgeStage";
-import { getCharacterAge } from "@/lib/characterAgeSystem";
-import { buildBackgroundPopulation, describeBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
+import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
+import { isCaregiverOnDuty } from "@/lib/childCaregiver";
+import { requiresSitter } from "@/lib/characterAgeSystem";
+import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 
 // Directed interactions act on ONE chosen person who is actually present.
@@ -223,15 +224,11 @@ export default function Scene() {
     return withBrought;
   }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
 
-  // The household's assigned child-care caregiver — a legitimate person in this home,
-  // never a random residential NPC. Recognized by the existing caregiver marker or role,
-  // belonging to THIS household (assigned to it, or living here).
-  const isAssignedCaregiverHere = (c) => {
-    if (!c) return false;
-    const caregiver = c.is_sitter === true || /babysit|caregiver|nanny|sitter/i.test(String(c.occupation || ''));
-    if (!caregiver) return false;
-    return c.sitter_assigned_to_location_id === location?.id || c.current_home_location_id === location?.id;
-  };
+  // The household's temporary child-care caregiver, exactly as the existing
+  // child-supervision system maintains them. The assignment (is_sitter + the home it is
+  // assigned to) is the authority: on duty while children are home and no adult who lives
+  // here has returned. A visiting adult never ends it, and it is never a random NPC.
+  const isAssignedCaregiverHere = (c) => isCaregiverOnDuty(c, location?.id);
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   // Gateway House — the administrator-shared residence where characters from
@@ -307,8 +304,14 @@ export default function Scene() {
       .filter((e) => e?.id && !characterIds.includes(e.id))
       // The user is the observer, not one of the other people here.
       .filter((e) => !isUserPresenceEntity(e, currentUser?.id))
-      .map((entity) => ({ id: entity.id, name: entity.display_name, avatar_url: entity.avatar_url, role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now', isNpc: false, npcType: 'present', resolved_presence_status: entity.resolved_presence_status, personality_summary: entity.personality_summary, emotional_state: entity.emotional_state }));
-  }, [location, unifiedPresenceEntities, characterIds]);
+      .map((entity) => {
+        // The household's caregiver on duty is listed as the caregiver, never as a
+        // random resident or visitor passing through.
+        const rec = characters.find((c) => c.id === entity.id);
+        const role = isCaregiverOnDuty(rec, location.id) ? 'Caregiver' : entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now';
+        return { id: entity.id, name: entity.display_name, avatar_url: entity.avatar_url, role, isNpc: false, npcType: 'present', resolved_presence_status: entity.resolved_presence_status, personality_summary: entity.personality_summary, emotional_state: entity.emotional_state };
+      });
+  }, [location, unifiedPresenceEntities, characterIds, characters]);
 
   const allPossibleNpcs = (() => {
     const npcs = [];
@@ -334,7 +337,21 @@ export default function Scene() {
     return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
   })().map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
 
-  const selectedNpcs = selectedNpcIds !== null ? allPossibleNpcs.filter((n) => selectedNpcIds.includes(n.id)) : [];
+  // A caregiver the existing supervision system currently has on duty in THIS household is
+  // an ACTIVE participant from the first render: physically present, automatically
+  // selected, and part of the opening image. The child is never shown as alone while
+  // supervised, and the caregiver is never a name the user has to add by hand. The same
+  // single individual is the Who's Here entry and the active participant — never a copy.
+  const onDutyCaregiverIds = useMemo(
+    () => characters.filter((c) => isCaregiverOnDuty(c, location?.id)).map((c) => c.id),
+    [characters, location?.id]
+  );
+  const selectedNpcIdList = useMemo(
+    () => [...new Set([...(selectedNpcIdList), ...onDutyCaregiverIds])],
+    [selectedNpcIds, onDutyCaregiverIds.join(',')]
+  );
+
+  const selectedNpcs = allPossibleNpcs.filter((n) => selectedNpcIdList.includes(n.id));
   const traveledWithChars = broughtCharacters;
 
   const baseSceneParticipants = (() => {
@@ -450,6 +467,25 @@ export default function Scene() {
       .catch(() => {});
   }, [isHomeLocation, location?.id, currentUser?.email]);
 
+  // Opening a supervised household opens ON the supervision, once: the caregiver is on
+  // duty and the children are not alone. This is the scene's starting circumstance — it
+  // never re-announces, and it never fabricates a caregiver who is not assigned.
+  const caregivingAnnouncedForRef = useRef(null);
+  useEffect(() => {
+    if (!isHomeLocation || !location?.id || onDutyCaregiverIds.length === 0) return;
+    if (caregivingAnnouncedForRef.current === location.id) return;
+    caregivingAnnouncedForRef.current = location.id;
+    const caregiver = characters.find((c) => c.id === onDutyCaregiverIds[0]);
+    if (!caregiver) return;
+    const children = characters
+      .filter((c) => c.id !== caregiver.id && c.current_home_location_id === location.id && requiresSitter(c).requiresSitter)
+      .map((c) => c.name);
+    const text = children.length > 0
+      ? `${caregiver.name} is here looking after ${children.join(', ')} until an adult who lives here is back.`
+      : `${caregiver.name} is here, on duty as the household's caregiver.`;
+    setMessages((prev) => [...prev, { id: `caregiver_${Date.now()}`, sender: "narrative", content: text, timestamp: new Date().toISOString() }]);
+  }, [isHomeLocation, location?.id, onDutyCaregiverIds.join(','), characters.length]);
+
   useEffect(() => {
     if (!location || broughtCharacters.length === 0) return;
     const _isHomeCat = location.category === 'home';
@@ -514,7 +550,15 @@ export default function Scene() {
     // supervise is never in the moment alone, and the caregiver is never replaced by an
     // unrelated background person.
     const supervision = observeCandidates
-      .filter((c) => c.isNpc !== true && isAssignedCaregiverHere(c))
+      .filter((c) => {
+        if (c.isNpc === true) return false;
+        if (isAssignedCaregiverHere(c)) return true;
+        // The children being supervised are part of the watched household moment — they
+        // are present and pictured, never missing from it.
+        return onDutyCaregiverIds.length > 0
+          && c.current_home_location_id === location?.id
+          && requiresSitter(c).requiresSitter;
+      })
       .map((c) => c.id);
     return [...new Set([...base, ...chosenBackground, ...supervision])];
   }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(',')]);
@@ -785,18 +829,26 @@ export default function Scene() {
         })
         .slice(0, 4);
     }
-    if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
+    if (isHomeLocation) {
+      // A supervised household is pictured as it is: the caregiver on duty AND the
+      // children they are looking after. The image never shows the child alone.
+      const supervisedChildIds = onDutyCaregiverIds.length > 0
+        ? characters.filter((c) => c.current_home_location_id === location.id && requiresSitter(c).requiresSitter).map((c) => c.id)
+        : [];
+      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : [])]);
+      return sceneParticipants.filter((p) => selectedIds.has(p.id));
+    }
     // At a public venue the chosen cast still decides the picture: whoever the user
     // brought or picked is who appears. Other people present only fill in when the
     // user has chosen nobody.
-    const chosenIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
+    const chosenIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIdList), ...(userId ? [userId] : [])]);
     const chosen = sceneParticipants.filter((p) => chosenIds.has(p.id));
     // An established character always keeps a place in the frame. A background person of
     // the venue only ever fills a remaining slot — never a slot ahead of a real character.
     const isBackgroundPerson = (p) => p.isNpc === true || String(p.id).startsWith("npc_");
     if (chosen.length > 0) return [...chosen.filter((p) => !isBackgroundPerson(p)), ...chosen.filter(isBackgroundPerson)].slice(0, 4);
     if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
-    const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]);
+    const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIdList), ...(userId ? [userId] : [])]);
     const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
     return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
   };
@@ -870,7 +922,7 @@ export default function Scene() {
         return `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`;
       }).join("\n");
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
-      const selectedCharIds = selectedNpcIds || [];
+      const selectedCharIds = selectedNpcIdList;
       // A directed interaction is answered by the chosen person only — never by someone else.
       const directedChar = directedTarget
         ? (sceneCharacters.find((c) => c.id === directedTarget.id) || { id: directedTarget.id, name: directedTarget.name })
@@ -895,7 +947,7 @@ export default function Scene() {
       const infantRule = infantCharacters.length > 0
         ? `\nINFANT PRESENT — CANNOT SPEAK (mandatory): ${infantCharacters.map((c) => c.name).join(", ")} ${infantCharacters.length === 1 ? "is a newborn baby" : "are newborn babies"}. They are physically present but non-verbal: they may only be described non-verbally (crying, cooing, babbling, reaching, sleeping). ⛔ Do NOT give them words, sentences, questions, answers, or dialogue of any kind. ⛔ Do NOT include them in the responses array. Other people present may respond and may react to the baby.`
         : "";
-      const ageGateRules = speakingEligible.map((char) => { const age = getCharacterAge(char); if (age === null || age >= 6) return null; if (age < 3) return `${char.name} is a toddler: speak ONLY 1-2 words max.`; return `${char.name} is a young child: max 5 words.`; }).filter(Boolean).join('\n');
+      const ageGateRules = speakingEligible.map(childSpeechLimit).filter(Boolean).join('\n');
       const watchContextBlock = watchContext ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together.\n- You MUST NOT pretend to know the video's contents until analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n` : "";
 
       const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n- A kiss or a flirt is an offer, not a guarantee. Reciprocating must fit this character; hesitating, deflecting, being caught off guard, or turning it down is a valid response.\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
@@ -1152,6 +1204,7 @@ export default function Scene() {
           onVoice={(character, text) => runObserveBeat({ voiceAs: { character, content: text } })}
           onContinue={() => runObserveBeat()}
           isGenerating={isObservingTurn}
+          blockedSpeakIds={[...onDutyCaregiverIds, ...observeCast.filter((c) => isInfantCharacter(c)).map((c) => c.id)]}
         />
       ) : (
         <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />

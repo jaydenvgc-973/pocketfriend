@@ -17,6 +17,7 @@ import { base44 } from '@/api/base44Client';
 import { filterDashes } from '@/lib/dashFilter';
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from '@/lib/sceneBackgroundResponse';
 import { buildSceneCircumstances } from '@/lib/sceneCircumstances';
+import { isInfantCharacter, childSpeechLimit } from '@/lib/characterAgeStage';
 
 // NARRATIVE — events that have ALREADY HAPPENED. Canon, not an instruction.
 const ESTABLISHED_NARRATIVE = (narrative) => `
@@ -55,9 +56,14 @@ export async function generateObserveBeat({ participants, responders, location, 
   const selectedBackground = backgroundCast(npcSpeakers);
   if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
 
+  // A baby cannot speak. They stay physically present in the moment, but no words are
+  // ever generated for them — the same age rule the user-present scene path enforces.
+  const nonverbalCast = cast.filter((c) => isInfantCharacter(c));
+  const speakingCast = cast.filter((c) => !isInfantCharacter(c));
+
   // Who may speak in this beat. Everyone else in the cast is present but listens.
   const requested = responders ? responders.map((c) => c.id) : null;
-  const speaking = requested ? cast.filter((c) => requested.includes(c.id)) : cast;
+  const speaking = requested ? speakingCast.filter((c) => requested.includes(c.id)) : speakingCast;
   // Background people of the venue can join the conversation when they were chosen
   // from Who's Here. They have no canonical record — they speak in role only.
   const bgSpeaking = selectedBackground.filter((n) => !requested || requested.includes(n.id));
@@ -143,6 +149,12 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
     ? `\nONLY THESE MAY SPEAK THIS BEAT: ${nameList}.\n${silent.map((c) => c.name).join(', ')} ${silent.length === 1 ? 'is' : 'are'} present and part of the scene, but do not give ${silent.length === 1 ? 'them' : 'them'} a spoken line this beat — they may only be shown listening or reacting without words.`
     : '';
 
+  const nonverbalRule = nonverbalCast.length > 0
+    ? `\nPRESENT BUT CANNOT SPEAK (mandatory): ${nonverbalCast.map((c) => c.name).join(', ')} ${nonverbalCast.length === 1 ? 'is a baby' : 'are babies'} below speaking age. They are physically here and part of the moment, shown only through non-verbal behaviour (crying, cooing, babbling, reaching, being held, sleeping). ⛔ Do NOT give them words, sentences, questions, answers, or any spoken line, and never include them as a speaker. Everyone else present may speak to and about the baby.`
+    : '';
+
+  const speechLimitRuleText = speaking.map(childSpeechLimit).filter(Boolean).join('\n');
+
   const prompt = `You are writing a scene that takes place between the characters themselves at ${location.name}${activeZone ? `, in the ${activeZone}` : ''} (${location.category}).
 
 THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
@@ -154,6 +166,8 @@ THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 PARTICIPANTS (the people this moment is about):
 ${castLines || '(no established Pocketfriend character is in this moment)'}
 ${silentRule}
+${nonverbalRule}
+${speechLimitRuleText ? `\nAGE SPEECH RULES (mandatory):\n${speechLimitRuleText}` : ''}
 
 ${placeBlock}
 ${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
@@ -210,6 +224,8 @@ Return JSON only.`;
     .map((line, i) => {
       const char = allowed.get(line?.character_name?.trim()?.toLowerCase());
       if (!char || !line?.content) return null;
+      // A child below speaking age never gets a generated line.
+      if (isInfantCharacter(char)) return null;
       return {
         id: `${stamp}_obs_${i}`,
         sender: 'character',

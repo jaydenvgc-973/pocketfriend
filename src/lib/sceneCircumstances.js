@@ -118,11 +118,10 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
   const status = person.resolved_presence_status || '';
   const jobTitle = jobTitleAt(person, location);
   const text = [];
-  // The household's assigned child-care caregiver (existing child-supervision system).
-  // They are a separate person present in the home looking after the children — the
-  // children of this household are supervised, never alone.
-  const isCaregiver = person.is_sitter === true ||
-    /babysit|caregiver|nanny|sitter/i.test(String(person.occupation || ''));
+  // The household's temporary child-care caregiver (existing child-supervision system).
+  // On duty only while the assignment stands: children are home and no adult who lives
+  // here has returned. A visiting adult never ends it.
+  const caregiverOnDuty = person.is_sitter === true && person.sitter_assigned_to_location_id === location.id;
 
   const employedHere = worksHere(person, location);
   const onShift = employedHere && onShiftHere(person, location, onShiftAtLocationIds);
@@ -134,8 +133,8 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
     text.push(`${name} is a PATIENT here, receiving care.`);
   } else if (['incarcerated', 'confined', 'house_arrest'].includes(status)) {
     text.push(`${name} is CONFINED here.`);
-  } else if (residentHere && isCaregiver && !onShift && !classNow) {
-    text.push(`${name} LIVES HERE as the household's CAREGIVER ON DUTY: they are here looking after the children of this home. The children are supervised and are not alone — any child at home with them is being cared for, not left by themselves.`);
+  } else if (caregiverOnDuty && !onShift && !classNow) {
+    text.push(`${name} is this household's TEMPORARY CAREGIVER, here on duty: they are looking after the children of this home until an adult who actually LIVES HERE comes back. Any child at home with them is being cared for, not left alone. Being here is their job right now — they are not a guest, not a visitor, and not someone who wandered in, and an adult who only stops by to visit does not end their responsibility. If asked why they are here, that is the answer.`);
   } else if (residentHere && !onShift && !classNow) {
     // A campus residence is still a home. Living on school property does not mean
     // attending class while at home.

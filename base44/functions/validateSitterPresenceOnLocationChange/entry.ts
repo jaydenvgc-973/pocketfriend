@@ -43,7 +43,8 @@ Deno.serve(async (req) => {
         const isMinor = c.age && c.age < 15;
         const isProtectedNPC = (c.character_type === 'family_npc' || c.character_type === 'npc') && 
                                location.resident_family_members?.some(m => m.name.toLowerCase() === c.name.toLowerCase());
-        const isAtHome = c.current_home_location_id === location.id || c.current_location_id === location.id;
+        const isAtHome = c.current_home_location_id === location.id &&
+                         (!c.resolved_current_location_id || c.resolved_current_location_id === location.id);
         const isAlive = c.status !== 'deleted';
         
         return (isMinor || isProtectedNPC) && isAtHome && isAlive;
@@ -51,15 +52,18 @@ Deno.serve(async (req) => {
 
       if (homeDependents.length === 0) continue;
 
-      // Check for valid supervising adults
+      // A supervising adult is an ADULT HOUSEHOLD RESIDENT who is physically home now.
+      // A visiting adult does not live here, so their presence never ends supervision,
+      // and a resident who is elsewhere has not returned yet.
       const supervisingAdults = allCharacters.filter(c => {
         const isAdult = !c.age || c.age >= 18;
-        const isAtHome = c.current_location_id === location.id || c.current_home_location_id === location.id;
+        const isResident = c.current_home_location_id === location.id;
+        const isHere = !c.resolved_current_location_id || c.resolved_current_location_id === location.id;
         const isAlive = c.status !== 'deleted';
         const isNotDependent = !(c.age && c.age < 15);
         const isNotAsleepOrAway = c.character_type !== 'background';
-        
-        return isAdult && isAtHome && isAlive && isNotDependent && isNotAsleepOrAway && !c.is_sitter;
+
+        return isAdult && isResident && isHere && isAlive && isNotDependent && isNotAsleepOrAway && !c.is_sitter;
       });
 
       report.checksPerformed.push({
@@ -88,13 +92,25 @@ Deno.serve(async (req) => {
         const isMinor = c.age && c.age < 15;
         const isProtectedNPC = (c.character_type === 'family_npc' || c.character_type === 'npc') && 
                                homeLocation.resident_family_members?.some(m => m.name.toLowerCase() === c.name.toLowerCase());
-        const isAtHome = c.current_location_id === homeLocation.id;
+        const isResident = c.current_home_location_id === homeLocation.id;
+        const isHere = !c.resolved_current_location_id || c.resolved_current_location_id === homeLocation.id;
         const isAlive = c.status !== 'deleted';
         
-        return (isMinor || isProtectedNPC) && isAtHome && isAlive;
+        return (isMinor || isProtectedNPC) && isResident && isHere && isAlive;
       });
 
-      if (dependentsNeedingSitter.length === 0) {
+      // Only a household resident returning home ends this supervision. A visitor at the
+      // house, or the caregiver themselves, never removes the caregiver.
+      const residentGuardianPresent = allCharacters.some(c =>
+        c.id !== sitter.id &&
+        c.current_home_location_id === homeLocation.id &&
+        (!c.resolved_current_location_id || c.resolved_current_location_id === homeLocation.id) &&
+        !c.is_sitter &&
+        (!c.age || c.age >= 18) &&
+        c.status !== 'deleted'
+      );
+
+      if (dependentsNeedingSitter.length === 0 || residentGuardianPresent) {
         // No dependents at this home anymore — remove sitter
         await base44.entities.Character.update(sitter.id, {
           is_sitter: false,

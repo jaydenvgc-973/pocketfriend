@@ -72,6 +72,27 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     // No DB state either — fall through to normal resolution (will eventually return 'location_unresolved')
   }
 
+  // CHILD-SUPERVISION CAREGIVER GUARD:
+  // A caregiver the existing child-supervision system has on duty (is_sitter +
+  // sitter_assigned_to_location_id) is physically at THAT home — even when its own
+  // household record lives somewhere else. Without this guard the home contradiction
+  // guard would "correct" a supervising caregiver back to its own house, and the child
+  // would be shown alone the moment the page loads. The assignment IS the presence;
+  // when the supervision ends the assignment is cleared and this guard stops applying.
+  if (character.is_sitter === true && character.sitter_assigned_to_location_id) {
+    const supervisionHome = locationMap[character.sitter_assigned_to_location_id];
+    if (supervisionHome) {
+      return {
+        resolved_current_location_id: supervisionHome.id,
+        resolved_current_location_name: supervisionHome.name || 'Home',
+        resolved_location_type: 'supervision_home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'child_supervision_assignment',
+        resolved_zone: null,
+      };
+    }
+  }
+
   // HOME CONTRADICTION GUARD (runs before all layers):
   // If the DB claims resolved_presence_status = home but the resolved location is NOT
   // the character's authoritative effective home, reject the stale state
