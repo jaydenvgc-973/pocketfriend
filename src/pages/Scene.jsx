@@ -224,8 +224,14 @@ export default function Scene() {
   }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
 
   // The household's assigned child-care caregiver — a legitimate person in this home,
-  // never a random residential NPC.
-  const isAssignedCaregiverHere = (c) => c?.is_sitter === true && c?.sitter_assigned_to_location_id === location?.id;
+  // never a random residential NPC. Recognized by the existing caregiver marker or role,
+  // belonging to THIS household (assigned to it, or living here).
+  const isAssignedCaregiverHere = (c) => {
+    if (!c) return false;
+    const caregiver = c.is_sitter === true || /babysit|caregiver|nanny|sitter/i.test(String(c.occupation || ''));
+    if (!caregiver) return false;
+    return c.sitter_assigned_to_location_id === location?.id || c.current_home_location_id === location?.id;
+  };
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   // Gateway House — the administrator-shared residence where characters from
