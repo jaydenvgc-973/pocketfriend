@@ -60,6 +60,10 @@ export function useSceneImageGenerator() {
       locationMap,
       actionOverridePrompt = null,
       strictCastOnly = false,
+      // The exact people the chosen action involves (acting participant + chosen target).
+      // When present, they are the cast of the image — the action is never rendered
+      // without the person it was aimed at.
+      actionFocusIds = null,
     } = opts;
 
     if (!location || isGeneratingImage) return;
@@ -70,7 +74,7 @@ export function useSceneImageGenerator() {
     const lightingDesc = getLightingDescriptor(hour);
 
     // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──
-    const finalParticipants = selectImageParticipants();
+    const finalParticipants = selectImageParticipants(actionFocusIds);
 
     // ── USER APPEARANCE BLOCK ──
     const userAppearanceBlock = userParticipant ? buildAppearanceLockBlock(userParticipant) : '';

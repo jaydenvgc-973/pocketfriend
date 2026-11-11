@@ -58,7 +58,58 @@ export const ACTION_IMAGE_PROMPTS = {
   cook:            (loc, who) => `${who} cooking in a kitchen, warm domestic lighting, photorealistic`,
   watch_tv:        (loc, who) => `${who} relaxing on a couch watching TV in a cozy living room, photorealistic`,
   order_drink_bar: (loc, who) => `Close-up of two cocktails being raised in a toast at a bar, photorealistic`,
+  // ── HOUSEHOLD ACTIVITIES ──
+  // Each one depicts the activity actually in progress — never a passive standing pose.
+  home_workout:    (loc, who) => who.includes("empty")
+    ? `Home workout area with a yoga mat, dumbbells and a resistance band laid out, no people, photorealistic.`
+    : `${who} actively working out in the home — mid-rep strength training with dumbbells, bodyweight squats or push-ups on a mat, athletic effort, focused expression, exercise clothing, photorealistic. No other people.`,
+  home_clean_up:   (loc, who) => who.includes("empty")
+    ? `Tidy home interior with cleaning supplies and folded cloths, no people, photorealistic.`
+    : `${who} actively cleaning the home — sweeping or vacuuming the floor, wiping down a surface, holding cleaning supplies, mid-motion, sleeves pushed up, photorealistic. No other people.`,
+  home_dishes:     (loc, who) => who.includes("empty")
+    ? `Kitchen sink filled with soapy water and clean plates on the drying rack, no people, photorealistic.`
+    : `${who} standing at the kitchen sink washing dishes, hands in soapy water, plates on the drying rack, warm kitchen light, photorealistic. No other people.`,
+  home_brush_teeth:(loc, who) => who.includes("empty")
+    ? `Bathroom sink with a toothbrush and toothpaste, mirror, no people, photorealistic.`
+    : `${who} brushing their teeth at the bathroom sink, toothbrush in mouth, toothpaste foam, mirror reflection, photorealistic. No other people.`,
+  home_shower:     (loc, who) => who.includes("empty")
+    ? `Steamy bathroom with the shower running behind glass, no people, photorealistic.`
+    : `${who} taking a shower, water running, steam filling the bathroom, wet hair, shoulders visible above a towel-wrapped or frosted-glass frame, tasteful and non-explicit, photorealistic. No other people.`,
+  home_make_bed:   (loc, who) => who.includes("empty")
+    ? `Neatly made bed in a sunlit bedroom, folded duvet and arranged pillows, no people, photorealistic.`
+    : `${who} making the bed in the bedroom — smoothing the duvet, tucking sheets, fluffing a pillow, morning light, photorealistic. No other people.`,
 };
+
+// ── HOUSEHOLD ACTIVITIES ──
+// Ids whose image must show the person actually doing the thing. The user is named in
+// the prompt when they are in the scene, since the participant list already includes them.
+export const HOUSEHOLD_ACTION_IDS = [
+  "home_workout", "home_clean_up", "home_dishes",
+  "home_brush_teeth", "home_shower", "home_make_bed",
+];
+
+// ── DIRECTED INTERACTION PROMPTS ──────────────────────────────────────────────
+// Kiss / Flirt With / Argue With are interactions BETWEEN two specific people, so the
+// prompt always names both of them and states the body language plainly. A directed
+// action must never render as one person alone, a crowd, or affectionate body language
+// during an argument.
+export function buildDirectedActionPrompt({ actionId, actorName, targetName, locationName }) {
+  const actor = actorName || "the person";
+  const target = targetName || "the other person";
+  const loc = locationName || "this place";
+  const together = `BOTH ${actor} and ${target} are clearly visible in frame — this is a moment between the two of them, never one person standing alone. `;
+
+  switch (actionId) {
+    case "kiss":
+      return `${actor} kissing ${target} at ${loc}, their lips meeting, close romantic embrace, hands on a cheek and around a waist, eyes closed, intimate and tasteful, non-explicit, photorealistic. ${together}No other people.`;
+    case "flirt_with":
+      return `${actor} flirting with ${target} at ${loc}, leaning in close, playful smile, teasing eye contact, a light touch on the arm, warm chemistry between them, photorealistic. ${together}No other people.`;
+    case "argue_with":
+      return `${actor} arguing with ${target} at ${loc}, standing face to face in a tense confrontation, hard expressions, raised hands mid-gesture, defensive posture, clearly NOT affectionate, dramatic lighting, photorealistic. ${together}No other people.`;
+    default:
+      return `${actor} and ${target} at ${loc}, photorealistic. ${together}`;
+  }
+}
 
 // Re-export from the authoritative adapter
 export { getSceneInteractions } from './sceneInteractionEngine.js';

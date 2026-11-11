@@ -32,7 +32,7 @@ import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
-import { ACTION_IMAGE_PROMPTS } from "@/lib/sceneActionConfig";
+import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
@@ -471,6 +471,27 @@ export default function Scene() {
     setDirectedAction(null);
     if (!action || !target?.id) return;
     const label = `[${action.emoji} ${action.label} — ${target.name}]`;
+    // The top scene image must show the interaction itself — the person acting and the
+    // person it is aimed at. In a watched scene the actor is the character in the moment;
+    // when the user is present, the user is the one acting.
+    const actor = observeMode
+      ? (observeCast.find((c) => c.id !== target.id && sceneParticipants.some((p) => p.id === c.id)) || null)
+      : userParticipant;
+    const actorName = actor?.name || actor?.display_name || null;
+    if (actor?.id && actorName) {
+      generateSceneImage({
+        location, locationZones, activeZone, sceneParticipants, userParticipant,
+        isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
+        strictCastOnly: observeMode,
+        actionFocusIds: [actor.id, target.id],
+        actionOverridePrompt: buildDirectedActionPrompt({
+          actionId: action.id,
+          actorName,
+          targetName: target.name,
+          locationName: location?.name,
+        }),
+      });
+    }
     // A watched scene stages the moment between the people in it: the cast acts on it.
     if (observeMode) {
       runObserveBeat({ direction: label });
@@ -597,8 +618,14 @@ export default function Scene() {
 
   // ── IMAGE PARTICIPANT SELECTION ──
   // Selects a subset of sceneParticipants by stable ID. The user is already a participant.
-  const selectImageParticipants = () => {
+  const selectImageParticipants = (focusIds = null) => {
     const userId = userParticipant?.id;
+    // A directed action names exactly who it involves — those two people are the image,
+    // whichever of them is playing the scene.
+    if (Array.isArray(focusIds) && focusIds.length > 0) {
+      const focused = sceneParticipants.filter((p) => focusIds.includes(p.id));
+      if (focused.length > 0) return focused.slice(0, 4);
+    }
     // Observed scene: the people actually in the moment are the ones in the image.
     if (observeMode) return sceneParticipants.filter((p) => observeCastIdList.includes(p.id)).slice(0, 4);
     if (isHomeLocation) { const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIds || []), ...(userId ? [userId] : [])]); return sceneParticipants.filter((p) => selectedIds.has(p.id)); }
@@ -794,7 +821,7 @@ export default function Scene() {
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      if (actionImageFn) { const presentPeople = [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoDesc = presentPeople.length > 0 ? presentPeople.map((c) => c.name).join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
+      if (actionImageFn) { const presentPeople = [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoNames = presentPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
