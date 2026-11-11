@@ -884,6 +884,7 @@ export default function Scene() {
         backgroundPeople: selectedNpcs.filter((n) => n.isNpc === true).map((n) => ({ id: n.id, name: n.name, role: n.role })),
         onShiftAtLocationIds: onShiftIds,
         homeResidentIds,
+        locationsById: locationMap,
       });
 
       const responses = await base44.integrations.Core.InvokeLLM({
