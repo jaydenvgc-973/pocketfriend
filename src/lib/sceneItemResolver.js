@@ -51,11 +51,11 @@ const CATEGORY_PATTERN_MAP = {
 
 /**
  * Category-specific generic fallback labels.
- * Used when no item can be resolved from message or context.
+ * Used when no item can be resolved from message, action label, or context.
+ * Food/drink fallbacks are venue-resolved (see venueAppropriateItem) — a universal
+ * "cocktail" fallback is forbidden because it contradicts a coffee order in a café.
  */
 const CATEGORY_FALLBACKS = {
-  food:        'meal',
-  drink:       'cocktail',
   clothing:    'clothing item',
   home_goods:  'home item',
   hardware:    'tool',
@@ -63,6 +63,28 @@ const CATEGORY_FALLBACKS = {
   pharmacy:    'health item',
   electronics: 'electronics item',
 };
+
+/**
+ * Venue-appropriate fallback items for food and drink.
+ * Order matters — the first matching venue family wins.
+ */
+const VENUE_ITEM_FALLBACKS = [
+  { pattern: /(caf|coffee|espresso|roaster|teahouse|tea house|bakery|patisserie|diner|breakfast|brunch|juice|smoothie)/i, drink: 'Coffee', food: 'Pastry' },
+  { pattern: /(bar|pub|lounge|tavern|club|brewery|winery|distiller|cocktail|speakeasy|rooftop)/i, drink: 'Cocktail', food: 'Bar Snack' },
+  { pattern: /(restaurant|bistro|grill|kitchen|eatery|steakhouse|pizzeria|trattoria|cantina|food truck)/i, drink: 'Soft Drink', food: 'Meal' },
+];
+
+/**
+ * Resolve a food or drink item that belongs to the given venue.
+ * Never returns an item from an unrelated venue family.
+ */
+export function venueAppropriateItem(category, location) {
+  const venueText = `${location?.name || ''} ${location?.category || ''} ${location?.venue_identity || ''} ${location?.club_theme || ''}`;
+  const match = VENUE_ITEM_FALLBACKS.find((v) => v.pattern.test(venueText));
+  if (category === 'drink') return match?.drink || 'Drink';
+  if (category === 'food') return match?.food || 'Meal';
+  return CATEGORY_FALLBACKS[category] || 'item';
+}
 
 /**
  * Derive the best category from a candidate string.
@@ -73,6 +95,44 @@ function deriveCategoryFromCandidate(candidate) {
     if (pattern.test(candidate)) return cat;
   }
   return null;
+}
+
+// ── ACTION-LABEL ITEM EXTRACTION ────────────────────────────────────────────
+// The Scene action strip wraps its label into the outgoing text as
+// "[☕ Order coffee — $5]". The selected action IS the order, so the item the
+// Shopfeed offers must come from that label — never from a category default.
+
+const ACTION_LEAD_VERBS = /^(?:i(?:'ll| will| want to)?\s+)?(?:order|buy|purchase|grab|get|have|take|pick up|try|sip|drink|eat|go for)\s+(?:a|an|some|the|one|another)?\s*/i;
+
+// Words that name no actual item — they must never become the offered item.
+const GENERIC_ITEMS = /^(?:drink|drinks|food|meal|snack|something|anything|option|item|another|round|one|it|that|this|stuff|beverage)$/i;
+
+/**
+ * Extract the item named by a Scene action label (or its bracketed echo).
+ * Returns a display label such as "Coffee", "Hotdog", "Pastry" — or null when
+ * the action names nothing specific.
+ */
+export function extractItemFromActionLabel(rawText) {
+  if (!rawText) return null;
+  let s = String(rawText).trim();
+
+  // Unwrap the action echo: "[☕ Order coffee — $5]"
+  const bracketed = s.match(/^\[(.+)\]$/);
+  if (bracketed) s = bracketed[1];
+
+  s = s.replace(/[—–-]\s*\$[\d.,]+/g, ' ')   // price tail
+       .replace(/\([^)]*\)/g, ' ')            // "(Maya pays)"
+       .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')   // emoji, symbols
+       .replace(/\s+/g, ' ')
+       .trim();
+  if (!s) return null;
+
+  const withoutVerb = s.replace(ACTION_LEAD_VERBS, '').trim() || s;
+  if (!withoutVerb || GENERIC_ITEMS.test(withoutVerb)) return null;
+
+  return withoutVerb
+    .replace(/\b\p{L}/gu, (c) => c.toUpperCase())
+    .slice(0, 60);
 }
 
 /**
@@ -153,13 +213,26 @@ function isCandidateValidForCategory(candidate, actionCategory) {
  * @param {string} rawText           - The user's raw message text
  * @param {Array}  messages          - Recent scene messages for context resolution
  * @param {string|null} actionCategory - Explicit category from strip action (food/drink/clothing/home_goods/hardware/grocery/pharmacy/electronics)
+ * @param {Object|null} location     - Current location, used so a fallback item belongs to this venue
  * @returns {{ label: string, category: string }}
  */
-export function extractSceneItemLabel(rawText, messages, actionCategory = null) {
+export function extractSceneItemLabel(rawText, messages, actionCategory = null, location = null) {
   // ── STEP 1: Check if the whole message is a pronoun confirmation ─────────
   const isWholePronoun = WHOLE_MSG_PRONOUN.test(rawText.trim());
 
-  // ── STEP 2: Try to extract a real noun phrase from the message ───────────
+  // ── STEP 2: A selected action names the item directly — it outranks
+  //            conversation context. "Order coffee" → Coffee, never a default.
+  //            Only the Scene's bracketed action echo ("[☕ Order coffee — $5]")
+  //            qualifies, so typed messages keep their existing parsing.
+  const isActionEcho = /^\[[^\]]+\]$/.test(rawText.trim());
+  if (!isWholePronoun && isActionEcho) {
+    const actionItem = extractItemFromActionLabel(rawText);
+    if (actionItem && (!actionCategory || isCandidateValidForCategory(actionItem, actionCategory))) {
+      return { label: actionItem, category: actionCategory || deriveCategoryFromCandidate(actionItem) || 'food' };
+    }
+  }
+
+  // ── STEP 3: Try to extract a real noun phrase from a typed message ───────
   let candidate = null;
   if (!isWholePronoun) {
     const tryMatch = rawText.match(/(?:i'll (?:have|take|get|order)|can i (?:get|have|order)|give me|i want|i'd like|show me|let me see|i'll take|bring me|get me|looking for|i need|i want to buy|i'd like to buy|i'll buy)\s+(?:a |an |some |the |one )?(.+)/i);
@@ -170,26 +243,26 @@ export function extractSceneItemLabel(rawText, messages, actionCategory = null) 
     }
   }
 
-  // ── STEP 3: Validate the candidate matches the action category ───────────
+  // ── STEP 4: Validate the candidate matches the action category ───────────
   if (candidate && actionCategory && !isCandidateValidForCategory(candidate, actionCategory)) {
     console.log(`[Scene] Candidate "${candidate}" rejected — cross-category mismatch with action=${actionCategory}`);
     candidate = null; // force context resolution
   }
 
-  // ── STEP 4: If no valid candidate, resolve from conversation context ─────
+  // ── STEP 5: If no valid candidate, resolve from conversation context ─────
   if (!candidate) {
     const contextItem = resolveActiveItemFromContext(messages, actionCategory);
     if (contextItem) {
       console.log(`[Scene] Pronoun resolved: "${rawText}" → "${contextItem.label}" (category=${contextItem.category})`);
       return { label: contextItem.label, category: actionCategory || contextItem.category };
     }
-    // No context at all — use category-correct generic fallback
-    const fallbackLabel = CATEGORY_FALLBACKS[actionCategory] || 'item';
+    // No context at all — use a category-correct, venue-correct fallback
     const fallbackCategory = actionCategory || 'food';
+    const fallbackLabel = venueAppropriateItem(fallbackCategory, location);
     return { label: fallbackLabel, category: fallbackCategory };
   }
 
-  // ── STEP 5: Derive category from candidate if not action-locked ──────────
+  // ── STEP 6: Derive category from candidate if not action-locked ──────────
   const category = actionCategory || deriveCategoryFromCandidate(candidate) || 'food';
 
   return { label: candidate.slice(0, 60), category };

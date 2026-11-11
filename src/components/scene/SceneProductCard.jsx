@@ -30,8 +30,18 @@ export default function SceneProductCard({
     const category = msg.item_category;
 
     switch (category) {
-      case "drink":
+      case "drink": {
+        // Serve the item in the drinkware and setting its own name implies —
+        // coffee in a mug, a shake in a tall glass, a cocktail in bar glassware.
+        const l = itemLabel.toLowerCase();
+        if (/coffee|espresso|latte|cappuccino|mocha|americano|macchiato|tea|chai|matcha|cocoa|hot chocolate/.test(l)) {
+          return `Professional café beverage photography of a ${itemLabel}, served hot in a ceramic mug or cup on a café counter, close-up, clean background, high detail, no alcohol, not a cocktail, no food items`;
+        }
+        if (/milkshake|smoothie|juice|soda|cola|lemonade|water|iced/.test(l)) {
+          return `Professional beverage photography of a ${itemLabel}, served in a tall glass with a straw, close-up, clean background, high detail, no alcohol, no food items`;
+        }
         return `Professional bar photography of a ${itemLabel}, beautifully presented in a glass on a bar surface, close-up, clean background, high detail, no food items`;
+      }
       case "food":
         return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
       case "clothing":
@@ -129,7 +139,7 @@ export default function SceneProductCard({
     setMessages(prev => [...prev, {
       id: `regen_${Date.now()}`,
       sender: "user",
-      content: `Show me a different ${msg.item_label || "option"}.`,
+      content: `Show me a different ${msg.item_label ? msg.item_label.toLowerCase() : "option"}.`,
       timestamp: new Date().toISOString(),
     }]);
   };
@@ -209,7 +219,7 @@ export default function SceneProductCard({
         onClick={handleAskAnother}
         className="w-full text-[10px] text-primary/70 hover:text-primary underline transition-colors"
       >
-        Show me another {msg.item_label ? msg.item_label.split(" ").slice(-1)[0] : "option"}
+        Show me another {msg.item_label ? msg.item_label.toLowerCase() : "option"}
       </button>
     </div>
   );
