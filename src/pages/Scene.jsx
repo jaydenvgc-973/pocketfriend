@@ -28,6 +28,7 @@ import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import ObserveStageControls from "@/components/scene/ObserveStageControls";
+import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
@@ -51,6 +52,14 @@ import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
 import { isInfantCharacter } from "@/lib/characterAgeStage";
 import { getCharacterAge } from "@/lib/characterAgeSystem";
+
+// Directed interactions act on ONE chosen person who is actually present.
+// They are performed through the existing scene/narrative pathway — no new system.
+const DIRECTED_SCENE_ACTIONS = [
+  { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses" },
+  { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with" },
+  { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with" },
+];
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -95,6 +104,7 @@ export default function Scene() {
   const [watchVideoActive, setWatchVideoActive] = useState(false);
   const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
+  const [directedAction, setDirectedAction] = useState(null);
   const [showSharedConversation, setShowSharedConversation] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
@@ -427,6 +437,52 @@ export default function Scene() {
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
 
+  // ── DIRECTED CHARACTER INTERACTIONS ──
+  // Kiss / Flirt With / Argue With need a target the user chooses from the people who
+  // are actually present. The list comes from the authoritative scene participants:
+  // NPC placeholders, the user, deceased characters and infants are never offered.
+  const directedTargets = useMemo(() => {
+    const seen = new Set();
+    // In a watched scene the moment belongs to the chosen cast — target one of them.
+    const castSet = observeMode ? new Set(observeCastIdList) : null;
+    return sceneParticipants
+      .filter((p) => {
+        if (!p || !p.id || p.isNpc || p.isUser) return false;
+        if (p.id === currentUser?.id) return false;
+        if (String(p.id).startsWith("npc_")) return false;
+        if (castSet && !castSet.has(p.id)) return false;
+        if (p.life_status === "deceased" || p.status === "deceased") return false;
+        if (isInfantCharacter(p)) return false;
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      })
+      .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+  }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id, observeMode, observeCastIdList.join(",")]);
+
+  // In a character-only scene the invitation comes FROM the character who is there,
+  // never from the absent user.
+  const characterInviter = observeMode
+    ? (observeCast.find((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_")) || null)
+    : null;
+
+  const handleDirectedTarget = (target) => {
+    const action = directedAction;
+    setDirectedAction(null);
+    if (!action || !target?.id) return;
+    const label = `[${action.emoji} ${action.label} — ${target.name}]`;
+    // A watched scene stages the moment between the people in it: the cast acts on it.
+    if (observeMode) {
+      runObserveBeat({ direction: label });
+      return;
+    }
+    sendMessage(label, true, null, null, null, null, null, false, {
+      id: target.id,
+      name: target.name,
+      instruction: `${displayName} ${action.verb} ${target.name}.`,
+    });
+  };
+
   const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
@@ -592,7 +648,7 @@ export default function Scene() {
 
   const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, timestamp: new Date().toISOString() }]); };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null) => {
     if (!text.trim() || !location) return; setInputText("");
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
@@ -618,7 +674,11 @@ export default function Scene() {
       const conversationHistory = messages.slice(-12).map((m) => `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`).join("\n");
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
       const selectedCharIds = selectedNpcIds || [];
-      const dialogueEligible = privateTarget ? sceneCharacters.filter((c) => c.id === privateTarget.id || c.name === privateTarget.name) : selectedCharIds.length > 0 ? [...broughtCharacters.filter((c) => selectedCharIds.includes(c.id)), ...selectedNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i) : [];
+      // A directed interaction is answered by the chosen person only — never by someone else.
+      const directedChar = directedTarget
+        ? (sceneCharacters.find((c) => c.id === directedTarget.id) || { id: directedTarget.id, name: directedTarget.name })
+        : null;
+      const dialogueEligible = directedChar ? [directedChar] : privateTarget ? sceneCharacters.filter((c) => c.id === privateTarget.id || c.name === privateTarget.name) : selectedCharIds.length > 0 ? [...broughtCharacters.filter((c) => selectedCharIds.includes(c.id)), ...selectedNpcs].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i) : [];
       // INFANTS ARE PRESENT, NOT CONVERSATIONAL: age 0 is a newborn — physically in
       // the scene, never capable of speech or an adult conversational response.
       const infantCharacters = dialogueEligible.filter((c) => isInfantCharacter(c));
@@ -635,8 +695,10 @@ export default function Scene() {
       const ageGateRules = speakingEligible.map((char) => { const age = getCharacterAge(char); if (age === null || age >= 6) return null; if (age < 3) return `${char.name} is a toddler: speak ONLY 1-2 words max.`; return `${char.name} is a young child: max 5 words.`; }).filter(Boolean).join('\n');
       const watchContextBlock = watchContext ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together.\n- You MUST NOT pretend to know the video's contents until analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n` : "";
 
+      const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n- A kiss or a flirt is an offer, not a guarantee. Reciprocating must fit this character; hesitating, deflecting, being caught off guard, or turning it down is a valid response.\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
+
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -839,6 +901,18 @@ export default function Scene() {
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
+          {directedTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => (
+            <button key={directed.id} onClick={() => { if (actionCooldown) return; setDirectedAction(directed); }} disabled={actionCooldown} title={`${directed.label} — choose who`} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
+              <span className="text-base leading-none">{directed.emoji}</span>
+              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{directed.label}</span>
+            </button>
+          ))}
+          {characterInviter && (
+            <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
+              <span className="text-base leading-none">🙋</span>
+              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Invite Character</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -872,7 +946,8 @@ export default function Scene() {
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
-      <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
+      <SceneTargetPicker action={directedAction} targets={directedTargets} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
+      <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
       <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(message) => { const price = pendingPurchase?.price; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `✓ Purchased for $${price} — ${message}.`, timestamp: new Date().toISOString() }]); setPendingPurchase(null); }} />

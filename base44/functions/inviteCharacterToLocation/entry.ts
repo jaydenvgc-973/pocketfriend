@@ -12,7 +12,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { inviteeId, inviteeName, inviteeType, locationId, locationName, locationCategory, userDisplayName } = await req.json();
+    const { inviteeId, inviteeName, inviteeType, locationId, locationName, locationCategory, userDisplayName, inviterName, inviterCharacterId } = await req.json();
 
     if (!locationId || !locationName) {
       return Response.json({ error: 'Missing locationId or locationName' }, { status: 400 });
@@ -34,8 +34,10 @@ Deno.serve(async (req) => {
       }, { status: 409 });
     }
 
-    const now = new Date();
-    const hourNow = now.getHours();
+    // Authoritative application time is Eastern. Server time is never used to decide
+    // whether someone is asleep, at work, or at school.
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hourNow = nowET.getHours();
 
     // Evaluate their current state
     let isAsleep = false;
@@ -57,7 +59,7 @@ Deno.serve(async (req) => {
 
       // Work check
       if (invitee.work_start_time && invitee.work_end_time && invitee.work_days) {
-        const dayOfWeek = now.getDay();
+        const dayOfWeek = nowET.getDay();
         const [workStartH] = (invitee.work_start_time || '09:00').split(':').map(Number);
         const [workEndH] = (invitee.work_end_time || '17:00').split(':').map(Number);
         const workDays = invitee.work_days || [];
@@ -68,7 +70,7 @@ Deno.serve(async (req) => {
 
       // School check
       if (invitee.student_status === 'enrolled' && invitee.education_location_id) {
-        if (hourNow >= 8 && hourNow < 16 && [1,2,3,4,5].includes(now.getDay())) {
+        if (hourNow >= 8 && hourNow < 16 && [1,2,3,4,5].includes(nowET.getDay())) {
           isAtSchool = true;
         }
       }
@@ -87,18 +89,32 @@ Deno.serve(async (req) => {
     const friendshipLevel = invitee?.friendship_level ?? 75;
     const emotionalState = invitee?.emotional_state || 'calm';
 
+    // When a character is doing the inviting, their own existing relationship with
+    // the invitee is what the decision turns on — not the account user's bond.
+    let inviterBond = null;
+    if (inviterCharacterId && invitee) {
+      const rel = (invitee.fictional_relationships || []).find((r: any) => r?.related_character_id === inviterCharacterId);
+      if (rel) inviterBond = {
+        type: (rel.relationship_type || rel.relation || '').toString().replace(/_/g, ' '),
+        friendship: rel.friendship_level ?? null,
+        romantic: rel.romantic_level ?? null,
+      };
+    }
+
     // Build context for LLM decision
     const contextLines = [
       `Person being invited: ${name}`,
       personality ? `Personality: ${personality}` : '',
       `Current emotional state: ${emotionalState}`,
       `Friendship level with user: ${friendshipLevel}/100`,
+      inviterName ? `Invitation is from ${inviterName}, who is already at ${locationName} — not from the account user.` : '',
+      inviterBond ? `Bond with ${inviterName}: ${inviterBond.type || 'acquaintance'}, friendship ${inviterBond.friendship ?? 'unknown'}/100, romantic ${inviterBond.romantic ?? 0}/100` : '',
       isAsleep ? `Status: ASLEEP right now` : '',
       isAtWork ? `Status: CURRENTLY AT WORK` : '',
       isAtSchool ? `Status: CURRENTLY IN SCHOOL/CLASS` : '',
       currentLocationName ? `Current location: ${currentLocationName}` : '',
       `Invited to: ${locationName} (${locationCategory || 'unknown type'})`,
-      `Invited by: ${userDisplayName || 'the user'}`,
+      `Invited by: ${inviterName || userDisplayName || 'the user'}`,
     ].filter(Boolean).join('\n');
 
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({

@@ -79,7 +79,7 @@ function InviteResult({ result }) {
  * - fictional_relationships[].person_name without a related_character_id is NOT selectable.
  * - family_members[] entries without _linked_character_id are NOT selectable.
  */
-export default function InviteToSceneModal({ isOpen, onClose, location, characters, userDisplayName, onCharacterArrived }) {
+export default function InviteToSceneModal({ isOpen, onClose, location, characters, userDisplayName, initiator = null, onCharacterArrived }) {
   const [selected, setSelected] = useState([]);
   const [sending, setSending] = useState(false);
   const [results, setResults] = useState([]);
@@ -99,8 +99,8 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
         return fetchUnifiedRoster(base44, user.email)
           .then(({ roster: r, repairDiagnostics: diag }) => {
             if (cancelled) return;
-            // Exclude the user-self entry — they are the host
-            const invitees = r.filter(e => !e.is_user);
+            // Exclude the user-self entry and the character doing the inviting
+            const invitees = r.filter(e => !e.is_user && e.canonical_person_id !== initiator?.id);
             if (invitees.length === 0 && r.length <= 1) {
               setLoadStatus('user_only');
             } else {
@@ -141,7 +141,7 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
         if (!user?.email) return;
         return fetchUnifiedRoster(base44, user.email)
           .then(({ roster: r, repairDiagnostics: diag }) => {
-            setRoster(r.filter(e => !e.is_user));
+            setRoster(r.filter(e => !e.is_user && e.canonical_person_id !== initiator?.id));
             setLoadStatus('fresh');
             setRepairDiagnostics(diag || []);
           });
@@ -179,6 +179,9 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
           locationName: location.name,
           locationCategory: location.category,
           userDisplayName,
+          // When a character is at the location without the user, the invitation is theirs.
+          inviterName: initiator?.name || null,
+          inviterCharacterId: initiator?.id || null,
         });
         const data = res?.data || {};
         inviteResults.push({
@@ -253,7 +256,9 @@ export default function InviteToSceneModal({ isOpen, onClose, location, characte
                   <UserPlus className="w-4 h-4 text-primary" />
                   Invite someone here
                 </h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Ask them to come to {location?.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {initiator ? `${initiator.name} asks them to come to ${location?.name}` : `Ask them to come to ${location?.name}`}
+                </p>
               </div>
               <button onClick={handleClose} className="p-1 hover:bg-secondary rounded-lg transition-colors">
                 <X className="w-4 h-4 text-muted-foreground" />

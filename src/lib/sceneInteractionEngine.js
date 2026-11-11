@@ -84,6 +84,13 @@ export function getSceneInteractions(location, activeZone, character, options = 
         result.suggested_zone_name = action.suggested_zone;
       }
       // If zone doesn't exist, action is still available — just not zone-locked
+    } else if (Array.isArray(action.zone_hints) && action.zone_hints.length > 0) {
+      // Several homes name the same kind of room differently. Match the hint keywords
+      // against the REAL zones on this location; no match means no zone lock at all.
+      const match = realZones.find(zone =>
+        action.zone_hints.some(hint => String(zone).toLowerCase().includes(hint))
+      );
+      if (match) result.suggested_zone_name = match;
     }
 
     // Staff check: if action requires staff but none are on shift, flag it (still visible)

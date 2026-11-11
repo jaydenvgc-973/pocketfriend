@@ -212,6 +212,15 @@ const HOME_ACTIONS = classifyAll([
   { id: "cook", label: "Cook something", emoji: "👨‍🍳", cost: 0, type: "functional", suggested_zone: "Kitchen" },
   { id: "nap", label: "Nap on couch", emoji: "😴", cost: 0, type: "observational", suggested_zone: "Living Room" },
   { id: "lay_down", label: "Lie down", emoji: "🛌", cost: 0, type: "observational", suggested_zone: "Bedroom" },
+  // Household activities — available because this is a home.
+  // zone_hints are matched against the real zones on the location by the adapter:
+  // a zone that does not exist simply leaves the activity unlocked, never redirects.
+  { id: "home_workout", label: "Workout", emoji: "💪", cost: 0, type: "functional", zone_hints: ["living room", "bedroom", "garage", "den"] },
+  { id: "home_clean_up", label: "Clean Up", emoji: "🧹", cost: 0, type: "functional" },
+  { id: "home_dishes", label: "Wash Dishes", emoji: "🍽️", cost: 0, type: "functional", zone_hints: ["kitchen", "sink", "scullery"] },
+  { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"] },
+  { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"] },
+  { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"] },
 ]);
 
 // ── HOTEL ─────────────────────────────────────────────────────────────────────
