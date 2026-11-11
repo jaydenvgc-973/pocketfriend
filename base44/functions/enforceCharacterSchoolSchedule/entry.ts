@@ -1,5 +1,26 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── COMPLETED SCHOOL DAY → THE EXISTING NARRATIVE GENERATOR ──────────────────
+// Called only AFTER the school-dismissal release has been committed. The completed
+// school day is the trigger; the generator writes the narrative entry that Chat and
+// Text display. A failure here cannot affect the dismissal that already happened.
+async function generateSchoolEndNarrative(base44, characterId) {
+  try {
+    const res = await base44.asServiceRole.functions.invoke('generateAutomaticNarrative', {
+      characterId,
+      trigger: 'school_end',
+      narrative_trigger: 'school_end',
+      forceGenerate: true,
+    });
+    const out = res?.data || res;
+    if (out?.success !== true) {
+      console.error(`[enforceCharacterSchoolSchedule] ${characterId}: school-end narrative FAILED — ${out?.error || out?.reason || 'unknown'}`);
+    }
+  } catch (err) {
+    console.error(`[enforceCharacterSchoolSchedule] ${characterId}: school-end narrative FAILED — ${err.message}`);
+  }
+}
+
 // ── SCHOOL SCHEDULE RESOLUTION (mirrors src/lib/schoolScheduleResolver.js) ──
 function toMinutes(timeStr) {
   if (!timeStr) return null;
@@ -223,6 +244,9 @@ Deno.serve(async (req) => {
           } catch (invokeErr) {
             return Response.json({ updated: false, reason: 'authority_invoke_failed', error: invokeErr.message, next_execution_time: null });
           }
+          // The dismissal above is committed. The requested school-end narrative is
+          // generated from that same completed event, after it, and cannot affect it.
+          if (updated) await generateSchoolEndNarrative(base44, targetCharId);
         }
       }
 

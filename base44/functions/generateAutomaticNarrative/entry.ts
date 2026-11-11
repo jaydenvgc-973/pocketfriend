@@ -72,12 +72,15 @@ Deno.serve(async (req) => {
     // exist to stop the same ongoing state being re-narrated, and a completed
     // shift is exactly the transition they must not swallow.
     const isWorkEnd = trigger === 'work_end';
+    // SCHOOL DISMISSAL is the same kind of discrete occurrence: the established school
+    // schedule pathway established that the scheduled school day reached its end time.
+    const isSchoolEnd = trigger === 'school_end';
 
     // ── CHECK INTERVAL (skip for manual triggers) ─────────────────────────
     const NOW = new Date();
     const isManual = trigger === 'manual_right_now';
 
-    if (!forceGenerate && !isManual && !isWorkEnd) {
+    if (!forceGenerate && !isManual && !isWorkEnd && !isSchoolEnd) {
       const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
         { character_id: characterId },
         '-timestamp',
@@ -555,6 +558,18 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the shift.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
 - Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
+    }
+
+    // SCHOOL DISMISSAL overrides the in-session framing. The established school schedule
+    // pathway established that the scheduled school day reached its end time, so the
+    // narrative must recognize the school day as complete. Nothing is moved or invented.
+    if (isSchoolEnd) {
+      situationBlock = `SITUATION: ${character.name}'s scheduled school day has ENDED.
+- The school day is COMPLETE. Classes are over and the students are dismissed for the day.
+- Do NOT describe ${character.name} as still in class, still at school, in a lesson, or in the middle of schoolwork.
+- Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after dismissal.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
+- Write the first moments after the school day ends: the day letting go, what they do immediately after dismissal, how the rest of the afternoon opens up.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -1351,7 +1366,7 @@ If no actions occur, return empty action_effects array.`;
       character_name: character.name,
       owner_user_id: ownerUser,
       owner_email: ownerEmail,
-      event_type: isWorkEnd ? 'work_end' : 'passive_time',
+      event_type: isWorkEnd ? 'work_end' : isSchoolEnd ? 'school_end' : 'passive_time',
       narrative_text: narrativeText,
       memory_summary: memorySummary,
       timestamp: NOW.toISOString(),
@@ -1370,6 +1385,33 @@ If no actions occur, return empty action_effects array.`;
     });
 
     console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
+
+    // A completed shift or school day is shown where narrative entries already live: as a
+    // narrative message in the character's own conversations. Only the existing Chat
+    // (direct) and Text (phone) conversations are written to — none is created here.
+    if (isWorkEnd || isSchoolEnd) {
+      try {
+        const convos = await base44.asServiceRole.entities.Conversation.filter(
+          { owner_email: ownerEmail, character_ids: characterId }, null, 20
+        );
+        for (const convo of convos || []) {
+          if (!convo || (convo.type !== 'direct' && convo.type !== 'phone')) continue;
+          await base44.asServiceRole.entities.Message.create({
+            conversation_id: convo.id,
+            sender_type: 'character',
+            character_id: characterId,
+            character_name: character.name,
+            content: narrativeText,
+            timestamp: NOW.toISOString(),
+            is_narrative: true,
+            memory_eligible: false,
+            relationship_eligible: false,
+          });
+        }
+      } catch (postErr) {
+        console.warn(`[generateAutomaticNarrative] narrative message post failed: ${postErr.message}`);
+      }
+    }
 
     // Save to Memory so character remembers it. Failure is reported explicitly —
     // never silently swallowed — but does not invalidate the already-saved narrative.

@@ -59,6 +59,7 @@
         "wake",
         "work_start",
         "work_end",
+        "school_end",
         "travel_arrival",
         "travel_departure",
         "needs_warning",
