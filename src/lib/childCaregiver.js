@@ -87,21 +87,6 @@ export function householdGuardiansHome(location, characterId, characters = []) {
   );
 }
 
-/** Children of this household who need supervision and have no adult household member home. */
-export function householdUnsupervisedChildren(location, characterId, characters = []) {
-  if (!location || !characterId) return [];
-  const households = new Set(resolveHousehold(location, characterId, characters).memberIds);
-  return (characters || []).filter((c) =>
-    c?.id &&
-    c.current_home_location_id === location.id &&
-    households.has(c.id) &&
-    !isCaregiverRecord(c) &&
-    requiresSitter(c).requiresSitter &&
-    isPhysicallyHome(c, location.id) &&
-    householdGuardiansHome(location, c.id, characters).length === 0
-  );
-}
-
 /**
  * The children the caregiver on duty is actually responsible for: the children at this
  * home whose own household has no adult member present. Neighbouring units' children are

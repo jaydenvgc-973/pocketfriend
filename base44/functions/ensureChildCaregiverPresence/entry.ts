@@ -122,16 +122,52 @@ Deno.serve(async (req) => {
     200
   ).catch(() => []);
 
-  // 2. Fetch all home-category locations owned by this user
-  const allLocations = await base44.entities.LocationReference.filter(
+  // 2. Homes to consider: the locations this user owns, PLUS the homes the user's own
+  // characters actually live in and any residence opened explicitly. A shared multi-unit
+  // building (Gateway House, VGC Towers) is not owned by the resident's account, and its
+  // households need the same supervision as an owned house.
+  const ownedLocations = await base44.entities.LocationReference.filter(
     { owner_email: user.email },
     '-created_date',
     100
   ).catch(() => []);
 
+  const residentHomeIds = [...new Set(allChars.map(c => c.current_home_location_id).filter(Boolean))];
+  const missingHomeIds = residentHomeIds.filter(id =>
+    id !== targetLocationId && !ownedLocations.some(l => l.id === id)
+  );
+  const missingHomes = (await Promise.all(
+    missingHomeIds.map(id => base44.entities.LocationReference.get(id).catch(() => null))
+  )).filter(Boolean);
+
+  const allLocations = [...ownedLocations, ...missingHomes];
+
+  if (targetLocationId && !allLocations.some(l => l.id === targetLocationId)) {
+    const targetLocation = await base44.entities.LocationReference.get(targetLocationId).catch(() => null);
+    if (targetLocation) allLocations.push(targetLocation);
+  }
+
   const homeLocations = allLocations.filter(l =>
     l.category === 'home' &&
     (!targetLocationId || l.id === targetLocationId)
+  );
+
+  // Which homes still need supervision right now, decided per household. A caregiver
+  // assigned to one of these homes is doing necessary work there and must never be
+  // pulled away to cover a different household.
+  const homeNeedsSupervision = (home) => {
+    const kidsHere = allChars.filter(c => {
+      if (c.current_home_location_id !== home.id) return false;
+      const age = resolveAge(c);
+      return age !== null && age < SAFE_ALONE_AGE;
+    });
+    return kidsHere.some(k => {
+      const atHome = !k.resolved_current_location_id || k.resolved_current_location_id === home.id;
+      return atHome && isChildAlone(k, home, allChars);
+    });
+  };
+  const homesStillSupervised = new Set(
+    allLocations.filter(l => l.category === 'home' && homeNeedsSupervision(l)).map(l => l.id)
   );
 
   const results = [];
@@ -215,11 +251,13 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    // 6. Try to reuse an existing sitter NPC owned by this user
+    // 6. Try to reuse an existing sitter NPC owned by this user — but never one whose own
+    // household still needs them. Each household keeps its own caregiver.
     const availableSitter = allChars.find(c =>
       isCaregiver(c) &&
       c.owner_email === user.email &&
-      c.sitter_assigned_to_location_id !== home.id
+      c.sitter_assigned_to_location_id !== home.id &&
+      !(c.is_sitter === true && homesStillSupervised.has(c.sitter_assigned_to_location_id))
     );
 
     if (availableSitter) {
