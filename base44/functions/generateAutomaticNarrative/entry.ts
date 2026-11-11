@@ -1362,7 +1362,67 @@ If no actions occur, return empty action_effects array.`;
       }
     }
 
+    let recordError = null;
+
+    // ── ESTABLISHED NARRATIVE DELIVERY ───────────────────────────────────────
+    // A narrative reaches the user the way this app already delivers narratives:
+    // an is_narrative message in the character's most recent direct conversation,
+    // with the conversation preview updated. Same conversation rule and same message
+    // fields the established narrative pathway already uses. The completed schedule
+    // boundary is the only trigger — no location, presence, movement or ownership
+    // condition is involved.
+    let deliveredMessageId = null;
+    let deliveryError = null;
+    if (isScheduleCompletion) {
+      try {
+        const [byOwner, byCreator] = await Promise.all([
+          base44.asServiceRole.entities.Conversation.filter({ type: 'direct', owner_email: ownerEmail }, '-last_message_date', 100).catch(() => []),
+          base44.asServiceRole.entities.Conversation.filter({ type: 'direct', created_by: ownerEmail }, '-last_message_date', 100).catch(() => []),
+        ]);
+        const seenConvos = new Set();
+        const convo = [...byOwner, ...byCreator]
+          .filter((c) => {
+            if (seenConvos.has(c.id)) return false;
+            seenConvos.add(c.id);
+            return true;
+          })
+          .filter((c) =>
+            Array.isArray(c.character_ids) &&
+            c.character_ids.includes(characterId) &&
+            c.channel !== 'world_phone'
+          )
+          .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))[0] || null;
+
+        if (!convo) {
+          deliveryError = 'no direct conversation found for this character';
+          console.error(`[generateAutomaticNarrative] ${character.name}: no direct conversation — narrative not delivered`);
+        } else {
+          const delivered = await base44.asServiceRole.entities.Message.create({
+            conversation_id: convo.id,
+            sender_type: 'character',
+            character_id: characterId,
+            character_name: character.name,
+            content: narrativeText,
+            is_narrative: true,
+            is_read: false,
+            timestamp: NOW.toISOString(),
+          });
+          deliveredMessageId = delivered?.id || null;
+          await base44.asServiceRole.entities.Conversation.update(convo.id, {
+            last_message_preview: narrativeText.substring(0, 100),
+            last_message_date: NOW.toISOString(),
+          }).catch(() => {});
+          console.log(`[generateAutomaticNarrative] ✓ Delivered to conversation ${convo.id} as message ${deliveredMessageId}`);
+        }
+      } catch (deliverErr) {
+        deliveryError = deliverErr.message;
+        console.error(`[generateAutomaticNarrative] NARRATIVE DELIVERY FAILED for ${character.name}: ${deliverErr.message}`);
+      }
+    }
+
     // ── SAVE TO CharacterAutomaticNarrative (same table as automatic system) ──
+    // This record is the side store, not the delivery. A write this contract
+    // rejects must never remove a narrative the user has already received.
     const narrative = await base44.asServiceRole.entities.CharacterAutomaticNarrative.create({
       character_id: characterId,
       character_name: character.name,
@@ -1385,9 +1445,15 @@ If no actions occur, return empty action_effects array.`;
       emotional_state: character.emotional_state || 'calm',
       triggered_by: isManual ? 'manual' : 'scheduled',
       visibility: isManual ? 'visible_in_chat' : 'visible_in_chat',
+    }).catch((recErr) => {
+      // This record is the side store. A payload it rejects must never undo a
+      // narrative that has already been delivered to the user.
+      recordError = recErr?.message || 'record write rejected';
+      console.error(`[generateAutomaticNarrative] record write REJECTED for ${character.name}: ${recordError} — delivery is unaffected`);
+      return null;
     });
 
-    console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
+    console.log(`[generateAutomaticNarrative] ✓ ${narrative ? `Saved ${narrative.id}` : 'Record not stored'} for ${character.name} | message=${deliveredMessageId || 'none'} | trigger=${trigger}`);
 
     // Save to Memory so character remembers it. Failure is reported explicitly —
     // never silently swallowed — but does not invalidate the already-saved narrative.
@@ -1410,7 +1476,10 @@ If no actions occur, return empty action_effects array.`;
 
     return Response.json({
       success: true,
-      narrativeId: narrative.id,
+      narrativeId: narrative?.id || null,
+      delivered_message_id: deliveredMessageId,
+      delivery_error: deliveryError,
+      record_error: recordError,
       characterName: character.name,
       narrativeText,
       memorySummary,
