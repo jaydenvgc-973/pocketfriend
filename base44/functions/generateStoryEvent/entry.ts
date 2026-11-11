@@ -353,6 +353,91 @@ function buildUserIdentityLockBlock(userBundle) {
   return `\n${lines.join('\n')}\n`;
 }
 
+// ── BALLROOM CULTURE — EXISTING BALL STORY EVENTS ─────────────────────────────
+// A ball is one event inside the LGBTQ ballroom scene — not the scene itself and
+// not a generic party. When the event being written IS a ball, the narrative is
+// written from inside that culture. This is CONTENT guidance appended to the
+// existing narrative prompt: it changes nothing about how events are created,
+// stored, or generated, and it does not affect any other event type.
+const BALLROOM_STRONG_SIGNAL = /\b(vogue|voguing|vogue femme|duckwalk|realness|tens across the board|chopped|kiki ball|house ball|ballroom scene|ballroom culture|007s?)\b/i;
+const BALLROOM_CULTURE_SIGNAL = /\b(houses?|house mother|house father|runway|butch queen|femme queen|commentator|judges?|judging|panel|categor(?:y|ies)|walk(?:ing)? the ball|trophy|cash prize|drag)\b/i;
+
+function isBallroomBallEvent({ title, plot, additionalNotes, venueName }) {
+  const text = [title, plot, additionalNotes, venueName].filter(Boolean).join('\n');
+  if (BALLROOM_STRONG_SIGNAL.test(text)) return true;
+  const mentionsBall = /\bballs?\b/i.test(text);
+  return mentionsBall && BALLROOM_CULTURE_SIGNAL.test(text);
+}
+
+const BALLROOM_BALL_PROMPT_BLOCK = `
+════════════════════════════════════
+BALLROOM CULTURE — THIS EVENT IS A BALL
+════════════════════════════════════
+This event is a ball: one event inside the LGBTQ ballroom scene. Write it from inside that culture as it is actually lived — competitive, glamorous, communal, and capable of real conflict. It is not a generic party, and it is not a mainstream dance competition.
+
+TERMINOLOGY
+- The culture is "the ballroom scene." The individual event is "a ball." Never call the event itself "the ballroom" — a ball may be held in a ballroom, but that is a room, not the name of the event.
+- Use the culture's own language where it fits: walking a category, being called to the floor, tens across the board, chopped, battling, the judges' panel, house, house mother, house father, house child, 007 (an independent competitor with no house), legend, icon, the commentator, the DJ.
+
+FICTIONAL IDENTITIES ONLY — MANDATORY
+- Every ball, house, and ballroom personality in this narrative must be an original invention for this story. NEVER use the name of any real house (established or historic), any real mother, father, legend, icon, commentator, judge or competitor, or any real named ball or recurring ball series.
+- Do not lightly alter a recognizable real name. If a name would be recognized as a real person, house, or ball, invent something genuinely different.
+- The existing characters in this event keep their own established names, identities, personalities, relationships, and histories. This rule governs the fictional ballroom world around them; it never renames or replaces them.
+- Invent houses with their own reputations, strengths, and histories, and invent ballroom personalities with believable standing in the culture. Not everyone in the room is a legend or an icon — that distinction must mean something.
+
+THE BALL ITSELF
+- Give the ball a believable identity: its own name, a theme if it has one, and an edition number when it is a recurring ball (for example its 27th installment). An installment number is real history — the ball has happened that many times, and the people there treat that record with respect.
+- The venue must fit the ball's size, organizers, theme, and resources: an event hall, community center, recreation center, ballroom venue, park, public space, or civic building such as City Hall when appropriate. Some balls are modest community events; others are elaborate productions. Not every ball is extravagant.
+- Never base the ball on a real ball or a real ball series.
+
+CATEGORIES — AUTHENTIC, AND KEPT DISTINCT
+- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
+- Respect what each category actually is. Schoolboy Realness is realness — passing, presentation, and believability — not a vogue battle. Runway is walked and judged on walk, posture, garment, and presence, and the runway categories are not interchangeable. Vogue performance categories are danced. Never flatten every category into the same dance-off.
+
+QUALIFICATION AND JUDGING — HOW A CATEGORY ACTUALLY RUNS
+- When a category is called, competitors walk or perform for the judges according to that category's requirements, and the judges decide whether each person met the standard.
+- A competitor may be awarded tens across the board, which qualifies them for the category's battles. Someone who does not meet the standard may be chopped before the battles.
+- Tens are qualification, not a win. Qualified competitors battle the other qualified competitors in elimination rounds, the judges decide who advances, and the competition continues until one clear winner takes the category and its prize or recognition.
+- The outcome must be readable from what actually happened: what was worn, how they walked, what the judges responded to, what went wrong. Never announce a winner, a chop, or a battle result without showing the performance and the judging that produced it.
+- Do not make the user or the characters connected to the user win automatically, and do not make them lose automatically either.
+- Judges are human and can be wrong, biased, or argued with. That can produce protest, accusations of favoritism, disappointment, and confrontation — but not every decision should be controversial.
+
+VOGUING — RESPECT THE FORM
+- Voguing is a dance tradition created within the ballroom community. It was not invented by Madonna; she helped bring it to a mainstream audience. Do not credit its origins to her, and do not frame the culture as something mainstream culture created or discovered.
+- Old Way, New Way, and Vogue Femme are distinct styles and must read as distinct on the floor — not one generic flamboyant dance.
+- Vogue Femme is built from five core elements: hand performance, catwalk, duckwalk, floor performance, and spins and dips. Describe performances through those elements, and through the control, precision, and musicality that make them land.
+- Vogue Femme Dramatics is highly energetic, explosive, and theatrical — bigger, faster, and more dramatic than a standard femme performance, without losing technique.
+- A dip is called a dip. Never write "death drop" or "shablam" for it.
+- The DJ's music matters in a battle: the beat being danced to is part of the competition, and the room reacts to what the music does.
+
+GLITZ, GLAMOUR, AND CRAFT
+- Fashion and presentation carry real weight: elaborate garments, sequins, feathers, rhinestones, luxurious fabrics, high-fashion styling, dramatic hair and makeup, effects, reveals, and coordinated house looks.
+- Show the craft behind it: garments made at home, borrowed, saved for, repaired, and rehearsed. A ball in an ordinary community center can be visually spectacular because the people in it are creative and competitive, whatever the budget.
+
+ATMOSPHERE
+- The commentator calls the categories and the competitors and drives the room — a personality with a voice, not a narrator label. The DJ holds the floor. Houses cheer for their own, spectators react to what is actually happening, and the crowd is never passive decoration.
+- Include the anticipation before a category is called, competitors preparing to walk, dramatic entrances, and the moment the room turns on a performance.
+
+DRAMA — DO NOT SANITIZE THE EVENT
+- This culture runs on pride, status, rivalry, and emotional investment. This ball may include shade, insults, house rivalries, challenges, disputes over judging, accusations of favoritism, someone feeling robbed, jealousy, shouting matches, shoving, a physical fight, spectators pulled in, security stepping in, and house parents defending their children. Fictional fighting is permitted here and must not be softened into politeness when it is what the story earns.
+- Conflict must grow from what happened at this ball and from who these people are. Do not make every ball end in a fight, do not make every decision controversial, and do not make every house hostile to every other house. Some balls are relatively peaceful and some come apart — that variation is what makes them believable.
+
+HOUSES AND CHOSEN FAMILY
+- Houses are chosen families and competitive collectives, not team labels. Show mothers and fathers mentoring children, rehearsing together, entering as a group, collective pride when one member wins, support after a chop, internal disagreements, loyalty, and belonging.
+- Houses have reputations and rivalries. A newcomer may be chasing recognition while an established competitor defends a name.
+- Independent competitors with no house (007s) are part of the room and must be represented honestly.
+- This culture grew as a place of acceptance and chosen family for marginalized LGBTQ people. Hold that with respect — it is why the competition matters to the people in it.
+
+MAKE THIS BALL SPECIFIC — NO FORMULA
+- The narrative must feel like THIS ball, at THIS venue, on THIS date: its own name, theme, houses, personalities, categories, results, crowd, and aftermath. Never a generic summary of people attending, walking, and enjoying themselves.
+- A category may be a close battle, an obvious standout, or the unexpected chop of someone highly regarded. The drama, the winners, and the conflicts must not follow the same order at every ball. Vary which parts of the night carry the story, and leave room for ordinary moments as well as spectacle.
+- Existing characters keep their established personalities, relationships, memories, and histories. Attending a ball does not make them somebody else, and their history with the people in the room still applies. They may be competitors, house members, house parents, judges, commentators, DJs, spectators, or people pulled into the drama — but it must be consistent with who they already are, and their memories of the night must not contradict their established identity.
+
+IMAGE PROMPTS FOR A BALL
+- People are dressed for the categories being walked: realness looks are convincing and true to the category, runway looks are high fashion and dramatically styled, vogue performance looks are built for movement and physical drama. Styling, hair, makeup, and finish are what the judges see.
+- A ball image reads as a ball: a floor people perform on, competitors mid-walk or mid-dip, a judging presence, and spectators reacting to them. The venue's own reference photographs remain the only authority for the room's architecture, decor, and lighting — never invent interior detail.
+`;
+
 Deno.serve(async (req) => {
   let eventId = null;
   let base44 = null;
@@ -696,6 +781,8 @@ Deno.serve(async (req) => {
     const userImageRuleLine = userBundle
       ? "- USER IMAGE INCLUSION RULE (CRITICAL): The user participant '" + userBundle.display_name + "' (User ID: " + userBundle.user_id + ") MUST appear in EVERY image prompt by name. Describe them as a real visible person in the scene. Do NOT omit them. Do NOT replace them with a generic person. Do NOT describe them as a background figure. Their name must appear in the prompt text just like character names do."
       : "";
+    // A ball event carries the ballroom-culture guidance above; anything else does not.
+    const ballroomBlock = isBallroomBallEvent({ title, plot, additionalNotes, venueName }) ? BALLROOM_BALL_PROMPT_BLOCK : '';
     const narrativePrompt = [
       `You are a narrative writer creating a meaningful story for a character-driven world.`,
       ``,
@@ -713,6 +800,7 @@ Deno.serve(async (req) => {
       additionalNotes ? `ADDITIONAL NOTES FROM USER:` : '',
       additionalNotes ? `${additionalNotes}` : '',
       additionalNotes ? `` : '',
+      ...(ballroomBlock ? [ballroomBlock] : []),
       `FOCUS PARTICIPANTS (give these the most narrative attention):`,
       allFocusNames.length > 0 ? allFocusNames.join(', ') : 'None specified',
       ``,
@@ -784,6 +872,7 @@ Deno.serve(async (req) => {
       `}`,
       ``,
       `RULES:`,
+      ...(ballroomBlock ? [`- BALL EVENT RULES (MANDATORY): this event is a ball in the LGBTQ ballroom scene. Follow the BALLROOM CULTURE section above exactly — the fiction-only naming rule, authentic categories kept distinct, tens/chopped qualification before a winner is decided, the five Vogue Femme elements, "dip" (never "death drop" or "shablam"), the commentator, the DJ, the houses, and the full range of possible conflict. Keep the existing characters as who they already are.`] : []),
       `- The narrative MUST follow the user's plot. Do not invent a different storyline.`,
       `- Emotional outcomes must be supported by what happens in the narrative. No random emotions.`,
       `- Relationship changes must have a meaningful reason in the narrative. No unsupported changes.`,
