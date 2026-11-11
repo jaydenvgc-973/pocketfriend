@@ -29,7 +29,7 @@ import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import ObserveStageControls from "@/components/scene/ObserveStageControls";
 import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
-import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory } from "@/lib/observeInteraction";
+import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory, recordNarrativeMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS } from "@/lib/sceneActionConfig";
@@ -512,13 +512,12 @@ export default function Scene() {
       return;
     }
     setIsObservingTurn(true);
-    let note = (direction || "").trim();
-    // A narrative the observer writes becomes the scene's own description: it is
-    // shown as narration, and the characters live through it as their circumstances.
+    // NARRATIVE — what has already happened. Canon: the characters already lived it.
+    // DIRECT — what happens next. It is played out now, not treated as history.
     const narration = (narrative || "").trim();
+    const note = (direction || "").trim();
     if (narration) {
-      setMessages((prev) => [...prev, { id: `nar_${Date.now()}`, sender: "narrative", content: narration, timestamp: new Date().toISOString() }]);
-      note = narration;
+      setMessages((prev) => [...prev, { id: `nar_${Date.now()}`, sender: "narrative", content: narration, is_canon_event: true, timestamp: new Date().toISOString() }]);
     } else if (note) {
       setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
     }
@@ -539,7 +538,7 @@ export default function Scene() {
       const lines = await generateObserveBeat({
         participants: cast, responders, location, activeZone,
         messages: priorLine ? [...messages, priorLine] : messages,
-        direction: note || null, ownerEmail: currentUser?.email,
+        direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
         watchNote: watchContext
           ? (buildWatchContextLabel(watchContext) || watchContext.linkAnalysisContext || (watchContext.title ? `They are watching "${watchContext.title}" together.` : "They are watching a video together."))
           : null,
@@ -554,6 +553,8 @@ export default function Scene() {
         recordObserveBeatMemories({ lines, participants: cast, priorLine })
           .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
           .catch(() => {});
+        // A narrative is canon: those events are part of what these people lived through.
+        if (narration) recordNarrativeMemories({ narrative: narration, participants: cast, lines }).catch(() => {});
       }
     } catch {
       setMessages((prev) => [...prev, { id: `obs_err_${Date.now()}`, sender: "narrative", content: "The moment did not continue.", timestamp: new Date().toISOString() }]);
@@ -910,7 +911,7 @@ export default function Scene() {
         <AnimatePresence>
           {messages.map((msg) => (
             <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
+              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
             </motion.div>
           ))}
         </AnimatePresence>

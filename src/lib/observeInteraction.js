@@ -16,22 +16,35 @@
 import { base44 } from '@/api/base44Client';
 import { filterDashes } from '@/lib/dashFilter';
 
-const OFF_SCREEN_DIRECTION = (direction) => `
-=== OFF-SCREEN DIRECTION (authorial circumstance only) ===
+// NARRATIVE — events that have ALREADY HAPPENED. Canon, not an instruction.
+const ESTABLISHED_NARRATIVE = (narrative) => `
+=== WHAT HAS ALREADY HAPPENED (ESTABLISHED — ALREADY COMPLETE) ===
+${narrative}
+
+THESE EVENTS ARE ALREADY OVER. They happened before the moment you are writing, and they are part of these people's lived history. Everyone present already lived them and already knows them.
+- Nobody performs them again, announces them, asks whether they should happen, or hears about them for the first time.
+- Any words in quotation marks attributed to a character were ALREADY SPOKEN in the past. Never repeat those words as new dialogue, and never have anyone say them again as if for the first time.
+- Do not contradict, undo, soften, or summarise these events.
+- Write only the next moment that follows from this reality, including what it has left behind in them.
+===`;
+
+// DIRECT — what happens next. The characters carry it out now.
+const DIRECTION_TO_PLAY_OUT = (direction) => `
+=== WHAT HAPPENS NEXT (TO BE PLAYED OUT NOW) ===
 ${direction}
 
-RULES FOR THIS DIRECTION:
-- It shapes mood, circumstance, topic, timing, or the physical setting only.
-- It is NOT spoken by anyone. It is NOT an action performed by anyone present.
-- Nobody in the scene notices it happening and nobody reacts to it as an event.
-- Never mention a director, an observer, an author, an audience, or a prompt.
+This has NOT happened yet. It is what should now take place in the moment you are writing.
+- Carry it out for real: the characters take these actions as the scene moves.
+- When words are attributed to a character, that character says them out loud here, in their own voice, as part of the moment.
+- Never answer with agreement, commentary, or acknowledgement of the instruction itself. Play the scene out.
+- There is no director, no instruction, no author, and no observer anywhere in this scene.
 ===`;
 
 function realCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && !c.isNpc && !String(c.id).startsWith('npc_'));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, ownerEmail, watchNote = null }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null }) {
   const cast = realCast(participants);
   if (cast.length < 1 || !location) return [];
 
@@ -57,10 +70,12 @@ export async function generateObserveBeat({ participants, responders, location, 
     } catch { /* memory is additive */ }
   }));
 
+  // Canon narrative from earlier in this scene stays in the record: those events
+  // already happened to these people, so later beats continue from them.
   const transcript = (messages || [])
-    .filter((m) => m.sender === 'character')
+    .filter((m) => m.sender === 'character' || (m.is_canon_event && m.content))
     .slice(-18)
-    .map((m) => `${m.senderName}: ${m.content}`)
+    .map((m) => (m.is_canon_event ? `(already happened, before this moment) ${m.content}` : `${m.senderName}: ${m.content}`))
     .join('\n');
 
   const nameList = speaking.map((c) => c.name).join(' and ');
@@ -98,9 +113,13 @@ ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'They are together for the first time in this moment.'}
 ${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThey are watching this together, in the same room. They may talk about it, react to it, or ignore it like real people do.\n===` : ''}
-${direction ? OFF_SCREEN_DIRECTION(direction) : ''}
+${narrative ? ESTABLISHED_NARRATIVE(narrative) : ''}
+${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
 
 WRITE THE NEXT MOMENT:
+${narrative ? `- These people have ALREADY lived the events above. Continue from the situation those events left behind: what is said and done now is the consequence of them.
+- Never reenact, re-announce, or question them. Anything quoted above was already said and must not be spoken again.` : ''}
+${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.` : ''}
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
@@ -173,6 +192,29 @@ export async function recordObserveBeatMemories({ lines, participants, priorLine
         playingAsCharacterId: previous.characterId,
         characterReply: current.content,
         witnessCharacterIds: witnesses,
+      });
+    } catch { /* memory write failure must not stop the scene */ }
+  }
+}
+
+/**
+ * Narrative is canon: the events described ALREADY happened to the people in the
+ * scene. Each participating character keeps their own record of having lived it,
+ * through the existing turn-memory pathway — no separate memory system.
+ */
+export async function recordNarrativeMemories({ narrative, participants, lines }) {
+  const text = (narrative || '').trim();
+  if (!text) return;
+  const cast = (participants || []).filter((p) => p && p.id);
+  for (const person of cast) {
+    const own = (lines || []).find((l) => l.characterId === person.id);
+    if (!own?.content) continue;
+    try {
+      await base44.functions.invoke('extractMemoriesFromTurn', {
+        characterId: person.id,
+        userMessage: text,
+        characterReply: own.content,
+        witnessCharacterIds: cast.filter((p) => p.id !== person.id).map((p) => p.id),
       });
     } catch { /* memory write failure must not stop the scene */ }
   }

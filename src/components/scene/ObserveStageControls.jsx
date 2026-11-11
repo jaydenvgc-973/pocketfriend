@@ -32,8 +32,8 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   const placeholder = speaking
     ? `What ${speaker?.name?.split(" ")[0]} says`
     : mode === "direct"
-      ? "Nudge the moment — direction, not something you say"
-      : "Write what happens — the scene's own narration";
+      ? "What happens next — played out now, including any quoted words"
+      : "What already happened — past events the characters already lived";
 
   return (
     <div className="border-t border-border bg-card/60 flex-shrink-0">
@@ -49,7 +49,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           onClick={() => setMode("narrate")}
           className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border transition-colors ${mode === "narrate" ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-muted-foreground"}`}
         >
-          <BookOpen className="w-3 h-3" /> Narrate
+          <BookOpen className="w-3 h-3" /> Narrative
         </button>
         <button
           onClick={() => setMode("direct")}
@@ -94,7 +94,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           onClick={submit}
           disabled={isGenerating || !text.trim() || (mode === "speak" && !speaker)}
           className="h-10 w-10 rounded-xl flex-shrink-0"
-          title={speaking ? `Say it as ${speaker?.name}` : mode === "direct" ? "Direct the moment" : "Add narration"}
+          title={speaking ? `Say it as ${speaker?.name}` : mode === "direct" ? "Play this out next" : "Record this as already happened"}
         >
           <Send className="w-4 h-4" />
         </Button>
