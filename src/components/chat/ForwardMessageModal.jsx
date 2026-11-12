@@ -7,13 +7,14 @@ import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterC
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 import { resolveNarrativeShareRecipients } from "@/lib/narrativeShareRecipients";
 
-export default function ForwardMessageModal({ message, onClose }) {
+export default function ForwardMessageModal({ message, onClose, chatType = "direct" }) {
   const [characters, setCharacters] = useState([]);
   const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
   const [isLoadingRecipients, setIsLoadingRecipients] = useState(true);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (!message) return;
@@ -50,6 +51,8 @@ export default function ForwardMessageModal({ message, onClose }) {
   const handleForward = async () => {
     if (selectedIds.length === 0) return;
     setIsSending(true);
+    setError(null);
+    let undelivered = 0;
     try {
       // If the original message has an image but no stored description, analyze it once
       // before creating any forwarded messages so all recipients get the same description.
@@ -63,25 +66,48 @@ export default function ForwardMessageModal({ message, onClose }) {
         resolvedImageDescription = analysis.imageDescription || null;
       }
 
+      const isNarrativeShare = !!message.is_narrative;
+      // A shared narrative lands on the receiving character's page for the SAME
+      // channel it was shared from: Chat → Chat (direct), Text → Text (phone).
+      const channel = isNarrativeShare && chatType === "phone" ? "phone" : "direct";
+
+      const me = await base44.auth.me().catch(() => null);
       const allRecipients = [...characters, ...crossAccountCharacters];
+
       for (const charId of selectedIds) {
         const char = allRecipients.find(c => c.id === charId);
         if (!char) continue;
+
+        const isCrossAccount = crossAccountCharacters.some(c => c.id === charId);
+
+        // Cross-account narratives are delivered into the receiving character's
+        // own thread on their own account, so they appear on their Chat/Text page.
+        if (isNarrativeShare && isCrossAccount) {
+          try {
+            await base44.functions.invoke("shareNarrativeToCharacter", {
+              source_message_id: message.id,
+              recipient_character_id: charId,
+              channel,
+            });
+          } catch (err) {
+            undelivered += 1;
+            console.error(`[Share] Cross-account delivery failed for ${char.name}:`, err?.message);
+          }
+          continue;
+        }
 
         // CANONICAL RESOLVER: Use the single authoritative conversation-identity
         // resolver shared with Chat loading and Scene image delivery. This
         // guarantees the forwarded message is written to the same conversation
         // the Chat page will load — no inline duplicate filters, no divergence.
-        const me = await base44.auth.me().catch(() => null);
-        const ownerEmail = me?.email || null;
         const convoId = await resolveOrCreateConversation({
           characterId: charId,
           characterName: char.name,
-          chatType: "direct",
-          ownerEmail,
+          chatType: channel,
+          ownerEmail: me?.email || null,
         });
 
-        const isNarrative = !!message.is_narrative;
+        const isNarrative = isNarrativeShare;
         const senderLabel = message.character_name || "them";
         const fwdContent = isNarrative
           ? message.content
@@ -125,6 +151,10 @@ export default function ForwardMessageModal({ message, onClose }) {
           last_message_preview: fwdContent.substring(0, 100),
           last_message_date: new Date().toISOString(),
         }).catch(() => {});
+      }
+      if (undelivered > 0) {
+        setError(`Could not deliver to ${undelivered} character${undelivered > 1 ? "s" : ""} on another account.`);
+        return;
       }
       setSent(true);
       setTimeout(onClose, 1200);
@@ -230,13 +260,17 @@ export default function ForwardMessageModal({ message, onClose }) {
             )}
           </div>
 
+          {error && (
+            <p className="px-1 text-xs text-destructive">{error}</p>
+          )}
+
           <button
             onClick={handleForward}
             disabled={selectedIds.length === 0 || isSending || sent}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {sent ? (
-              <><Check className="w-4 h-4" /> Forwarded!</>
+              <><Check className="w-4 h-4" /> {message.is_narrative ? "Shared!" : "Forwarded!"}</>
             ) : isSending ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Sending...</>
             ) : (

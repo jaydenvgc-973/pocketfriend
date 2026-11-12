@@ -2441,6 +2441,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       {forwardTarget && (
         <ForwardMessageModal
           message={forwardTarget}
+          chatType={chatType}
           onClose={() => setForwardTarget(null)}
         />
       )}
