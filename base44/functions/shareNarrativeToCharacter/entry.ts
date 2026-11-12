@@ -136,10 +136,8 @@ Deno.serve(async (req) => {
       image_url: source.image_url || undefined,
       image_description: source.image_description || source.inferred_image_description || undefined,
       is_narrative: true,
-      // Attribution: the receiving page shows "Fwd from {original character}",
-      // so the narrative is never mistaken for the receiving character's own.
-      is_forwarded: true,
-      forwarded_from: origin.name,
+      // Narratives are never marked as forwarded and carry no forwarding
+      // attribution — a shared narrative reads exactly like any other narrative.
       is_read: false,
       timestamp: new Date().toISOString(),
     });
