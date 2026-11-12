@@ -6,6 +6,7 @@ import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
+import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -200,6 +201,27 @@ ALLOWED — remote-only framing:
       const attractionLevel = character.attraction_level ?? 0;
       const emotionalState = character.emotional_state || "calm";
       const location = character.resolved_current_location_name || character.city || "home";
+
+      // ── TIME OF DAY — the existing temporal engine, not a new clock ──────────
+      // Insert Drama and Insert Serenity must honour the real daypart exactly as
+      // every other narrative path already does. buildTemporalState recalculates
+      // from the live Eastern clock, so nothing here is cached or inferred from
+      // the conversation, the event chosen, or the atmosphere being written.
+      const lastThreadMsg = recentMessages.length > 0 ? recentMessages[recentMessages.length - 1] : null;
+      const temporalState = buildTemporalState(
+        character,
+        lastThreadMsg?.timestamp || lastThreadMsg?.created_date || null
+      );
+
+      const temporalBlock = `${buildTemporalContextBlock(temporalState)}
+
+TIME-OF-DAY ACCURACY — OUTRANKS ATMOSPHERE, SUBJECT, AND MOOD
+• The daypart above is the only truth about what time it is. The event you chose does not get to change it.
+• NEVER name a daypart other than the current one. "For the rest of the afternoon" is a factual error at 10:15 PM; "for the rest of the evening" is correct.
+• Do not default to a time of day out of habit, because the subject feels like a morning thing, or because you imagined soft light.
+• Any duration or elapsed time must remain inside the real time. An event that begins at night must not run into the following afternoon, midday must not drift into sunset, and a morning must not become evening.
+• When the real time makes a time reference awkward or unnecessary, leave it out. "They keep each other company for a while" needs no clock at all.
+`;
 
       // Relationship type detection — these are HARD gates
       const isFamilial = (character.fictional_relationships || []).some(r =>
@@ -423,6 +445,7 @@ PLAUSIBILITY ANCHOR — authoritative state outranks any example:
 • If the character is HOSPITALIZED, INCARCERATED, or otherwise CONFINED, the development must fit that reality: staff, facility, other patients, medical results, institutional or legal news — never a free walk outside, a night out, or a burglary they personally discover.
 • At work or at school: the development must fit that setting and their actual role.
 • At home: household failures, visitors, deliveries, discoveries, calls, and messages are all plausible.
+• The current daypart is fixed. A development that begins at night stays in the night — it cannot continue through the afternoon, and no other daypart may be named.
 • Earlier activity is not indefinitely ongoing. If cooking happened hours ago, the food is not still on the stove now. Recency decides.
 
 PEOPLE — FICTIONAL AND UNESTABLISHED ONLY:
@@ -536,6 +559,7 @@ PLAUSIBILITY ANCHOR — authoritative state outranks any example:
 • If the character is HOSPITALIZED or CONFINED, the moment must fit that reality: reassuring results, a kind nurse or cellmate, a letter, a visit, a small comfort available there.
 • At work or at school: the moment must fit that setting and their actual role — a helpful coworker, an unexpected free period, something finished early.
 • At home: a neighbor's meal, an easy morning, a forgotten thing found, a delivery that is exactly what was wanted.
+• The current daypart is fixed. A moment that begins at night stays in the night — it cannot continue through the afternoon, and no other daypart may be named. A pleasantly "easy morning" may only appear if the real time is morning.
 • Earlier activity is not indefinitely ongoing. If cooking happened hours ago, the food is not still on the stove now. Recency decides.
 
 PEOPLE — FICTIONAL AND UNESTABLISHED ONLY:
@@ -652,6 +676,7 @@ Emotional state: ${emotionalState}
 Location: ${location}
 Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
+${temporalBlock}
 ${userPresenceBlock}
 ${currentMomentBlock}
 ${narrativeContinuityBlock}
@@ -724,6 +749,7 @@ STYLE RULES:
 - One short quoted line of dialogue allowed if it fits naturally
 - Include one grounded environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
 - Do NOT repeat descriptive patterns from recent outputs. Vary the sensory entry point each time.
+- Time of day is fixed by the temporal block above. Never state a different daypart, and never let a duration ("for the rest of...", "until the sun...", "by the time the light...") contradict it. If a time reference is not necessary, write the moment without one.
 
 ${(intent === 'drama' || intent === 'serenity')
   ? `Return JSON only, with exactly these three fields — no other text:
