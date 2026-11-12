@@ -1,26 +1,46 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Forward, Check, Loader2 } from "lucide-react";
+import { X, Forward, Check, Loader2, Globe2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
+import { resolveNarrativeShareRecipients } from "@/lib/narrativeShareRecipients";
 
 export default function ForwardMessageModal({ message, onClose }) {
   const [characters, setCharacters] = useState([]);
+  const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
+  const [isLoadingRecipients, setIsLoadingRecipients] = useState(true);
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
     if (!message) return;
-    // OWNERSHIP: scope to authenticated user's characters only
+    let cancelled = false;
+    setIsLoadingRecipients(true);
     base44.auth.me().then(me => {
       if (!me?.email) return;
-      base44.entities.Character.filter({ status: "active", owner_email: me.email })
-        .then(chars => setCharacters(chars || []))
+      // Narratives also offer characters from other accounts who are already known
+      // to the character the narrative belongs to. Plain forwards stay own-only.
+      if (message.is_narrative) {
+        return resolveNarrativeShareRecipients({ message, me }).then(({ own, crossAccount }) => {
+          if (cancelled) return;
+          setCharacters(own);
+          setCrossAccountCharacters(crossAccount);
+        });
+      }
+      return base44.entities.Character.filter({ status: "active", owner_email: me.email })
+        .then(chars => {
+          if (cancelled) return;
+          setCharacters(chars || []);
+          setCrossAccountCharacters([]);
+        })
         .catch(() => {});
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => {
+      if (!cancelled) setIsLoadingRecipients(false);
+    });
+    return () => { cancelled = true; };
   }, [message]);
 
   const toggle = (id) => setSelectedIds(prev =>
@@ -43,8 +63,9 @@ export default function ForwardMessageModal({ message, onClose }) {
         resolvedImageDescription = analysis.imageDescription || null;
       }
 
+      const allRecipients = [...characters, ...crossAccountCharacters];
       for (const charId of selectedIds) {
-        const char = characters.find(c => c.id === charId);
+        const char = allRecipients.find(c => c.id === charId);
         if (!char) continue;
 
         // CANONICAL RESOLVER: Use the single authoritative conversation-identity
@@ -116,6 +137,40 @@ export default function ForwardMessageModal({ message, onClose }) {
 
   if (!message) return null;
 
+  const renderRecipient = (char, isCrossAccount = false) => (
+    <button
+      key={char.id}
+      onClick={() => toggle(char.id)}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors text-left ${
+        selectedIds.includes(char.id)
+          ? "bg-primary/10 border-primary/40"
+          : isCrossAccount
+            ? "bg-secondary/30 border-dashed border-border hover:border-primary/30"
+            : "bg-secondary/50 border-border hover:border-primary/30"
+      }`}
+    >
+      <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 overflow-hidden flex items-center justify-center">
+        {char.avatar_url
+          ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+          : <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
+        }
+      </div>
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium text-foreground truncate">{char.name}</span>
+        {isCrossAccount && (
+          <span className="mt-0.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Globe2 className="w-2.5 h-2.5" /> Other account
+          </span>
+        )}
+      </span>
+      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+        selectedIds.includes(char.id) ? "bg-primary border-primary" : "border-border"
+      }`}>
+        {selectedIds.includes(char.id) && <Check className="w-3 h-3 text-white" />}
+      </div>
+    </button>
+  );
+
   return createPortal(
     <AnimatePresence>
       <motion.div
@@ -149,32 +204,30 @@ export default function ForwardMessageModal({ message, onClose }) {
             {message.image_url && message.content && " 📷"}
           </div>
 
-          {/* Character list */}
+          {/* Character list — own characters first (A–Z), then known cross-account characters (A–Z) */}
           <div className="max-h-56 overflow-y-auto space-y-1">
-            {characters.map(char => (
-              <button
-                key={char.id}
-                onClick={() => toggle(char.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors text-left ${
-                  selectedIds.includes(char.id)
-                    ? "bg-primary/10 border-primary/40"
-                    : "bg-secondary/50 border-border hover:border-primary/30"
-                }`}
-              >
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 overflow-hidden flex items-center justify-center">
-                  {char.avatar_url
-                    ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
-                    : <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
-                  }
-                </div>
-                <span className="flex-1 text-sm font-medium text-foreground">{char.name}</span>
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                  selectedIds.includes(char.id) ? "bg-primary border-primary" : "border-border"
-                }`}>
-                  {selectedIds.includes(char.id) && <Check className="w-3 h-3 text-white" />}
-                </div>
-              </button>
-            ))}
+            {isLoadingRecipients ? (
+              <p className="text-xs text-muted-foreground px-1 py-3 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading recipients...
+              </p>
+            ) : (
+              <>
+                {characters.length === 0 && crossAccountCharacters.length === 0 && (
+                  <p className="text-xs text-muted-foreground px-1 py-3">No characters available.</p>
+                )}
+
+                {characters.map(char => renderRecipient(char))}
+
+                {crossAccountCharacters.length > 0 && (
+                  <div className="pt-2 space-y-1">
+                    <p className="flex items-center gap-1.5 px-1 pt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <Globe2 className="w-3 h-3" /> From other accounts
+                    </p>
+                    {crossAccountCharacters.map(char => renderRecipient(char, true))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <button
