@@ -203,8 +203,30 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
     base44.auth.me()
       .then(async me => {
         const contactList = await resolveCharacterContacts(character, me?.email, me);
+        // ACCOUNT USERS who have actually messaged this character. Resolved through the
+        // verified thread resolver (world name + real profile avatar + the existing
+        // conversation), never by name matching — so a user is never confused with a
+        // similarly named character, and a user who never wrote this character never appears.
+        const userContacts = await base44.functions
+          .invoke('characterWorldPhoneUserThread', { character_id: character.id, action: 'contacts' })
+          .then(res => (res?.data?.contacts || []).map(c => ({
+            person_name: c.world_name,
+            relationship_type: 'World Phone',
+            related_character_id: null,
+            avatar_url: c.avatar_url || null,
+            description: '',
+            is_user_contact: true,
+            user_id: c.user_id,
+            conversation_id: c.conversation_id,
+            _source: 'user_world_phone',
+            _linkage: 'user_account',
+          })))
+          .catch(() => []);
+        const merged = [...contactList, ...userContacts].sort((a, b) =>
+          (a.person_name || '').localeCompare(b.person_name || '')
+        );
         if (!cancelled) {
-          setContacts(contactList);
+          setContacts(merged);
           setIsLoadingContacts(false);
         }
       })
@@ -224,6 +246,47 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
 
   // Load or create a persistent conversation for the selected NPC
   const selectContact = async (contact) => {
+    // ── ACCOUNT USER CONTACT ────────────────────────────────────────────────────
+    // Opens the ONE conversation the user already started with this character.
+    // Nothing is created here — an existing thread is loaded as-is.
+    if (contact.is_user_contact) {
+      setSelectedContact(contact);
+      setMessages([]);
+      setConversationId(contact.conversation_id || null);
+      setInputText("");
+      setIsLoadingHistory(true);
+      contactCharRecordRef.current = null;
+      canonicalPromptCacheRef.current = null;
+      replyLockRef.current.clear();
+      isSendingRef.current = false;
+      try {
+        const res = await base44.functions.invoke('characterWorldPhoneUserThread', {
+          character_id: character.id,
+          action: 'thread',
+          user_id: contact.user_id,
+        });
+        const rows = res?.data?.messages || [];
+        setMessages(rows.map(m => ({
+          id: m.id,
+          dbId: m.id,
+          // This character's own messages were sent by them; everything from the
+          // account user is incoming and labelled with the user's World Name.
+          role: (m.sender_type === 'character' && (m.sender_character_id === character.id || m.character_id === character.id))
+            ? 'sent' : 'npc',
+          content: m.content,
+          image_url: m.image_url || null,
+          message_type: m.message_type || null,
+          timestamp: m.timestamp || m.created_date || null,
+        })));
+      } catch (err) {
+        console.error('[WorldContacts] User thread load failed:', err?.message);
+      } finally {
+        setIsLoadingHistory(false);
+        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      }
+      return;
+    }
+
     const t_page_open = Date.now();
     setSelectedContact(contact);
     setMessages([]);
@@ -781,6 +844,42 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   };
 
   const sendMessage = async (imageUrl = null) => {
+    // ── ACCOUNT USER CONTACT ────────────────────────────────────────────────────
+    // The character replies into the same established conversation the user began.
+    // The user is a real person, so no auto-reply is generated.
+    if (selectedContact?.is_user_contact) {
+      const userText = inputText.trim();
+      if (!userText || isSendingRef.current) return;
+      isSendingRef.current = true;
+      setIsTyping(true);
+      setInputText("");
+      try {
+        const res = await base44.functions.invoke('characterWorldPhoneUserThread', {
+          character_id: character.id,
+          action: 'send',
+          user_id: selectedContact.user_id,
+          content: userText,
+        });
+        if (!res?.data?.success) throw new Error(res?.data?.error || 'Message could not be sent');
+        const sent = {
+          id: res.data.message_id || `local_${Date.now()}`,
+          dbId: res.data.message_id || null,
+          role: 'sent',
+          content: userText,
+          image_url: null,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages(prev => prev.some(m => m.id === sent.id) ? prev : [...prev, sent]);
+      } catch (err) {
+        console.error('[WorldContacts] User contact send failed:', err?.message);
+        setInputText(userText);
+      } finally {
+        setIsTyping(false);
+        isSendingRef.current = false;
+      }
+      return;
+    }
+
     if (!inputText.trim() || isTyping) return;
     // ── SEND GUARD: block concurrent sends (rapid tap / double submit) ──────────
     if (isSendingRef.current) {
@@ -1538,7 +1637,7 @@ Only include image fields when sharing a photo, selfie, or visual. Image prompts
                         <span className="text-xs text-emerald-400">✦</span>
                       )}
                       {/* DIAGNOSTIC: show linkage state — name-only contacts are visibly flagged */}
-                      {!contact.related_character_id && (
+                      {!contact.related_character_id && !contact.is_user_contact && (
                         <span title="Not linked to a Character record — bilateral memory may be incomplete">
                           <AlertTriangle className="w-3 h-3 text-amber-400/70" />
                         </span>
@@ -1558,7 +1657,7 @@ Only include image fields when sharing a photo, selfie, or visual. Image prompts
                 </div>
               )}
               {/* Linkage diagnostic banner — visible, non-destructive */}
-              {!selectedContact.related_character_id && (
+              {!selectedContact.related_character_id && !selectedContact.is_user_contact && (
                 <div className="px-4 py-1.5 bg-amber-500/10 border-b border-amber-500/20 flex items-center gap-2 flex-shrink-0">
                   <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                   <p className="text-[10px] text-amber-300/80">Not linked to a Character record — memory may not carry over to Chat/Scene</p>
