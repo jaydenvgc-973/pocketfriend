@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Forward, Check, Loader2, Globe2 } from "lucide-react";
+import { X, Forward, Check, Loader2, Globe2, User as UserIcon } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { analyzeImageForCharacterContext } from "@/lib/analyzeImageForCharacterContext";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 import { resolveNarrativeShareRecipients } from "@/lib/narrativeShareRecipients";
 
-export default function ForwardMessageModal({ message, onClose, chatType = "direct" }) {
+export default function ForwardMessageModal({ message, onClose, chatType = "direct", originCharacter = null }) {
   const [characters, setCharacters] = useState([]);
   const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
   const [isLoadingRecipients, setIsLoadingRecipients] = useState(true);
@@ -15,6 +15,11 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState(null);
+  // Sender identity for image forwards: "user" (World Name) or "character".
+  const [senderMode, setSenderMode] = useState("user");
+  // The character whose Chat/Text page this is — the origin of the contact graph
+  // and the identity offered as "send as character". Falls back to the route.
+  const [originChar, setOriginChar] = useState(originCharacter || null);
 
   useEffect(() => {
     if (!message) return;
@@ -22,22 +27,37 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
     setIsLoadingRecipients(true);
     base44.auth.me().then(me => {
       if (!me?.email) return;
-      // Narratives also offer characters from other accounts who are already known
-      // to the character the narrative belongs to. Plain forwards stay own-only.
-      if (message.is_narrative) {
-        return resolveNarrativeShareRecipients({ message, me }).then(({ own, crossAccount }) => {
-          if (cancelled) return;
-          setCharacters(own);
-          setCrossAccountCharacters(crossAccount);
+      // Resolve the chat page's character when it was not passed in as a prop:
+      // an image sent by the USER carries no character_id, so the route is the
+      // authoritative source for which character's page this is.
+      const resolveOrigin = async () => {
+        if (originCharacter?.id) return originCharacter;
+        if (message.character_id) {
+          const byMessage = await base44.entities.Character.get(message.character_id).catch(() => null);
+          if (byMessage) return byMessage;
+        }
+        const routeId = window.location.pathname.match(/\/(?:chat|text)\/([^/?#]+)/)?.[1];
+        if (!routeId) return null;
+        return base44.entities.Character.get(routeId).catch(() => null);
+      };
+
+      return resolveOrigin().then(origin => {
+        if (cancelled) return;
+        if (origin) setOriginChar(origin);
+        // Image forwards and narrative shares offer other accounts' characters,
+        // through the same contact graph. A plain text forward stays own-only so
+        // its existing delivery path is unchanged.
+        const wantsCrossAccount = !!message.is_narrative || !!message.image_url;
+        return resolveNarrativeShareRecipients({
+          message,
+          me,
+          originCharacter: wantsCrossAccount ? origin : null,
         });
-      }
-      return base44.entities.Character.filter({ status: "active", owner_email: me.email })
-        .then(chars => {
-          if (cancelled) return;
-          setCharacters(chars || []);
-          setCrossAccountCharacters([]);
-        })
-        .catch(() => {});
+      }).then(({ own, crossAccount } = {}) => {
+        if (cancelled || !own) return;
+        setCharacters(own);
+        setCrossAccountCharacters(crossAccount);
+      }).catch(() => {});
     }).catch(() => {}).finally(() => {
       if (!cancelled) setIsLoadingRecipients(false);
     });
@@ -74,11 +94,58 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
       const me = await base44.auth.me().catch(() => null);
       const allRecipients = [...characters, ...crossAccountCharacters];
 
+      const isImageForward = !!message.image_url && !message.is_narrative;
+      const sendAsCharacter = isImageForward && senderMode === "character" && !!originChar?.id;
+
       for (const charId of selectedIds) {
         const char = allRecipients.find(c => c.id === charId);
         if (!char) continue;
 
         const isCrossAccount = crossAccountCharacters.some(c => c.id === charId);
+
+        // ── IMAGE FORWARD — delivered over World Phone as the chosen identity ──
+        // Forward is only the action. The received message is a normal World Phone
+        // image from the selected sender: no forwarded label, no forward wording.
+        if (isImageForward) {
+          if (sendAsCharacter) {
+            if (charId === originChar.id) continue; // a character cannot message itself
+            const res = await base44.functions.invoke("sendWorldPhoneMessage", {
+              sender_character_id: originChar.id,
+              recipient_identifier: charId,
+              requested_message: "",
+              image_url: message.image_url,
+              image_description: resolvedImageDescription || "",
+              image_analysis_status: resolvedImageDescription ? "complete" : "failed",
+              message_type: "image",
+              source: "image_forward",
+              owner_email: me?.email || null,
+            }).catch(err => ({ data: { success: false, error: err?.message } }));
+            if (!res?.data?.success) {
+              undelivered += 1;
+              console.error(`[Forward] Character image send failed for ${char.name}:`, res?.data?.error);
+            }
+            continue;
+          }
+
+          if (isCrossAccount) {
+            // User identity on another account's World Phone — delivered under the
+            // user's World Name, never as the chat character.
+            const res = await base44.functions.invoke("sendUserWorldPhoneMessage", {
+              recipient_character_id: charId,
+              content: "",
+              image_url: message.image_url,
+              image_description: resolvedImageDescription || undefined,
+              message_type: "image",
+              source: "image_forward_user",
+              generate_reply: false,
+            }).catch(err => ({ data: { success: false, error: err?.message } }));
+            if (!res?.data?.success) {
+              undelivered += 1;
+              console.error(`[Forward] User image send failed for ${char.name}:`, res?.data?.error);
+            }
+            continue;
+          }
+        }
 
         // Cross-account narratives are delivered into the receiving character's
         // own thread on their own account, so they appear on their Chat/Text page.
@@ -109,11 +176,15 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
 
         const isNarrative = isNarrativeShare;
         const senderLabel = message.character_name || "them";
-        const fwdContent = isNarrative
-          ? message.content
-          : (message.content
-            ? `Fwd Message from ${senderLabel}:\n${message.content}`
-            : `Fwd Message from ${senderLabel}`);
+        // An image forward arrives as a normal image message — the Forward action
+        // is only how it was sent, never how it is presented.
+        const fwdContent = isImageForward
+          ? ""
+          : isNarrative
+            ? message.content
+            : (message.content
+              ? `Fwd Message from ${senderLabel}:\n${message.content}`
+              : `Fwd Message from ${senderLabel}`);
 
         const forwardedPayload = {
           conversation_id: convoId,
@@ -124,8 +195,8 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
           image_url: message.image_url || undefined,
           timestamp: new Date().toISOString(),
           is_narrative: isNarrative || undefined,
-          is_forwarded: !isNarrative,
-          forwarded_from: isNarrative ? undefined : senderLabel,
+          is_forwarded: isNarrative || isImageForward ? undefined : true,
+          forwarded_from: isNarrative || isImageForward ? undefined : senderLabel,
         };
 
         // CRITICAL: Preserve location_share so the receiving chat renders the card UI
@@ -180,8 +251,8 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
       }`}
     >
       <div className="w-8 h-8 rounded-full bg-primary/20 flex-shrink-0 overflow-hidden flex items-center justify-center">
-        {char.avatar_url
-          ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+        {char.avatar_url || char.image_avatar_url
+          ? <img src={char.avatar_url || char.image_avatar_url} alt={char.name} className="w-full h-full object-cover" />
           : <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
         }
       </div>
@@ -259,6 +330,50 @@ export default function ForwardMessageModal({ message, onClose, chatType = "dire
               </>
             )}
           </div>
+
+          {/* Sender identity — image forwards only */}
+          {message.image_url && !message.is_narrative && (
+            <div className="space-y-1.5">
+              <p className="px-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Send image as</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSenderMode("user")}
+                  aria-pressed={senderMode === "user"}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition-colors ${
+                    senderMode === "user"
+                      ? "bg-primary/10 border-primary/40 text-foreground"
+                      : "bg-secondary/50 border-border text-muted-foreground hover:border-primary/30"
+                  }`}
+                >
+                  <UserIcon className="w-3.5 h-3.5" /> You
+                </button>
+                {originChar?.id && (
+                  <button
+                    onClick={() => setSenderMode("character")}
+                    aria-pressed={senderMode === "character"}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-medium transition-colors truncate ${
+                      senderMode === "character"
+                        ? "bg-primary/10 border-primary/40 text-foreground"
+                        : "bg-secondary/50 border-border text-muted-foreground hover:border-primary/30"
+                    }`}
+                  >
+                    <span className="w-4 h-4 rounded-full overflow-hidden flex-shrink-0 bg-primary/20 flex items-center justify-center">
+                      {(originChar.avatar_url || originChar.image_avatar_url)
+                        ? <img src={originChar.avatar_url || originChar.image_avatar_url} alt={originChar.name} className="w-full h-full object-cover" />
+                        : <span className="text-[8px] font-bold text-primary">{originChar.name?.[0]}</span>
+                      }
+                    </span>
+                    <span className="truncate">{originChar.name}</span>
+                  </button>
+                )}
+              </div>
+              <p className="px-1 text-[10px] text-muted-foreground">
+                {senderMode === "character"
+                  ? `Arrives in their World Phone as a normal image from ${originChar?.name}.`
+                  : "Arrives in their World Phone as a normal image from your World Name."}
+              </p>
+            </div>
+          )}
 
           {error && (
             <p className="px-1 text-xs text-destructive">{error}</p>

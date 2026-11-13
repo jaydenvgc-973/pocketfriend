@@ -223,6 +223,7 @@ export default function ChatPageLayout({
       {forwardTarget && (
         <ForwardMessageModal
           message={forwardTarget}
+          originCharacter={character}
           onClose={() => setForwardTarget(null)}
         />
       )}

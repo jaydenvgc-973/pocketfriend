@@ -21,7 +21,7 @@ function byName(a, b) {
   return (a?.name || "").localeCompare(b?.name || "");
 }
 
-export async function resolveNarrativeShareRecipients({ message, me }) {
+export async function resolveNarrativeShareRecipients({ message, me, originCharacter = null }) {
   if (!me?.email) return { own: [], crossAccount: [] };
 
   const ownChars = await base44.entities.Character
@@ -31,11 +31,13 @@ export async function resolveNarrativeShareRecipients({ message, me }) {
   const own = (ownChars || []).slice().sort(byName);
   const ownIds = new Set(own.map(c => c.id));
 
-  const originId = message?.character_id;
+  // The character whose thread this comes from is the origin of the contact graph.
+  // Narratives carry their own character_id; an image that the USER sent does not,
+  // so the chat page's character is passed in explicitly.
+  const originId = originCharacter?.id || message?.character_id || null;
   if (!originId) return { own, crossAccount: [] };
 
-  // The character whose narrative is being shared is the origin of the contact graph.
-  let origin = own.find(c => c.id === originId) || null;
+  let origin = originCharacter || own.find(c => c.id === originId) || null;
   if (!origin) {
     origin = await base44.entities.Character.get(originId).catch(() => null);
   }
