@@ -158,9 +158,12 @@ Deno.serve(async (req) => {
     const ownerEmail = user?.email;
     if (!ownerEmail) return Response.json({ error: 'Auth required' }, { status: 401 });
 
-    // Cleanup previous
+    // Cleanup previous HARNESS-OWNED fixtures only.
+    // A matching name is not proof that a character is disposable or that this harness
+    // created it. Only records carrying this harness's creation marker AND the Disposable
+    // designation are removed. Any other character is preserved, whatever its name.
     const prev = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: ownerEmail, name: 'Harness Test Character' }, null, 10
+      { owner_email: ownerEmail, test_fixture_origin: 'autonomous_travel_harness', is_disposable: true }, null, 10
     ).catch(() => []);
     for (const c of prev) await base44.asServiceRole.entities.Character.delete(c.id).catch(() => {});
     const prevLocs = await base44.asServiceRole.entities.LocationReference.filter(
@@ -269,7 +272,14 @@ Deno.serve(async (req) => {
     }
 
     // Create test character
-    const char = await base44.asServiceRole.entities.Character.create(charConfig);
+    // Created by this harness for this run: marked as a Disposable temporary fixture so
+    // creation history — not a name — is what makes it removable.
+    const char = await base44.asServiceRole.entities.Character.create({
+      ...charConfig,
+      is_test_character: true,
+      is_disposable: true,
+      test_fixture_origin: 'autonomous_travel_harness',
+    });
 
     // Create financial record
     const fin = await base44.asServiceRole.entities.CharacterFinancial.create({

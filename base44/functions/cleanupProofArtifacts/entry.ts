@@ -48,29 +48,37 @@ Deno.serve(async (req) => {
     );
   }
 
+  // ── CHARACTER DELETION BOUNDARY (function scope) ──────────────────────────
+  // A character is deletable only when its creation history proves a test run created
+  // it as a temporary fixture: the test_fixture_origin marker written at creation, AND
+  // the Disposable designation. A name, a proof-style name, a Test Character toggle or a
+  // diagnostic flag is never sufficient. No creation history = preserved.
+  const isTestCreatedFixture = (c) =>
+    !!c.test_fixture_origin && c.is_disposable === true && c.is_world_service !== true;
+
+  // Account boundary: only the authenticated user's own records may ever be touched.
+  const isOwnedByCaller = (c) =>
+    c.owner_email === user.email || c.created_by === user.email;
+
   // ── STEP 1: Find all proof characters ─────────────────────────────────────
   let proofCharIds = new Set();
   let proofConvoIds = new Set();
   let proofCommitmentIds = new Set();
 
   try {
-    // CHARACTER DELETION BOUNDARY
-    // Only scratch characters a proof run created for itself are deletable: an explicit
-    // proof-artifact name AND the test/diagnostic designation the run writes at creation.
-    // Any pre-existing character is preserved, even if it participated in a proof —
-    // the Test Character toggle grants test eligibility, never permission to delete.
-    const isProofArtifactCharacter = (c) =>
-      isProofChar(c.name) && (c.is_test_character === true || c.diagnostic_only === true);
-
-    // Fetch all characters owned by this user (service role to catch all)
+    // Fetch all characters (service role), then keep only this account's records
     const allChars = await base44.asServiceRole.entities.Character.list('-created_date', 500);
-    const proofChars = allChars.filter(isProofArtifactCharacter);
-    const preservedChars = allChars.filter(c => isProofChar(c.name) && !isProofArtifactCharacter(c));
+    const myChars = allChars.filter(isOwnedByCaller);
+    const proofChars = myChars.filter(isTestCreatedFixture);
+    const preservedChars = myChars.filter(c =>
+      !isTestCreatedFixture(c) && (c.is_test_character === true || isProofChar(c.name))
+    );
 
     for (const c of proofChars) proofCharIds.add(c.id);
-    log.push(`Found ${proofChars.length} proof characters: ${proofChars.map(c => c.name).join(', ')}`);
+    log.push(`Found ${proofChars.length} test-created disposable fixture(s): ${proofChars.map(c => `${c.name} [${c.test_fixture_origin}]`).join(', ')}`);
+    log.push(`Ignored ${allChars.length - myChars.length} character(s) on other accounts — never deleted by cleanup`);
     if (preservedChars.length > 0) {
-      log.push(`PRESERVED ${preservedChars.length} pre-existing character(s) matching a proof name pattern (never deleted by cleanup): ${preservedChars.map(c => c.name).join(', ')}`);
+      log.push(`PRESERVED ${preservedChars.length} character(s) not verifiably created for a test (never deleted by cleanup): ${preservedChars.map(c => c.name).join(', ')}`);
     }
 
     deleted.characters = await hardDeleteAll('Character', proofChars);
@@ -174,7 +182,13 @@ Deno.serve(async (req) => {
 
   try {
     const remaining = await base44.asServiceRole.entities.Character.list('-created_date', 500);
-    verification.remaining_proof_characters = remaining.filter(c => isProofChar(c.name)).map(c => ({ id: c.id, name: c.name }));
+    verification.remaining_proof_characters = remaining
+      .filter(c => isTestCreatedFixture(c))
+      .map(c => ({ id: c.id, name: c.name }));
+    verification.preserved_characters = remaining
+      .filter(c => !isTestCreatedFixture(c) && (c.is_test_character === true || isProofChar(c.name)))
+      .map(c => ({ id: c.id, name: c.name, disposable: c.is_disposable === true }));
+    verification.characters_on_other_accounts = remaining.filter(c => !isOwnedByCaller(c)).length;
   } catch (err) {
     verification.remaining_proof_characters = `ERROR: ${err.message}`;
   }

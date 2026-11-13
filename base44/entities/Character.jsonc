@@ -266,7 +266,17 @@
     },
     "is_test_character": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "Testing eligibility ONLY. ON = this character may participate in tests. OFF = it may not. Name, alias and character type never decide eligibility, and this flag never authorizes deletion."
+    },
+    "is_disposable": {
+      "type": "boolean",
+      "default": false,
+      "description": "Test-cleanup permission ONLY, independent of is_test_character. True = a temporary fixture that a test run created for itself and may remove once that test is finished. False = Non-Disposable: never removed by test cleanup, even while Test Character is ON. Defaults to false whenever Test Character is turned ON."
+    },
+    "test_fixture_origin": {
+      "type": "string",
+      "description": "Creation-history marker. Written only by a Base44 test/Proof function at the moment it creates the character itself as a temporary fixture (e.g. 'proof_commitment_system', 'autonomous_travel_harness', 'proactive_comms_fixture_test'). Empty on any character that existed before the test. Test cleanup requires BOTH this marker AND is_disposable=true, so a name, an alias or Test Character status can never make an existing character deletable."
     },
     "diagnostic_only": {
       "type": "boolean",

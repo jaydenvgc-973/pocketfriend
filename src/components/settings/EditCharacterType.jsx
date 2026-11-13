@@ -203,8 +203,13 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     setTestSaving(true);
     try {
       const next = selectedChar.is_test_character !== true;
-      await base44.entities.Character.update(selectedChar.id, { is_test_character: next });
-      setSelectedChar(prev => prev ? { ...prev, is_test_character: next } : prev);
+      // Enabling Test Character always defaults the disposal designation to
+      // Non-Disposable — an existing character must never become deletable by testing.
+      const patch = next
+        ? { is_test_character: true, is_disposable: false }
+        : { is_test_character: false };
+      await base44.entities.Character.update(selectedChar.id, patch);
+      setSelectedChar(prev => prev ? { ...prev, ...patch } : prev);
       queryClient.invalidateQueries({ queryKey: ["characters"] });
       setSaveResult({ success: true, message: next ? "Marked as Test Character." : "Test Character status removed — normal character type unchanged." });
     } catch (err) {
