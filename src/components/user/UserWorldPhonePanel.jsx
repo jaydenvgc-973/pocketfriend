@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { Phone, Send, ChevronLeft, Image as ImageIcon, Loader2, Globe2 } from "lucide-react";
-import { loadCrossAccountContacts, alphabetizeByName } from "@/lib/imageShareCharacters";
+import { loadCrossAccountContacts } from "@/lib/imageShareCharacters";
 
 /**
  * UserWorldPhonePanel
@@ -13,8 +13,10 @@ import { loadCrossAccountContacts, alphabetizeByName } from "@/lib/imageShareCha
  * pair keyed `world_phone::user_<userId>::<characterId>`, written by
  * sendUserWorldPhoneMessage. Character World Phones are untouched.
  *
- * Reachable characters: the user's own characters, plus eligible characters on
- * other accounts known through the existing contact graph.
+ * Reachable characters: ONLY characters on other accounts that have an
+ * established connection to one of the user's own characters through the
+ * existing contact graph. The user's own characters are deliberately excluded —
+ * they are already reachable through their Chat pages.
  */
 
 function keyFor(userId, characterId) {
@@ -33,7 +35,6 @@ function Avatar({ url, name, size = "w-8 h-8" }) {
 
 export default function UserWorldPhonePanel({ worldName = "You", avatarUrl = null }) {
   const [user, setUser] = useState(null);
-  const [ownCharacters, setOwnCharacters] = useState([]);
   const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
   const [activeContact, setActiveContact] = useState(null);
@@ -50,18 +51,22 @@ export default function UserWorldPhonePanel({ worldName = "You", avatarUrl = nul
     base44.auth.me().then(async (me) => {
       if (cancelled || !me?.email) return;
       setUser(me);
+      // The user's OWN characters seed the contact graph but are never listed:
+      // they are already reachable through their Chat pages. Legacy records with
+      // missing newer fields stay in the graph — only explicitly inactive records
+      // are dropped, so no established connection is lost.
       const chars = await base44.entities.Character
-        .filter({ owner_email: me.email, status: "active" }, "name", 200)
+        .filter({ owner_email: me.email }, "name", 300)
         .catch(() => []);
-      const own = alphabetizeByName(
-        (chars || []).filter((c) => !c.is_user && !c.is_test_character)
+      const ownedSeeds = (chars || []).filter(
+        (c) => !c.is_user && !["deleted", "soft_deleted", "merged"].includes(c.status)
       );
+      const ownIds = (chars || []).map((c) => c.id).filter(Boolean);
       if (cancelled) return;
-      setOwnCharacters(own);
       const cross = await loadCrossAccountContacts({
-        characterRecords: chars || [],
+        characterRecords: ownedSeeds,
         ownerEmail: me.email,
-        excludeIds: own.map((c) => c.id),
+        excludeIds: ownIds,
       }).catch(() => []);
       if (cancelled) return;
       setCrossAccountCharacters(cross || []);
@@ -258,16 +263,12 @@ export default function UserWorldPhonePanel({ worldName = "You", avatarUrl = nul
         </p>
       ) : (
         <div className="max-h-64 overflow-y-auto space-y-1">
-          {ownCharacters.length === 0 && crossAccountCharacters.length === 0 && (
-            <p className="text-xs text-muted-foreground py-3">No characters available to message.</p>
+          {crossAccountCharacters.length === 0 && (
+            <p className="text-xs text-muted-foreground py-3">
+              No characters from other accounts yet — contacts appear here once one of your characters knows them.
+            </p>
           )}
-          {ownCharacters.map((c) => renderContact(c, false))}
-          {crossAccountCharacters.length > 0 && (
-            <>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-purple-300 pt-2 px-1">Other accounts</p>
-              {crossAccountCharacters.map((c) => renderContact(c, true))}
-            </>
-          )}
+          {crossAccountCharacters.map((c) => renderContact(c, true))}
         </div>
       )}
     </div>
