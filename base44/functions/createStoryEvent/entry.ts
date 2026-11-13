@@ -31,15 +31,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'title, event_date, plot, and at least one participant are required' }, { status: 400 });
     }
 
-    // Resolve character names from IDs.
-    // A test character with an assigned alias is referred to by that alias in
-    // Story Mode, Story Events and narratives. Test status is never changed here.
-    const narrativeNameOf = (c) => {
-      const alias = (Array.isArray(c?.aliases) ? c.aliases : [])
-        .map(a => (typeof a === 'string' ? a : a?.text || a?.alias_name))
-        .filter(Boolean)[0];
-      return c?.is_test_character === true && alias ? alias : (c?.name || c?.display_name || null);
-    };
+    // Resolve character names from IDs. Primary names are authoritative; aliases are
+    // nicknames and are not substituted here.
+    const narrativeNameOf = (c) => c?.name || c?.display_name || null;
     const allCharacterIds = [...new Set([...focusIds, ...participantIds])];
     const nameById = {};
     for (const cid of allCharacterIds) {

@@ -41,9 +41,24 @@ Deno.serve(async (req) => {
     // Filter to this user's fixtures only (asServiceRole sees all users — scope by owner_email)
     const userFixtures = allChars.filter(c => c.owner_email === ownerEmail);
 
-    let charA = userFixtures.find(c => c.name === 'Test Character A');
-    let charB = userFixtures.find(c => c.name === 'Test Character B');
-    let charC = userFixtures.find(c => c.name === 'Test Character C');
+    // Fixtures are selected by the Test Character designation (toggle ON), never by name.
+    // A preferred label is honored when present, otherwise any remaining toggle-ON test
+    // character is used — a renamed fixture stays eligible, a non-designated one does not.
+    const _pool = [...userFixtures].sort((a, b) =>
+      String(a.created_date || '').localeCompare(String(b.created_date || ''))
+    );
+    const _claimed = new Set();
+    const claimFixture = (preferredName) => {
+      const exact = userFixtures.find(c => c.name === preferredName && !_claimed.has(c.id));
+      if (exact) { _claimed.add(exact.id); return exact; }
+      const next = _pool.find(c => !_claimed.has(c.id));
+      if (next) { _claimed.add(next.id); return next; }
+      return null;
+    };
+
+    let charA = claimFixture('Test Character A');
+    let charB = claimFixture('Test Character B');
+    let charC = claimFixture('Test Character C');
 
     // Create any missing fixtures
     if (!charA) {

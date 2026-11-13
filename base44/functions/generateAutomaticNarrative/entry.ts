@@ -45,13 +45,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found', characterId }, { status: 404 });
     }
 
-    // A test character with an assigned alias is referred to by that alias in the
-    // narrative. Test status and every other field remain unchanged.
-    const _narrativeAlias = (Array.isArray(character.aliases) ? character.aliases : [])
-      .map(a => (typeof a === 'string' ? a : a?.text || a?.alias_name)).filter(Boolean)[0];
-    const narrativeName = (character.is_test_character === true && _narrativeAlias)
-      ? _narrativeAlias
-      : character.name;
+    // Narratives use the character's primary name. Aliases remain nicknames and are
+    // not substituted here; test status plays no part in naming.
+    const narrativeName = character.name || character.display_name || 'the character';
 
     // DECEASED — no new first-person activity narratives for a dead character.
     if (character.life_status === 'deceased' || character.status === 'deceased') {

@@ -524,10 +524,8 @@ Deno.serve(async (req) => {
       const c = charById[cid];
       if (!c) continue;
 
-      // A test character with an assigned alias is written under that alias.
-      const _alias = (Array.isArray(c.aliases) ? c.aliases : [])
-        .map(a => (typeof a === 'string' ? a : a?.text || a?.alias_name)).filter(Boolean)[0];
-      const displayName = (c.is_test_character === true && _alias) ? _alias : (c.name || c.display_name || cid);
+      // Primary name is authoritative; aliases are not substituted here.
+      const displayName = c.name || c.display_name || cid;
       const firstName = displayName.split(/\s+/)[0];
       const refImages = resolveCharacterRefImages(c);
 

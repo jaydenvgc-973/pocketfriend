@@ -7,7 +7,6 @@ import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExa
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
-import { narrativeNameFor } from "@/lib/characterNarrativeName";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -31,8 +30,8 @@ export default function NarrativeActionButton({
   onExternalClose,
   userSettings = null,
 }) {
-  // A test character with an assigned alias is written under that alias.
-  const narrativeName = narrativeNameFor(character);
+  // Narratives refer to the character by their primary name.
+  const narrativeName = character?.name || character?.display_name || "the character";
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);

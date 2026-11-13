@@ -208,14 +208,13 @@ export function countCharactersByType(characters) {
 
 /**
  * A test character is a disposable diagnostic record — never a canonical
- * character. Flagged explicitly (is_test_character / diagnostic_only) or
- * carrying the mandated "Test Character …" name.
+ * character. Eligibility is the explicit Test Character designation
+ * (is_test_character) — never the character's name.
  */
 export function isTestCharacter(c) {
   if (!c) return false;
   return c.is_test_character === true
-    || c.diagnostic_only === true
-    || /^test character\b/i.test(c.name || '');
+    || c.diagnostic_only === true;
 }
 
 /**
