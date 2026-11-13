@@ -30,6 +30,7 @@ import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
+import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
 import { getResidentialUnits } from "@/lib/residentialUnits";
 
 
@@ -972,15 +973,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 
+                  // Residents grouped by apartment (when this property has units), compact
+                  // and scrollable so the panel never grows with the household size.
                   const presenceSummary = (
-                    <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
-                      {lines.map((l, i) => (
-                        <p key={i} className="text-xs truncate">
-                          <span className="text-foreground font-medium">{l.name}</span>
-                          <span className={`ml-1 ${l.color}`}>is {l.status}</span>
-                        </p>
-                      ))}
-                    </div>
+                    <ResidentPresenceList lines={lines} units={selectedUnits} residentIds={[...residentIdSet]} location={selectedLocation} />
                   );
 
                   // VGC Towers: show how many residents are out
