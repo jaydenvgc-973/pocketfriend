@@ -170,8 +170,23 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
         if (!person || person.id === senderId) continue;
 
         if (senderIsUser) {
+          // Sent as YOU to a character on another account — delivered through your
+          // own World Phone under your World Name.
+          if (person.is_other_account) {
+            const upRes = await base44.functions.invoke("sendUserWorldPhoneMessage", {
+              recipient_character_id: person.id,
+              image_url: generatedImage,
+              image_description: caption,
+              message_type: "image",
+              source: "scene_image_share_user",
+            });
+            if (!upRes?.data?.success) {
+              throw new Error(upRes?.data?.error || `Could not send to ${person.name}`);
+            }
+            continue;
+          }
+
           // User-sent image — unchanged existing chat delivery path.
-          if (person.is_other_account) continue;
           const convoId = await resolveOrCreateConversation({
             characterId: person.id,
             characterName: person.name,

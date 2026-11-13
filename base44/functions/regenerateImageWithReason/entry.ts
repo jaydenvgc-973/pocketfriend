@@ -1036,10 +1036,33 @@ Deno.serve(async (req) => {
         if (candidate) {
           const owner = candidate.owner_email;
           if (owner && owner !== requestingUser) {
-            console.error(`[regenerateImageWithReason] ⛔ Cross-account: char ${effectiveCharId} owned by ${owner}`);
-            return Response.json({ success: false, error: 'Character does not belong to your account.' }, { status: 403 });
+            // CROSS-ACCOUNT CORRECTION — allowed only for characters already known to
+            // this account through the existing contact graph of the user's own
+            // characters (fictional_relationships.related_character_id /
+            // family_members.character_id), or an existing World Phone thread.
+            // The selected character's own visual identity is used below, exactly as
+            // for an account-owned character.
+            const myCharsForCross = await base44.asServiceRole.entities.Character
+              .filter({ owner_email: requestingUser }, null, 200)
+              .catch(() => []);
+            const crossKey = `world_phone::${[candidate.id].join('::')}`;
+            const knownByRelationship = (myCharsForCross || []).some(c =>
+              (c.fictional_relationships || []).some(r => r?.related_character_id === candidate.id) ||
+              (c.family_members || []).some(f => f?.character_id === candidate.id)
+            );
+            const knownByThread = knownByRelationship ? true : await base44.asServiceRole.entities.Conversation
+              .filter({ shared_conversation_key: { $regex: candidate.id } }, null, 5)
+              .then(rows => (rows || []).some(r => String(r.shared_conversation_key || '').includes(candidate.id) && String(r.shared_conversation_key || '').includes('world_phone')))
+              .catch(() => false);
+            if (!knownByRelationship && !knownByThread) {
+              console.error(`[regenerateImageWithReason] ⛔ Cross-account not a known contact: char ${effectiveCharId} owned by ${owner}`);
+              return Response.json({ success: false, error: 'Character does not belong to your account.' }, { status: 403 });
+            }
+            console.log(`[regenerateImageWithReason] ✅ Cross-account known contact allowed: char ${effectiveCharId} (${candidate.name}) owner=${owner} key=${crossKey}`);
+            charRecord = candidate;
+          } else {
+            charRecord = candidate;
           }
-          charRecord = candidate;
         }
       }
 

@@ -81,6 +81,11 @@ export async function loadCrossAccountContacts({ characterRecords = [], ownerEma
     (character?.fictional_relationships || []).forEach((rel) => {
       if (rel?.related_character_id) knownIds.add(rel.related_character_id);
     });
+    // Family members linked to a real character record are part of the same
+    // established contact graph the Media Grid generator uses.
+    (character?.family_members || []).forEach((member) => {
+      if (member?.character_id) knownIds.add(member.character_id);
+    });
   });
 
   const requested = [...knownIds].filter((id) => !excludeIds.includes(id)).slice(0, 100);

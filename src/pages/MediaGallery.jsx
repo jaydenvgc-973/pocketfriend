@@ -9,6 +9,7 @@ import FolderGrid from '@/components/gallery/FolderGrid';
 import MonthGrid from '@/components/gallery/MonthGrid';
 import DeleteFolderModal from '@/components/gallery/DeleteFolderModal';
 import GalleryImageGrid from '@/components/gallery/GalleryImageGrid';
+import { loadCrossAccountContacts } from '@/lib/imageShareCharacters';
 
 // ── CENTRALIZED STATE MUTATION LOGGER ──────────────────────────────────────────
 // Every write to gallery state (pageImages, hasMore, proof, etc) gets logged with:
@@ -860,10 +861,22 @@ function SendImageModal({ image, onClose, onSent }) {
     base44.auth.me().then(u => setUser(u)).catch(() => {});
   }, []);
 
+  // Characters on OTHER accounts, known through the existing contact graph of this
+  // account's characters. Same eligible set the Media Grid generator offers.
+  const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
+
   useEffect(() => {
     if (!user?.email) return;
     base44.entities.Character.filter({ owner_email: user.email, status: 'active' }, 'name', 200)
-      .then(setCharacters)
+      .then((rows) => {
+        setCharacters(rows);
+        return loadCrossAccountContacts({
+          characterRecords: rows,
+          ownerEmail: user.email,
+          excludeIds: (rows || []).map(r => r.id),
+        });
+      })
+      .then(list => { if (list) setCrossAccountCharacters(list); })
       .catch(e => console.error('[SendImageModal] Failed to load characters:', e));
   }, [user?.email]);
 
@@ -966,9 +979,28 @@ function SendImageModal({ image, onClose, onSent }) {
         }
 
         for (const charId of selectedRecipientCharacterIds) {
-          const char = characters.find(c => c.id === charId);
+          const char = characters.find(c => c.id === charId) ||
+            crossAccountCharacters.find(c => c.id === charId);
           if (!char) {
             log.push(`WARN: charId=${charId} not found`);
+            continue;
+          }
+
+          // ── SENT AS THE USER TO ANOTHER ACCOUNT ──────────────────────────
+          // Your own World Phone carries it, identified by your World Name.
+          if (char.is_other_account) {
+            log.push(`--- Sending as YOU to ${char.name} (other account, World Phone) ---`);
+            const upRes = await base44.functions.invoke('sendUserWorldPhoneMessage', {
+              recipient_character_id: char.id,
+              image_url: image.url,
+              image_description: image.displayPrompt || image.imageDescription || undefined,
+              message_type: 'image',
+              source: 'media_gallery_send_user',
+            });
+            if (!upRes?.data?.success) {
+              throw new Error(upRes?.data?.error || `World Phone send to ${char.name} failed`);
+            }
+            log.push(`World Phone OK: msg_id=${upRes.data.message_id} as "${upRes.data.sender_display_name}"`);
             continue;
           }
 
@@ -1071,6 +1103,7 @@ function SendImageModal({ image, onClose, onSent }) {
 
         const senderChar = characters.find(c => c.id === selectedSenderCharacterId);
         if (!senderChar) { setError('Sender character not found'); setLoading(false); return; }
+        // Cross-account recipients are delivered through the existing World Phone path below.
 
         // Separate user recipient from character recipients
         const sendToUser = recipientIds.includes(USER_RECIPIENT_ID);
@@ -1258,6 +1291,19 @@ function SendImageModal({ image, onClose, onSent }) {
                     onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
                 );
               })}
+              {crossAccountCharacters.length > 0 && (
+                <>
+                  <div className="px-3 py-2 text-xs font-semibold text-purple-300 uppercase bg-purple-500/10 border-t border-border">Other Accounts</div>
+                  {crossAccountCharacters.map(char => (
+                    <label key={char.id} className="flex items-center gap-2 px-3 py-2 hover:bg-secondary/50 cursor-pointer border-b border-border/50 last:border-b-0">
+                      <input type="checkbox" checked={selectedRecipientCharacterIds.has(char.id)} onChange={() => { const s = new Set(selectedRecipientCharacterIds); s.has(char.id) ? s.delete(char.id) : s.add(char.id); setSelectedRecipientCharacterIds(s); }} className="w-4 h-4" />
+                      {char.avatar_url && <img src={char.avatar_url} alt={char.name} className="w-5 h-5 rounded-full object-cover" />}
+                      <span className="text-sm text-foreground">{char.name}</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Other account</span>
+                    </label>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -1288,9 +1334,25 @@ function SendImageModal({ image, onClose, onSent }) {
                   return (
                     <CharacterGroupCharacter key={typeKey} title={typeLabels[typeKey]} chars={groupedCharacters[typeKey]} selected={selectedRecipientCharacterIds} senderCharacterId={selectedSenderCharacterId}
                       onToggle={(charId) => { const s = new Set(selectedRecipientCharacterIds); s.has(charId) ? s.delete(charId) : s.add(charId); setSelectedRecipientCharacterIds(s); }} />
-                  );
-                })}
-              </div>
+                    );
+                    })}
+                    {crossAccountCharacters.length > 0 && (
+                    <>
+                    <div className="px-3 py-2 text-xs font-semibold text-purple-300 uppercase bg-purple-500/10 border-t border-border">Other Accounts</div>
+                    {crossAccountCharacters.map(char => {
+                      const isSender = char.id === selectedSenderCharacterId;
+                      return (
+                        <label key={char.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-border/50 last:border-b-0 ${isSender ? 'opacity-50 cursor-not-allowed' : 'hover:bg-secondary/50'}`}>
+                          <input type="checkbox" checked={selectedRecipientCharacterIds.has(char.id)} onChange={() => { const s = new Set(selectedRecipientCharacterIds); s.has(char.id) ? s.delete(char.id) : s.add(char.id); setSelectedRecipientCharacterIds(s); }} disabled={isSender} className="w-4 h-4" />
+                          {char.avatar_url && <img src={char.avatar_url} alt={char.name} className="w-5 h-5 rounded-full object-cover" />}
+                          <span className="text-sm text-foreground">{char.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30">Other account</span>
+                        </label>
+                      );
+                    })}
+                    </>
+                    )}
+                    </div>
             </div>
             </div>
         )}

@@ -6,6 +6,8 @@ import { base44 } from "@/api/base44Client";
 import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { registerForegroundTask, FOREGROUND_TASKS } from "@/lib/foregroundPriority";
 import { validateZoneImages } from "@/lib/imageFormatValidator";
+import { resolveKnownCrossAccountCharacters } from "@/lib/knownCrossAccountCharacters";
+import { loadCrossAccountContacts } from "@/lib/imageShareCharacters";
 
 function getInitial(name) { return name?.[0]?.toUpperCase() || '?'; }
 
@@ -119,6 +121,9 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [allCharacters, setAllCharacters] = useState([]);
   const [loadingCharacters, setLoadingCharacters] = useState(false);
   const [rosterLoadStatus, setRosterLoadStatus] = useState('idle'); // 'idle'|'loading'|'fresh'|'error'
+  // Characters belonging to OTHER accounts, known through the existing contact graph.
+  // Same eligible set the Media Grid generator offers — shown below your own characters.
+  const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [userEmail, setUserEmail] = useState(null);
   // Ref so openSubjectPicker always has the email even if state hasn't propagated yet
@@ -170,6 +175,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setSelectedZone(null);
       setShowSubjectPicker(false);
       setSelectedSubjectIds([]);
+      setCrossAccountCharacters([]);
       setRosterDiagnostics(null);
       setCombinedMode(false);
       setPendingSubjectSelection(null);
@@ -320,6 +326,48 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setAllCharacters(roster);
       setRosterLoadStatus('fresh');
       applyPreSelection(roster);
+
+      // ── CROSS-ACCOUNT CHARACTERS ───────────────────────────────────────────
+      // The same eligible set the Media Grid generator offers: characters on other
+      // accounts already known to this image's character through the existing
+      // contact graph. Loaded separately so the account-scoped roster is unchanged.
+      const originId = generationContext?.character_id ||
+        (generationContext?.subjects || []).find(s => s.subject_type !== 'user' && s.subject_id)?.subject_id ||
+        null;
+      if (originId || liveChars.length > 0) {
+        Promise.resolve(
+          originId
+            ? base44.entities.Character.get(originId).catch(() => null)
+            : null
+        )
+          .then(origin => {
+            if (origin) {
+              return resolveKnownCrossAccountCharacters({
+                originCharacter: origin,
+                user: { email, id: userEntity?.id },
+              });
+            }
+            // Origin character is on another account (not readable here) — use the
+            // same contact graph across this account's own characters.
+            return loadCrossAccountContacts({
+              characterRecords: liveChars,
+              ownerEmail: email,
+              excludeIds: liveChars.map(c => c.id),
+            });
+          })
+          .then(list => {
+            if (!list || list.length === 0) return;
+            setCrossAccountCharacters(list);
+            // Pre-select a cross-account subject already recorded on this image
+            const ctxIds = (generationContext?.subjects || []).map(s => s.subject_id).filter(Boolean);
+            const preCross = list.filter(c => ctxIds.includes(c.id)).map(c => c.id);
+            if (preCross.length > 0) {
+              setSelectedSubjectIds(prev => [...new Set([...prev, ...preCross])]);
+            }
+          })
+          .catch(() => {});
+      }
+
       setRosterDiagnostics({
         email,
         characterCount: liveChars.length,
@@ -688,6 +736,39 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                       })}
                     {allCharacters.filter(c => !c.is_user).length === 0 && rosterLoadStatus !== 'loading' && rosterLoadStatus !== 'error' && (
                       <p className="text-xs text-muted-foreground text-center py-3 italic">No characters on this account</p>
+                    )}
+
+                    {/* Cross-account characters — same organization as Media Grid: */}
+                    {/* your characters first, other accounts last, clearly distinguishable. */}
+                    {crossAccountCharacters.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-1.5 pt-2 pb-1 px-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-purple-300">Other accounts</span>
+                        </div>
+                        {crossAccountCharacters.map(char => {
+                          const isSelected = selectedSubjectIds.includes(char.id);
+                          return (
+                            <button
+                              key={char.id}
+                              onClick={() => toggleSubject(char.id)}
+                              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-sm text-left ${
+                                isSelected
+                                  ? 'border-primary bg-primary/10 text-primary'
+                                  : 'border-dashed border-border bg-secondary/30 text-foreground hover:border-primary/40'
+                              }`}
+                            >
+                              {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                              {char.avatar_url ? (
+                                <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={e => { e.target.style.display = 'none'; }} />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{getInitial(char.name)}</div>
+                              )}
+                              <span className="font-medium truncate">{char.name}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 flex-shrink-0 ml-auto">Other account</span>
+                            </button>
+                          );
+                        })}
+                      </>
                     )}
                   </div>
                 </>

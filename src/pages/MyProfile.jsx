@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
 import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
+import UserWorldPhonePanel from "@/components/user/UserWorldPhonePanel";
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
 import LocationImage from "@/components/profile/LocationImage";
@@ -503,6 +504,12 @@ export default function MyProfile() {
               </button>
             </div>
           </div>
+        </section>
+
+        {/* Your own World Phone — you speak as your World Name, never as a character */}
+        <section className="bg-card border border-border rounded-2xl p-4">
+          <ProfileSectionHeader icon={Phone} title="World Phone" subtitle={displayName} />
+          <UserWorldPhonePanel worldName={displayName} avatarUrl={avatarUrl} />
         </section>
 
         {/* Full appearance editor — collapsible */}

@@ -42,19 +42,18 @@ export default function ImageShareSelector({
   const renderRecipient = (person) => {
     const isSender = person.id === senderId;
     const selected = selectedIds.includes(person.id);
-    const blockedByAccount = person.is_other_account && userIsSender;
-    const blocked = disabled || isSender || blockedByAccount;
+    // Cross-account recipients are reachable either way: as one of your characters,
+    // or as yourself through your own World Phone (your World Name is the sender).
+    const blocked = disabled || isSender;
     return (
       <button
         key={person.id}
         onClick={() => { if (!blocked) onToggle(person.id); }}
         disabled={blocked}
         title={
-          blockedByAccount
-            ? "Send as one of your characters to reach a character on another account"
-            : person.is_other_account
-              ? `${person.name} — belongs to another account`
-              : person.name
+          person.is_other_account
+            ? `${person.name} — belongs to another account`
+            : person.name
         }
         className={`w-full flex items-center gap-2 px-2.5 py-2 text-left border-b border-border/50 last:border-b-0 transition-colors ${blocked ? "opacity-45 cursor-not-allowed" : "hover:bg-secondary/50"} ${selected ? "bg-primary/10" : ""}`}
       >
@@ -113,9 +112,9 @@ export default function ImageShareSelector({
                 <p className="text-[10px] font-semibold text-purple-300 uppercase tracking-wider">Other accounts</p>
               </div>
               {otherAccountCharacters.map(renderRecipient)}
-              {userIsSender && (
+              {userIsSender && otherAccountCharacters.length > 0 && (
                 <p className="px-2.5 py-1.5 text-[10px] text-muted-foreground border-t border-border">
-                  Choose one of your characters as the sender to reach these.
+                  Sent as you, through your World Phone.
                 </p>
               )}
             </>
