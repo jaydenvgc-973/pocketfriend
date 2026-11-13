@@ -1,5 +1,6 @@
 import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight, Shirt, Building } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
@@ -26,6 +27,7 @@ function SectionHeader({ icon: Icon, label }) {
 }
 
 export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null, onLocationUpdate = null, sharedOccupancy = null }) {
+  const navigate = useNavigate();
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
   const [workerUpdateTick, setWorkerUpdateTick] = useState(0);
@@ -234,6 +236,16 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="text-xs font-medium text-foreground">{unit.unit_name}</span>
                         <span className="text-[10px] text-muted-foreground ml-auto">{occupantCount} {occupantCount === 1 ? 'resident' : 'residents'}</span>
+                        {/* Enter THIS apartment on the Scenes page — the unit is the space,
+                            the zone inside it stays shared with the rest of the building. */}
+                        {cat === 'home' && (
+                          <button
+                            onClick={() => navigate(`/scene?locationId=${location.id}&unitId=${unit.unit_id}`)}
+                            className="text-[10px] text-primary font-medium flex items-center gap-0.5 hover:underline flex-shrink-0"
+                          >
+                            Visit <ArrowRight className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                       {aptRentAmount > 0 && (
                         <div className="text-[10px] text-muted-foreground mb-1">

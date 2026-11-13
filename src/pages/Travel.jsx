@@ -29,6 +29,8 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
+import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
+import { getResidentialUnits } from "@/lib/residentialUnits";
 
 
 export default function Travel() {
@@ -49,7 +51,16 @@ export default function Travel() {
   const [showEnvironmentModal, setShowEnvironmentModal] = useState(false);
   const [pendingEnvironmentLocation, setPendingEnvironmentLocation] = useState(null);
   const [selectedEnvironment, setSelectedEnvironment] = useState(null);
+  // The apartment being visited inside a multi-dwelling residence. It travels with the
+  // visit so Scenes opens on that unit's household — never the whole building.
+  const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
+
+  // Apartments inside the chosen residence, straight from Places (residential_units).
+  // Only residential properties carry households; other unit types are unchanged.
+  const selectedUnits = selectedLocation?.category === "home" ? getResidentialUnits(selectedLocation) : [];
+  // The apartment belongs to the property: choosing another destination releases it.
+  useEffect(() => { setSelectedUnitId(null); }, [selectedLocation?.id]);
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);
   const [showMap, setShowMap] = useState(false);
@@ -518,6 +529,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // Carry the selected environment itself so the arrival gate validates the
     // environment the user chose, not the property's business hours.
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
+    if (selectedUnitId) params.set("unitId", selectedUnitId);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -556,6 +568,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const envZone = selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
+    if (selectedUnitId) params.set("unitId", selectedUnitId);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -572,6 +585,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const envZone = selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
+    if (selectedUnitId) params.set("unitId", selectedUnitId);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -591,6 +605,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     }
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId });
+    // A chosen apartment travels with a solo visit to that same property.
+    if (selectedUnitId && getResidentialUnits(location).some((u) => u.unit_id === selectedUnitId)) params.set("unitId", selectedUnitId);
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -817,6 +833,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       <p className="text-xs text-muted-foreground capitalize">
                         {selectedCharacterIds.length === 0 ? "Going alone" : `${selectedCharacterIds.length + 1} people`}
                       </p>
+                    )}
+                    {selectedUnits.length > 0 && (
+                      <div className="mt-1">
+                        <ApartmentSwitcher
+                          units={selectedUnits}
+                          activeUnitId={selectedUnitId}
+                          onSelect={setSelectedUnitId}
+                          location={selectedLocation}
+                          allowNone
+                          direction="up"
+                        />
+                      </div>
                     )}
                   </div>
                   <button onClick={() => setSelectedLocation(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
