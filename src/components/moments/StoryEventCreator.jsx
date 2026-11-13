@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
-import { Loader2, BookOpen, Users, MapPin, Star } from 'lucide-react';
+import { Loader2, BookOpen, Users, MapPin, Star, Globe, Lock } from 'lucide-react';
 
 // Stable synthetic ID for the user participant (not a Character entity ObjectId)
 const USER_STORY_ID = '__user__';
@@ -13,6 +13,8 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
   const [startTime, setStartTime] = useState(initialStartTime || '');
   const [endTime, setEndTime] = useState(initialEndTime || '');
   const [allDay, setAllDay] = useState(false);
+  // Public/Private — decided before generating. Public is the legacy default.
+  const [isPublic, setIsPublic] = useState(true);
   const [selectedVenueId, setSelectedVenueId] = useState(initialVenueId || '');
   const [isRabbitHole, setIsRabbitHole] = useState(initialIsRabbitHole);
   const [rabbitHoleName, setRabbitHoleName] = useState(initialRabbitHoleName || '');
@@ -105,6 +107,7 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
         start_time: allDay ? null : (startTime || null),
         end_time: allDay ? null : (endTime || null),
         all_day: allDay,
+        is_public: isPublic,
         venue_id: isRabbitHole ? null : (selectedVenueId || null),
         venue_name: resolveVenueName(),
         is_rabbit_hole: isRabbitHole,
@@ -135,6 +138,7 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
           }),
           all_day: allDay,
           is_rabbit_hole: isRabbitHole,
+          is_public: isPublic,
         };
         if (onCreated) onCreated(res.data.storyEventId, eventPreview);
       } else {
@@ -162,6 +166,40 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
         className="w-full px-3 py-2 bg-input border border-border rounded-lg text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-primary/50"
         autoFocus
       />
+
+      <div>
+        <div className="flex items-center gap-1 mb-1">
+          <Globe className="w-3 h-3 text-muted-foreground" />
+          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Visibility</span>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setIsPublic(true)}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+              isPublic
+                ? 'bg-primary/20 text-primary border-primary/40'
+                : 'bg-secondary/60 text-muted-foreground border-border hover:border-primary/30'
+            }`}
+          >
+            <Globe className="w-3 h-3" /> Public
+          </button>
+          <button
+            onClick={() => setIsPublic(false)}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${
+              !isPublic
+                ? 'bg-primary/20 text-primary border-primary/40'
+                : 'bg-secondary/60 text-muted-foreground border-border hover:border-primary/30'
+            }`}
+          >
+            <Lock className="w-3 h-3" /> Private
+          </button>
+        </div>
+        <p className="text-[9px] text-muted-foreground mt-1">
+          {isPublic
+            ? 'Public events can affect Public Relations and may be reported in the weekly newsletter.'
+            : 'Private events stay among their participants — no Public Relations, never in the weekly newsletter.'}
+        </p>
+      </div>
 
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">

@@ -172,6 +172,8 @@ Deno.serve(async (req) => {
     const allStoryEvents = await base44.asServiceRole.entities.StoryEvent.list('-created_date', 200);
     const qualifyingStoryEvents = allStoryEvents.filter(e => {
       if (e.status !== 'complete') return false;
+      // Private Story Events are never reported in the newsletter.
+      if (e.is_public === false) return false;
       if (!e.event_date) return false;
       return e.event_date >= weekStartStr && e.event_date <= weekEndStr;
     });

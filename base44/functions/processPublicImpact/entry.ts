@@ -20,6 +20,10 @@ Deno.serve(async (req) => {
     if (event.status !== 'complete') {
       return Response.json({ error: 'Story Event must be complete before public impact processing' }, { status: 400 });
     }
+    // Private Story Events do not participate in Public Relations.
+    if (event.is_public === false) {
+      return Response.json({ error: 'This Story Event is private and does not participate in Public Relations' }, { status: 400 });
+    }
 
     const participantIds = character_ids || event.participant_character_ids || [];
     const participantNames = event.participant_character_names || [];

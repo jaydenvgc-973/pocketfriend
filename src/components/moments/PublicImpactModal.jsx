@@ -51,7 +51,13 @@ export default function PublicImpactModal({ event, onClose }) {
         </div>
 
         <div className="p-4 space-y-3">
-          {!results && !processing && (
+          {event.is_public === false && (
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              This Story Event is private. It does not participate in Public Relations, so its participants gain no public-facing record from it.
+            </p>
+          )}
+
+          {!results && !processing && event.is_public !== false && (
             <>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 Designate this completed event as part of the public-facing history for its participants. The system will analyze what actually happened and determine proportional public consequences.

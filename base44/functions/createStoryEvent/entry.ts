@@ -22,6 +22,9 @@ Deno.serve(async (req) => {
     const venueName = body.venue_name || null;
     const isRabbitHole = body.is_rabbit_hole || false;
     const rabbitHoleVenueName = body.rabbit_hole_venue_name || null;
+    // Public/Private selection — private events never participate in Public
+    // Relations or the weekly newsletter. Absent = public (legacy default).
+    const isPublic = body.is_public !== false;
 
     const hasAnyParticipant = participantIds.length > 0 || !!userParticipant;
     if (!title || !eventDate || !plot || !hasAnyParticipant) {
@@ -69,6 +72,7 @@ Deno.serve(async (req) => {
       user_participant: userParticipantMetadata,
       owner_email: user.email,
       status: 'generating',
+      is_public: isPublic,
     });
 
     return Response.json({ success: true, storyEventId: record.id, status: 'generating' });

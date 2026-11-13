@@ -23,6 +23,11 @@
       "default": false,
       "description": "Whether this is an all-day event"
     },
+    "is_public": {
+      "type": "boolean",
+      "default": true,
+      "description": "True = Public Story Event: eligible for Public Relations and the weekly newsletter. False = Private: excluded from Public Relations and the weekly newsletter, and only its participants are affected. Absent on legacy records = public."
+    },
     "venue_id": {
       "type": "string",
       "description": "ID of the LocationReference venue"
