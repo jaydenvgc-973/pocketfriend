@@ -48,6 +48,9 @@ Deno.serve(async (req) => {
       String(a.created_date || '').localeCompare(String(b.created_date || ''))
     );
     const _claimed = new Set();
+    // Only characters CREATED by this run are ever removed by cleanup. Pre-existing
+    // characters used for a test are continuing characters and are preserved.
+    const _createdFixtureIds = [];
     const claimFixture = (preferredName) => {
       const exact = userFixtures.find(c => c.name === preferredName && !_claimed.has(c.id));
       if (exact) { _claimed.add(exact.id); return exact; }
@@ -87,6 +90,7 @@ Deno.serve(async (req) => {
           respect_level: 80,
         }],
       });
+      _createdFixtureIds.push(charA.id);
       log.push(`[setup] Created Test Character A: ${charA.id}`);
     } else {
       log.push(`[setup] Found existing Test Character A: ${charA.id}`);
@@ -125,6 +129,7 @@ Deno.serve(async (req) => {
           respect_level: 30,
         }],
       });
+      _createdFixtureIds.push(charB.id);
       log.push(`[setup] Created Test Character B: ${charB.id}`);
     } else {
       log.push(`[setup] Found existing Test Character B: ${charB.id}`);
@@ -156,6 +161,7 @@ Deno.serve(async (req) => {
           respect_level: 55,
         }],
       });
+      _createdFixtureIds.push(charC.id);
       log.push(`[setup] Created Test Character C: ${charC.id}`);
     } else {
       log.push(`[setup] Found existing Test Character C: ${charC.id}`);
@@ -587,12 +593,15 @@ Deno.serve(async (req) => {
 
     // ── CLEANUP (optional) ────────────────────────────────────────────────────
     if (cleanup) {
-      // Archive test fixtures and their messages/commitments
-      for (const c of [charA, charB, charC]) {
-        if (c) {
-          await base44.asServiceRole.entities.Character.update(c.id, { status: 'soft_deleted' }).catch(() => {});
-        }
+      // Archive ONLY the fixtures this run created. Characters that already existed
+      // before the test are continuing characters: the Test Character toggle grants
+      // eligibility for testing, never permission to delete or archive them.
+      for (const id of _createdFixtureIds) {
+        await base44.asServiceRole.entities.Character.update(id, { status: 'soft_deleted' }).catch(() => {});
       }
+      const preservedFixtures = [charA, charB, charC]
+        .filter(c => c && !_createdFixtureIds.includes(c.id))
+        .map(c => c.name);
       // Clean commitments
       await base44.entities.CommunicationCommitment.filter(
         { owner_email: ownerEmail }, null, 50
@@ -604,7 +613,7 @@ Deno.serve(async (req) => {
           await base44.entities.CommunicationCommitment.update(i.id, { status: 'cancelled' }).catch(() => {});
         }
       }).catch(() => {});
-      log.push('[cleanup] Test fixtures soft-deleted, commitments cancelled');
+      log.push(`[cleanup] Removed ${_createdFixtureIds.length} fixture(s) created by this run | preserved pre-existing: ${preservedFixtures.join(', ') || 'none'} | commitments cancelled`);
     }
 
     // ── SUMMARY ───────────────────────────────────────────────────────────────

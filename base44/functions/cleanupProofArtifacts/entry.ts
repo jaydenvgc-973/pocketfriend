@@ -54,13 +54,25 @@ Deno.serve(async (req) => {
   let proofCommitmentIds = new Set();
 
   try {
+    // CHARACTER DELETION BOUNDARY
+    // Only scratch characters a proof run created for itself are deletable: an explicit
+    // proof-artifact name AND the test/diagnostic designation the run writes at creation.
+    // Any pre-existing character is preserved, even if it participated in a proof —
+    // the Test Character toggle grants test eligibility, never permission to delete.
+    const isProofArtifactCharacter = (c) =>
+      isProofChar(c.name) && (c.is_test_character === true || c.diagnostic_only === true);
+
     // Fetch all characters owned by this user (service role to catch all)
     const allChars = await base44.asServiceRole.entities.Character.list('-created_date', 500);
-    const proofChars = allChars.filter(c => isProofChar(c.name) || (c.is_test_character === true && isProofChar(c.name)));
-    
+    const proofChars = allChars.filter(isProofArtifactCharacter);
+    const preservedChars = allChars.filter(c => isProofChar(c.name) && !isProofArtifactCharacter(c));
+
     for (const c of proofChars) proofCharIds.add(c.id);
     log.push(`Found ${proofChars.length} proof characters: ${proofChars.map(c => c.name).join(', ')}`);
-    
+    if (preservedChars.length > 0) {
+      log.push(`PRESERVED ${preservedChars.length} pre-existing character(s) matching a proof name pattern (never deleted by cleanup): ${preservedChars.map(c => c.name).join(', ')}`);
+    }
+
     deleted.characters = await hardDeleteAll('Character', proofChars);
     log.push(`Deleted ${deleted.characters} characters`);
   } catch (err) {
