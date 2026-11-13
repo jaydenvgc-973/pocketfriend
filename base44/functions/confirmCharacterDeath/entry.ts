@@ -44,6 +44,42 @@ function easternLabel(iso) {
   }) + ' Eastern';
 }
 
+/**
+ * Removes the character from every residence/roster they still occupy, so a deceased
+ * person is never shown as a resident or an active occupant anywhere in the app.
+ */
+async function clearWorldOccupancy(base44, characterId) {
+  const [asResident, asWorker] = await Promise.all([
+    base44.asServiceRole.entities.LocationReference
+      .filter({ resident_character_ids: [characterId] }, null, 200)
+      .catch(() => []),
+    base44.asServiceRole.entities.LocationReference
+      .filter({ worker_character_ids: [characterId] }, null, 200)
+      .catch(() => []),
+  ]);
+
+  const targets = new Map();
+  [...asResident, ...asWorker].forEach((loc) => {
+    if (loc?.id) targets.set(loc.id, loc);
+  });
+
+  for (const loc of targets.values()) {
+    const residents = loc.resident_character_ids || [];
+    const family = loc.resident_family_members || [];
+    const workers = loc.worker_character_ids || [];
+    const inResidents = residents.includes(characterId);
+    const inFamily = family.some((f) => f?.character_id === characterId);
+    const inWorkers = workers.includes(characterId);
+    if (!inResidents && !inFamily && !inWorkers) continue;
+
+    await base44.asServiceRole.entities.LocationReference.update(loc.id, {
+      ...(inResidents ? { resident_character_ids: residents.filter((id) => id !== characterId) } : {}),
+      ...(inFamily ? { resident_family_members: family.filter((f) => f?.character_id !== characterId) } : {}),
+      ...(inWorkers ? { worker_character_ids: workers.filter((id) => id !== characterId) } : {}),
+    });
+  }
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -125,6 +161,12 @@ Deno.serve(async (req) => {
       presence_stay_lock_location_id: '',
       presence_stay_lock_expires_at: null,
     });
+
+    // A deceased person no longer occupies any residence or roster — the same records
+    // the deletion pathway clears. Deletion of the record is a separate step below.
+    await clearWorldOccupancy(base44, characterId).catch((err) =>
+      console.warn('[confirmCharacterDeath] residence cleanup failed:', err?.message)
+    );
 
     // ── 2. SURVIVING CHARACTERS KEEP THE LOSS ──────────────────────────────
     // Survivors are everyone the deceased was connected to through the existing

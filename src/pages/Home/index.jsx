@@ -23,6 +23,7 @@ import VickServiceCard from "@/components/home/VickServiceCard";
 import CommunityEventsStrip from "@/components/home/CommunityEventsStrip.jsx";
 import WeeklyPublicationCard from "@/components/home/WeeklyPublicationCard.jsx";
 import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
+import { isDeletionCompleted } from "@/lib/characterDeletionState";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 import { usePageContext } from "@/hooks/usePageContext";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
@@ -471,9 +472,11 @@ export default function Home() {
                   <Link key={c.id} to={`/profile/${c.id}`} className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-border bg-card">
                     <span className="text-sm text-foreground truncate">{c.display_name || c.name}</span>
                     <span className="text-[11px] text-muted-foreground text-right flex-shrink-0">
-                      Deceased{c.death_deletion_scheduled_at
-                        ? ` · record removed ${new Date(c.death_deletion_scheduled_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} Eastern`
-                        : ""}
+                      Deceased{isDeletionCompleted(c)
+                        ? " · record removed"
+                        : c.death_deletion_scheduled_at
+                          ? ` · deletion due ${new Date(c.death_deletion_scheduled_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} Eastern`
+                          : ""}
                     </span>
                   </Link>
                 ))}

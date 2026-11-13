@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { fetchUnifiedRoster, getInitial } from '@/lib/unifiedRosterUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 import MergeReviewModal from '@/components/settings/MergeReviewModal';
+import { isDeletionCompleted } from '@/lib/characterDeletionState';
 
 const CATEGORY_OPTIONS = [
   { id: 'user', label: 'User', color: 'bg-primary/10 border-primary/30' },
@@ -54,8 +55,11 @@ export default function CharacterManager() {
   // 1. User, 2. Active Characters (created_by_user: true), 3. Inactive Characters (created_by_user: true but not active), 4. Family Members, 5. NPCs
   const userItem = roster.find(e => e.is_user) ? { type: 'user', data: roster.find(e => e.is_user) } : null;
   
+  // Characters whose deletion actually completed are gone. A deceased character whose
+  // record still exists (deletion failed or was never carried out) stays listed here
+  // so the manual Delete action below remains reachable.
   const characterItems = roster
-    .filter(e => e.is_character && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
+    .filter(e => e.is_character && !isDeletionCompleted(e))
     .map(c => ({ type: 'character', data: c }));
   
   // Split characters by character_type field (matches Settings.jsx logic)
@@ -359,7 +363,16 @@ export default function CharacterManager() {
         } else if (selectedCategory === 'inactive') {
           updateData.is_active_character = false;
         } else if (selectedCategory === 'delete') {
-          updateData.status = 'soft_deleted';
+          // Route through the existing deletion pathway so the character is actually
+          // removed (residence/presence cleared first). A raw status write would hide
+          // the character while leaving them occupying a residence.
+          updates.push(
+            base44.functions.invoke('deleteCharacter', { characterId: item.data.id })
+              .then((res) => {
+                if (res?.data?.error) console.error('[CharacterManager] delete failed:', res.data.error);
+              })
+              .catch((err) => console.error('[CharacterManager] delete failed:', err?.message))
+          );
         }
         if (Object.keys(updateData).length > 0) {
           updates.push(base44.entities.Character.update(item.data.id, updateData));

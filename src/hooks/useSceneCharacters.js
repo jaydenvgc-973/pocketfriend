@@ -139,7 +139,13 @@ export function useSceneCharacters(currentUser) {
     return [...activeChars, ...npcFictitious, ...npcFamily, ...caregivers, ...sharedEmployees, ...sharedVisitors].filter(c =>
       c.is_test_character !== true &&
       c.diagnostic_only !== true &&
-      c.exclude_from_default_scene_queries !== true
+      c.exclude_from_default_scene_queries !== true &&
+      // A deceased or removed character is never a living scene participant.
+      c.life_status !== 'deceased' &&
+      c.status !== 'deceased' &&
+      c.status !== 'deleted' &&
+      c.status !== 'soft_deleted' &&
+      c.status !== 'merged'
     );
   }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors]);
 

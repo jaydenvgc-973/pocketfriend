@@ -1,3 +1,5 @@
+import { isDeletionCompleted } from "@/lib/characterDeletionState";
+
 /**
  * UNIFIED CHARACTER RESOLVER + PRESENCE ENGINE
  * 
@@ -575,11 +577,12 @@ export function resolveSettingsCharacterLists(allCharacters, currentUser, module
   // 1. User scope
   const scoped = resolveUserScopedCharacters(allCharacters, currentUser?.id, currentUser?.email);
 
-  // 2. Status filter (exclude deleted/soft_deleted/merged).
-  // LEGACY COMPATIBILITY: status may be null/absent on older records.
-  // Absent status means the character was never explicitly deleted — treat as active.
-  // Only exclude when status is EXPLICITLY set to a terminal value.
-  const live = scoped.filter(c => !['deleted', 'soft_deleted', 'merged'].includes(c.status));
+  // 2. Status filter — exclude only characters whose deletion actually COMPLETED.
+  // A deceased character is never hidden merely because their status changed or a
+  // deletion was requested. If the record still exists and still occupies the world,
+  // it remains listed here so the user can find it and delete it manually.
+  // LEGACY COMPATIBILITY: status may be null/absent on older records — treat as active.
+  const live = scoped.filter(c => !isDeletionCompleted(c));
 
   // 3. Module eligibility — only keep allowed types
   const eligible = live.filter(c => allowedTypes.includes(c._resolvedType));

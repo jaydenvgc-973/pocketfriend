@@ -27,6 +27,7 @@ import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.js
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
 import TestCharacterToggle from "@/components/character/TestCharacterToggle.jsx";
 import CharacterDeathModal from "@/components/character/CharacterDeathModal.jsx";
+import { isDeletionCompleted } from "@/lib/characterDeletionState";
 import HomeLocationField from "@/components/character/HomeLocationField.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
@@ -562,11 +563,13 @@ export default function CharacterProfile() {
               <p className="text-xs text-muted-foreground">{character.death_circumstances}</p>
             )}
             <p className="text-[11px] text-muted-foreground">
-              {character.death_deletion_mode === "immediate"
+              {isDeletionCompleted(character)
                 ? "Record removed."
-                : character.death_deletion_scheduled_at
+                : character.death_deletion_scheduled_at && new Date(character.death_deletion_scheduled_at) > new Date()
                   ? `Record removal: ${new Date(character.death_deletion_scheduled_at).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true })} Eastern`
-                  : "Record removal scheduled."}
+                  : character.death_deletion_mode === "immediate" || character.death_deletion_scheduled_at
+                    ? "Deletion has not completed. The record still exists — you can remove it manually from Settings → Manage Characters."
+                    : "Record removal scheduled."}
             </p>
           </div>
         )}
