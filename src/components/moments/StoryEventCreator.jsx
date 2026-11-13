@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
+import { narrativeNameFor } from '@/lib/characterNarrativeName';
 import { Loader2, BookOpen, Users, MapPin, Star, Globe, Lock } from 'lucide-react';
 
 // Stable synthetic ID for the user participant (not a Character entity ObjectId)
@@ -130,11 +131,11 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
           participant_character_ids: participantIds,
           focus_character_names: focusIds.map(id => {
             const c = characters.find(ch => ch.id === id);
-            return c?.name || c?.display_name || id;
+            return narrativeNameFor(c) || c?.name || id;
           }),
           participant_character_names: participantIds.map(id => {
             const c = characters.find(ch => ch.id === id);
-            return c?.name || c?.display_name || id;
+            return narrativeNameFor(c) || c?.name || id;
           }),
           all_day: allDay,
           is_rabbit_hole: isRabbitHole,
@@ -353,7 +354,7 @@ export default function StoryEventCreator({ date, characters = [], currentUser =
                     return (
                       <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/40 border border-border">
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-foreground truncate">{c.name || c.display_name}</p>
+                          <p className="text-xs font-medium text-foreground truncate">{narrativeNameFor(c) || c.name || c.display_name}</p>
                           <div className="flex gap-1.5 text-[9px] text-muted-foreground mt-0.5">
                             {typeLabel && <span className="px-1 rounded bg-secondary/80">{typeLabel}</span>}
                             {c.is_jailed === true && <span className="px-1 rounded bg-orange-950/40 text-orange-400">Incarcerated</span>}

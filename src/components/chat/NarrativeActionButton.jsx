@@ -7,6 +7,7 @@ import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExa
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
+import { narrativeNameFor } from "@/lib/characterNarrativeName";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -30,6 +31,9 @@ export default function NarrativeActionButton({
   onExternalClose,
   userSettings = null,
 }) {
+  // A test character with an assigned alias is written under that alias.
+  const narrativeName = narrativeNameFor(character);
+
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -163,31 +167,31 @@ CONTINUATION RULES:
         ? `\n\n════════════════════════════════════
 USER PRESENCE — PHYSICALLY CO-PRESENT
 ════════════════════════════════════
-"${userWorldName}" is currently AT THE SAME LOCATION as ${character.name}.
+"${userWorldName}" is currently AT THE SAME LOCATION as ${narrativeName}.
 Physical co-presence IS confirmed. The following are ALLOWED:
-• ${character.name} can look at, react to, or physically interact with ${userWorldName}
+• ${narrativeName} can look at, react to, or physically interact with ${userWorldName}
 • Shared environmental experience (both in the same space)
 • Eye contact, handing objects, physical proximity descriptions
 ════════════════════════════════════`
         : `\n\n════════════════════════════════════
 USER PRESENCE — REMOTE / NOT CO-PRESENT
 ════════════════════════════════════
-"${userWorldName}" is NOT physically present with ${character.name} right now.
+"${userWorldName}" is NOT physically present with ${narrativeName} right now.
 This is a TEXT/PHONE interaction — the user is remote.
 
 ABSOLUTE PROHIBITIONS — these are generation errors:
-✗ "${character.name} glanced over at you"
+✗ "${narrativeName} glanced over at you"
 ✗ "You sat together" / "You stood beside him/her"
 ✗ "He/She watched you leave"
 ✗ "You could feel the tension between you"
 ✗ Any description implying the user is in the same physical space
 
 ALLOWED — remote-only framing:
-✓ ${character.name} thinking about the user / missing the user
+✓ ${narrativeName} thinking about the user / missing the user
 ✓ Referencing a previous visit or memory
 ✓ Emotional reaction to the text/call conversation
-✓ Environmental details of WHERE ${character.name} IS without the user present
-✓ What ${character.name} is doing in their space alone or with others who ARE there
+✓ Environmental details of WHERE ${narrativeName} IS without the user present
+✓ What ${narrativeName} is doing in their space alone or with others who ARE there
 ════════════════════════════════════`;
 
       const last5 = recentMessages.slice(-5).map(m => m.content || "").join(" ").toLowerCase();
@@ -316,7 +320,7 @@ If the chosen intent was "flirt" — generate a grounded professional moment ins
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !! CONFINEMENT COMMUNICATION BLACKOUT — HARD BLOCK  !!
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-${character.name} is currently INCARCERATED / CONFINED.
+${narrativeName} is currently INCARCERATED / CONFINED.
 The current time is outside the allowed communication window (9:00 AM – 9:00 PM).
 Communication is NOT permitted right now.
 
@@ -328,13 +332,13 @@ ABSOLUTE PROHIBITIONS — violation = critical generation error:
 ✗ Any implication of live digital communication
 
 THIS NARRATIVE MUST INSTEAD:
-✓ Show ${character.name} in their cell or housing unit
+✓ Show ${narrativeName} in their cell or housing unit
 ✓ Internal reflection, memory, emotional state, anticipation
 ✓ Physical environment of the facility (sounds, light, fabric, air)
 ✓ Thinking about someone — NOT communicating with them
 ✓ Frustration, longing, or quiet resolve — without active contact
 
-DO NOT place ${character.name} near entrances, parking lots, sidewalks, or public-facing areas.
+DO NOT place ${narrativeName} near entrances, parking lots, sidewalks, or public-facing areas.
 Courtyard/recreation access only during approved daytime hours.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 `;
@@ -343,11 +347,11 @@ Courtyard/recreation access only during approved daytime hours.
 ════════════════════════════════════
 CONFINEMENT RESTRICTIONS ACTIVE
 ════════════════════════════════════
-${character.name} is INCARCERATED / CONFINED. Communication is currently within allowed hours (9 AM–9 PM) but institutional restrictions still apply.
+${narrativeName} is INCARCERATED / CONFINED. Communication is currently within allowed hours (9 AM–9 PM) but institutional restrictions still apply.
 
 RULES:
 • Phone access is LIMITED — short calls/texts only, monitored
-• ${character.name} is INSIDE the facility — no outdoor public areas, no civilian spaces
+• ${narrativeName} is INSIDE the facility — no outdoor public areas, no civilian spaces
 • Do NOT place them near entrances, parking lots, or public sidewalks
 • Movement is restricted to sanctioned areas (cell, common room, courtyard if daytime)
 • Narrative must maintain institutional reality (guards, restricted movement, facility environment)
@@ -409,7 +413,7 @@ ONE CONTINUOUS CONTEXT ACROSS ALL CATEGORIES:
 ════════════════════════════════════════════════════════════
 INSERT DRAMA — SPONTANEOUS DEVELOPMENT (SPECIAL RULE SET)
 ════════════════════════════════════════════════════════════
-The selected Action is INSERT DRAMA. Something happens TO or AROUND ${character.name} that was not being discussed and was not planned.
+The selected Action is INSERT DRAMA. Something happens TO or AROUND ${narrativeName} that was not being discussed and was not planned.
 
 THIS OVERRIDES THE "DO NOT AUTHORIZE UNRELATED EVENTS" LINE ABOVE — FOR THIS SELECTION ONLY.
 Every other continuity rule still applies: the scene starts exactly where the character is, and nothing already established may be contradicted.
@@ -453,7 +457,7 @@ PEOPLE — FICTIONAL AND UNESTABLISHED ONLY:
 • That person does NOT need to exist as a character in the application. Do not create, alter, or require any application character to hold this memory.
 • ABSOLUTE: do not add, change, harm, kill, or contradict any EXISTING established character or relationship in this world, and do not invent shared history between the user and a person the user has never been described knowing.
 • Deaths are permitted only for a person introduced by this narrative or an unnamed acquaintance who is NOT an established application character. Never kill, injure, or ruin an established character, and never invent the death of a real public figure.
-• Do not plant a memory into another character. The development belongs to ${character.name}.
+• Do not plant a memory into another character. The development belongs to ${narrativeName}.
 
 BODY-AWARE RULES:
 • A FEMALE character may realize her own period is late, take a test, or fear a possible pregnancy.
@@ -479,7 +483,7 @@ Reduce each development already present in the beats and conversation above the 
 STEP B — VARY MORE THAN THE EVENT:
 Change the CATEGORY of the situation, the SEVERITY, and the TONE.
 • Severity is chosen deliberately: an eye-roll, an inconvenience, an awkward moment, a real problem, and a life change are all valid. Do not escalate to an emergency by default.
-• Tone must vary across selections: frightening, embarrassing, funny, financially annoying, socially awkward, medically concerning, emotionally complicated, quietly strange, or so unusual that ${character.name} struggles to believe it.
+• Tone must vary across selections: frightening, embarrassing, funny, financially annoying, socially awkward, medically concerning, emotionally complicated, quietly strange, or so unusual that ${narrativeName} struggles to believe it.
 • Consecutive developments must not all land as serious problems, and must not all land as jokes.
 • Do not favour arguments, confrontations, or emergencies. They are the easiest to reach for and must not become this Action's usual shape: embarrassment, absurdity, awkwardness, mild inconvenience, a strange coincidence, and other people's very human behaviour are equally valid and must appear at least as often.
 • Quiet, private, logistical, and mundane are first-class outcomes, at least as often as loud ones.
@@ -497,12 +501,12 @@ REALITY IS NEVER BROKEN — the boundary on the above:
 • Every event has an ordinary physical, human, institutional, or accidental cause. Strange means unlikely and surprising, never impossible.
 • No supernatural, paranormal, psychic, prophetic, haunting, or cursed events. No reality glitches, no objects moving on their own, no unexplained phenomena, no uncanny coincidences presented as more than coincidence.
 • No catastrophic global events, no celebrity or public-figure involvement, no impossible timing, and no knowledge the character could not actually have.
-• ${character.name}'s reaction stays proportionate and grounded: they may be shaken, baffled, amused, or annoyed by something genuinely strange, but they do not accept an impossible explanation as fact.
+• ${narrativeName}'s reaction stays proportionate and grounded: they may be shaken, baffled, amused, or annoyed by something genuinely strange, but they do not accept an impossible explanation as fact.
 
 CRAFT:
 • Third person, in the tense the scene already reads. 2-3 sentences — the event, then the reaction.
 • One grounded concrete detail of the event itself — what arrived, what broke, what was said, what was seen.
-• React through behavior, not announced feeling. The first beat is the event; the second is what ${character.name} does about it.
+• React through behavior, not announced feeling. The first beat is the event; the second is what ${narrativeName} does about it.
 • No dialogue dumps. At most one short quoted line.
 • No meta commentary about "drama", "plot", "storylines", or "the narrative".
 • Never use the words "chaos" or "chaotic".
@@ -519,7 +523,7 @@ CRAFT:
 ════════════════════════════════════════════════════════════
 INSERT SERENITY — SPONTANEOUS GOOD (SPECIAL RULE SET)
 ════════════════════════════════════════════════════════════
-The selected Action is INSERT SERENITY. Something good, kind, helpful, comforting, or simply pleasant happens TO or AROUND ${character.name} — it was not being discussed and was not planned.
+The selected Action is INSERT SERENITY. Something good, kind, helpful, comforting, or simply pleasant happens TO or AROUND ${narrativeName} — it was not being discussed and was not planned.
 
 THIS OVERRIDES THE "DO NOT AUTHORIZE UNRELATED EVENTS" LINE ABOVE — FOR THIS SELECTION ONLY.
 Every other continuity rule still applies: the scene starts exactly where the character is, and nothing already established may be contradicted.
@@ -595,12 +599,12 @@ DO NOT FILTER FOR THE REMARKABLE — AND DO NOT FILTER FOR THE PLAIN: a good thi
 REALITY IS NEVER BROKEN — the boundary on the above:
 • Every moment has an ordinary human, physical, institutional, or accidental cause. No supernatural, paranormal, prophetic, or mystical events; no omens, signs, or prayers answered as fact; no unexplained phenomena presented as more than coincidence.
 • No catastrophic or global events, no celebrity or public-figure involvement, no impossible timing, and no knowledge the character could not actually have.
-• ${character.name}'s reaction stays proportionate and grounded to who they are.
+• ${narrativeName}'s reaction stays proportionate and grounded to who they are.
 
 CRAFT:
 • Third person, in the tense the scene already reads. 2-3 sentences — the moment, then the reaction to it.
 • One grounded concrete detail of the moment itself — what arrived, what was said, what was tasted, what was seen.
-• React through behavior, not announced feeling. The first beat is the moment; the second is what ${character.name} does with it.
+• React through behavior, not announced feeling. The first beat is the moment; the second is what ${narrativeName} does with it.
 • No dialogue dumps. At most one short quoted line.
 • Restraint: do not explain why the good thing happened, and do not moralize about it.
 • Never use the word "serenity" or the word "blessed" in the narrative itself.
@@ -668,9 +672,9 @@ ${buildStyleMotifContext()}
 
       const prompt = `${hardBoundary}${confinementBlock}
 
-You are writing a SHORT third-person narrative scene (2-4 sentences) for ${character.name}.
+You are writing a SHORT third-person narrative scene (2-4 sentences) for ${narrativeName}.
 
-CHARACTER: ${character.name}
+CHARACTER: ${narrativeName}
 Personality: ${character.personality_summary || "unknown"}
 Emotional state: ${emotionalState}
 Location: ${location}
@@ -741,7 +745,7 @@ CONSENT CHECK: If the other person shows hesitation → reduce intensity. If cle
 LGBTQ+ RULE: All patterns apply identically regardless of gender combination. No tone changes based on pairing. Pronouns from profile only.
 
 STYLE RULES:
-- Third person only ("${character.name} reaches...", "He looks up...")
+- Third person only ("${narrativeName} reaches...", "He looks up...")
 - ONE continuous paragraph, clean punctuation, no em dashes mid-sentence
 - State what the character is physically doing — metaphor intensifies action, does NOT replace it
 - 2-4 sentences max. Tight. Cinematic. Real.

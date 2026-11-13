@@ -31,13 +31,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'title, event_date, plot, and at least one participant are required' }, { status: 400 });
     }
 
-    // Resolve character names from IDs
+    // Resolve character names from IDs.
+    // A test character with an assigned alias is referred to by that alias in
+    // Story Mode, Story Events and narratives. Test status is never changed here.
+    const narrativeNameOf = (c) => {
+      const alias = (Array.isArray(c?.aliases) ? c.aliases : [])
+        .map(a => (typeof a === 'string' ? a : a?.text || a?.alias_name))
+        .filter(Boolean)[0];
+      return c?.is_test_character === true && alias ? alias : (c?.name || c?.display_name || null);
+    };
     const allCharacterIds = [...new Set([...focusIds, ...participantIds])];
     const nameById = {};
     for (const cid of allCharacterIds) {
       try {
         const chars = await base44.entities.Character.filter({ id: cid }, null, 1);
-        if (chars[0]) nameById[cid] = chars[0].name || chars[0].display_name || cid;
+        if (chars[0]) nameById[cid] = narrativeNameOf(chars[0]) || cid;
       } catch (_) {
         nameById[cid] = cid;
       }

@@ -1158,17 +1158,10 @@ Deno.serve(async (req) => {
       console.log(`[generateImageAsync] Scene classification: "${sceneClass}"`);
       const isSafeScene = ['emotional_comfort', 'sleep_lifestyle', 'comfort', 'lifestyle', 'casual_body', 'neutral'].includes(sceneClass);
 
-      // ── FRAMING CONSTRAINT (non-destructive) ─────────────────────────────────
-      // Instead of replacing "naked" with "not fully dressed" (which gives the provider
-      // permission to fully clothe the subject), we PRESERVE the requested clothing
-      // state and append a compositional concealment instruction. This keeps the
-      // character unclothed / partially undressed while ensuring private anatomy is
-      // concealed through pose, framing, bedding, or foreground objects — not by
-      // adding clothing the user never requested.
-      // POLICY: Unclothed, no pants, no top, no bottom, shirtless, or any partially-undressed state
-      // is NOT explicit and must NOT be blocked — as long as private areas (groin, genitals, nipples,
-      // buttocks) remain fully concealed. The concealment must use NATURAL, context-appropriate
-      // occlusion that fits the scene — never artificial censorship. No added clothing unless requested.
+      // ── FRAMING CONSTRAINT (non-destructive) ──
+      // PRESERVE the requested clothing state and append compositional concealment. POLICY: unclothed or
+      // partially undressed is NOT explicit and must NOT be blocked, provided private anatomy stays fully
+      // concealed through natural, scene-appropriate occlusion — never artificial censorship, never added clothing.
       const NUDITY_FRAMING = ' Non-explicit undressed state: the subject is unclothed or partially undressed, which is NOT explicit. Private anatomy (groin, genitals, nipples, buttocks) must remain FULLY CONCEALED using natural, context-appropriate occlusion that fits the setting. Use techniques such as: body pose, camera framing, bedding, pillows, blankets, towels, clothing, hair, strategically placed objects, environmental shadows, directional lighting, furniture, foliage, smoke, steam, mist, water, reflections, or other believable scene elements. The concealment must appear intentional within the composition rather than as a censoring effect. Do NOT add a shirt, pants, shorts, or underwear unless explicitly requested — preserve all requested visible body regions exactly while concealing only private anatomy through the natural techniques above.';
       const hasNudityTerm = /\b(naked|fully nude|fully naked|in the nude)\b/i.test(s);
       const hasBareBody = /\b(bare\s+(chest|abs|torso|back|butt|buttocks|bottom)|exposed\s+(chest|abs|torso|stomach|midriff|back|butt|buttocks))\b/i.test(s);
@@ -1260,9 +1253,15 @@ Deno.serve(async (req) => {
       if (candidate) {
         const owner = candidate.owner_email;
         if (owner && owner !== requestingUser) {
-          console.error(`[generateImageAsync] ⛔ Cross-account character: ${characterId} owned by ${owner}, request from ${requestingUser}`);
-          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-          return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
+          // Cross-account subject: allowed only when already known to this account —
+          // the same verified contact graph the character access path uses.
+          const chk = await base44.functions.invoke('fetchCharactersByIds', { ids: [characterId] }).catch(() => null);
+          if (!(chk?.data?.characters || []).some(c => c.id === characterId)) {
+            console.error(`[generateImageAsync] ⛔ Cross-account character not in verified contact graph: ${characterId} owned by ${owner}, request from ${requestingUser}`);
+            await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+            return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
+          }
+          console.log(`[generateImageAsync] ✅ Cross-account contact subject allowed: "${candidate.name}"`);
         }
         charRecord = candidate;
         console.log(`[generateImageAsync] ✅ Character fetched via service role: "${charRecord.name}"`);
@@ -1450,13 +1449,8 @@ Deno.serve(async (req) => {
 
     if (charRefs.length === 0 && charRecord?.avatar_url) {
         const avatarPublic = toPublicCDN(charRecord.avatar_url);
-        // AVATAR FALLBACK RULE:
-        // Allow CDN-hosted avatar images even if they contain "generated_image" in the URL.
-        // An avatar on media.base44.com IS the character's canonical face portrait —
-        // it was generated specifically to represent this character and is safe to use as an identity anchor.
-        // The "generated_image" filter exists to block environment/scene images (non-CDN) from being
-        // incorrectly used as face refs. It must NOT block a character's own CDN-hosted avatar.
-        // Only block: private URLs, signed URLs, internal base44.app API URLs (already filtered by isAccessible).
+        // AVATAR FALLBACK RULE: a CDN-hosted avatar IS the canonical face portrait, so allow it
+        // even when the URL contains "generated_image"; private/signed/internal URLs stay blocked.
         const isCharacterAvatar = avatarPublic.startsWith('https://media.base44.com/');
         if (isAccessible(avatarPublic) && (isCharacterAvatar || !avatarPublic.includes('generated_image'))) {
           charRefs = [avatarPublic];
@@ -1507,15 +1501,8 @@ Deno.serve(async (req) => {
     // the subjectType wasn't explicitly set to 'user' — name-in-prompt detection is enough.
     const effectiveUserSubject = subjectType === 'user' || subjectType === 'joint' || userIsVisualSubject === true;
     if (effectiveUserSubject) {
-      // ── BACKEND USER IDENTITY RESOLUTION ─────────────────────────────────────
-      // Authority order (matches resolveUserIdentityForImageGen contract):
-      //   1. User entity (reference_image_urls, generated_avatar_urls) — PRIMARY
-      //   2. UserSettings (appearance_lock, outfit, world_name mirror)
-      //   3. callerBundle (frontend-passed) — fallback only
-      //   4. Character.is_user — legacy last resort, logged as [LEGACY_FALLBACK]
-      //
-      // The frontend-passed userReferenceImages is used ONLY as a caller bundle fallback,
-      // not as the primary source. Backend reloads from authoritative sources first.
+      // ── BACKEND USER IDENTITY RESOLUTION ──
+      // Authority order: User entity → UserSettings → callerBundle (fallback) → Character.is_user (legacy).
       const callerBundleForFallback = userReferenceImages?.length > 0
         ? { visual_reference_images: userReferenceImages }
         : null;
@@ -1669,14 +1656,8 @@ Deno.serve(async (req) => {
           locationId = charRecord.current_school_location_id || charRecord.education_location_id || null;
         }
 
-        // ── PRESENCE-FIRST AUTHORITY ─────────────────────────────────────────────
-        // PRIORITY ORDER:
-        //   1. Work schedule (if on shift) — schedule authority is highest
-        //   2. School schedule
-        //   3. Incarcerated
-        //   4. resolved_current_location_id (DB truth)
-        //   5. Presence-status-derived fallback
-        //   6. Home absolute last resort
+        // ── PRESENCE-FIRST AUTHORITY ──
+        // Priority: work schedule → school schedule → incarcerated → resolved_current_location_id → presence fallback → home.
         if (!locationId) {
           const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || '';
           const resolvedLocId = charRecord.resolved_current_location_id || null;
@@ -1828,12 +1809,8 @@ Deno.serve(async (req) => {
       envRefs = validEnvRefs;
     }
 
-    // ── ADDITIONAL CHARACTER RESOLUTION — sealed multi-subject bundles ────────
-    // Fires when additionalCharacterIds[] is passed (e.g. from character-generated images
-    // that include multiple people). Each secondary character is resolved exactly like the
-    // primary: DB record + reference images + appearance lock + outfit.
-    // When 2+ total character subjects exist, we switch to the multi-subject sealed prompt
-    // format (same as mediaGridGenerate) so every identity is locked independently.
+    // ── ADDITIONAL CHARACTER RESOLUTION — sealed multi-subject identity bundles ──
+    // Each secondary character resolves exactly like the primary: record + refs + appearance lock + outfit.
     const additionalCharRecords = []; // { record, refs, outfitText, desc }
 
     const cleanAdditionalIds = (additionalCharacterIds || []).filter(
@@ -1849,8 +1826,9 @@ Deno.serve(async (req) => {
           const addlCandidate = addlListSR?.[0] || null;
           if (addlCandidate) {
             if (addlCandidate.owner_email && addlCandidate.owner_email !== requestingUser) {
-              console.error(`[generateImageAsync] ⛔ Cross-account additional char ${addlId}`);
-              continue;
+              // Cross-account additional subject: allowed only for a known contact.
+              const chk = await base44.functions.invoke('fetchCharactersByIds', { ids: [addlId] }).catch(() => null);
+              if (!(chk?.data?.characters || []).length) { console.error(`[generateImageAsync] ⛔ Cross-account additional char not a known contact ${addlId}`); continue; }
             }
             addlRec = addlCandidate;
           }

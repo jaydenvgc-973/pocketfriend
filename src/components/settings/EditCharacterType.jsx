@@ -126,6 +126,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [relationshipType, setRelationshipType] = useState("");
   const [familyTitle, setFamilyTitle] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [testSaving, setTestSaving] = useState(false);
   const [saveResult, setSaveResult] = useState(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [newCharName, setNewCharName] = useState("");
@@ -193,6 +194,24 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     }
 
     return discovered;
+  };
+
+  // Test Character status is independent of character_type: turning it off leaves the
+  // character's normal type, name, alias, avatar and history exactly as they are.
+  const handleToggleTestStatus = async () => {
+    if (!selectedChar || testSaving) return;
+    setTestSaving(true);
+    try {
+      const next = selectedChar.is_test_character !== true;
+      await base44.entities.Character.update(selectedChar.id, { is_test_character: next });
+      setSelectedChar(prev => prev ? { ...prev, is_test_character: next } : prev);
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      setSaveResult({ success: true, message: next ? "Marked as Test Character." : "Test Character status removed — normal character type unchanged." });
+    } catch (err) {
+      setSaveResult({ success: false, message: err?.message || "Failed to update test status." });
+    } finally {
+      setTestSaving(false);
+    }
   };
 
   const userEmail = currentUser?.email || '';
@@ -910,6 +929,27 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                       </div>
                       <button onClick={() => { setSelectedChar(null); setSelectedType(""); setLinkedCharId(""); setSaveResult(null); setSearchQuery(""); }} className="text-xs text-muted-foreground hover:text-foreground transition-colors">Change</button>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 p-3 rounded-xl bg-secondary/40 border border-border">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground">Test Character</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {selectedChar.is_test_character === true
+                          ? 'Designated a test character. Normal type unchanged.'
+                          : 'Regular character — not used when tests are run.'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleToggleTestStatus}
+                      disabled={testSaving}
+                      role="switch"
+                      aria-checked={selectedChar.is_test_character === true}
+                      aria-label="Test Character status"
+                      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${selectedChar.is_test_character === true ? "bg-primary" : "bg-secondary border border-border"} disabled:opacity-50`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${selectedChar.is_test_character === true ? "translate-x-5" : ""}`} />
+                    </button>
                   </div>
 
                   <div className="space-y-2">

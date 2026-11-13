@@ -25,6 +25,7 @@ import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.js
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
+import TestCharacterToggle from "@/components/character/TestCharacterToggle.jsx";
 import CharacterDeathModal from "@/components/character/CharacterDeathModal.jsx";
 import HomeLocationField from "@/components/character/HomeLocationField.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
@@ -548,6 +549,8 @@ export default function CharacterProfile() {
 
       <div className="max-w-lg mx-auto px-0 py-0 flex flex-col h-full">
         <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
+
+        <TestCharacterToggle character={character} />
 
         {character.life_status === "deceased" && (
           <div className="mx-4 mt-4 rounded-2xl border border-destructive/40 bg-destructive/10 p-4 space-y-1">

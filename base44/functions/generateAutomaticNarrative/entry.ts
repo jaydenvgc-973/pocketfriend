@@ -45,6 +45,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found', characterId }, { status: 404 });
     }
 
+    // A test character with an assigned alias is referred to by that alias in the
+    // narrative. Test status and every other field remain unchanged.
+    const _narrativeAlias = (Array.isArray(character.aliases) ? character.aliases : [])
+      .map(a => (typeof a === 'string' ? a : a?.text || a?.alias_name)).filter(Boolean)[0];
+    const narrativeName = (character.is_test_character === true && _narrativeAlias)
+      ? _narrativeAlias
+      : character.name;
+
     // DECEASED — no new first-person activity narratives for a dead character.
     if (character.life_status === 'deceased' || character.status === 'deceased') {
       return Response.json({ success: false, skipped: true, reason: 'deceased', characterId });
@@ -55,15 +63,15 @@ Deno.serve(async (req) => {
     const ownerUser = character.owner_user_id || null;
 
     if (!ownerEmail) {
-      console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${character.name}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
+      console.error(`[generateAutomaticNarrative] BLOCKED: Character id=${characterId} name="${narrativeName}" has no owner_email — cannot write narrative. Ownership cannot be verified.`);
       return Response.json({
         success: false,
-        error: `Character "${character.name}" (id=${characterId}) is missing owner_email. Narrative generation stopped. Fix ownership data before retrying.`,
+        error: `Character "${narrativeName}" (id=${characterId}) is missing owner_email. Narrative generation stopped. Fix ownership data before retrying.`,
         reason: 'missing_owner_email',
       }, { status: 422 });
     }
 
-    console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
+    console.log(`[generateAutomaticNarrative] ▶ Character: ${narrativeName} (${characterId}) | trigger: ${trigger}`);
 
     // SCHEDULED SHIFT COMPLETION is a discrete occurrence, not a repeating
     // instance: the existing enforcement pathway detected that the character's
@@ -219,11 +227,11 @@ Deno.serve(async (req) => {
           userLocId === charLocId
         );
         if (userIsCoPresent) {
-          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is physically co-present with ${character.name} at this location right now. The narrative may include their shared physical presence, interaction, or proximity. Do NOT make the user disappear from the established scene.`;
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is physically co-present with ${narrativeName} at this location right now. The narrative may include their shared physical presence, interaction, or proximity. Do NOT make the user disappear from the established scene.`;
         } else if (userPresence === 'present' && userLocId) {
-          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is present in the app world at a different location. This is a remote/text interaction — do NOT invent physical co-presence with ${character.name}.`;
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is present in the app world at a different location. This is a remote/text interaction — do NOT invent physical co-presence with ${narrativeName}.`;
         } else {
-          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is not physically present with ${character.name} right now (away/remote). Do NOT invent physical co-presence.`;
+          userPresenceLine = `\nUSER PRESENCE: ${userWorldName} is not physically present with ${narrativeName} right now (away/remote). Do NOT invent physical co-presence.`;
         }
       }
     } catch (presenceErr) {
@@ -411,16 +419,16 @@ Deno.serve(async (req) => {
         canonicalLoaded = true;
       } else {
         canonicalFallbackUsed = true;
-        console.warn(`[generateAutomaticNarrative] Canonical context returned no systemPrompt for ${character.name} (${characterId}) — falling back to minimal inline context`);
+        console.warn(`[generateAutomaticNarrative] Canonical context returned no systemPrompt for ${narrativeName} (${characterId}) — falling back to minimal inline context`);
       }
     } catch (ctxErr) {
       canonicalFallbackUsed = true;
-      console.warn(`[generateAutomaticNarrative] Canonical context unavailable for ${character.name} (${characterId}): ${ctxErr.message} — falling back to minimal inline context`);
+      console.warn(`[generateAutomaticNarrative] Canonical context unavailable for ${narrativeName} (${characterId}): ${ctxErr.message} — falling back to minimal inline context`);
     }
 
     // Fallback: minimal inline identity — only if canonical service fails
     if (!canonicalLoaded) {
-      canonicalSystemPrompt = `You are ${character.name}. ${character.personality_summary || 'A real person with their own life and personality.'}\nEmotional state: ${character.emotional_state || 'calm'}.`;
+      canonicalSystemPrompt = `You are ${narrativeName}. ${character.personality_summary || 'A real person with their own life and personality.'}\nEmotional state: ${character.emotional_state || 'calm'}.`;
     }
 
     // ── PLACE RECONCILIATION WITH THE LIVE SNAPSHOT ───────────────────────────
@@ -458,7 +466,7 @@ Deno.serve(async (req) => {
     // ── FULL DIAGNOSTIC LOG ───────────────────────────────────────────────────
     console.log(
       `[generateAutomaticNarrative] route=automatic_narrative` +
-      ` | character=${character.name} (${characterId})` +
+      ` | character=${narrativeName} (${characterId})` +
       ` | owner=${ownerEmail}` +
       ` | canonical_loaded=${canonicalLoaded}` +
       ` | hard_facts_loaded=${canonicalHardFacts.length > 0}` +
@@ -480,58 +488,58 @@ Deno.serve(async (req) => {
     // Derive the dominant constraint
     let situationBlock = '';
     if (isAsleep) {
-      situationBlock = `SITUATION: ${character.name} is ASLEEP right now.
+      situationBlock = `SITUATION: ${narrativeName} is ASLEEP right now.
 - Do NOT depict them awake, moving, speaking, or doing anything active.
 - Narrative must reflect sleep: physical rest, breathing, stillness, possible dreams, subconscious.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}${activityLine}`;
     } else if (isAtWork) {
-      situationBlock = `SITUATION: ${character.name} is AT WORK right now.
+      situationBlock = `SITUATION: ${narrativeName} is AT WORK right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Occupation: ${character.occupation || 'their job'}
 - Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
 - Do NOT depict them at home, relaxing, or away from work.
-- WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${character.name} as currently AT WORK (e.g., "${character.name} is at work at ${resolvedLocationName}." / "${character.name} is working at ${resolvedLocationName}."). Do NOT use transition wording ("has gone to work", "gone to work", "went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
+- WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${narrativeName} as currently AT WORK (e.g., "${narrativeName} is at work at ${resolvedLocationName}." / "${narrativeName} is working at ${resolvedLocationName}."). Do NOT use transition wording ("has gone to work", "gone to work", "went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
 - WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.${activityLine}`;
     } else if (presenceStatus === 'at_school') {
-      situationBlock = `SITUATION: ${character.name} is AT SCHOOL right now.
+      situationBlock = `SITUATION: ${narrativeName} is AT SCHOOL right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Narrative must reflect school activities, classes, studying, campus environment, or student life.
 - Do NOT depict them at home, at work, or away from school.
-- This is a CURRENT STATE, not a transition. Describe ${character.name} as currently AT SCHOOL. Do NOT use transition wording ("went to school", "headed to class", "arrived at school").${activityLine}`;
+- This is a CURRENT STATE, not a transition. Describe ${narrativeName} as currently AT SCHOOL. Do NOT use transition wording ("went to school", "headed to class", "arrived at school").${activityLine}`;
     } else if (presenceStatus === 'incarcerated' || presenceStatus === 'house_arrest' || presenceStatus === 'confined') {
-      situationBlock = `SITUATION: ${character.name} is INCARCERATED / CONFINED right now.
+      situationBlock = `SITUATION: ${narrativeName} is INCARCERATED / CONFINED right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Narrative must reflect the confinement reality: cell, facility, restricted movement, institutional environment.
 - Do NOT depict them at home, at work, in public, or free to move around normally.
 - This is a CURRENT STATE, not a transition.${activityLine}`;
     } else if (presenceStatus === 'hospitalized') {
-      situationBlock = `SITUATION: ${character.name} is HOSPITALIZED / RECEIVING CARE right now.
+      situationBlock = `SITUATION: ${narrativeName} is HOSPITALIZED / RECEIVING CARE right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Narrative must reflect the medical setting: patient room, treatment, care environment, medical staff.
 - Do NOT depict them at home, at work, or in a non-medical setting.
 - Do NOT reset to a hospital lobby or entrance — continue from the established care area.
 - This is a CURRENT STATE, not a transition.${activityLine}`;
     } else if (presenceStatus === 'traveling') {
-      situationBlock = `SITUATION: ${character.name} is TRAVELING right now.
+      situationBlock = `SITUATION: ${narrativeName} is TRAVELING right now.
 - Destination: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Narrative must reflect the travel/destination context.
 - Do NOT depict them at home unless newer information establishes arrival.
 - This is a CURRENT STATE, not a transition.${activityLine}`;
     } else if (presenceStatus === 'rabbit_hole') {
-      situationBlock = `SITUATION: ${character.name} is at ${resolvedLocationName} right now (rabbit-hole destination).
+      situationBlock = `SITUATION: ${narrativeName} is at ${resolvedLocationName} right now (rabbit-hole destination).
 - This destination may not have ordinary explorable rooms or zones — describe activity appropriate to this destination without inventing a fake room entity.
 - Do NOT replace this destination with the character's home or borrow a room from an unrelated Location.
 - Do NOT manufacture a home living room, bedroom, lobby, or generic office just because the normal location system expects one.
 - Continue from the established activity and context for this destination.${activityLine}`;
     } else if (_isActiveNonHome) {
-      situationBlock = `SITUATION: ${character.name} is AWAKE and at ${resolvedLocationName} right now.
+      situationBlock = `SITUATION: ${narrativeName} is AWAKE and at ${resolvedLocationName} right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Category: ${locationCategory}
 ${locationDescription ? `- Environment: ${locationDescription}` : ''}
 - This is an active non-home state (${presenceStatus}). Do NOT depict them at home or reset to a default room.
 - Narrative must reflect what they'd realistically be doing here at this time.${activityLine}`;
     } else {
-      situationBlock = `SITUATION: ${character.name} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
+      situationBlock = `SITUATION: ${narrativeName} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Category: ${locationCategory}
 ${locationDescription ? `- Environment: ${locationDescription}` : ''}
@@ -552,24 +560,24 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
         const hour12 = ((h + 11) % 12) + 1;
         return `${hour12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'} Eastern`;
       })();
-      situationBlock = `SITUATION: ${character.name}'s scheduled work shift has ENDED${_endLabel12 ? ` (scheduled end ${_endLabel12})` : ''}.
+      situationBlock = `SITUATION: ${narrativeName}'s scheduled work shift has ENDED${_endLabel12 ? ` (scheduled end ${_endLabel12})` : ''}.
 - The scheduled work activity is COMPLETE. Work is over for today.
-- Do NOT describe ${character.name} as still working, still at work, still at the office, still on the clock, finishing up, staying late, wrapping up duties, or in the middle of job tasks.
+- Do NOT describe ${narrativeName} as still working, still at work, still at the office, still on the clock, finishing up, staying late, wrapping up duties, or in the middle of job tasks.
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after the shift.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
-- Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
+- Write the first moments after the shift ends: the shift leaving their body and attention, what they do immediately after, how the day's work settles.${isAsleep ? `\n- ${narrativeName} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // SCHOOL DISMISSAL overrides the in-session framing. The established school schedule
     // pathway established that the scheduled school day reached its end time, so the
     // narrative must recognize the school day as complete. Nothing is moved or invented.
     if (isSchoolEnd) {
-      situationBlock = `SITUATION: ${character.name}'s scheduled school day has ENDED.
+      situationBlock = `SITUATION: ${narrativeName}'s scheduled school day has ENDED.
 - The school day is COMPLETE. Classes are over and the students are dismissed for the day.
-- Do NOT describe ${character.name} as still in class, still at school, in a lesson, or in the middle of schoolwork.
+- Do NOT describe ${narrativeName} as still in class, still at school, in a lesson, or in the middle of schoolwork.
 - Do NOT announce a destination, a commute in progress, or a planned move. If nothing else says otherwise, this is simply the moment after dismissal.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}. This is authoritative and unchanged by this narrative.
-- Write the first moments after the school day ends: the day letting go, what they do immediately after dismissal, how the rest of the afternoon opens up.${isAsleep ? `\n- ${character.name} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
+- Write the first moments after the school day ends: the day letting go, what they do immediately after dismissal, how the rest of the afternoon opens up.${isAsleep ? `\n- ${narrativeName} is ASLEEP right now. Reflect rest and stillness, not activity.` : ''}${activityLine}`;
     }
 
     // Needs color — thresholds match stable baselines (75), not critical-only.
@@ -804,12 +812,12 @@ ${needsHints.length > 0 ? `CURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join('
 ════════════════════════════════════
 AUTOMATIC NARRATIVE TASK — PRESENT MOMENT
 ════════════════════════════════════
-Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
+Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${narrativeName} is experiencing RIGHT NOW.
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
 ${situationBlock}${userPresenceLine}
-LOCATION AUTHORITY — ${character.name}'s residence (home address in the profile) is where they LIVE, not where they are. It is never the scene by default. Write them at home only when the SITUATION block above says home. A previous narrative, an earlier activity, a home routine, or a remembered address is never authority to place them there now.
+LOCATION AUTHORITY — ${narrativeName}'s residence (home address in the profile) is where they LIVE, not where they are. It is never the scene by default. Write them at home only when the SITUATION block above says home. A previous narrative, an earlier activity, a home routine, or a remembered address is never authority to place them there now.
 ${needsLine}${quirkLine}${householdActivityBlock}${healthActivityBlock}
 
 IDENTITY AND PRONOUN LOCK — ABSOLUTE:
@@ -1082,7 +1090,7 @@ If no actions occur, return empty action_effects array.`;
     });
 
     let narrativeText = narrativeRes?.narrative_text?.trim() ||
-      `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
+      `${narrativeName} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
     // Whitespace normalization + work-status wording correction.
     // The prompt instructs current-state wording ("is at work") but the LLM
     // sometimes still generates transition wording ("has gone to work").
@@ -1189,7 +1197,7 @@ If no actions occur, return empty action_effects array.`;
       for (const effect of actionEffects) {
         if (effect.type === 'needs' && effect.need) {
           if (effect.need === 'energy' && effect.change > 0 && !ENERGY_RECOVERY_PRESENCES.has(_narrativePresence)) {
-            console.warn(`[generateAutomaticNarrative] BLOCKED +energy effect (${effect.change}) for ${character.name} in presence=${_narrativePresence} — awake/work states cannot gain energy from narrative action_effects`);
+            console.warn(`[generateAutomaticNarrative] BLOCKED +energy effect (${effect.change}) for ${narrativeName} in presence=${_narrativePresence} — awake/work states cannot gain energy from narrative action_effects`);
             continue;
           }
           const needFieldMap = {
@@ -1312,7 +1320,7 @@ If no actions occur, return empty action_effects array.`;
           valence: 'positive',
           severity: 'moderate',
           title: `Had a ${_eatingMealSize === 'snack' ? 'snack' : _eatingMealSize === 'large_meal' ? 'large meal' : 'meal'}`,
-          description: `${character.name} had a ${_eatingMealSize === 'snack' ? 'snack' : _eatingMealSize === 'large_meal' ? 'large meal' : 'meal'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
+          description: `${narrativeName} had a ${_eatingMealSize === 'snack' ? 'snack' : _eatingMealSize === 'large_meal' ? 'large meal' : 'meal'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
           emotional_impact: 'satisfied',
           triggered_by: 'life_simulation',
           context_tags: ['eating_event', _eatingMealSize, 'autonomous_narrative'],
@@ -1333,7 +1341,7 @@ If no actions occur, return empty action_effects array.`;
           valence: 'positive',
           severity: 'minor',
           title: `${_hygieneActionLabel === 'washing' ? 'Freshened up' : 'Groomed'}`,
-          description: `${character.name} ${_hygieneActionLabel === 'washing' ? 'washed up and freshened' : 'groomed'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
+          description: `${narrativeName} ${_hygieneActionLabel === 'washing' ? 'washed up and freshened' : 'groomed'}${resolvedLocationName ? ` at ${resolvedLocationName}` : ''}.`,
           emotional_impact: 'refreshed',
           triggered_by: 'life_simulation',
           context_tags: ['hygiene', _hygieneActionLabel, 'autonomous_narrative'],
@@ -1384,7 +1392,7 @@ If no actions occur, return empty action_effects array.`;
       visibility: isManual ? 'visible_in_chat' : 'visible_in_chat',
     });
 
-    console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
+    console.log(`[generateAutomaticNarrative] ✓ Saved for ${narrativeName}: ${narrative.id} | trigger=${trigger}`);
 
     // A completed shift or school day is shown where narrative entries already live: as a
     // narrative message in the character's own conversations. Only the existing Chat

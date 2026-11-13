@@ -4,6 +4,9 @@ import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Che
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import CrossAccountCharacterList from "@/components/chat/CrossAccountCharacterList";
+import { resolveKnownCrossAccountCharacters } from "@/lib/knownCrossAccountCharacters";
+import { setCrossAccountSubjects } from "@/lib/crossAccountSubjectRegistry";
 import { sortCharactersByManageListHierarchy } from "@/lib/characterListSorting";
 import { useAuth } from "@/lib/AuthContext";
 import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
@@ -83,6 +86,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // User settings for world name
   const [userSettings, setUserSettings] = useState(null);
   const [allCharacters, setAllCharacters] = useState([]);
+  // Known characters from other accounts (existing contact graph only) — selectable
+  // for image generation and kept in allCharacters so identity refs resolve.
+  const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
 
   // Load status for character dropdown — drives visible error/retry UI
   // 'loading' | 'fresh' | 'error'
@@ -243,6 +249,18 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         // Write to mg_cache for same-session reuse in RegenerateImageModal
         writeCache(email, 'characters', roster);
         setCharsLoadStatus('fresh');
+
+        // Cross-account characters already known to this character are appended
+        // after the account's own roster. They are never cached and never replace
+        // own-account entries.
+        resolveKnownCrossAccountCharacters({ originCharacter: character, user: { email, id: user?.id } })
+          .then(cross => {
+            if (!cross || cross.length === 0) return;
+            setCrossAccountCharacters(cross);
+            setCrossAccountSubjects(cross);
+            setAllCharacters(prev => [...prev, ...cross.filter(c => !prev.some(p => p.id === c.id))]);
+          })
+          .catch(() => {});
         setCharsDiagnostics({
           owner_email: email,
           source: 'direct_account_query',
@@ -1081,7 +1099,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                             // hierarchy (active_created → npc_fictitious → npc_family → untyped/test
                             // → moved_away), alphabetical within each group. Roster composition unchanged.
                             const userEntry = allCharacters.find(c => c.is_user);
-                            const nonUser = allCharacters.filter(c => !c.is_user);
+                            // Own-account roster keeps its existing hierarchy; known
+                            // cross-account characters are rendered separately below.
+                            const nonUser = allCharacters.filter(c => !c.is_user && !c.is_cross_account);
                             return [userEntry, ...sortCharactersByManageListHierarchy(nonUser)].filter(Boolean);
                           })().map(char => (
                             <button
@@ -1101,6 +1121,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                               {char.character_type === 'active_created_character' && !char.is_user && <span className="text-[10px] text-primary/60 ml-auto">Active</span>}
                             </button>
                           ))}
+                          <CrossAccountCharacterList
+                            characters={crossAccountCharacters}
+                            selectedIds={selectedCharacterIds}
+                            onToggle={toggleCharacter}
+                          />
                         </div>
                       )}
                     </div>

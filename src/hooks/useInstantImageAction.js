@@ -1,6 +1,8 @@
 import { base44 } from "@/api/base44Client";
 import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import { resolveCoPresence } from "@/lib/coPresenceResolver";
+import { resolveKnownCrossAccountCharacters } from "@/lib/knownCrossAccountCharacters";
+import { setCrossAccountSubjects } from "@/lib/crossAccountSubjectRegistry";
 
 /**
  * useInstantImageAction
@@ -96,9 +98,23 @@ export function useInstantImageAction({
       // is decided by the established narrative below — never assumed.
       const coPresence = resolveCoPresence(characterInScene, userSettings, worldName);
 
+      // ── KNOWN CROSS-ACCOUNT CHARACTERS (existing contact graph) ────────────
+      // Registered so identity binding resolves them, and included below only
+      // when they are physically at this same location.
+      let crossAccountCharacters = [];
+      try {
+        crossAccountCharacters = await resolveKnownCrossAccountCharacters({
+          originCharacter: character,
+          user: currentUser,
+        });
+        setCrossAccountSubjects(crossAccountCharacters);
+      } catch (_) { /* non-blocking */ }
+
       // ── OTHER PEOPLE PHYSICALLY AT THIS LOCATION (roster, same resolver) ───
-      const allCharacters =
-        queryClient?.getQueryData?.(["characters", currentUser?.email]) || [];
+      const allCharacters = [
+        ...(queryClient?.getQueryData?.(["characters", currentUser?.email]) || []),
+        ...crossAccountCharacters,
+      ];
       const charLocId = coPresence?.characterLocationId || null;
       const othersHere = allCharacters
         .filter(

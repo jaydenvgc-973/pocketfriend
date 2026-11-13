@@ -408,8 +408,20 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
  *   the user's world name and aliases are checked against the full prompt (including [JOINT],
  *   secondary subjects, and non-leading mentions) to detect user-as-visual-subject.
  */
+import { getCrossAccountSubjects } from "@/lib/crossAccountSubjectRegistry";
+
 export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, resolvedUser = null) {
   const log = [];
+
+  // ── KNOWN CROSS-ACCOUNT CHARACTERS ────────────────────────────────────────
+  // Characters from other accounts who are already known through the existing
+  // contact graph are registered by the surfaces that resolve them. They join
+  // the roster for identity binding only — own-account entries always win.
+  try {
+    const knownIds = new Set((allChars || []).map(c => c?.id));
+    const extra = getCrossAccountSubjects().filter(c => c && c.id && !knownIds.has(c.id));
+    if (extra.length > 0) allChars = [...(allChars || []), ...extra];
+  } catch (_) { /* registry is best-effort */ }
 
   if (!imagePrompt) {
     return {
