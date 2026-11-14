@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Building, ChevronDown } from "lucide-react";
-import { getUnitLabel } from "@/lib/residentialUnits";
+import { getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
 
 /**
  * ApartmentSwitcher
@@ -27,7 +27,7 @@ export default function ApartmentSwitcher({
   onSelect = () => {},
   location = null,
   allowNone = false,
-  noneLabel = "Whole building",
+  noneLabel = null,
   className = "",
   direction = "down",
 }) {
@@ -90,8 +90,10 @@ export default function ApartmentSwitcher({
 
   if (units.length === 0) return null;
 
+  const kind = getUnitKind(location);
+  const noneText = noneLabel || kind.none;
   const active = units.find((u) => u.unit_id === activeUnitId) || null;
-  const buttonLabel = active ? getUnitLabel(active.unit_name, location) : noneLabel;
+  const buttonLabel = active ? getUnitLabel(active.unit_name, location) : noneText;
 
   const choose = (unitId) => {
     setOpen(false);
@@ -115,7 +117,7 @@ export default function ApartmentSwitcher({
             ? "bg-primary/10 border-primary/40 text-primary"
             : "bg-secondary border-border text-muted-foreground hover:text-foreground"
         }`}
-        title="Apartment"
+        title={kind.heading}
       >
         <Building className="w-3.5 h-3.5 flex-shrink-0" />
         <span className="truncate max-w-[110px]">{buttonLabel}</span>
@@ -130,12 +132,12 @@ export default function ApartmentSwitcher({
           className="fixed z-[80] bg-card border border-border rounded-xl shadow-xl overflow-hidden"
         >
           <div className="px-3 py-2 border-b border-border">
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Apartment</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{kind.heading}</p>
           </div>
           <div className="overflow-y-auto py-1" style={{ maxHeight: pos.listMax }}>
             {allowNone && (
               <button onClick={() => choose(null)} className={optionClass(!active)}>
-                <span className="flex-1 truncate">{noneLabel}</span>
+                <span className="flex-1 truncate">{noneText}</span>
                 {!active && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
               </button>
             )}

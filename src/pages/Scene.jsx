@@ -56,7 +56,7 @@ import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
-import { getResidentialUnits, getUnitHomeOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
+import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -249,21 +249,23 @@ export default function Scene() {
   // apartment being visited — never the whole building — decides who is selected on open.
   // Only the occupants of THAT unit who are actually home are picked automatically; a
   // resident of another apartment stays available through Who's Here, unselected.
-  const residentialUnits = isHomeLocation ? getResidentialUnits(location) : [];
+  // Apartments, patient rooms and prison cells are the same kind of assignment — the
+  // space inside the facility that Places already defines. A hotel keeps its own flow.
+  const locationUnits = getAssignableUnits(location);
   const activeUnit = getUnitById(location, activeUnitId);
-  const unitHomeOccupantIds = residentialUnits.length > 0 ? getUnitHomeOccupantIds(location, activeUnitId, characters) : [];
+  const unitPresentOccupantIds = locationUnits.length > 0 ? getUnitPresentOccupantIds(location, activeUnitId, characters) : [];
   const unitAutoSelectedIdsRef = useRef([]);
   const unitManualDeselectRef = useRef(new Set());
   const previousUnitIdRef = useRef(initialUnitId);
 
   useEffect(() => {
-    if (!location || residentialUnits.length === 0) return;
+    if (!location || locationUnits.length === 0) return;
     // Moving to another apartment releases the previous apartment's automatic picks.
     if (previousUnitIdRef.current !== activeUnitId) {
       previousUnitIdRef.current = activeUnitId;
       unitManualDeselectRef.current = new Set();
     }
-    const nextAuto = unitHomeOccupantIds.filter((id) => !unitManualDeselectRef.current.has(id));
+    const nextAuto = unitPresentOccupantIds.filter((id) => !unitManualDeselectRef.current.has(id));
     const previousAuto = unitAutoSelectedIdsRef.current;
     unitAutoSelectedIdsRef.current = nextAuto;
     setSelectedNpcIds((prev) => {
@@ -273,7 +275,7 @@ export default function Scene() {
       if (merged.length === current.length && merged.every((id) => current.includes(id))) return prev;
       return merged;
     });
-  }, [activeUnitId, location?.id, residentialUnits.length, unitHomeOccupantIds.join(',')]);
+  }, [activeUnitId, location?.id, locationUnits.length, unitPresentOccupantIds.join(',')]);
 
   // Choosing an apartment is a move between units, not a change of zone: the property's
   // zone references and images stay exactly as they are.
@@ -281,11 +283,12 @@ export default function Scene() {
     setActiveUnitId(unitId);
     const unit = getUnitById(location, unitId);
     if (observeMode) {
-      setObserveCastIds(getUnitHomeOccupantIds(location, unitId, characters));
+      // Choosing the whole facility releases the unit cast back to the default selection.
+      setObserveCastIds(unitId ? getUnitPresentOccupantIds(location, unitId, characters) : null);
       return;
     }
     if (!unit) return;
-    setMessages((prev) => [...prev, { id: `unit_${Date.now()}`, sender: "narrative", content: `You move to ${unit.unit_name}.`, timestamp: new Date().toISOString() }]);
+    setMessages((prev) => [...prev, { id: `unit_${Date.now()}`, sender: "narrative", content: `You move to ${getUnitLabel(unit.unit_name, location)}.`, timestamp: new Date().toISOString() }]);
   };
 
   const getFamilyNpcLocationId = (fm) => {
@@ -366,7 +369,7 @@ export default function Scene() {
     const npcs = [];
     if (isHomeLocation) {
       vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.character_type === 'family_npc' ? 'Family' : 'Resident', isNpc: true, npcType: 'resident', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); });
-      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: isAssignedCaregiverHere(c) ? 'Caregiver' : 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state, unit_name: residentialUnits.length > 0 ? getUnitLabel(getUnitForCharacter(location, c.id)?.unit_name, location) || null : null }); });
+      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: isAssignedCaregiverHere(c) ? 'Caregiver' : 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state, unit_name: locationUnits.length > 0 ? getUnitLabel(getUnitForCharacter(location, c.id)?.unit_name, location) || null : null }); });
       (location.resident_family_members || []).forEach((fm) => { if (!fm.name) return; const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); if (alreadyAdded) return; const sourceChar = fm.source_character_id ? characters.find((c) => c.id === fm.source_character_id) : homeResidents.find((c) => c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())); const familyMemberRecord = sourceChar?.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); npcs.push({ id: `npc_${fm.name.replace(/\s+/g, "_")}`, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, npcType: "resident", avatar_url: familyMemberRecord?.photo_url || null }); });
     }
     if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
@@ -615,8 +618,8 @@ export default function Scene() {
   const observeDefaultIds = useMemo(() => {
     const base = observeSentIds.length > 0
       ? observeSentIds
-      : unitHomeOccupantIds.length > 0
-        ? unitHomeOccupantIds
+      : unitPresentOccupantIds.length > 0
+        ? unitPresentOccupantIds
         : observeCandidates.filter((c) => !c.isNpc).slice(0, 4).map((c) => c.id);
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
     // The household's assigned caregiver is part of a watched residence: the children they
@@ -630,7 +633,7 @@ export default function Scene() {
       })
       .map((c) => c.id);
     return [...new Set([...base, ...chosenBackground, ...supervision])];
-  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), unitHomeOccupantIds.join(',')]);
+  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), unitPresentOccupantIds.join(',')]);
   const observeCastIdList = observeCastIds || observeDefaultIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
   const toggleObserveCast = (id) => setObserveCastIds((prev) => {
@@ -1167,7 +1170,7 @@ export default function Scene() {
     <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
         <button onClick={() => observeMode ? navigate("/travel") : setShowLeaveModal(true)} className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0" title={observeMode ? "Stop watching" : "Leave location"}><ArrowLeft className="w-5 h-5" /></button>
-        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {observeMode ? "watching · " : ""}{activeUnit ? `${activeUnit.unit_name} · ` : ""}{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
+        <div className="flex-1 min-w-0"><h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2><p className="text-xs text-muted-foreground capitalize">{CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} · {observeMode ? "watching · " : ""}{activeUnit ? `${getUnitLabel(activeUnit.unit_name, location)} · ` : ""}{new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</p></div>
         {isHomeLocation && !observeMode && (!isSharedLocation || isGatewayHouse) && <ResidenceOptionsDropdown location={location} sceneCharacters={sceneCharacters} isResident={broughtCharacters.some((c) => c.current_home_location_id === location.id)} currentUser={currentUser} allCharacters={characters} onTour={() => setShowTourModal(true)} onMoveIn={() => setShowMoveInPopup(true)} onMoveOut={handleMoveOut} onAskToLeave={handleAskToLeave} onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} onKickOut={() => setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: "You assert your authority and ask them to leave immediately.", timestamp: new Date().toISOString() }])} />}
         {!observeMode && isSharedResidence && sharedResidenceParticipants.length > 1 && (
           <button onClick={() => { setShowSharedConversation(true); setUserLocation(location.id, location.name).then(() => queryClient.invalidateQueries({ queryKey: ["sharedResidenceParticipants", location.id] })).catch(() => {}); }} className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/10 border border-primary/40 text-primary text-xs font-medium flex-shrink-0" title="Talk with everyone here">
@@ -1198,9 +1201,9 @@ export default function Scene() {
 
       {/* Character presence strip */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0 overflow-x-auto scrollbar-hide">
-        {residentialUnits.length > 0 && (
+        {locationUnits.length > 0 && (
           <>
-            <ApartmentSwitcher units={residentialUnits} activeUnitId={activeUnitId} onSelect={handleUnitChange} location={location} allowNone />
+            <ApartmentSwitcher units={locationUnits} activeUnitId={activeUnitId} onSelect={handleUnitChange} location={location} allowNone />
             <div className="w-px h-6 bg-border flex-shrink-0" />
           </>
         )}

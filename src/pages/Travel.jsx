@@ -31,7 +31,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
-import { getResidentialUnits } from "@/lib/residentialUnits";
+import { getAssignableUnits, getResidentialUnits } from "@/lib/residentialUnits";
 
 
 export default function Travel() {
@@ -57,9 +57,10 @@ export default function Travel() {
   const [selectedUnitId, setSelectedUnitId] = useState(null);
   const [showDebug, setShowDebug] = useState(false);
 
-  // Apartments inside the chosen residence, straight from Places (residential_units).
-  // Only residential properties carry households; other unit types are unchanged.
-  const selectedUnits = selectedLocation?.category === "home" ? getResidentialUnits(selectedLocation) : [];
+  // The spaces inside the chosen facility, straight from Places (residential_units):
+  // apartments in a residence, patient rooms in a hospital or clinic, cells in a prison
+  // or jail. Choosing one carries it into Scenes. Every other location is unchanged.
+  const selectedUnits = getAssignableUnits(selectedLocation);
   // The apartment belongs to the property: choosing another destination releases it.
   useEffect(() => { setSelectedUnitId(null); }, [selectedLocation?.id]);
   const [distributeResult, setDistributeResult] = useState(null);
@@ -970,6 +971,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     seenNames.add(name.toLowerCase());
                     lines.push({ name, status: 'home', color: 'text-green-400', id: resId });
                   });
+
+                  // PATIENTS / INMATES ASSIGNED TO A ROOM OR CELL
+                  // A hospital or correctional facility keeps its people in the unit
+                  // assignments Places already defines, so each assigned person is listed
+                  // under their own room or cell before they are chosen for a visit.
+                  selectedUnits.forEach(unit => (unit.occupant_character_ids || []).forEach(occId => {
+                    const occ = allCharactersForFamilyScan.find(c => c.id === occId);
+                    if (!occ) return;
+                    const name = occ.display_name || occ.name;
+                    if (!name || seenNames.has(name.toLowerCase())) return;
+                    seenNames.add(name.toLowerCase());
+                    const status = occ.resolved_presence_status === 'hospitalized'
+                      ? 'hospitalized'
+                      : (occ.is_jailed === true ? 'confined' : (occ.resolved_presence_status || 'present'));
+                    lines.push({ name, status, color: 'text-muted-foreground', id: occ.id });
+                  }));
 
                   console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 

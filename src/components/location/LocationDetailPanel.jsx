@@ -5,6 +5,7 @@ import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
+import FacilityUnitsSection from "./FacilityUnitsSection";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -568,6 +569,14 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
             <DetailRow label={location.owner_role || 'operator'} value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name} />
           )}
         </>
+      )}
+
+      {/* ── PATIENT ROOMS / CELLS ──
+          A hospital, clinic, prison or jail keeps its internal spaces in the same
+          residential_units assignments Places maintains. Each room or cell can be
+          entered directly; the zone dropdown inside it stays untouched. */}
+      {(cat === 'medical' || cat === 'jail_prison') && (
+        <FacilityUnitsSection location={location} characters={characters} />
       )}
 
       {cat === 'jail_prison' && (location.inmates?.length > 0 || (location.worker_character_ids || []).length > 0) && (

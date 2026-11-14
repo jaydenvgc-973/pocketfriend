@@ -1,4 +1,5 @@
 import React from "react";
+import { getUnitLabel } from "@/lib/residentialUnits";
 
 /**
  * DwellingUnitGroups
@@ -39,12 +40,10 @@ export function splitByDwellingUnit(participants, residentialUnits) {
 }
 
 // Unit names are shown exactly as stored. A bare number/letter ("1A") gets the
-// property's own kind as a lead-in so the grouping reads as an apartment or room.
+// property's own kind as a lead-in so the grouping reads as an apartment, a
+// patient room or a cell.
 function unitLabel(unitName, locationCategory) {
-  if (!unitName || /\s/.test(unitName)) return unitName;
-  if (locationCategory === "hotel") return `Room ${unitName}`;
-  if (locationCategory === "home") return `Apartment ${unitName}`;
-  return `Unit ${unitName}`;
+  return getUnitLabel(unitName, { category: locationCategory });
 }
 
 export default function DwellingUnitGroups({ groups = {}, order = [], renderParticipant, locationCategory = "home" }) {

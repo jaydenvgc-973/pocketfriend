@@ -1237,24 +1237,53 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── APARTMENTS / ROOMS (Building venue type + all Hotel venue types) ── */}
-      {((form.category === 'home' && form.subtype.includes('building')) || form.category === 'hotel') && (
-        <ApartmentManager
-          residentialUnits={form.residential_units}
-          residentCharacterIds={form.resident_character_ids}
-          allCharacters={allCharacters}
-          nameById={characterNameById}
-          maxUnits={sharedResidencyConfig?.max_units || 0}
-          onChange={(units) => update("residential_units", units)}
-          {...(form.category === 'hotel' ? {
-            sectionLabel: "Rooms / Units",
-            unitSingular: "room",
-            contextNoun: "hotel",
-            addPlaceholder: "e.g. Room 101, Unit 4B...",
-            emptyHint: "Add residents to the hotel first, then create rooms to organize them.",
-          } : {})}
-        />
-      )}
+      {/* ── APARTMENTS / PATIENT ROOMS / CELLS ──
+          The internal spaces Places already organizes for apartments now also cover a
+          hospital's patient rooms and a prison's cells, from the same residential_units
+          array. Assigning a room or cell changes nothing about a character's medical or
+          legal status, and house arrest is never given a cell. */}
+      {(() => {
+        const isHomeBuilding = form.category === 'home' && form.subtype.includes('building');
+        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison'].includes(form.category)) return null;
+
+        const alreadyAssigned = new Set();
+        (form.residential_units || []).forEach(u => (u.occupant_character_ids || []).forEach(id => alreadyAssigned.add(id)));
+
+        // Who can be placed in a space at THIS facility.
+        let assignableIds = form.resident_character_ids || [];
+        let labels = {};
+        if (form.category === 'medical') {
+          assignableIds = [...new Set([
+            ...allAssignableCharacters.filter(c =>
+              (c.resolved_presence_status === 'hospitalized' && (!c.resolved_current_location_id || c.resolved_current_location_id === editingLocation?.id)) ||
+              c.resolved_current_location_id === editingLocation?.id
+            ).map(c => c.id),
+            ...alreadyAssigned,
+          ])];
+          labels = { sectionLabel: "Patient Rooms", unitSingular: "room", occupantNoun: "patient", contextNoun: "facility", addPlaceholder: "e.g. 204, ICU-3...", emptyHint: "Hospitalized characters at this facility can be assigned to a patient room." };
+        } else if (form.category === 'jail_prison') {
+          assignableIds = [...new Set([
+            ...(form.inmates || []).filter(i => i.confinement_status !== 'released').map(i => i.character_id).filter(Boolean),
+            ...allAssignableCharacters.filter(c => c.is_jailed === true && (!c.incarceration_facility_id || c.incarceration_facility_id === editingLocation?.id)).map(c => c.id),
+            ...alreadyAssigned,
+          ])];
+          labels = { sectionLabel: "Cells", unitSingular: "cell", occupantNoun: "inmate", contextNoun: "facility", addPlaceholder: "e.g. B2, Cellblock C...", emptyHint: "Incarcerated characters at this facility can be assigned to a cell." };
+        } else if (form.category === 'hotel') {
+          labels = { sectionLabel: "Rooms / Units", unitSingular: "room", contextNoun: "hotel", addPlaceholder: "e.g. Room 101, Unit 4B...", emptyHint: "Add residents to the hotel first, then create rooms to organize them." };
+        }
+
+        return (
+          <ApartmentManager
+            residentialUnits={form.residential_units}
+            residentCharacterIds={assignableIds}
+            allCharacters={allCharacters}
+            nameById={characterNameById}
+            maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
+            onChange={(units) => update("residential_units", units)}
+            {...labels}
+          />
+        );
+      })()}
 
       {/* ── WORKERS ── */}
       {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (

@@ -25,6 +25,7 @@ export default function ApartmentManager({
   sectionLabel = "Apartments",
   unitSingular = "apartment",
   contextNoun = "building",
+  occupantNoun = "resident",
   addPlaceholder = "e.g. Apartment 1, Unit 4B...",
   emptyHint = "Add residents to the building first, then create apartments to organize them.",
   maxUnits = 0,
@@ -173,7 +174,7 @@ export default function ApartmentManager({
                   ) : (
                     <>
                       <span className="text-xs font-medium text-foreground flex-1">{unit.unit_name}</span>
-                      <span className="text-[10px] text-muted-foreground">{occupants.length} {occupants.length === 1 ? "resident" : "residents"}</span>
+                      <span className="text-[10px] text-muted-foreground">{occupants.length} {occupants.length === 1 ? occupantNoun : `${occupantNoun}s`}</span>
                       <button
                         onClick={() => handleStartEdit(unit)}
                         title="Edit name"
@@ -256,7 +257,7 @@ export default function ApartmentManager({
                         })}
                       </div>
                     ) : (
-                      <p className="text-[10px] text-muted-foreground italic py-1">No unassigned residents available.</p>
+                      <p className="text-[10px] text-muted-foreground italic py-1">No unassigned {occupantNoun}s available.</p>
                     )}
                     <button
                       onClick={() => setAssignMenuUnitId(null)}
@@ -275,7 +276,7 @@ export default function ApartmentManager({
                     className="w-full flex items-center gap-1.5 py-1 rounded-lg text-[10px] text-muted-foreground hover:text-primary border border-dashed border-border hover:border-primary/30 transition-colors disabled:opacity-40 disabled:cursor-default"
                   >
                     <UserPlus className="w-3 h-3" />
-                    {available.length > 0 ? "Assign resident" : "No unassigned residents"}
+                    {available.length > 0 ? `Assign ${occupantNoun}` : `No unassigned ${occupantNoun}s`}
                   </button>
                 )}
               </div>

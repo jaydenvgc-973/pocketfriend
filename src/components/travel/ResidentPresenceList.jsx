@@ -1,4 +1,4 @@
-import { getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
+import { getUnitForCharacter, getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
 
 /**
  * ResidentPresenceList
@@ -52,7 +52,7 @@ export default function ResidentPresenceList({ lines = [], units = [], location 
   const unplaced = lines.filter((line) => !placed.has(line));
   const unassigned = unplaced.filter((line) => !line.id || residentSet.has(line.id));
   const others = unplaced.filter((line) => line.id && !residentSet.has(line.id));
-  if (unassigned.length > 0) grouped.push({ key: "__unassigned", label: "No apartment assigned", lines: unassigned });
+  if (unassigned.length > 0) grouped.push({ key: "__unassigned", label: getUnitKind(location).unassigned, lines: unassigned });
   if (others.length > 0) grouped.push({ key: "__others", label: "Others here", lines: others });
 
   return (
