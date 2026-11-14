@@ -36,6 +36,7 @@ import { getEditableCharactersForModule } from "@/lib/characterEditableListResol
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 import { usePageContext } from "@/hooks/usePageContext";
+import { getActiveUnitOccupantIds } from "@/lib/residentialUnits";
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
@@ -1246,17 +1247,27 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         const isHomeBuilding = form.category === 'home' && form.subtype.includes('building');
         if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison'].includes(form.category)) return null;
 
+        // A patient room and a prison cell are temporary: once the stay ends the occupant is
+        // no longer assigned, so the space is free for someone else. Apartments, hotel rooms
+        // and every other space are unchanged. Any edit here saves the ended assignments away.
+        const activeUnits = (form.residential_units || []).map(u => ({
+          ...u,
+          occupant_character_ids: getActiveUnitOccupantIds(editingLocation || form, u, allCharacters),
+        }));
+
         const alreadyAssigned = new Set();
-        (form.residential_units || []).forEach(u => (u.occupant_character_ids || []).forEach(id => alreadyAssigned.add(id)));
+        activeUnits.forEach(u => (u.occupant_character_ids || []).forEach(id => alreadyAssigned.add(id)));
 
         // Who can be placed in a space at THIS facility.
         let assignableIds = form.resident_character_ids || [];
         let labels = {};
         if (form.category === 'medical') {
           assignableIds = [...new Set([
+            // A patient room belongs to an admitted patient: only a character who is
+            // currently hospitalized at this facility can be placed in one.
             ...allAssignableCharacters.filter(c =>
-              (c.resolved_presence_status === 'hospitalized' && (!c.resolved_current_location_id || c.resolved_current_location_id === editingLocation?.id)) ||
-              c.resolved_current_location_id === editingLocation?.id
+              c.resolved_presence_status === 'hospitalized' &&
+              (!c.resolved_current_location_id || c.resolved_current_location_id === editingLocation?.id)
             ).map(c => c.id),
             ...alreadyAssigned,
           ])];
@@ -1274,7 +1285,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
         return (
           <ApartmentManager
-            residentialUnits={form.residential_units}
+            residentialUnits={activeUnits}
             residentCharacterIds={assignableIds}
             allCharacters={allCharacters}
             nameById={characterNameById}

@@ -79,6 +79,49 @@ export function getAssignableUnits(location) {
   return supportsUnitAssignments(location) ? getResidentialUnits(location) : [];
 }
 
+/**
+ * WHETHER A SPACE ASSIGNMENT IS STILL ACTIVE.
+ *
+ * An apartment in a residence is a standing arrangement and always stands.
+ * A patient room and a prison cell are TEMPORARY: they exist only while that
+ * character is actually hospitalized or incarcerated at that facility. The moment
+ * the stay ends — discharged, released — the assignment has ended on its own. No
+ * clock, sweep, or extra process is involved: the status the release/discharge
+ * authority already wrote is the whole rule.
+ */
+export function isTemporaryUnitAssignmentActive(location, character) {
+  if (!location || !character) return false;
+  if (location.category === "medical") {
+    if (character.resolved_presence_status !== "hospitalized") return false;
+    return !character.resolved_current_location_id || character.resolved_current_location_id === location.id;
+  }
+  if (location.category === "jail_prison") {
+    const confined = character.is_jailed === true
+      || ["incarcerated", "confined"].includes(character.resolved_presence_status);
+    if (!confined) return false;
+    const facilityId = character.incarceration_facility_id || character.resolved_current_location_id;
+    return !facilityId || facilityId === location.id;
+  }
+  return true;
+}
+
+/**
+ * The assigned occupants whose assignment still stands. A character whose stay has
+ * ended is gone from the room/cell, so the space is free to be assigned again —
+ * the space itself, and everyone else in it, are untouched. An id whose character
+ * record is not loaded is never dropped: reading can never erase an assignment.
+ */
+export function getActiveUnitOccupantIds(location, unit, characters = []) {
+  const byId = new Map((characters || []).map((c) => [c.id, c]));
+  return [...new Set(unit?.occupant_character_ids || [])].filter((id) => {
+    const c = byId.get(id);
+    // An id whose character record is not loaded is never dropped: reading can never
+    // erase an assignment it cannot verify.
+    if (!c) return true;
+    return isTemporaryUnitAssignmentActive(location, c);
+  });
+}
+
 export function getUnitById(location, unitId) {
   if (!unitId) return null;
   return getResidentialUnits(location).find((u) => u.unit_id === unitId) || null;

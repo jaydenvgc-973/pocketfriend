@@ -1692,6 +1692,25 @@ Deno.serve(async (req) => {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Emergency hospitalization', description: `${charName} was rushed to the hospital — health collapsed to ${c.healthValue}.`, emotional_impact: 'critical medical event', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['er_escalation', 'hospitalized'] });
             } else if (c.type === 'hospital_discharge') {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Discharged from hospital', description: `${charName} recovered enough to leave the hospital and was sent home.`, emotional_impact: 'relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['hospitalized_end', 'discharge', 'sent_home'] });
+              // TEMPORARY PATIENT ROOM — the discharge ends the room assignment with the stay.
+              // The room and any other patient in it are untouched; it simply frees up.
+              try {
+                const _roomFacilityId = char.resolved_current_location_id;
+                if (_roomFacilityId) {
+                  const _facility = await base44.asServiceRole.entities.LocationReference.get(_roomFacilityId).catch(() => null);
+                  const _units = _facility?.residential_units || [];
+                  if (_units.some(u => (u.occupant_character_ids || []).includes(char.id))) {
+                    await base44.asServiceRole.entities.LocationReference.update(_roomFacilityId, {
+                      residential_units: _units.map(u => ({
+                        ...u,
+                        occupant_character_ids: (u.occupant_character_ids || []).filter(id => id !== char.id),
+                      })),
+                    });
+                  }
+                }
+              } catch (_roomError) {
+                // The discharge itself stands; an inert room id is never treated as occupancy.
+              }
             } else if (c.type === 'compound_crisis') {
               await base44.entities.ScheduledEvent.create({ character_id: char.id, character_name: charName, event_type: 'compound_crisis_recovery', title: 'Compound crisis — forced rest', description: `${charName} was put to rest — ${c.criticalNeeds} needs below critical threshold.`, scheduled_time: nowIso, status: 'active', owner_email: ownerEmail });
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'medical_event', valence: 'negative', severity: 'major', title: 'Compound crisis — forced rest', description: `${charName}'s body gave out — ${c.criticalNeeds} needs were critical.`, emotional_impact: 'physical collapse', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['compound_crisis'] });

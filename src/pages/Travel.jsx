@@ -31,7 +31,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
-import { getAssignableUnits, getResidentialUnits } from "@/lib/residentialUnits";
+import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds } from "@/lib/residentialUnits";
 
 
 export default function Travel() {
@@ -976,7 +976,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   // A hospital or correctional facility keeps its people in the unit
                   // assignments Places already defines, so each assigned person is listed
                   // under their own room or cell before they are chosen for a visit.
-                  selectedUnits.forEach(unit => (unit.occupant_character_ids || []).forEach(occId => {
+                  // A stay that has ended is no longer an assignment, so a discharged
+                  // patient or released inmate is not listed as an occupant.
+                  selectedUnits.forEach(unit => getActiveUnitOccupantIds(selectedLocation, unit, allCharactersForFamilyScan).forEach(occId => {
                     const occ = allCharactersForFamilyScan.find(c => c.id === occId);
                     if (!occ) return;
                     const name = occ.display_name || occ.name;

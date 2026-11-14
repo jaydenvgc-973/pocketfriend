@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, DoorOpen } from "lucide-react";
-import { getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
+import { getUnitKind, getUnitLabel, getActiveUnitOccupantIds } from "@/lib/residentialUnits";
 
 /**
  * FacilityUnitsSection
@@ -19,6 +19,21 @@ export default function FacilityUnitsSection({ location, characters = [] }) {
 
   const kind = getUnitKind(location);
 
+  // A room or cell is only occupied while that character is still hospitalized or
+  // incarcerated here. Once the stay ends, the space shows as free and can be assigned
+  // again — the space and its other occupants are untouched. Inmates whose full character
+  // record is not loaded fall back to the facility's own inmate list.
+  const loadedIds = new Set(characters.map((c) => c.id));
+  const seatRecords = (location.inmates || [])
+    .filter((i) => i.character_id && !loadedIds.has(i.character_id))
+    .map((i) => ({
+      id: i.character_id,
+      is_jailed: i.confinement_status !== 'released',
+      resolved_presence_status: 'incarcerated',
+      incarceration_facility_id: location.id,
+    }));
+  const occupantSource = [...characters, ...seatRecords];
+
   const resolveOccupant = (id) => {
     const char = characters.find((c) => c.id === id);
     if (char) return { id, name: char.name || char.display_name, avatar_url: char.avatar_url };
@@ -35,7 +50,7 @@ export default function FacilityUnitsSection({ location, characters = [] }) {
       </div>
       <div className="space-y-1.5">
         {units.map((unit) => {
-          const occupants = (unit.occupant_character_ids || []).map(resolveOccupant);
+          const occupants = getActiveUnitOccupantIds(location, unit, occupantSource).map(resolveOccupant);
           return (
             <div key={unit.unit_id} className="bg-secondary/30 rounded-lg p-2">
               <div className="flex items-center gap-1.5 mb-1">

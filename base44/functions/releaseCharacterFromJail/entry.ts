@@ -61,6 +61,28 @@ Deno.serve(async (req) => {
       context_tags: ['jail', 'release', 'user_confirmed'],
     }).catch(() => {});
 
+    // TEMPORARY CELL — the sentence is over, so the cell assignment ends with it.
+    // The cell itself and any other inmate in it are untouched; the space simply
+    // becomes available again. The stay status written above is the only trigger.
+    try {
+      const facilityId = character.incarceration_facility_id;
+      if (facilityId) {
+        const facility = await base44.asServiceRole.entities.LocationReference.get(facilityId).catch(() => null);
+        const units = facility?.residential_units || [];
+        if (units.some(u => (u.occupant_character_ids || []).includes(character_id))) {
+          await base44.asServiceRole.entities.LocationReference.update(facilityId, {
+            residential_units: units.map(u => ({
+              ...u,
+              occupant_character_ids: (u.occupant_character_ids || []).filter(id => id !== character_id),
+            })),
+          });
+        }
+      }
+    } catch (_cellError) {
+      // The release itself stands. An unassigned-cell write failure leaves the cell
+      // assignment inert (the character is no longer incarcerated), never the character jailed.
+    }
+
     return Response.json({ success: true, character_id, released_at: nowISO });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
