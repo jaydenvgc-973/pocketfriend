@@ -81,10 +81,13 @@ export default function FacilityUnitsSection({ location, characters = [], curren
   };
 
   // The caller's own characters who are actually a patient or inmate at this facility,
-  // and are not already assigned to one of its spaces.
+  // and are not already assigned to one of its spaces. A character whose HOME is this
+  // facility lives here — their own account owner may place them in a room or cell even
+  // on a facility that belongs to another account.
   const ownEligible = characters.filter((c) => {
     if (!c?.id || c.owner_email !== currentUserEmail) return false;
     if (assignedAnywhere.has(c.id)) return false;
+    if (c.current_home_location_id === location.id) return true;
     if (location.category === 'medical') {
       return c.resolved_presence_status === 'hospitalized'
         && (!c.resolved_current_location_id || c.resolved_current_location_id === location.id);

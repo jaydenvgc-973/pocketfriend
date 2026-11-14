@@ -292,7 +292,11 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} onLocationUpdate={handleUniformSave} onResidentsChanged={onLocationUpdate} sharedOccupancy={isSharedResidency ? sharedOccupancy : null} />
                     {isShared && !isSharedResidency && !isOwner && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                        <p className="text-xs text-amber-400">🔒 This is a shared location owned by another account. Your characters can visit but cannot be permanently assigned here.</p>
+                        {location.category === 'medical' || location.category === 'jail_prison' ? (
+                          <p className="text-xs text-amber-400">🔗 This facility belongs to another account. If one of your characters lives here, they can be assigned to an existing room or cell below — only the facility's owner can change the facility itself.</p>
+                        ) : (
+                          <p className="text-xs text-amber-400">🔒 This is a shared location owned by another account. Your characters can visit but cannot be permanently assigned here.</p>
+                        )}
                       </div>
                     )}
                     <div className="px-4 pb-4 space-y-3">

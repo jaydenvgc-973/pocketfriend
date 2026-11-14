@@ -241,17 +241,20 @@ Deno.serve(async (req) => {
 
     // Update destination home resident lists
     try {
-      // The shared property keeps its administrator-given name and is written
-      // with service role so every account sees the same resident list.
+      // A location shared across accounts belongs to its own owner: its name and
+      // structure are never written here from the resident's account — only the
+      // resident lists, with service role, so a resident who belongs to another
+      // account appears on every account's view of the same shared location.
+      const isSharedDestination = isSharedResidency || dest.scope === 'shared';
       const destPayload = {
         resident_character_ids: Array.from(destResidents),
         resident_character_names: Array.from(destNames),
         resident_family_members: destFamilyMembers,
       };
-      if (!isSharedResidency) destPayload.name = newHomeName || dest.name;
+      if (!isSharedDestination) destPayload.name = newHomeName || dest.name;
       if (isSharedResidency) destPayload.residential_units = updatedUnits;
 
-      const destWriter = isSharedResidency ? base44.asServiceRole.entities.LocationReference : base44.entities.LocationReference;
+      const destWriter = isSharedDestination ? base44.asServiceRole.entities.LocationReference : base44.entities.LocationReference;
       await destWriter.update(destinationHomeId, destPayload);
     } catch (locErr) {
       console.warn(`[moveCharactersToNewHome] destination resident-list update failed: ${locErr.message}`);
@@ -276,7 +279,9 @@ Deno.serve(async (req) => {
             occupant_character_ids: (u.occupant_character_ids || []).filter(id => !moversToMove.includes(id)),
           }));
         }
-        const sourceWriter = source.canonical_location_key === 'gateway_house'
+        // Leaving a shared location must reach the same cross-account record its owner
+        // holds — only the resident lists are written, never its structure.
+        const sourceWriter = (source.canonical_location_key === 'gateway_house' || source.scope === 'shared')
           ? base44.asServiceRole.entities.LocationReference
           : base44.entities.LocationReference;
         await sourceWriter.update(sourceHomeId, sourcePayload);

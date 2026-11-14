@@ -29,6 +29,12 @@ const isPatientHere = (character, location) => {
   return !character.resolved_current_location_id || character.resolved_current_location_id === location.id;
 };
 
+// A facility a character actually LIVES in — the hospital, clinic, prison or jail set as
+// their home — is where that character stays a patient or inmate, so their own account
+// owner can give them a room or cell there even while the status field says "home".
+// This is residency, never a structural edit of the facility.
+const livesHere = (character, location) => character.current_home_location_id === location.id;
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -91,10 +97,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'You can only assign your own characters.' }, { status: 403 });
     }
 
-    // A room or cell belongs to someone who is actually a patient or inmate here.
-    const eligible = location.category === 'medical'
+    // A room or cell belongs to someone who is actually a patient or inmate here —
+    // or whose established home is this facility.
+    const eligible = livesHere(character, location) || (location.category === 'medical'
       ? isPatientHere(character, location)
-      : isConfinedHere(character, location);
+      : isConfinedHere(character, location));
     if (!eligible) {
       return Response.json({ error: `${character.name || 'That character'} is not currently a patient or inmate at ${location.name}.` }, { status: 400 });
     }
