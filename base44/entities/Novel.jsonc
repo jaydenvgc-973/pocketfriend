@@ -1,0 +1,125 @@
+{
+  "name": "Novel",
+  "type": "object",
+  "description": "A literary novel built from a character's established life. Novel-owned record only: it never writes to character, memory, relationship, journal, or message records.",
+  "rls": {
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "The central character whose profile owns this novel"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Central character display name at creation time"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner account of the central character"
+    },
+    "title": {
+      "type": "string",
+      "description": "Novel title, user-entered or generated"
+    },
+    "focus": {
+      "type": "string",
+      "description": "What the novel centers on: the character's life, family history, a relationship, selected events"
+    },
+    "premise": {
+      "type": "string",
+      "description": "User-written premise guiding the narrative"
+    },
+    "perspective": {
+      "type": "string",
+      "enum": [
+        "character",
+        "outside_narrator"
+      ],
+      "default": "character",
+      "description": "character = first-person from the central character. outside_narrator = third-person omniscient.",
+      "enumColors": [
+        "purple",
+        "blue"
+      ]
+    },
+    "focus_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Characters central to the novel alongside the central character"
+    },
+    "focus_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "include_user": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the account holder's own world persona appears in the novel"
+    },
+    "user_world_name": {
+      "type": "string",
+      "description": "The world name used for the user's persona in the prose"
+    },
+    "chapter_count": {
+      "type": "number",
+      "default": 0
+    },
+    "last_chapter_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cover_image_url": {
+      "type": "string",
+      "description": "First generated illustration, used as the library thumbnail"
+    }
+  },
+  "required": [
+    "character_id",
+    "title"
+  ]
+}

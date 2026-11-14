@@ -43,6 +43,7 @@ import MemoryReelCreator from './pages/MemoryReelCreator';
 import MediaGallery from './pages/MediaGallery';
 import Locations from './pages/Locations';
 import TheWeekly from './pages/TheWeekly';
+import NovelReader from './pages/NovelReader';
 import SettingsErrorBoundary from '@/components/SettingsErrorBoundary';
 
 
@@ -141,6 +142,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/media-gallery" element={<MediaGallery />} />
       <Route path="/locations" element={<SettingsErrorBoundary pageTitle="Location References"><Locations /></SettingsErrorBoundary>} />
       <Route path="/the-weekly" element={<TheWeekly />} />
+      <Route path="/novel/:novelId" element={<NovelReader />} />
 
 
       <Route path="/edit-character-relationships" element={<SettingsErrorBoundary pageTitle="Edit Relationship Levels"><EditCharacterRelationships /></SettingsErrorBoundary>} />

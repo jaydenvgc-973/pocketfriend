@@ -1,0 +1,98 @@
+{
+  "name": "NovelChapter",
+  "type": "object",
+  "description": "One generated chapter of a novel, with its own prose and illustrations. Novel-owned record only.",
+  "rls": {
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "read": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by_id": "{{user.id}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "novel_id": {
+      "type": "string"
+    },
+    "owner_email": {
+      "type": "string"
+    },
+    "chapter_number": {
+      "type": "number"
+    },
+    "title": {
+      "type": "string"
+    },
+    "content": {
+      "type": "string",
+      "description": "Chapter prose. Paragraphs are separated by blank lines; illustrations are anchored by paragraph index."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Short continuity summary used when writing later chapters"
+    },
+    "direction": {
+      "type": "string",
+      "description": "User direction supplied for this chapter, if any"
+    },
+    "word_count": {
+      "type": "number"
+    },
+    "illustrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "caption": {
+            "type": "string"
+          },
+          "after_paragraph": {
+            "type": "number"
+          }
+        }
+      },
+      "default": []
+    }
+  },
+  "required": [
+    "novel_id",
+    "chapter_number",
+    "content"
+  ]
+}

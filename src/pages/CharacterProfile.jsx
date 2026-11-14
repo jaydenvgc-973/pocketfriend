@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, BookMarked, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull } from "lucide-react";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -47,6 +47,7 @@ import CharacterDashboard from "@/components/character/CharacterDashboard";
 import PublicRelationsSection from "@/components/character/PublicRelationsSection";
 import HybridNeedsLockPanel from "@/components/character/HybridNeedsLockPanel";
 import VacationModeToggle from "@/components/character/VacationModeToggle";
+import NovelLibrary from "@/components/novels/NovelLibrary";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -1278,6 +1279,15 @@ export default function CharacterProfile() {
 
           <CollapsibleProfileSection icon={Globe} title="Public Relations">
             <PublicRelationsSection character={character} />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={BookMarked} title="Novels">
+            <NovelLibrary
+              character={character}
+              characters={allCharacters}
+              currentUser={currentUser}
+              worldName={userSettings[0]?.fictional_world_name || currentUser?.full_name || ""}
+            />
           </CollapsibleProfileSection>
         </div>
         </div>
