@@ -229,7 +229,15 @@ export default function Travel() {
   // Close popup on outside click/tap or Escape key
   useEffect(() => {
     if (!selectedLocation) return;
+    // The room/unit menu and any dialog are rendered in a portal, so they sit outside the
+    // card in the DOM even though they belong to it. A tap there is the card's own
+    // interaction — it must choose the room, never dismiss the card.
+    const isInsideFloatingLayer = (target) => {
+      if (!(target instanceof Element)) return false;
+      return !!target.closest('[data-floating-menu], [role="dialog"], [role="alertdialog"]');
+    };
     const handlePointerDown = (e) => {
+      if (isInsideFloatingLayer(e.target)) return;
       if (popupRef.current && !popupRef.current.contains(e.target)) {
         setSelectedLocation(null);
       }

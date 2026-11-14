@@ -128,6 +128,7 @@ export default function ApartmentSwitcher({
         <div
           ref={menuRef}
           role="listbox"
+          data-floating-menu="unit"
           style={{ left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom }}
           className="fixed z-[80] bg-card border border-border rounded-xl shadow-xl overflow-hidden"
         >
