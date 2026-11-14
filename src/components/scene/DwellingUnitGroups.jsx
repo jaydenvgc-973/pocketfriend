@@ -1,5 +1,5 @@
 import React from "react";
-import { getUnitLabel } from "@/lib/residentialUnits";
+import { getUnitLabel, sortUnits } from "@/lib/residentialUnits";
 
 /**
  * DwellingUnitGroups
@@ -15,7 +15,7 @@ import { getUnitLabel } from "@/lib/residentialUnits";
 export function splitByDwellingUnit(participants, residentialUnits) {
   const unitByCharacter = {};
   const unitOrder = [];
-  (residentialUnits || []).forEach((unit) => {
+  sortUnits(residentialUnits || []).forEach((unit) => {
     if (unit?.unit_name) unitOrder.push(unit.unit_name);
     (unit?.occupant_character_ids || []).forEach((id) => {
       if (id && !unitByCharacter[id]) unitByCharacter[id] = unit.unit_name;

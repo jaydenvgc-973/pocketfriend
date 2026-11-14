@@ -6,6 +6,7 @@ import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
 import FacilityUnitsSection from "./FacilityUnitsSection";
+import { sortUnits } from "@/lib/residentialUnits";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -223,7 +224,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
             <>
               <SectionHeader icon={Building} label={location.category === 'hotel' ? 'Rooms / Units' : 'Apartments'} />
               <div className="space-y-1.5">
-                {(location.residential_units || []).map(unit => {
+                {sortUnits(location.residential_units || []).map(unit => {
                   const occupants = (unit.occupant_character_ids || []).map(id => {
                     // Residents on another account resolve from the shared projection.
                     const shared = sharedResidentById.get(id);

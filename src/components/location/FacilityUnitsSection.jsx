@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, DoorOpen, Plus, X } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { getUnitKind, getUnitLabel, getActiveUnitOccupantIds } from "@/lib/residentialUnits";
+import { getUnitKind, getUnitLabel, getActiveUnitOccupantIds, getResidentialUnits } from "@/lib/residentialUnits";
 
 /**
  * FacilityUnitsSection
@@ -25,7 +25,7 @@ export default function FacilityUnitsSection({ location, characters = [], curren
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const units = (location?.residential_units || []).filter((u) => u?.unit_id && u?.unit_name);
+  const units = getResidentialUnits(location);
   const kind = getUnitKind(location);
 
   // A room or cell is only occupied while that character is still hospitalized or

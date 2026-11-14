@@ -36,7 +36,7 @@ import { getEditableCharactersForModule } from "@/lib/characterEditableListResol
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 import { usePageContext } from "@/hooks/usePageContext";
-import { getActiveUnitOccupantIds } from "@/lib/residentialUnits";
+import { getActiveUnitOccupantIds, sortUnits } from "@/lib/residentialUnits";
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
@@ -1259,10 +1259,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         // A patient room and a prison cell are temporary: once the stay ends the occupant is
         // no longer assigned, so the space is free for someone else. Apartments, hotel rooms
         // and every other space are unchanged. Any edit here saves the ended assignments away.
-        const activeUnits = (form.residential_units || []).map(u => ({
+        const activeUnits = sortUnits((form.residential_units || []).map(u => ({
           ...u,
           occupant_character_ids: getActiveUnitOccupantIds(editingLocation || form, u, allCharacters),
-        }));
+        })));
 
         const alreadyAssigned = new Set();
         activeUnits.forEach(u => (u.occupant_character_ids || []).forEach(id => alreadyAssigned.add(id)));

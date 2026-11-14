@@ -5,6 +5,7 @@ import { X, Home, AlertCircle, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import { sortUnits } from "@/lib/residentialUnits";
 
 export default function MoveInPopup({
   isOpen,
@@ -62,7 +63,7 @@ export default function MoveInPopup({
   // Gateway House is administrator-shared: its name is not a resident's to change,
   // and its apartments are where a new resident is placed.
   const isSharedResidency = destinationHome?.canonical_location_key === "gateway_house";
-  const availableUnits = isSharedResidency ? (destinationHome?.residential_units || []) : [];
+  const availableUnits = isSharedResidency ? sortUnits(destinationHome?.residential_units || []) : [];
   const [selectedUnitId, setSelectedUnitId] = useState("");
 
   // Sync when popup opens with different data

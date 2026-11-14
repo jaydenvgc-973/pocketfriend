@@ -13,8 +13,20 @@ import { isCharacterHome } from "@/lib/travelAvailability";
  * Nothing here creates, reassigns, or infers an assignment. It only reads what Places stores.
  */
 
+const UNIT_NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/** Alphabetical + natural numerical order: Unit 2 before Unit 10, A2 before A10, Room 100 before Room 110. */
+export function compareUnitNames(a, b) {
+  return UNIT_NAME_COLLATOR.compare(a?.unit_name || '', b?.unit_name || '');
+}
+
+/** The same units in display order — never renamed, never reordered in storage. */
+export function sortUnits(units = []) {
+  return [...units].sort(compareUnitNames);
+}
+
 export function getResidentialUnits(location) {
-  return (location?.residential_units || []).filter((u) => u?.unit_id && u?.unit_name);
+  return sortUnits((location?.residential_units || []).filter((u) => u?.unit_id && u?.unit_name));
 }
 
 const UNIT_KINDS = {
