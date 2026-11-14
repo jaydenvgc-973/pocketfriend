@@ -20,14 +20,44 @@ const usableCharacter = (c) => !!c && !!c.id && !!c.name
   && c.life_status !== 'deceased'
   && c.is_test_character !== true;
 
+// ── AGES ─────────────────────────────────────────────────────────────────────
+// Ages come only from recorded data. A recorded age is authoritative; a recorded
+// date of birth or birth year gives the age for any period. Nothing else — not
+// appearance, family position or behaviour — may ever produce an age.
+function ageFromBirthDate(c, on) {
+  const when = on instanceof Date ? on : new Date();
+  const birthday = c?.birthday ? new Date(c.birthday) : null;
+  if (birthday && !Number.isNaN(birthday.getTime())) {
+    let years = when.getFullYear() - birthday.getFullYear();
+    const month = when.getMonth() - birthday.getMonth();
+    if (month < 0 || (month === 0 && when.getDate() < birthday.getDate())) years -= 1;
+    if (years >= 0) return years;
+  }
+  const birthYear = Number(c?.birth_year);
+  if (Number.isFinite(birthYear) && birthYear > 1900) {
+    const years = when.getFullYear() - birthYear;
+    if (years >= 0) return years;
+  }
+  return null;
+}
+
+function currentAgeOf(c) {
+  const recorded = Number(c?.age);
+  if (Number.isFinite(recorded) && recorded > 0) return Math.round(recorded);
+  return ageFromBirthDate(c);
+}
+
 function characterBlock(c) {
   if (!c) return '';
+  const age = currentAgeOf(c);
   const family = names(c.family_members).slice(0, 14)
     .map((f) => `${f.name || f.person_name || 'Unnamed'}${f.relationship_type ? ` (${f.relationship_type})` : ''}`)
     .join('; ');
   return [
     `### ${c.name}`,
-    c.age ? `Age: ${c.age}` : '',
+    `Age: ${age != null ? `${age} — recorded, use exactly this` : 'not recorded — treat as an adult and never state a number'}`,
+    c.birthday ? `Date of birth: ${c.birthday}` : '',
+    c.birth_year && !c.birthday ? `Birth year: ${c.birth_year}` : '',
     c.gender ? `Gender: ${c.gender}` : '',
     names(c.ethnicities).length ? `Heritage: ${names(c.ethnicities).join(', ')}` : '',
     c.occupation ? `Occupation: ${clip(c.occupation, 200)}` : '',
@@ -66,12 +96,19 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const mode = body.mode === 'continue' ? 'continue' : 'create';
+    const mode = body.mode === 'continue' ? 'continue' : (body.mode === 'redo' ? 'redo' : 'create');
 
     let novel = null;
     let central = null;
+    let targetChapter = null;
 
-    if (mode === 'continue') {
+    if (mode === 'create') {
+      if (!body.character_id) return Response.json({ error: 'character_id is required' }, { status: 400 });
+      if (!body.premise || !String(body.premise).trim()) return Response.json({ error: 'A premise is required' }, { status: 400 });
+      central = await base44.entities.Character.get(body.character_id)
+        .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+      if (!central) return Response.json({ error: 'Character not found' }, { status: 404 });
+    } else {
       if (!body.novel_id) return Response.json({ error: 'novel_id is required' }, { status: 400 });
       novel = await base44.entities.Novel.get(body.novel_id).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
       if (!novel) return Response.json({ error: 'Novel not found' }, { status: 404 });
@@ -80,24 +117,28 @@ Deno.serve(async (req) => {
       }
       central = await base44.entities.Character.get(novel.character_id)
         .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
-    } else {
-      if (!body.character_id) return Response.json({ error: 'character_id is required' }, { status: 400 });
-      if (!body.premise || !String(body.premise).trim()) return Response.json({ error: 'A premise is required' }, { status: 400 });
-      central = await base44.entities.Character.get(body.character_id)
+    }
+
+    // A rewrite targets one existing chapter of this novel and replaces only that chapter.
+    if (mode === 'redo') {
+      if (!body.chapter_id) return Response.json({ error: 'chapter_id is required' }, { status: 400 });
+      targetChapter = await base44.entities.NovelChapter.get(body.chapter_id)
         .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
-      if (!central) return Response.json({ error: 'Character not found' }, { status: 404 });
+      if (!targetChapter || targetChapter.novel_id !== novel.id) {
+        return Response.json({ error: 'That chapter is not part of this novel' }, { status: 404 });
+      }
     }
 
     const centralId = central?.id || novel.character_id;
     const centralName = central?.name || novel.character_name || 'the character';
-    const perspective = mode === 'continue' ? novel.perspective : (body.perspective === 'outside_narrator' ? 'outside_narrator' : 'character');
-    const focusIds = names(mode === 'continue' ? novel.focus_character_ids : body.focus_character_ids).filter((id) => id && id !== centralId);
-    const focusMode = mode === 'continue'
-      ? (novel.focus_mode === 'known' ? 'known' : 'selected')
-      : (body.focus_mode === 'known' ? 'known' : 'selected');
-    const includeUser = mode === 'continue' ? !!novel.include_user : !!body.include_user;
-    const premise = mode === 'continue' ? novel.premise : String(body.premise).trim();
-    const focus = mode === 'continue' ? (novel.focus || '') : clip(body.focus, 600);
+    const perspective = mode === 'create' ? (body.perspective === 'outside_narrator' ? 'outside_narrator' : 'character') : novel.perspective;
+    const focusIds = names(mode === 'create' ? body.focus_character_ids : novel.focus_character_ids).filter((id) => id && id !== centralId);
+    const focusMode = mode === 'create'
+      ? (body.focus_mode === 'known' ? 'known' : 'selected')
+      : (novel.focus_mode === 'known' ? 'known' : 'selected');
+    const includeUser = mode === 'create' ? !!body.include_user : !!novel.include_user;
+    const premise = mode === 'create' ? String(body.premise).trim() : novel.premise;
+    const focus = mode === 'create' ? clip(body.focus, 600) : (novel.focus || '');
     const direction = clip(body.direction, 1200);
 
     // ── USER PERSONA (world name only — never "the user") ────────────────────
