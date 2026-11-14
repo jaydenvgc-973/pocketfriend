@@ -47,6 +47,15 @@ function currentAgeOf(c) {
   return ageFromBirthDate(c);
 }
 
+// A location description is written for human readers; strip markdown and drop
+// generation preambles so only the actual description reaches the prompt.
+const readableText = (value, max) => {
+  const text = String(value || '').replace(/[*#_`>]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (/^(here are|here is|below are|sure[,!]|certainly|of course)\b/i.test(text)) return '';
+  return text.slice(0, max || 400);
+};
+
 function characterBlock(c) {
   if (!c) return '';
   const age = currentAgeOf(c);
@@ -393,7 +402,10 @@ Deno.serve(async (req) => {
       source.push(`\n## ESTABLISHED RELATIONSHIPS`);
       relationships.slice(0, 45).forEach((r) => {
         const outgoing = r.source_character_id === centralId;
-        const other = nameById.get(outgoing ? r.target_character_id : r.source_character_id) || 'someone in their life';
+        const otherId = outgoing ? r.target_character_id : r.source_character_id;
+        const otherPerson = peopleById.get(otherId);
+        const otherAge = otherPerson ? currentAgeOf(otherPerson) : null;
+        const other = `${nameById.get(otherId) || 'someone in their life'}${otherAge != null ? ` (age ${otherAge})` : ''}`;
         const label = outgoing ? r.label_from_source_perspective : r.label_from_target_perspective;
         const type = r.relationship_type || 'relationship';
         const numbers = [
@@ -453,10 +465,14 @@ Deno.serve(async (req) => {
     if (places.length) {
       source.push(`\n## ESTABLISHED PLACES (authoritative appearance — never substitute another property)`);
       places.forEach((p) => {
-        source.push(`- ${p.name}${p.category ? ` (${p.category})` : ''}${p.description ? `: ${clip(p.description, 500)}` : ''}`);
+        const placeText = readableText(p.description, 500);
+        source.push(`- ${p.name}${p.category ? ` (${p.category})` : ''}${placeText ? `: ${placeText}` : ''}`);
         const zones = names(p.zones);
         if (zones.length) {
-          source.push(`  zones: ${zones.map((z) => `${z.zone_name}${z.zone_description ? ` — ${clip(z.zone_description, 200)}` : ''}`).join('; ')}`);
+          source.push(`  zones: ${zones.map((z) => {
+            const zoneText = readableText(z.zone_description, 200);
+            return `${z.zone_name}${zoneText ? ` — ${zoneText}` : ''}`;
+          }).join('; ')}`);
         }
       });
     }
@@ -703,7 +719,7 @@ Deno.serve(async (req) => {
         return `${person.name} appears about ${Math.round(youngAge)} years old in this scene — the same person at a younger age, keeping the same recognisable face, hair and features.`;
       }).filter(Boolean).join(' ');
 
-      const placeDescription = place ? clip(zone?.zone_description || place.description, 420) : '';
+      const placeDescription = readableText(zone?.zone_description, 420) || readableText(place?.description, 420);
 
       const prompt = [
         `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
