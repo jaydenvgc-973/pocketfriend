@@ -5,8 +5,11 @@
  * character:
  *   1. connected_ids — every character ID with an established connection to the
  *      central character, derived ONLY from existing Pocketfriend records:
- *      relationships, memories, family/fictional relationship lists, conversations,
- *      messages (chat, text, scene, world phone) and gathering-room co-presence.
+ *      relationships, memories, family/fictional relationship lists (linked by
+ *      _linked_character_id), household residency (unit-aware), Story Event
+ *      participation, conversations, messages (chat, text, scene, world phone)
+ *      and gathering-room co-presence. No source is required to repeat: a family
+ *      link, a shared household or a documented Story Event is enough on its own.
  *   2. cross_account_characters — those connected characters that belong to another
  *      account, resolved by exact ID so the selector can group them by account.
  *
@@ -38,7 +41,7 @@ Deno.serve(async (req) => {
     if (!central) return Response.json({ error: 'Character not found' }, { status: 404 });
 
     // ── EXISTING RECORDS ONLY (caller-scoped) ────────────────────────────────
-    const [relationshipsRaw, memoriesRaw, conversationsRaw, messagesRaw, participationsRaw] = await Promise.all([
+    const [relationshipsRaw, memoriesRaw, conversationsRaw, messagesRaw, participationsRaw, storyEventsRaw] = await Promise.all([
       base44.entities.CharacterRelationship.filter({
         $or: [{ source_character_id: characterId }, { target_character_id: characterId }],
       }, null, 200).catch(() => []),
@@ -46,6 +49,9 @@ Deno.serve(async (req) => {
       base44.entities.Conversation.filter({ character_ids: { $in: [characterId] } }, '-last_message_date', 100).catch(() => []),
       base44.entities.Message.filter({ participant_character_ids: { $in: [characterId] } }, '-timestamp', 200).catch(() => []),
       base44.entities.GatheringRoomParticipant.filter({ participant_id: characterId }, null, 100).catch(() => []),
+      // Established Story Events the central character took part in. Read through the
+      // caller-scoped client, so the event's own access rules decide what is visible.
+      base44.entities.StoryEvent.filter({ participant_character_ids: { $in: [characterId] } }, '-event_date', 80).catch(() => []),
     ]);
 
     const relationships = asArray(relationshipsRaw);
@@ -53,6 +59,40 @@ Deno.serve(async (req) => {
     const conversations = asArray(conversationsRaw);
     const messages = asArray(messagesRaw);
     const participations = asArray(participationsRaw);
+    const storyEvents = asArray(storyEventsRaw);
+
+    // ── HOUSEHOLD / RESIDENCY (existing assignments, unit-aware) ─────────────
+    // A residence is read from the central character's own home fields. A shared
+    // residence on another account is resolved by the exact ID the character's own
+    // record points at — read-only, never modified.
+    const homeIds = [...new Set([
+      central.current_home_location_id,
+      central.temporary_housing_location_id,
+      central.vacation_mode ? central.vacation_home_location_id : null,
+    ].filter(Boolean))];
+
+    let homeLocations = homeIds.length
+      ? asArray(await base44.entities.LocationReference.filter({ id: { $in: homeIds } }, null, homeIds.length).catch(() => []))
+      : [];
+    const unreadableHomeIds = homeIds.filter((id) => !homeLocations.some((h) => h.id === id));
+    if (unreadableHomeIds.length) {
+      homeLocations = homeLocations.concat(asArray(await base44.asServiceRole.entities.LocationReference
+        .filter({ id: { $in: unreadableHomeIds } }, null, unreadableHomeIds.length).catch(() => [])));
+    }
+
+    // Multi-unit property: ONLY the actual apartment/unit assignment is a household.
+    // A building without units uses its own resident list. Nothing is assumed.
+    const householdIdsOf = (home) => {
+      const units = Array.isArray(home?.residential_units) ? home.residential_units : [];
+      if (units.length) {
+        const myUnit = units.find((u) => (u.occupant_character_ids || []).includes(characterId));
+        return myUnit ? (myUnit.occupant_character_ids || []) : [];
+      }
+      return [...new Set([
+        ...(home?.resident_character_ids || []),
+        ...asArray(home?.residents).map((r) => r?.character_id).filter(Boolean),
+      ])];
+    };
 
     // Co-presence in gathering rooms is a documented interaction too.
     const roomIds = [...new Set(participations.map((p) => p?.gathering_room_id).filter(Boolean))].slice(0, 40);
@@ -64,11 +104,17 @@ Deno.serve(async (req) => {
     // ── CONNECTION GRAPH ─────────────────────────────────────────────────────
     const connections = new Map();
     const note = (id, reason) => {
-      if (!id || typeof id !== 'string' || id === characterId) return;
+      // The account holder is not a character connection.
+      if (!id || typeof id !== 'string' || id === characterId || id === user.id) return;
       if (!connections.has(id)) connections.set(id, reason);
     };
 
-    (central.family_members || []).forEach((f) => note(f?.character_id || f?.related_character_id, 'family'));
+    // Family list — linked family members, including cross-account ones
+    // (_linked_character_id is how an established family link is stored).
+    (central.family_members || []).forEach((f) => note(
+      f?._linked_character_id || f?.character_id || f?.related_character_id,
+      'family'
+    ));
     (central.fictional_relationships || []).forEach((r) => note(r?.related_character_id || r?.character_id, 'relationship'));
     [...(central.people_in_world || []), ...(central.known_people || [])]
       .forEach((p) => note(p?.related_character_id || p?.character_id, 'relationship'));
@@ -86,6 +132,13 @@ Deno.serve(async (req) => {
     });
     roomParticipants.forEach((p) => {
       if (p?.participant_type === 'character') note(p.participant_id, 'shared scene');
+    });
+    // Shared household — established co-residents, unit-aware.
+    homeLocations.forEach((home) => householdIdsOf(home).forEach((id) => note(id, 'shared household')));
+    // Story Events — documented co-participation in an established event.
+    storyEvents.forEach((e) => {
+      [...(e?.participant_character_ids || []), ...(e?.focus_character_ids || [])]
+        .forEach((id) => note(id, 'story event'));
     });
 
     const connectedIds = [...connections.keys()];

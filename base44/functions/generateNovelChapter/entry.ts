@@ -122,16 +122,42 @@ Deno.serve(async (req) => {
     }
 
     // ── SOURCE MATERIAL (read-only, all caller-scoped) ───────────────────────
-    const [lifeEventsRaw, memoriesRaw, relationshipsRaw, conversationsRaw] = await Promise.all([
+    const [lifeEventsRaw, memoriesRaw, relationshipsRaw, conversationsRaw, storyEventsRaw] = await Promise.all([
       base44.entities.LifeEvent.filter({ character_id: centralId }, '-timestamp', 70).catch(() => []),
       base44.entities.CharacterMemory.filter({ character_id: centralId }, '-importance_score', 70).catch(() => []),
       base44.entities.CharacterRelationship.filter({
         $or: [{ source_character_id: centralId }, { target_character_id: centralId }],
       }, null, 60).catch(() => []),
       base44.entities.Conversation.filter({ character_ids: { $in: [centralId] } }, '-last_message_date', 14).catch(() => []),
+      // Established Story Events they took part in — read only, nothing is triggered.
+      base44.entities.StoryEvent.filter({ participant_character_ids: { $in: [centralId] } }, '-event_date', 18).catch(() => []),
     ]);
 
     const lifeEvents = asArray(lifeEventsRaw);
+    const storyEvents = asArray(storyEventsRaw);
+
+    // ── HOUSEHOLD (existing residency, unit-aware, read-only) ────────────────
+    const homeLocationIds = [...new Set([central?.current_home_location_id, central?.temporary_housing_location_id].filter(Boolean))];
+    let homeLocations = homeLocationIds.length
+      ? asArray(await base44.entities.LocationReference.filter({ id: { $in: homeLocationIds } }, null, homeLocationIds.length).catch(() => []))
+      : [];
+    const unreadableHomeIds = homeLocationIds.filter((id) => !homeLocations.some((h) => h.id === id));
+    if (unreadableHomeIds.length) {
+      homeLocations = homeLocations.concat(asArray(await base44.asServiceRole.entities.LocationReference
+        .filter({ id: { $in: unreadableHomeIds } }, null, unreadableHomeIds.length).catch(() => [])));
+    }
+    const householdIdsOf = (home) => {
+      const units = Array.isArray(home?.residential_units) ? home.residential_units : [];
+      if (units.length) {
+        const myUnit = units.find((u) => (u.occupant_character_ids || []).includes(centralId));
+        return myUnit ? (myUnit.occupant_character_ids || []) : [];
+      }
+      return [...new Set([
+        ...(home?.resident_character_ids || []),
+        ...asArray(home?.residents).map((r) => r?.character_id).filter(Boolean),
+      ])];
+    };
+    const householdIds = new Set(homeLocations.flatMap((home) => householdIdsOf(home)).filter((id) => id && id !== centralId));
     const memories = asArray(memoriesRaw);
     const relationships = asArray(relationshipsRaw);
     const conversations = asArray(conversationsRaw);
@@ -154,17 +180,25 @@ Deno.serve(async (req) => {
 
     // ── ANYONE THEY KNOW (only when the user chose that option) ──────────────
     // Candidates come from the central character's own readable records: family,
-    // fictional relationships, established relationships, memories, and documented
-    // conversations. Nothing is created or modified — the user then lets the premise
-    // decide who actually belongs in the chapter.
+    // shared household, Story Event participation, fictional and established
+    // relationships, memories, and documented conversations. Each source stands on
+    // its own — none has to be corroborated. Nothing is created or modified — the
+    // user then lets the premise decide who actually belongs in the chapter.
     let knownPeople = [];
     if (focusMode === 'known') {
       const knownVia = new Map();
       const note = (id, reason) => {
-        if (!id || typeof id !== 'string' || id === centralId || knownVia.has(id)) return;
+        if (!id || typeof id !== 'string' || id === centralId || id === user.id || knownVia.has(id)) return;
         knownVia.set(id, reason);
       };
-      names(central?.family_members).forEach((f) => note(f?.character_id || f?.related_character_id, 'family'));
+      // Structured, independently sufficient sources first, so the candidate cap
+      // never cuts them off behind the conversational history.
+      names(central?.family_members).forEach((f) => note(f?._linked_character_id || f?.character_id || f?.related_character_id, 'family'));
+      householdIds.forEach((id) => note(id, 'shared household'));
+      storyEvents.forEach((e) => {
+        [...(e?.participant_character_ids || []), ...(e?.focus_character_ids || [])]
+          .forEach((id) => note(id, 'story event'));
+      });
       names(central?.fictional_relationships).forEach((r) => note(r?.related_character_id || r?.character_id, 'relationship'));
       relationships.forEach((r) => note(
         r.source_character_id === centralId ? r.target_character_id : r.source_character_id, 'relationship'
@@ -175,7 +209,7 @@ Deno.serve(async (req) => {
           .forEach((id) => note(id, 'conversation'));
       });
 
-      const candidateIds = [...knownVia.keys()].filter((id) => !focusIds.includes(id)).slice(0, 20);
+      const candidateIds = [...knownVia.keys()].filter((id) => !focusIds.includes(id)).slice(0, 24);
       const readable = candidateIds.length
         ? asArray(await base44.entities.Character.filter({ id: { $in: candidateIds } }, null, candidateIds.length).catch(() => []))
         : [];
@@ -203,6 +237,12 @@ Deno.serve(async (req) => {
     const people = [central, ...focusCharacters, ...relatedCharacters, ...knownPeople].filter(Boolean);
     const nameById = new Map(people.map((p) => [p.id, p.name]));
     nameById.set('user', worldName);
+    // Event participants keep the names recorded on the event itself.
+    storyEvents.forEach((e) => {
+      const ids = e?.participant_character_ids || [];
+      const eventNames = e?.participant_character_names || [];
+      ids.forEach((id, i) => { if (id && eventNames[i] && !nameById.has(id)) nameById.set(id, eventNames[i]); });
+    });
 
     // Locations (visual continuity)
     const locationIds = [...new Set([
@@ -293,6 +333,21 @@ Deno.serve(async (req) => {
         const when = e.timestamp ? new Date(e.timestamp).toISOString().slice(0, 10) : '';
         source.push(`- ${when} ${clip(e.title, 140)}: ${clip(e.description, 420)}${e.emotional_impact ? ` (emotional impact: ${clip(e.emotional_impact, 200)})` : ''}`);
       });
+    }
+
+    if (storyEvents.length) {
+      source.push(`\n## ESTABLISHED EVENTS THEY TOOK PART IN (recorded Story Events — background you may draw on)`);
+      storyEvents.slice(0, 16).forEach((e) => {
+        const when = e.event_date || (e.created_date ? new Date(e.created_date).toISOString().slice(0, 10) : '');
+        const venue = e.venue_name || e.rabbit_hole_venue_name || '';
+        const with_ = names(e.participant_character_names).filter((n) => n && n !== centralName).slice(0, 8).join(', ');
+        source.push(`- ${when} ${clip(e.title, 140)}${venue ? ` at ${venue}` : ''}${with_ ? ` — with ${with_}` : ''}${e.plot ? `: ${clip(e.plot, 400)}` : ''}`);
+      });
+      const recorded = storyEvents.filter((e) => e.generated_narrative).slice(0, 4);
+      if (recorded.length) {
+        source.push(`\n### WHAT WAS RECORDED AS HAPPENING (do not contradict these events)`);
+        recorded.forEach((e) => source.push(`${clip(e.title, 120)}:\n${clip(e.generated_narrative, 1500)}`));
+      }
     }
 
     if (messages.length) {
