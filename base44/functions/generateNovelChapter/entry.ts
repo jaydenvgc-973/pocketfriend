@@ -298,6 +298,40 @@ Deno.serve(async (req) => {
       ids.forEach((id, i) => { if (id && eventNames[i] && !nameById.has(id)) nameById.set(id, eventNames[i]); });
     });
 
+    // ── FAMILY MEMBERS WHO EXIST AS CHARACTERS (read-only) ───────────────────
+    // A Family Member character is reached through the family link its relative's
+    // record already holds (_linked_character_id), so this never leaves the
+    // established record graph. Readable records first, then the exact IDs of the
+    // links themselves — which is how a family member on another account resolves.
+    const familyLinks = new Map();
+    peopleList.forEach((p) => {
+      names(p.family_members).forEach((f) => {
+        const id = f?._linked_character_id || f?.character_id || f?.related_character_id;
+        if (!id || id === p.id || familyLinks.has(id)) return;
+        familyLinks.set(id, {
+          relative: p.name,
+          relationship: clip(f?.relationship_type || f?.relationship || 'family', 60),
+        });
+      });
+    });
+    const familyDirectory = [];
+    if (familyLinks.size) {
+      const wanted = [...familyLinks.keys()].slice(0, 60);
+      const readableFamily = asArray(await base44.entities.Character
+        .filter({ id: { $in: wanted } }, null, wanted.length).catch(() => []));
+      const readableIds = new Set(readableFamily.map((c) => c?.id));
+      const unreadableFamilyIds = wanted.filter((id) => !readableIds.has(id));
+      const recoveredFamily = unreadableFamilyIds.length
+        ? asArray(await base44.asServiceRole.entities.Character
+          .filter({ id: { $in: unreadableFamilyIds } }, null, unreadableFamilyIds.length).catch(() => []))
+        : [];
+      [...readableFamily, ...recoveredFamily].forEach((c) => {
+        if (!usableCharacter(c) || peopleById.has(c.id)) return;
+        const link = familyLinks.get(c.id);
+        familyDirectory.push({ person: c, relative: link.relative, relationship: link.relationship });
+      });
+    }
+
     // ── ESTABLISHED PLACES + HOUSEHOLDS (read-only) ──────────────────────────
     // Where people live now — including the apartment or unit inside a shared
     // dwelling — and the existing location descriptions and zone images that keep
@@ -484,6 +518,15 @@ Deno.serve(async (req) => {
       source.push(`Residents of other apartments in the same building are neighbours, not housemates.`);
     }
 
+    if (familyDirectory.length) {
+      source.push(`\n## FAMILY MEMBERS WHO EXIST AS CHARACTERS (established people — use their recorded names)`);
+      familyDirectory.forEach(({ person, relative, relationship }) => {
+        const age = currentAgeOf(person);
+        source.push(`- ${person.name}${age != null ? ` (age ${age})` : ''} — ${relative}'s ${relationship}; an existing character with their own established appearance${person.appearance_notes ? `: ${clip(person.appearance_notes, 160)}` : ''}`);
+      });
+      source.push(`When one of these people is in a scene, name them. Do not replace a recorded child with "his children" or "a child", and never merge two of them into one.`);
+    }
+
     const previousBlock = mode === 'redo'
       ? [
         `\n## THIS CHAPTER IS BEING REWRITTEN`,
@@ -565,6 +608,8 @@ Deno.serve(async (req) => {
       ``,
       `## ILLUSTRATIONS`,
       `Choose 2 or 3 moments from THIS chapter — never more than 3 — spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based index of the paragraph it should follow; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the exact names of the people visible; location is the exact name of the place from ESTABLISHED PLACES when the scene happens there, otherwise leave it empty and describe the setting inside scene; location_zone is one of that place's listed zones when the scene happens in a particular room or area. Do not illustrate a character or event the chapter does not contain.`,
+      `In characters, use the recorded name of every established person — including each family member listed under FAMILY MEMBERS WHO EXIST AS CHARACTERS — never "his children", "a child", "his daughter" or any description, and never give a recorded person's name to somebody invented. A person who exists only in this prose and has no character record has no recorded name: describe them in a few words instead (for example "the soup-kitchen mother", "an unnamed neighbour"). Established people and narrative-only people may share one illustration.`,
+      `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
       `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
       `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
       ``,
@@ -683,48 +728,103 @@ Deno.serve(async (req) => {
         || null;
     };
 
+    // Established people an illustration may contain: everyone already in this novel,
+    // plus their recorded family members. A name is matched to a real record here, so
+    // an established person is never drawn as a generic stranger, whatever their
+    // character type or account — and anyone without a record stays narrative-only.
+    const directoryById = new Map(peopleById);
+    familyDirectory.forEach(({ person }) => { if (!directoryById.has(person.id)) directoryById.set(person.id, person); });
+    const directory = [...directoryById.values()].filter((p) => p && p.name);
+    const matchPerson = (name) => {
+      const target = normalize(name);
+      if (!target) return null;
+      return directory.find((p) => normalize(p.name) === target)
+        || directory.find((p) => {
+          const pn = normalize(p.name);
+          return pn.length > 2 && (pn.includes(target) || target.includes(pn));
+        })
+        || null;
+    };
+    const stageOf = (age) => {
+      const a = Number(age);
+      if (!Number.isFinite(a)) return '';
+      if (a < 1) return 'a newborn baby, held or lying down, unable to sit up, walk or speak';
+      if (a < 2) return 'a one-year-old toddler, only just beginning to walk';
+      if (a < 4) return 'a toddler';
+      if (a < 6) return 'a small child';
+      if (a < 10) return 'a young child';
+      if (a < 13) return 'an older child';
+      if (a < 18) return 'a teenager';
+      if (a < 60) return 'an adult';
+      return 'an elderly person';
+    };
+
     const specs = (Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
     const imageResults = await Promise.allSettled(specs.map(async (spec) => {
-      const depictedNames = names(spec.characters).map((n) => normalize(n));
-      const depicted = peopleList.filter((p) => {
-        const pn = normalize(p.name);
-        return pn && depictedNames.some((n) => n === pn || n.includes(pn) || pn.includes(n));
+      const depictedNames = names(spec.characters).map((n) => String(n || '').trim()).filter(Boolean);
+      const depicted = [];
+      const narrativePeople = [];
+      depictedNames.forEach((name) => {
+        const person = matchPerson(name);
+        if (person) {
+          if (!depicted.some((p) => p.id === person.id)) depicted.push(person);
+        } else if (!narrativePeople.includes(name)) {
+          narrativePeople.push(name);
+        }
       });
-      const showsUser = includeUser && depictedNames.some((n) => n.includes(normalize(worldName)));
+      const showsUser = includeUser && normalize(worldName)
+        && depictedNames.some((n) => normalize(n).includes(normalize(worldName)));
 
       // Established place and zone: the location's own reference photographs drive
       // the illustration, so each property keeps its recognizable appearance.
       const place = findPlace(spec.location);
       const zone = findZone(place, spec.location_zone);
 
+      // Each established person's own photograph comes first, so a crowd or a
+      // location can never push their identity out of the reference set.
       const refs = [];
       depicted.forEach((p) => {
-        if (p.avatar_url) refs.push(p.avatar_url);
-        names(p.reference_image_urls).slice(0, 1).forEach((r) => refs.push(r));
+        const primary = p.avatar_url || p.image_avatar_url;
+        if (primary) refs.push(primary);
       });
       if (showsUser) refs.push(...userRefs);
+      depicted.forEach((p) => names(p.reference_image_urls).slice(0, 1).forEach((r) => refs.push(r)));
       const placeRefs = (zone ? names(zone.image_urls) : []).slice(0, 2);
       if (!placeRefs.length && place) placeRefs.push(...names(place.image_urls).slice(0, 2));
       refs.push(...placeRefs);
 
-      const identity = depicted.map((p) => `${p.name}${p.ethnicities && p.ethnicities.length ? ` (${p.ethnicities.join('/')})` : ''}: ${clip(p.appearance_notes || p.profile_summary, 260)}`).join(' | ');
+      const identity = depicted.map((p) => `${p.name}${p.ethnicities && p.ethnicities.length ? ` (${p.ethnicities.join('/')})` : ''}: ${clip(p.appearance_notes || p.profile_summary, 220)}`).join(' | ');
 
-      // A younger appearance belongs to this illustration only — never to the character.
-      const ageNotes = (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : []).map((entry) => {
-        const person = depicted.find((p) => normalize(p.name) === normalize(entry?.name));
+      // Ages come from the records. A younger appearance belongs to this illustration
+      // only — it never alters the character's established age.
+      const historicalAges = new Map();
+      (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : []).forEach((entry) => {
+        const person = matchPerson(entry?.name);
         const youngAge = Number(entry?.age);
-        if (!person || !Number.isFinite(youngAge) || youngAge <= 0) return '';
+        if (!person || !Number.isFinite(youngAge) || youngAge < 0) return;
         const presentAge = currentAgeOf(person);
-        if (presentAge != null && Math.round(youngAge) >= presentAge) return '';
-        return `${person.name} appears about ${Math.round(youngAge)} years old in this scene — the same person at a younger age, keeping the same recognisable face, hair and features.`;
-      }).filter(Boolean).join(' ');
+        if (presentAge != null && Math.round(youngAge) >= presentAge) return;
+        historicalAges.set(person.id, Math.round(youngAge));
+      });
+
+      const ageNotes = depicted.map((p) => {
+        const historical = historicalAges.has(p.id) ? historicalAges.get(p.id) : null;
+        const age = historical != null ? historical : currentAgeOf(p);
+        if (age == null) return `${p.name}'s age is not recorded — keep their established appearance and do not invent an age or an extra person.`;
+        const stage = stageOf(age);
+        return historical != null
+          ? `${p.name} appears about ${age} years old here — the same person at a younger age, the same recognisable face and features${stage ? `, reading clearly as ${stage}` : ''}.`
+          : `${p.name} is ${age} years old${stage ? ` — ${stage}` : ''}. Depict exactly that age and stage: never older, never younger, never swapped with another child.`;
+      }).join(' ');
 
       const placeDescription = readableText(zone?.zone_description, 420) || readableText(place?.description, 420);
 
       const prompt = [
         `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
         spec.scene,
-        depicted.length ? `People present: ${depicted.map((p) => p.name).join(', ')}. Their faces, hair and features must match the attached reference photographs exactly — same person, not a lookalike.` : '',
+        depicted.length ? `Established people present: ${depicted.map((p) => p.name).join(', ')}. Each keeps their own identity — face, hair, build and features matching the attached reference photographs exactly: the same person, never a generic lookalike and never a blend of two people.` : '',
+        narrativePeople.length ? `Narrative-only people with no character record, drawn generically: ${narrativePeople.join(', ')}. Believable, ordinary faces consistent with the description and with the ages stated above; they must never take on the identity of an established person.` : '',
+        (depicted.length && narrativePeople.length) ? `Established characters and these background people share the scene naturally — fill out the gathering if the moment needs it, but every established person above stays clearly present and recognisable.` : '',
         showsUser ? `${worldName} must match their attached reference photographs exactly.` : '',
         place
           ? `Setting: ${place.name}${zone ? ` — ${zone.zone_name}` : ''}.${placeDescription ? ` ${placeDescription}` : ''} The architecture, furnishings, materials and atmosphere must match the attached reference photograph of this exact place — do not substitute another property or a generic interior.`
@@ -736,7 +836,7 @@ Deno.serve(async (req) => {
 
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: [...new Set(refs)].slice(0, 6),
+        existing_image_urls: [...new Set(refs)].slice(0, 8),
       });
       return { url: result?.url, spec };
     }));
