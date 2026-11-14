@@ -20,6 +20,62 @@ const usableCharacter = (c) => !!c && !!c.id && !!c.name
   && c.life_status !== 'deceased'
   && c.is_test_character !== true;
 
+// ── FAILURE REPORTING ────────────────────────────────────────────────────────
+// A failed attempt never changes the novel. Every failure names the stage that
+// failed, whether trying again can help, and whether adjusting the request can
+// help, so the reader is never shown a bare HTTP code as the whole explanation.
+const failureResponse = (status, failure) =>
+  Response.json({ error: failure.message, failure }, { status });
+
+const statusOf = (error) => {
+  const value = Number(error?.status || error?.response?.status);
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+// A transient failure is the service itself: retrying shortly can genuinely help.
+const isTransientWriteFailure = (error) => {
+  const status = statusOf(error);
+  if (status && [429, 500, 502, 503, 504].includes(status)) return true;
+  return /overloaded|temporarily unavailable|timeout|timed out|rate limit|too many requests|econnreset/i
+    .test(String(error?.message || ''));
+};
+
+const serviceFailure = (error) => {
+  const status = statusOf(error);
+  const detail = String(error?.message || '');
+  const technical = status ? `HTTP ${status}${detail ? ` — ${detail}` : ''}` : detail;
+  if (status === 429 || /rate limit|too many requests/i.test(detail)) {
+    return {
+      stage: 'writing',
+      cause: 'busy',
+      retryable: true,
+      canAdjust: false,
+      technical,
+      message: 'The writing service is handling too many requests right now. Your novel has not been changed. Wait a moment and try again.',
+    };
+  }
+  return {
+    stage: 'writing',
+    cause: 'service_unavailable',
+    retryable: true,
+    canAdjust: false,
+    technical,
+    message: 'Your chapter couldn\'t be generated because the writing service was temporarily unavailable. Your novel has not been changed. You can try again.',
+  };
+};
+
+// A refusal or an empty answer is a content outcome, not a service outage: the
+// retry note asks for the chapter to be written around the restricted moment
+// instead of refusing the whole request.
+const RESTRICTED_MATERIAL_NOTE = [
+  'IMPORTANT CORRECTION: return the chapter itself, in the required JSON shape, and nothing else.',
+  'Never return a refusal, a disclaimer, an apology, or an explanation of what you will not write.',
+  'If a particular moment would be restricted, write around it: imply it, fade past it, or summarise it in a sentence or two, and keep the rest of the chapter exactly as instructed.',
+].join(' ');
+
+const REFUSAL_PATTERN = /^(i'm sorry|i am sorry|i can't|i cannot|i won't|i will not|i'm not able|unable to (comply|continue|help|write)|as an ai|certainly[,!]? here)/i;
+const looksLikeRefusal = (text) => String(text || '').trim().length < 500 && REFUSAL_PATTERN.test(String(text || '').trim());
+
 // ── AGES ─────────────────────────────────────────────────────────────────────
 // Ages come only from recorded data. A recorded age is authoritative; a recorded
 // date of birth or birth year gives the age for any period. Nothing else — not
@@ -99,6 +155,9 @@ function messageBlock(messages, nameById) {
 }
 
 Deno.serve(async (req) => {
+  // Which part of the work we are in, so an unexpected crash can still say where
+  // it happened instead of returning a bare code.
+  let stage = 'source';
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me().catch((e) => (e.status === 401 ? null : Promise.reject(e)));
@@ -150,6 +209,23 @@ Deno.serve(async (req) => {
     const focus = mode === 'create' ? clip(body.focus, 600) : (novel.focus || '');
     const direction = clip(body.direction, 1200);
 
+    // ── EXCLUSIONS (this attempt only) ───────────────────────────────────────
+    // The reader may leave people, events or subjects out of ONE chapter. This
+    // only changes what this request considers — no record is edited, hidden or
+    // suppressed, and the next attempt starts from the full source again.
+    const exclusions = [...new Set(
+      names(body.exclusions).map((value) => clip(value, 160)).filter(Boolean)
+    )].slice(0, 12);
+    const isExcludedName = (name) => {
+      const target = String(name || '').toLowerCase().trim();
+      if (!target) return false;
+      return exclusions.some((entry) => {
+        const value = entry.toLowerCase().trim();
+        return !!value && (target === value || target.includes(value));
+      });
+    };
+    const sourceIssues = [];
+
     // ── USER PERSONA (world name only — never "the user") ────────────────────
     const settings = await base44.entities.UserSettings.filter({ owner_email: user.email }, null, 1).catch(() => []);
     const settingsRow = asArray(settings)[0] || {};
@@ -168,19 +244,26 @@ Deno.serve(async (req) => {
       const recovered = missing.length
         ? asArray(await base44.asServiceRole.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
         : [];
-      focusCharacters = [...readable, ...recovered].filter(usableCharacter);
+      focusCharacters = [...readable, ...recovered].filter(usableCharacter)
+        .filter((c) => !isExcludedName(c.name));
     }
 
     // ── SOURCE MATERIAL (read-only, all caller-scoped) ───────────────────────
+    // A source that cannot be read is reported as missing and the chapter is still
+    // written from everything that did load — it is never a reason to fail.
     const [lifeEventsRaw, memoriesRaw, relationshipsRaw, conversationsRaw, storyEventsRaw] = await Promise.all([
-      base44.entities.LifeEvent.filter({ character_id: centralId }, '-timestamp', 70).catch(() => []),
-      base44.entities.CharacterMemory.filter({ character_id: centralId }, '-importance_score', 70).catch(() => []),
+      base44.entities.LifeEvent.filter({ character_id: centralId }, '-timestamp', 70)
+        .catch(() => { sourceIssues.push('the life journal'); return []; }),
+      base44.entities.CharacterMemory.filter({ character_id: centralId }, '-importance_score', 70)
+        .catch(() => { sourceIssues.push('memories'); return []; }),
       base44.entities.CharacterRelationship.filter({
         $or: [{ source_character_id: centralId }, { target_character_id: centralId }],
-      }, null, 60).catch(() => []),
-      base44.entities.Conversation.filter({ character_ids: { $in: [centralId] } }, '-last_message_date', 14).catch(() => []),
+      }, null, 60).catch(() => { sourceIssues.push('relationships'); return []; }),
+      base44.entities.Conversation.filter({ character_ids: { $in: [centralId] } }, '-last_message_date', 14)
+        .catch(() => { sourceIssues.push('conversations'); return []; }),
       // Established Story Events they took part in — read only, nothing is triggered.
-      base44.entities.StoryEvent.filter({ participant_character_ids: { $in: [centralId] } }, '-event_date', 18).catch(() => []),
+      base44.entities.StoryEvent.filter({ participant_character_ids: { $in: [centralId] } }, '-event_date', 18)
+        .catch(() => { sourceIssues.push('story events'); return []; }),
     ]);
 
     const lifeEvents = asArray(lifeEventsRaw);
@@ -215,16 +298,20 @@ Deno.serve(async (req) => {
 
     const messagePages = await Promise.all([
       conversationIds.length
-        ? base44.entities.Message.filter({ conversation_id: { $in: conversationIds } }, '-timestamp', 140).catch(() => [])
+        ? base44.entities.Message.filter({ conversation_id: { $in: conversationIds } }, '-timestamp', 140)
+          .catch(() => { sourceIssues.push('recorded conversations'); return []; })
         : Promise.resolve([]),
-      base44.entities.Message.filter({ participant_character_ids: { $in: [centralId] } }, '-timestamp', 80).catch(() => []),
-      base44.entities.Message.filter({ character_id: centralId }, '-timestamp', 80).catch(() => []),
+      base44.entities.Message.filter({ participant_character_ids: { $in: [centralId] } }, '-timestamp', 80)
+        .catch(() => { sourceIssues.push('recorded conversations'); return []; }),
+      base44.entities.Message.filter({ character_id: centralId }, '-timestamp', 80)
+        .catch(() => { sourceIssues.push('recorded conversations'); return []; }),
     ]);
 
     const byId = new Map();
     messagePages.forEach((page) => asArray(page).forEach((m) => { if (m && m.id && !byId.has(m.id)) byId.set(m.id, m); }));
     const messages = [...byId.values()]
       .filter((m) => m.content || m.image_description)
+      .filter((m) => !isExcludedName(m.character_name))
       .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
       .slice(-90);
 
@@ -270,6 +357,7 @@ Deno.serve(async (req) => {
         : [];
       knownPeople = [...readable, ...recovered]
         .filter(usableCharacter)
+        .filter((c) => !isExcludedName(c.name))
         .map((c) => ({ ...c, known_via: knownVia.get(c.id) }));
     }
 
@@ -326,7 +414,7 @@ Deno.serve(async (req) => {
           .filter({ id: { $in: unreadableFamilyIds } }, null, unreadableFamilyIds.length).catch(() => []))
         : [];
       [...readableFamily, ...recoveredFamily].forEach((c) => {
-        if (!usableCharacter(c) || peopleById.has(c.id)) return;
+        if (!usableCharacter(c) || peopleById.has(c.id) || isExcludedName(c.name)) return;
         const link = familyLinks.get(c.id);
         familyDirectory.push({ person: c, relative: link.relative, relationship: link.relationship });
       });
@@ -439,7 +527,9 @@ Deno.serve(async (req) => {
         const otherId = outgoing ? r.target_character_id : r.source_character_id;
         const otherPerson = peopleById.get(otherId);
         const otherAge = otherPerson ? currentAgeOf(otherPerson) : null;
-        const other = `${nameById.get(otherId) || 'someone in their life'}${otherAge != null ? ` (age ${otherAge})` : ''}`;
+        const otherName = nameById.get(otherId) || '';
+        if (isExcludedName(otherName)) return;
+        const other = `${otherName || 'someone in their life'}${otherAge != null ? ` (age ${otherAge})` : ''}`;
         const label = outgoing ? r.label_from_source_perspective : r.label_from_target_perspective;
         const type = r.relationship_type || 'relationship';
         const numbers = [
@@ -602,6 +692,19 @@ Deno.serve(async (req) => {
         ? `No individual people were chosen for this novel. Select from PEOPLE IN THEIR LIFE according to the premise and the period it covers, and leave out anyone who is not relevant. Never force a connection into a chapter.`
         : '',
       ``,
+      `## SELECTION — THE PREMISE DECIDES WHAT HAPPENS`,
+      `Everything in the source below is available to you; none of it is compulsory. The premise, the focus and the direction decide what this chapter is about and what it needs.`,
+      `- Build the chapter from the memories, conversations, events and relationships that serve the requested subject. When the reader asks for a particular relationship, period or experience, that is what the chapter is made of.`,
+      `- Everything else is background: use it to understand who these people are — how they speak, what they carry, how they treat one another — without staging it as a scene. A chapter must never become a tour of unrelated records simply because they exist.`,
+      `- Do not invent a place in the chapter for someone who has nothing to do with the requested subject, and do not leave out material the premise actually requires.`,
+      `- This is selection inside the telling, never a claim that anything else did not happen. Never contradict or deny what the source records.`,
+      ``,
+      `## LANGUAGE AND ADULT MATERIAL — AUTHENTIC, NOT GRATUITOUS`,
+      `These people have recorded histories, and some of what is recorded contains profanity, crudeness, sexual references, substance use, or raw emotional conflict. That is their established voice and part of who they are: its presence in the source is never by itself a reason to refuse, sanitise or abandon the chapter.`,
+      `- When such language belongs to the moment the premise asks for, write them as these people actually speak.`,
+      `- When it does not belong to the requested subject, leave it out. Never import mature material into a chapter that has no use for it, and never reach for it for effect.`,
+      `- If a particular moment cannot be depicted, write around it — imply it, cut away from it, or summarise it in a sentence — and keep the chapter. Never return a refusal in place of prose, and never silently change what is established about a character.`,
+      ``,
       `## CHAPTER SHAPE`,
       lengthRule,
       `Paragraphs separated by a blank line. No headings, no bullet points, no chapter number inside the body — the chapter title is returned separately. Open inside a moment, not with a summary of the life. End the chapter on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
@@ -625,13 +728,27 @@ Deno.serve(async (req) => {
       mode !== 'create' && novel.title ? `Existing title: ${novel.title}` : '',
       mode === 'create' && body.title ? `The user supplied this title, use it exactly: ${body.title}` : '',
       ``,
+      exclusions.length
+        ? [
+          `## LEFT OUT OF THIS ATTEMPT`,
+          `The reader asked for the following to be left out of this chapter: ${exclusions.join('; ')}.`,
+          `Do not depict, name, describe, quote or allude to any of it, and do not let it shape a scene indirectly. Write the chapter as though it simply is not part of this telling.`,
+          `This is a choice about this chapter only. It never means the material did not happen, and it must never be referred to inside the prose as missing, withheld or redacted.`,
+        ].join('\n')
+        : '',
+      ``,
       `## SOURCE MATERIAL`,
       source.join('\n'),
       previousBlock,
     ].filter(Boolean).join('\n');
 
-    const generated = await base44.integrations.Core.InvokeLLM({
-      prompt: instruction,
+    stage = 'writing';
+    // One automatic retry covers a transient service failure or a refusal. Nothing
+    // is saved before a chapter exists, so a retry can never duplicate or overwrite.
+    let generated = null;
+    let writeError = null;
+    const askForChapter = (note) => base44.integrations.Core.InvokeLLM({
+      prompt: note ? `${instruction}\n\n${note}` : instruction,
       model: 'claude-sonnet-5',
       response_json_schema: {
         type: 'object',
@@ -671,12 +788,54 @@ Deno.serve(async (req) => {
       },
     });
 
+    for (let attempt = 0; attempt < 2 && !generated; attempt += 1) {
+      try {
+        const result = await askForChapter(attempt === 0 ? '' : RESTRICTED_MATERIAL_NOTE);
+        const text = String(result?.content || '').trim();
+        if (!text || looksLikeRefusal(text)) {
+          writeError = { cause: text ? 'content_restricted' : 'empty_response' };
+          continue;
+        }
+        generated = result;
+      } catch (error) {
+        writeError = error;
+        if (attempt === 0 && isTransientWriteFailure(error)) continue;
+        break;
+      }
+    }
+
+    if (!generated) {
+      if (writeError?.cause === 'content_restricted' || writeError?.cause === 'empty_response') {
+        const restricted = writeError.cause === 'content_restricted';
+        return failureResponse(422, {
+          stage: 'writing',
+          cause: writeError.cause,
+          retryable: true,
+          canAdjust: true,
+          technical: '',
+          message: restricted
+            ? 'The writing service would not write this chapter as requested. Your novel has not been changed. You can try again, or adjust the focus and leave out any material you would rather not see in this chapter.'
+            : 'The writing service returned no chapter text. Your novel has not been changed. You can try again, or adjust the focus and try again.',
+        });
+      }
+      return failureResponse(503, serviceFailure(writeError));
+    }
+
     const content = String(generated?.content || '')
       .replace(/\r\n?/g, '\n')
       .replace(/^\s*chapter\s+[0-9ivxlc]+[^\n]*\n+/i, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    if (!content) return Response.json({ error: 'The chapter came back empty. Please try again.' }, { status: 502 });
+    if (!content) {
+      return failureResponse(422, {
+        stage: 'writing',
+        cause: 'empty_response',
+        retryable: true,
+        canAdjust: true,
+        technical: '',
+        message: 'The writing service returned no usable chapter text. Your novel has not been changed. You can try again.',
+      });
+    }
 
     const chapterTitle = clip(generated?.chapter_title, 160) || `Chapter ${chapterNumber}`;
 
@@ -759,6 +918,7 @@ Deno.serve(async (req) => {
       return 'an elderly person';
     };
 
+    stage = 'illustrations';
     const specs = (Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
     const imageResults = await Promise.allSettled(specs.map(async (spec) => {
       const depictedNames = names(spec.characters).map((n) => String(n || '').trim()).filter(Boolean);
@@ -811,10 +971,10 @@ Deno.serve(async (req) => {
         const historical = historicalAges.has(p.id) ? historicalAges.get(p.id) : null;
         const age = historical != null ? historical : currentAgeOf(p);
         if (age == null) return `${p.name}'s age is not recorded — keep their established appearance and do not invent an age or an extra person.`;
-        const stage = stageOf(age);
+        const ageStage = stageOf(age);
         return historical != null
-          ? `${p.name} appears about ${age} years old here — the same person at a younger age, the same recognisable face and features${stage ? `, reading clearly as ${stage}` : ''}.`
-          : `${p.name} is ${age} years old${stage ? ` — ${stage}` : ''}. Depict exactly that age and stage: never older, never younger, never swapped with another child.`;
+          ? `${p.name} appears about ${age} years old here — the same person at a younger age, the same recognisable face and features${ageStage ? `, reading clearly as ${ageStage}` : ''}.`
+          : `${p.name} is ${age} years old${ageStage ? ` — ${ageStage}` : ''}. Depict exactly that age and stage: never older, never younger, never swapped with another child.`;
       }).join(' ');
 
       const placeDescription = readableText(zone?.zone_description, 420) || readableText(place?.description, 420);
@@ -850,6 +1010,19 @@ Deno.serve(async (req) => {
       }))
       .sort((a, b) => a.after_paragraph - b.after_paragraph);
 
+    // An illustration that fails is reported, never fatal: the finished prose is
+    // kept exactly as written and the chapter is saved without that plate.
+    const notices = [];
+    const missingPlates = specs.length - illustrations.length;
+    if (missingPlates > 0) {
+      notices.push(missingPlates === specs.length
+        ? 'The chapter was written but its illustrations could not be created this time. The prose is complete and saved.'
+        : `The chapter was written, but ${missingPlates === 1 ? 'one illustration' : `${missingPlates} illustrations`} could not be created this time.`);
+    }
+    if (sourceIssues.length) {
+      notices.push(`Some recorded background could not be retrieved for this chapter (${[...new Set(sourceIssues)].join(', ')}). Everything that was retrieved was used, and your records are unchanged.`);
+    }
+
     // ── PERSIST THE CHAPTER (novel-owned records only) ───────────────────────
     const chapterFields = {
       title: chapterTitle,
@@ -860,25 +1033,53 @@ Deno.serve(async (req) => {
       illustrations,
     };
 
-    const chapter = mode === 'redo'
-      ? await base44.entities.NovelChapter.update(targetChapter.id, chapterFields)
-      : await base44.entities.NovelChapter.create({
-        ...chapterFields,
-        novel_id: novel.id,
-        owner_email: user.email,
-        chapter_number: chapterNumber,
+    stage = 'saving';
+    let chapter = null;
+    try {
+      chapter = mode === 'redo'
+        ? await base44.entities.NovelChapter.update(targetChapter.id, chapterFields)
+        : await base44.entities.NovelChapter.create({
+          ...chapterFields,
+          novel_id: novel.id,
+          owner_email: user.email,
+          chapter_number: chapterNumber,
+        });
+    } catch (error) {
+      // A novel created moments ago by this very attempt has no chapters and is
+      // removed, so a retry never leaves a duplicate behind. An existing novel is
+      // never touched.
+      if (mode === 'create' && novel?.id) {
+        await base44.entities.Novel.delete(novel.id).catch(() => {});
+      }
+      return failureResponse(500, {
+        stage: 'saving',
+        cause: 'save_failed',
+        retryable: true,
+        canAdjust: false,
+        technical: statusOf(error) ? `HTTP ${statusOf(error)} — ${String(error?.message || '')}` : String(error?.message || ''),
+        message: 'The chapter was written but could not be saved. Your novel has not been changed. You can try again.',
       });
+    }
 
+    // Counters and cover are bookkeeping: a failure there must never discard a
+    // chapter that is already saved.
     const updatedNovel = await base44.entities.Novel.update(novel.id, mode === 'redo'
       ? { last_chapter_at: new Date().toISOString(), cover_image_url: novel.cover_image_url || illustrations[0]?.url || '' }
       : {
         chapter_count: chapterNumber,
         last_chapter_at: new Date().toISOString(),
         cover_image_url: novel.cover_image_url || illustrations[0]?.url || '',
-      });
+      }).catch(() => novel);
 
-    return Response.json({ novel: updatedNovel, chapter });
+    return Response.json({ novel: updatedNovel, chapter, notices });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return failureResponse(500, {
+      stage,
+      cause: 'unexpected',
+      retryable: true,
+      canAdjust: false,
+      technical: statusOf(error) ? `HTTP ${statusOf(error)} — ${String(error?.message || '')}` : String(error?.message || ''),
+      message: 'Something went wrong while this chapter was being prepared. Your novel has not been changed. You can try again.',
+    });
   }
 });

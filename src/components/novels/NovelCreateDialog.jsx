@@ -3,10 +3,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { BookOpen, User, Users } from "lucide-react";
 import NovelFocusPicker from "./NovelFocusPicker";
+import NovelGenerationFailure from "./NovelGenerationFailure";
 import useNovelCharacterCandidates from "@/hooks/useNovelCharacterCandidates";
 
 export default function NovelCreateDialog({
-  open, onOpenChange, character, characters = [], worldName = "", onSubmit, busy = false, error = null,
+  open, onOpenChange, character, characters = [], worldName = "", onSubmit, busy = false, failure = null,
 }) {
   const [title, setTitle] = useState("");
   const [focus, setFocus] = useState("");
@@ -15,6 +16,7 @@ export default function NovelCreateDialog({
   const [focusIds, setFocusIds] = useState([]);
   const [focusMode, setFocusMode] = useState("selected");
   const [includeUser, setIncludeUser] = useState(false);
+  const [exclusions, setExclusions] = useState([]);
   const [localError, setLocalError] = useState(null);
 
   const { connectedIds, crossAccountCharacters, isLoading: loadingCandidates } =
@@ -22,7 +24,8 @@ export default function NovelCreateDialog({
 
   const reset = () => {
     setTitle(""); setFocus(""); setPremise(""); setPerspective("character");
-    setFocusIds([]); setFocusMode("selected"); setIncludeUser(false); setLocalError(null);
+    setFocusIds([]); setFocusMode("selected"); setIncludeUser(false);
+    setExclusions([]); setLocalError(null);
   };
 
   const handleOpenChange = (next) => {
@@ -31,19 +34,29 @@ export default function NovelCreateDialog({
     onOpenChange(next);
   };
 
+  const payload = () => ({
+    title: title.trim(),
+    focus: focus.trim(),
+    premise: premise.trim(),
+    perspective,
+    focusCharacterIds: focusMode === "known" ? [] : focusIds,
+    focusMode,
+    includeUser,
+    exclusions,
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!premise.trim()) { setLocalError("Describe what the novel should explore."); return; }
     setLocalError(null);
-    onSubmit({
-      title: title.trim(),
-      focus: focus.trim(),
-      premise: premise.trim(),
-      perspective,
-      focusCharacterIds: focusMode === "known" ? [] : focusIds,
-      focusMode,
-      includeUser,
-    });
+    onSubmit(payload());
+  };
+
+  // Retrying keeps everything the reader typed, including what they chose to leave out.
+  const handleRetry = () => {
+    if (!premise.trim()) { setLocalError("Describe what the novel should explore."); return; }
+    setLocalError(null);
+    onSubmit(payload());
   };
 
   const others = characters.filter((c) => c.id !== character?.id);
@@ -170,11 +183,23 @@ export default function NovelCreateDialog({
             </span>
           </button>
 
-          {(localError || error) && <p className="text-xs text-destructive">{localError || error}</p>}
+          {localError && <p className="text-xs text-destructive">{localError}</p>}
 
-          <Button type="submit" disabled={busy} className="w-full">
-            {busy ? "Writing chapter one…" : "Write chapter one"}
-          </Button>
+          <NovelGenerationFailure
+            failure={failure}
+            exclusions={exclusions}
+            onExclude={(value) => setExclusions((prev) => (prev.includes(value) ? prev : [...prev, value]))}
+            onRemoveExclusion={(value) => setExclusions((prev) => prev.filter((v) => v !== value))}
+            onRetry={handleRetry}
+            busy={busy}
+            retryLabel="Write chapter one"
+          />
+
+          {!failure && (
+            <Button type="submit" disabled={busy} className="w-full">
+              {busy ? "Writing chapter one…" : "Write chapter one"}
+            </Button>
+          )}
         </form>
       </DialogContent>
     </Dialog>

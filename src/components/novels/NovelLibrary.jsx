@@ -7,13 +7,14 @@ import NovelCard from "./NovelCard";
 import NovelCreateDialog from "./NovelCreateDialog";
 import NovelGeneratingOverlay from "./NovelGeneratingOverlay";
 import DeleteNovelDialog from "./DeleteNovelDialog";
+import { normalizeNovelError } from "@/lib/novelGenerationError";
 
 export default function NovelLibrary({ character, characters = [], currentUser = null, worldName = "" }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+  const [failure, setFailure] = useState(null);
   const [toDelete, setToDelete] = useState(null);
 
   const { data: novels = [], isLoading } = useQuery({
@@ -24,7 +25,7 @@ export default function NovelLibrary({ character, characters = [], currentUser =
 
   const handleCreate = async (form) => {
     setBusy(true);
-    setError(null);
+    setFailure(null);
     try {
       const res = await base44.functions.invoke("generateNovelChapter", {
         mode: "create",
@@ -36,13 +37,15 @@ export default function NovelLibrary({ character, characters = [], currentUser =
         focus_character_ids: form.focusCharacterIds,
         focus_mode: form.focusMode,
         include_user: form.includeUser,
+        exclusions: form.exclusions || [],
       });
       if (res?.data?.error) throw new Error(res.data.error);
+      const notices = res.data.notices || [];
       await queryClient.invalidateQueries({ queryKey: ["novels", character.id] });
       setCreating(false);
-      navigate(`/novel/${res.data.novel.id}`);
+      navigate(`/novel/${res.data.novel.id}`, { state: { notices } });
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || "The novel could not be written.");
+      setFailure(normalizeNovelError(err, { operation: "create" }));
     } finally {
       setBusy(false);
     }
@@ -64,7 +67,7 @@ export default function NovelLibrary({ character, characters = [], currentUser =
           Novels written from {character?.name}&apos;s life. Nothing is ever generated until you ask for it.
         </p>
         <button
-          onClick={() => { setError(null); setCreating(true); }}
+          onClick={() => { setFailure(null); setCreating(true); }}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors flex-shrink-0"
         >
           <Plus className="w-3.5 h-3.5" /> New novel
@@ -89,8 +92,6 @@ export default function NovelLibrary({ character, characters = [], currentUser =
         </div>
       )}
 
-      {error && <p className="mt-2 text-[11px] text-destructive">{error}</p>}
-
       {creating && (
         <NovelCreateDialog
           open={creating}
@@ -100,7 +101,7 @@ export default function NovelLibrary({ character, characters = [], currentUser =
           worldName={worldName}
           onSubmit={handleCreate}
           busy={busy}
-          error={error}
+          failure={failure}
         />
       )}
 

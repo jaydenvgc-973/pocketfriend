@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { ArrowLeft, ChevronLeft, ChevronRight, List, Loader2 } from "lucide-react";
@@ -8,15 +8,22 @@ import NovelTableOfContents from "@/components/novels/NovelTableOfContents";
 import ContinueNovelPanel from "@/components/novels/ContinueNovelPanel";
 import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
 import NovelChapterActions from "@/components/novels/NovelChapterActions";
+import NovelGenerationFailure from "@/components/novels/NovelGenerationFailure";
+import { normalizeNovelError } from "@/lib/novelGenerationError";
 
 export default function NovelReader() {
   const { novelId } = useParams();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [activeNumber, setActiveNumber] = useState(null);
   const [showToc, setShowToc] = useState(false);
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
-  const [error, setError] = useState(null);
+  const [failure, setFailure] = useState(null);
+  const [exclusions, setExclusions] = useState([]);
+  // Notices carried over from the first chapter, e.g. a plate that failed to render.
+  const [notices, setNotices] = useState(location.state?.notices || []);
+  // Delete is not a generation attempt: its failures stay a plain line of text.
   const [actionError, setActionError] = useState(null);
 
   const { data: novel, isLoading: loadingNovel, isError: novelError } = useQuery({
@@ -65,22 +72,26 @@ export default function NovelReader() {
     queryClient.invalidateQueries({ queryKey: ["novels", novel?.character_id] }),
   ]);
 
-  const handleContinue = async (direction) => {
+  const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
+    const plainDirection = typeof direction === "string" ? direction : "";
     setBusy(true);
     setBusyLabel(`Writing chapter ${nextChapterNumber}`);
-    setError(null);
+    setFailure(null);
+    setNotices([]);
     setActionError(null);
     try {
       const res = await base44.functions.invoke("generateNovelChapter", {
         mode: "continue",
         novel_id: novelId,
-        direction,
+        direction: plainDirection,
+        exclusions: exclusionsForAttempt,
       });
       if (res?.data?.error) throw new Error(res.data.error);
       await refreshNovel();
       setActiveNumber(res.data.chapter?.chapter_number ?? null);
+      setNotices(res.data.notices || []);
     } catch (err) {
-      setError(err?.response?.data?.error || err?.message || "That chapter could not be written.");
+      setFailure(normalizeNovelError(err, { operation: "continue", direction: plainDirection }));
     } finally {
       setBusy(false);
       setBusyLabel("");
@@ -88,23 +99,26 @@ export default function NovelReader() {
   };
 
   // Rewrite only the chapter being read — the rest of the novel is untouched.
-  const handleRedoChapter = async () => {
+  const handleRedoChapter = async (exclusionsForAttempt = exclusions) => {
     if (!current) return;
     setBusy(true);
     setBusyLabel(`Rewriting chapter ${current.chapter_number}`);
-    setError(null);
+    setFailure(null);
+    setNotices([]);
     setActionError(null);
     try {
       const res = await base44.functions.invoke("generateNovelChapter", {
         mode: "redo",
         novel_id: novelId,
         chapter_id: current.id,
+        exclusions: exclusionsForAttempt,
       });
       if (res?.data?.error) throw new Error(res.data.error);
       await refreshNovel();
       setActiveNumber(res.data.chapter?.chapter_number ?? current.chapter_number);
+      setNotices(res.data.notices || []);
     } catch (err) {
-      setActionError(err?.response?.data?.error || err?.message || "That chapter could not be rewritten.");
+      setFailure(normalizeNovelError(err, { operation: "redo" }));
     } finally {
       setBusy(false);
       setBusyLabel("");
@@ -117,7 +131,6 @@ export default function NovelReader() {
     const target = current;
     setBusy(true);
     setBusyLabel(`Removing chapter ${target.chapter_number}`);
-    setError(null);
     setActionError(null);
     try {
       await base44.entities.NovelChapter.delete(target.id);
@@ -234,18 +247,42 @@ export default function NovelReader() {
 
             <NovelChapterActions
               chapter={current}
-              onRedo={handleRedoChapter}
+              onRedo={() => handleRedoChapter()}
               onDelete={handleDeleteChapter}
               disabled={busy}
               error={actionError}
             />
+
+            {failure && (
+              <NovelGenerationFailure
+                failure={failure}
+                exclusions={exclusions}
+                onExclude={(value) => setExclusions((prev) => (prev.includes(value) ? prev : [...prev, value]))}
+                onRemoveExclusion={(value) => setExclusions((prev) => prev.filter((v) => v !== value))}
+                onRetry={() => (
+                  failure.operation === "redo"
+                    ? handleRedoChapter(exclusions)
+                    : handleContinue(failure.direction || "", exclusions)
+                )}
+                busy={busy}
+                onDismiss={() => setFailure(null)}
+                retryLabel={failure.operation === "redo" ? "Rewrite chapter" : `Write chapter ${nextChapterNumber}`}
+              />
+            )}
+
+            {notices.length > 0 && (
+              <div className="mt-4 rounded-lg border border-border bg-secondary/40 p-3 space-y-1">
+                {notices.map((notice) => (
+                  <p key={notice} className="text-[11px] leading-relaxed text-muted-foreground">{notice}</p>
+                ))}
+              </div>
+            )}
 
             {isLast && (
               <ContinueNovelPanel
                 nextChapterNumber={nextChapterNumber}
                 onGenerate={handleContinue}
                 busy={busy}
-                error={error}
               />
             )}
           </>
