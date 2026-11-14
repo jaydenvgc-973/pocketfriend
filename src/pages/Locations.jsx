@@ -103,6 +103,9 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
   // Other users may only place their own characters in its existing apartments.
   const isSharedResidency = isSharedResidencyLocation(location);
   const canManageResidency = isSharedResidency && !canEdit && !!onManageResidency;
+  // The administrator-shared residence keeps its established purple. Every other
+  // location shared across accounts is marked in yellow.
+  const isOtherShared = isShared && !isSharedResidency;
   const [expanded, setExpanded] = useState(false);
 
   const handleUniformSave = async (updatedLocation) => {
@@ -125,12 +128,18 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
       className={`border rounded-2xl overflow-hidden transition-colors bg-card ${
-        isSharedResidency ? "border-purple-500/40 bg-gradient-to-br from-purple-950/50 to-card" : "border-border"
+        isSharedResidency
+          ? "border-purple-500/40 bg-gradient-to-br from-purple-950/50 to-card"
+          : isOtherShared
+            ? "border-amber-500/40 bg-gradient-to-br from-amber-950/30 to-card"
+            : "border-border"
       }`}
     >
       <div className="flex items-center gap-3 p-4">
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-lg ${
-          isSharedResidency ? "bg-purple-500/20 ring-1 ring-purple-400/30" : "bg-primary/10"
+          isSharedResidency
+            ? "bg-purple-500/20 ring-1 ring-purple-400/30"
+            : isOtherShared ? "bg-amber-500/15 ring-1 ring-amber-400/30" : "bg-primary/10"
         }`}>
           {catDef.emoji}
         </div>

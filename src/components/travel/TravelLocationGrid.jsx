@@ -24,6 +24,9 @@ export default function TravelLocationGrid({
       {locations.map(loc => {
         const isSelected = selectedLocation?.id === loc.id;
         const isSharedResidency = isSharedResidencyLocation(loc);
+        // Shared with other accounts (other than the administrator-shared residence):
+        // marked in yellow. Its card layout is unchanged.
+        const isOtherShared = loc.scope === 'shared' && !isSharedResidency;
         const firstImage = loc.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
           || loc.image_urls?.[0]
           || null;
@@ -59,14 +62,16 @@ export default function TravelLocationGrid({
                 ? "border-primary shadow-lg shadow-primary/20"
                 : isSharedResidency
                   ? "border-purple-500/40 shadow-sm shadow-purple-500/10"
-                  : isClosed ? "border-transparent opacity-60" : "border-transparent"
+                  : isOtherShared
+                    ? "border-amber-500/40 shadow-sm shadow-amber-500/10"
+                    : isClosed ? "border-transparent opacity-60" : "border-transparent"
             }`}
           >
             {/* Background image or fallback */}
             {firstImage ? (
               <img src={firstImage} alt={loc.name} className="w-full h-full object-cover" />
             ) : (
-              <div className={`w-full h-full flex items-center justify-center ${isSharedResidency ? "bg-purple-950" : "bg-secondary"}`}>
+              <div className={`w-full h-full flex items-center justify-center ${isSharedResidency ? "bg-purple-950" : isOtherShared ? "bg-amber-950" : "bg-secondary"}`}>
                 <span className="text-4xl">{emoji}</span>
               </div>
             )}
@@ -75,7 +80,9 @@ export default function TravelLocationGrid({
             <div className={`absolute inset-0 pointer-events-none ${
               isSharedResidency
                 ? "bg-gradient-to-t from-purple-950/95 via-purple-900/25 to-transparent"
-                : "bg-gradient-to-t from-black/70 via-black/10 to-transparent"
+                : isOtherShared
+                  ? "bg-gradient-to-t from-amber-950/90 via-amber-900/20 to-transparent"
+                  : "bg-gradient-to-t from-black/70 via-black/10 to-transparent"
             }`} />
 
             {/* Shared residence mark */}
@@ -85,11 +92,18 @@ export default function TravelLocationGrid({
               </div>
             )}
 
+            {/* Shared-across-accounts mark */}
+            {isOtherShared && !isClosed && (
+              <div className="absolute top-2 left-2 px-2 py-0.5 bg-amber-500/30 border border-amber-300/30 rounded-full pointer-events-none">
+                <span className="text-[9px] font-semibold text-amber-100 uppercase tracking-wide">Shared</span>
+              </div>
+            )}
+
             {/* Name */}
             <div className="absolute bottom-0 left-0 right-0 p-2.5 pointer-events-none">
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
               {occupantLabel && (
-                <p className={`text-[10px] truncate ${isSharedResidency ? "text-purple-200/80" : "text-white/70"}`}>
+                <p className={`text-[10px] truncate ${isSharedResidency ? "text-purple-200/80" : isOtherShared ? "text-amber-100/80" : "text-white/70"}`}>
                   {occupantLabel}
                 </p>
               )}

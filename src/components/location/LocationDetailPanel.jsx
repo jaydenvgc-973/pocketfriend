@@ -576,7 +576,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           residential_units assignments Places maintains. Each room or cell can be
           entered directly; the zone dropdown inside it stays untouched. */}
       {(cat === 'medical' || cat === 'jail_prison') && (
-        <FacilityUnitsSection location={location} characters={characters} />
+        <FacilityUnitsSection location={location} characters={characters} currentUserEmail={currentUserEmail} onChanged={onResidentsChanged} />
       )}
 
       {cat === 'jail_prison' && (location.inmates?.length > 0 || (location.worker_character_ids || []).length > 0) && (

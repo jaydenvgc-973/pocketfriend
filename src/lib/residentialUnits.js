@@ -122,6 +122,25 @@ export function getActiveUnitOccupantIds(location, unit, characters = []) {
   });
 }
 
+/**
+ * THE ZONE THAT IDENTIFIES THIS SPACE.
+ *
+ * A room or cell identifies WHICH space inside a facility; the zone identifies WHAT KIND
+ * of space. A hospital's patient room is shown by its existing "Patient Room" zone and a
+ * jail's cell by its existing "Cell" zone — the facility's own zone references and images,
+ * never a per-room zone. Returns null when the facility has no such zone (and for every
+ * other kind of property, which keeps its current behavior).
+ */
+export function getUnitZoneName(location) {
+  const zones = (location?.zones || []).map((z) => z?.zone_name).filter(Boolean);
+  if (zones.length === 0) return null;
+  if (location.category === 'medical') return zones.find((z) => /patient room/i.test(z)) || null;
+  if (location.category === 'jail_prison') {
+    return zones.find((z) => /^cell$/i.test(z)) || zones.find((z) => /\bcell\b/i.test(z)) || null;
+  }
+  return null;
+}
+
 export function getUnitById(location, unitId) {
   if (!unitId) return null;
   return getResidentialUnits(location).find((u) => u.unit_id === unitId) || null;

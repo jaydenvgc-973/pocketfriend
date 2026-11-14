@@ -56,7 +56,7 @@ import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
-import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
+import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName } from "@/lib/residentialUnits";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -282,6 +282,11 @@ export default function Scene() {
   const handleUnitChange = (unitId) => {
     setActiveUnitId(unitId);
     const unit = getUnitById(location, unitId);
+    // A room or cell identifies the space; the zone identifies the kind of space. Moving
+    // between a hospital's patient rooms (or a jail's cells) keeps that facility's own
+    // Patient Room / Cell zone — its reference images and dropdown are unchanged.
+    const unitZone = unitId ? getUnitZoneName(location) : null;
+    if (unitZone) setActiveZone(unitZone);
     if (observeMode) {
       // Choosing the whole facility releases the unit cast back to the default selection.
       setObserveCastIds(unitId ? getUnitPresentOccupantIds(location, unitId, characters) : null);

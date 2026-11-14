@@ -31,7 +31,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
-import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds } from "@/lib/residentialUnits";
+import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds, getUnitZoneName } from "@/lib/residentialUnits";
 
 
 export default function Travel() {
@@ -526,7 +526,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
     // Pass the first zone assigned to this environment so Scene starts in the correct zone
-    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
+    // that facility's own Patient Room / Cell zone. Every other visit keeps its
+    // environment's zone exactly as before.
+    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     // Carry the selected environment itself so the arrival gate validates the
     // environment the user chose, not the property's business hours.
@@ -567,7 +571,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (unavailable.length > 0) { setUnavailablePopup(unavailable); return; }
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(","), observe: "1" });
-    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
+    // that facility's own Patient Room / Cell zone. Every other visit keeps its
+    // environment's zone exactly as before.
+    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
     if (selectedUnitId) params.set("unitId", selectedUnitId);
@@ -584,7 +592,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   const handleObserveLocation = () => {
     if (!selectedLocation) return;
     const params = new URLSearchParams({ locationId: selectedLocation.id, observe: "1" });
-    const envZone = selectedEnvironment?.zone_names?.[0] || null;
+    // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
+    // that facility's own Patient Room / Cell zone. Every other visit keeps its
+    // environment's zone exactly as before.
+    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
     if (selectedUnitId) params.set("unitId", selectedUnitId);
@@ -607,8 +619,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     }
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId });
-    // A chosen apartment travels with a solo visit to that same property.
+    // A chosen apartment, patient room or cell travels with a solo visit to that property.
     if (selectedUnitId && getResidentialUnits(location).some((u) => u.unit_id === selectedUnitId)) params.set("unitId", selectedUnitId);
+    const unitZone = selectedUnitId ? getUnitZoneName(location) : null;
+    if (unitZone) params.set("zoneName", unitZone);
     navigate(`/scene?${params.toString()}`);
   };
 
