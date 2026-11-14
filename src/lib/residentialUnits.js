@@ -88,12 +88,18 @@ export function getAssignableUnits(location) {
  * the stay ends — discharged, released — the assignment has ended on its own. No
  * clock, sweep, or extra process is involved: the status the release/discharge
  * authority already wrote is the whole rule.
+ *
+ * ESTABLISHED HOME — LIVING THERE IS NOT THE STAY ENDING.
+ * A facility listed as the character's home (current_home_location_id) makes that space
+ * where they live, so it is never read as lapsed and never pruned from the property just
+ * because a status field is not set. This only protects the SPACE. It never writes,
+ * clears, or extends patient or inmate status: a home hospital or jail keeps the
+ * character a patient or inmate exactly as before, and an actual discharge or release
+ * still runs its established authority, which frees the room or cell as it always has.
  */
 export function isTemporaryUnitAssignmentActive(location, character) {
   if (!location || !character) return false;
-  // ESTABLISHED HOME EXCEPTION — when the facility itself is this character's home, the
-  // room or cell is where they live, not a temporary placement. It stands on its own and
-  // is never ended by a medical or incarceration status changing.
+  // Home space stands on its own — never removed because the facility is their home.
   if (character.current_home_location_id && character.current_home_location_id === location.id) return true;
   if (location.category === "medical") {
     if (character.resolved_presence_status !== "hospitalized") return false;
