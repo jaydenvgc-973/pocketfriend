@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "@/components/ui/button";
 import { BookOpen, User, Users } from "lucide-react";
 import NovelFocusPicker from "./NovelFocusPicker";
+import useNovelCharacterCandidates from "@/hooks/useNovelCharacterCandidates";
 
 export default function NovelCreateDialog({
   open, onOpenChange, character, characters = [], worldName = "", onSubmit, busy = false, error = null,
@@ -12,12 +13,16 @@ export default function NovelCreateDialog({
   const [premise, setPremise] = useState("");
   const [perspective, setPerspective] = useState("character");
   const [focusIds, setFocusIds] = useState([]);
+  const [focusMode, setFocusMode] = useState("selected");
   const [includeUser, setIncludeUser] = useState(false);
   const [localError, setLocalError] = useState(null);
 
+  const { connectedIds, crossAccountCharacters, isLoading: loadingCandidates } =
+    useNovelCharacterCandidates(character?.id, open);
+
   const reset = () => {
     setTitle(""); setFocus(""); setPremise(""); setPerspective("character");
-    setFocusIds([]); setIncludeUser(false); setLocalError(null);
+    setFocusIds([]); setFocusMode("selected"); setIncludeUser(false); setLocalError(null);
   };
 
   const handleOpenChange = (next) => {
@@ -30,7 +35,15 @@ export default function NovelCreateDialog({
     e.preventDefault();
     if (!premise.trim()) { setLocalError("Describe what the novel should explore."); return; }
     setLocalError(null);
-    onSubmit({ title: title.trim(), focus: focus.trim(), premise: premise.trim(), perspective, focusCharacterIds: focusIds, includeUser });
+    onSubmit({
+      title: title.trim(),
+      focus: focus.trim(),
+      premise: premise.trim(),
+      perspective,
+      focusCharacterIds: focusMode === "known" ? [] : focusIds,
+      focusMode,
+      includeUser,
+    });
   };
 
   const others = characters.filter((c) => c.id !== character?.id);
@@ -106,11 +119,42 @@ export default function NovelCreateDialog({
           <div>
             <label className="text-xs font-medium text-foreground">Focus characters</label>
             <p className="text-[10px] text-muted-foreground mb-1.5">{character?.name} is always the centre. Add anyone who should be central.</p>
-            <NovelFocusPicker
-              characters={others}
-              selectedIds={focusIds}
-              onToggle={(id) => setFocusIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
-            />
+
+            <button
+              type="button"
+              onClick={() => setFocusMode((m) => (m === "known" ? "selected" : "known"))}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left transition-colors mb-2 ${
+                focusMode === "known" ? "border-primary/60 bg-primary/10" : "border-border bg-secondary/40"
+              }`}
+            >
+              <span className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                focusMode === "known" ? "bg-primary border-primary" : "border-border"
+              }`}>
+                {focusMode === "known" && <span className="text-[9px] text-primary-foreground font-bold">✓</span>}
+              </span>
+              <span className="flex-1">
+                <span className="block text-xs text-foreground">Anyone the Character Knows</span>
+                <span className="block text-[10px] text-muted-foreground leading-tight">
+                  Let the novel draw on every established connection instead of picking people yourself.
+                </span>
+              </span>
+            </button>
+
+            {focusMode === "known" ? (
+              <p className="text-[10px] text-muted-foreground italic px-1">
+                Everyone {character?.name} has a relationship, memory, conversation or shared scene with may appear — only those the premise needs.
+              </p>
+            ) : (
+              <NovelFocusPicker
+                characters={others}
+                crossAccount={crossAccountCharacters}
+                connectedIds={connectedIds}
+                centralName={character?.name || "them"}
+                selectedIds={focusIds}
+                isLoading={loadingCandidates}
+                onToggle={(id) => setFocusIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))}
+              />
+            )}
           </div>
 
           <button

@@ -14,6 +14,11 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 const clip = (value, max) => (value == null ? '' : String(value)).replace(/\s+/g, ' ').trim().slice(0, max || 600);
 const asArray = (value) => (Array.isArray(value) ? value : (value && value.items) || []);
 const names = (list) => (Array.isArray(list) ? list : []).filter(Boolean);
+const NOVEL_DEAD_STATUS = ['deleted', 'soft_deleted', 'merged'];
+const usableCharacter = (c) => !!c && !!c.id && !!c.name
+  && !NOVEL_DEAD_STATUS.includes(c.status)
+  && c.life_status !== 'deceased'
+  && c.is_test_character !== true;
 
 function characterBlock(c) {
   if (!c) return '';
@@ -87,6 +92,9 @@ Deno.serve(async (req) => {
     const centralName = central?.name || novel.character_name || 'the character';
     const perspective = mode === 'continue' ? novel.perspective : (body.perspective === 'outside_narrator' ? 'outside_narrator' : 'character');
     const focusIds = names(mode === 'continue' ? novel.focus_character_ids : body.focus_character_ids).filter((id) => id && id !== centralId);
+    const focusMode = mode === 'continue'
+      ? (novel.focus_mode === 'known' ? 'known' : 'selected')
+      : (body.focus_mode === 'known' ? 'known' : 'selected');
     const includeUser = mode === 'continue' ? !!novel.include_user : !!body.include_user;
     const premise = mode === 'continue' ? novel.premise : String(body.premise).trim();
     const focus = mode === 'continue' ? (novel.focus || '') : clip(body.focus, 600);
@@ -97,11 +105,20 @@ Deno.serve(async (req) => {
     const settingsRow = asArray(settings)[0] || {};
     const worldName = settingsRow.fictional_world_name || user.full_name || 'the one who stays';
 
-    // ── FOCUS CHARACTERS (caller-scoped: unreadable records are simply omitted) ─
+    // ── FOCUS CHARACTERS ─────────────────────────────────────────────────────
+    // The user picked these people in the selection list, which is itself built from
+    // the existing contact graph. Records the caller cannot read directly (a character
+    // on another account) are resolved by exact ID through the service role. Read-only.
     let focusCharacters = [];
     if (focusIds.length) {
-      const fetched = await base44.entities.Character.filter({ id: { $in: focusIds.slice(0, 12) } }, null, 12).catch(() => []);
-      focusCharacters = asArray(fetched);
+      const wanted = focusIds.slice(0, 12);
+      const readable = asArray(await base44.entities.Character.filter({ id: { $in: wanted } }, null, 12).catch(() => []));
+      const found = new Set(readable.map((c) => c.id));
+      const missing = wanted.filter((id) => !found.has(id));
+      const recovered = missing.length
+        ? asArray(await base44.asServiceRole.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
+        : [];
+      focusCharacters = [...readable, ...recovered].filter(usableCharacter);
     }
 
     // ── SOURCE MATERIAL (read-only, all caller-scoped) ───────────────────────
@@ -135,6 +152,43 @@ Deno.serve(async (req) => {
       .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
       .slice(-90);
 
+    // ── ANYONE THEY KNOW (only when the user chose that option) ──────────────
+    // Candidates come from the central character's own readable records: family,
+    // fictional relationships, established relationships, memories, and documented
+    // conversations. Nothing is created or modified — the user then lets the premise
+    // decide who actually belongs in the chapter.
+    let knownPeople = [];
+    if (focusMode === 'known') {
+      const knownVia = new Map();
+      const note = (id, reason) => {
+        if (!id || typeof id !== 'string' || id === centralId || knownVia.has(id)) return;
+        knownVia.set(id, reason);
+      };
+      names(central?.family_members).forEach((f) => note(f?.character_id || f?.related_character_id, 'family'));
+      names(central?.fictional_relationships).forEach((r) => note(r?.related_character_id || r?.character_id, 'relationship'));
+      relationships.forEach((r) => note(
+        r.source_character_id === centralId ? r.target_character_id : r.source_character_id, 'relationship'
+      ));
+      memories.forEach((m) => note(m?.related_character_id, 'shared memory'));
+      messages.forEach((m) => {
+        [...(m.participant_character_ids || []), m.sender_character_id, m.receiver_character_id]
+          .forEach((id) => note(id, 'conversation'));
+      });
+
+      const candidateIds = [...knownVia.keys()].filter((id) => !focusIds.includes(id)).slice(0, 20);
+      const readable = candidateIds.length
+        ? asArray(await base44.entities.Character.filter({ id: { $in: candidateIds } }, null, candidateIds.length).catch(() => []))
+        : [];
+      const found = new Set(readable.map((c) => c.id));
+      const missing = candidateIds.filter((id) => !found.has(id));
+      const recovered = missing.length
+        ? asArray(await base44.asServiceRole.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
+        : [];
+      knownPeople = [...readable, ...recovered]
+        .filter(usableCharacter)
+        .map((c) => ({ ...c, known_via: knownVia.get(c.id) }));
+    }
+
     // Relationship counterpart names (batched, caller-scoped)
     const relatedIds = new Set();
     relationships.forEach((r) => {
@@ -146,7 +200,7 @@ Deno.serve(async (req) => {
       const fetched = await base44.entities.Character.filter({ id: { $in: [...relatedIds].slice(0, 24) } }, null, 24).catch(() => []);
       relatedCharacters = asArray(fetched);
     }
-    const people = [central, ...focusCharacters, ...relatedCharacters].filter(Boolean);
+    const people = [central, ...focusCharacters, ...relatedCharacters, ...knownPeople].filter(Boolean);
     const nameById = new Map(people.map((p) => [p.id, p.name]));
     nameById.set('user', worldName);
 
@@ -177,6 +231,19 @@ Deno.serve(async (req) => {
     source.push(`## THE PEOPLE`);
     source.push(characterBlock(central) || `### ${centralName}`);
     focusCharacters.forEach((c) => source.push(characterBlock(c)));
+
+    if (knownPeople.length) {
+      source.push(`\n## PEOPLE IN THEIR LIFE (established connections — draw only on those this chapter needs)`);
+      knownPeople.forEach((c) => {
+        const bits = [
+          c.known_via ? `known through ${c.known_via}` : '',
+          c.occupation ? clip(c.occupation, 120) : '',
+          c.profile_summary ? clip(c.profile_summary, 220) : '',
+        ].filter(Boolean).join(' · ');
+        source.push(`- ${c.name}${bits ? ` — ${bits}` : ''}`);
+      });
+    }
+
     if (includeUser) {
       source.push([
         `### ${worldName} — the account holder's own persona`,
@@ -282,6 +349,9 @@ Deno.serve(async (req) => {
       `## THIS IS LITERATURE, NOT A TRANSCRIPT`,
       `Most of the chapter must be developed prose: scene-setting, sensory detail, interiority, gesture, silence, transitions, emotional movement, and consequence. Dialogue is a spice, not the body. Never reproduce a chat log. Never mention records, memories-as-files, data, apps, prompts, or that this story is generated.`,
       includeUser ? `When ${worldName} appears, use that name and treat them as a person in the story — never "the user".` : `The account holder does not appear in this novel; do not write them into scenes.`,
+      focusMode === 'known'
+        ? `No individual people were chosen for this novel. Select from PEOPLE IN THEIR LIFE according to the premise and the period it covers, and leave out anyone who is not relevant. Never force a connection into a chapter.`
+        : '',
       ``,
       `## CHAPTER SHAPE`,
       lengthRule,
@@ -353,6 +423,7 @@ Deno.serve(async (req) => {
         focus,
         premise,
         perspective,
+        focus_mode: focusMode,
         focus_character_ids: focusIds,
         focus_character_names: focusCharacters.map((c) => c.name),
         include_user: includeUser,

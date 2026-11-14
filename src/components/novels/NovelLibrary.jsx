@@ -34,6 +34,7 @@ export default function NovelLibrary({ character, characters = [], currentUser =
         premise: form.premise,
         perspective: form.perspective,
         focus_character_ids: form.focusCharacterIds,
+        focus_mode: form.focusMode,
         include_user: form.includeUser,
       });
       if (res?.data?.error) throw new Error(res.data.error);

@@ -81,6 +81,19 @@
         "blue"
       ]
     },
+    "focus_mode": {
+      "type": "string",
+      "enum": [
+        "selected",
+        "known"
+      ],
+      "default": "selected",
+      "description": "selected = only the focus characters the user picked. known = the novel may draw on anyone the central character has an established connection with, choosing those the premise needs.",
+      "enumColors": [
+        "gray",
+        "green"
+      ]
+    },
     "focus_character_ids": {
       "type": "array",
       "items": {
