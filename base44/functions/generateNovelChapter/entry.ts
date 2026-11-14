@@ -275,8 +275,12 @@ Deno.serve(async (req) => {
       const fetched = await base44.entities.Character.filter({ id: { $in: [...relatedIds].slice(0, 24) } }, null, 24).catch(() => []);
       relatedCharacters = asArray(fetched);
     }
-    const people = [central, ...focusCharacters, ...relatedCharacters, ...knownPeople].filter(Boolean);
-    const nameById = new Map(people.map((p) => [p.id, p.name]));
+    const peopleById = new Map();
+    [central, ...focusCharacters, ...relatedCharacters, ...knownPeople].filter(Boolean).forEach((p) => {
+      if (p?.id && !peopleById.has(p.id)) peopleById.set(p.id, p);
+    });
+    const peopleList = [...peopleById.values()];
+    const nameById = new Map(peopleList.map((p) => [p.id, p.name]));
     nameById.set('user', worldName);
     // Event participants keep the names recorded on the event itself.
     storyEvents.forEach((e) => {
@@ -285,25 +289,73 @@ Deno.serve(async (req) => {
       ids.forEach((id, i) => { if (id && eventNames[i] && !nameById.has(id)) nameById.set(id, eventNames[i]); });
     });
 
-    // Locations (visual continuity)
-    const locationIds = [...new Set([
+    // ── ESTABLISHED PLACES + HOUSEHOLDS (read-only) ──────────────────────────
+    // Where people live now — including the apartment or unit inside a shared
+    // dwelling — and the existing location descriptions and zone images that keep
+    // an established place looking like itself.
+    const placeIds = [...new Set([
       central?.resolved_current_location_id,
       central?.current_home_location_id,
+      central?.temporary_housing_location_id,
       central?.occupation_location_id,
-    ].filter(Boolean))].slice(0, 4);
-    const locations = locationIds.length
-      ? asArray(await base44.entities.LocationReference.filter({ id: { $in: locationIds } }, null, 4).catch(() => []))
-      : [];
+      central?.current_school_location_id,
+      ...peopleList.map((p) => p.current_home_location_id),
+      ...peopleList.map((p) => p.temporary_housing_location_id),
+      ...storyEvents.map((e) => e.venue_id),
+    ].filter(Boolean))].slice(0, 20);
 
-    // ── PREVIOUS CHAPTERS (continuity) ───────────────────────────────────────
-    let previousChapters = [];
-    if (mode === 'continue') {
-      const pages = await base44.entities.NovelChapter.filter({ novel_id: novel.id }, 'chapter_number', 60).catch(() => []);
-      previousChapters = asArray(pages).sort((a, b) => (a.chapter_number || 0) - (b.chapter_number || 0));
+    let places = placeIds.length
+      ? asArray(await base44.entities.LocationReference.filter({ id: { $in: placeIds } }, null, placeIds.length).catch(() => []))
+      : [];
+    const unreadablePlaceIds = placeIds.filter((id) => !places.some((p) => p.id === id));
+    if (unreadablePlaceIds.length) {
+      places = places.concat(asArray(await base44.asServiceRole.entities.LocationReference
+        .filter({ id: { $in: unreadablePlaceIds } }, null, unreadablePlaceIds.length).catch(() => [])));
     }
-    const chapterNumber = previousChapters.length
-      ? Math.max(...previousChapters.map((c) => c.chapter_number || 0)) + 1
-      : 1;
+    const placeById = new Map(places.map((p) => [p.id, p]));
+
+    const unitOf = (place, characterId) => {
+      const units = Array.isArray(place?.residential_units) ? place.residential_units : [];
+      return units.find((u) => (u.occupant_character_ids || []).includes(characterId)) || null;
+    };
+
+    // A household is one exact dwelling: same place AND the same apartment or unit.
+    // Other apartments in a shared building are separate households, never one family.
+    const householdGroups = new Map();
+    const notInHousehold = [];
+    peopleList.forEach((p) => {
+      const home = placeById.get(p.current_home_location_id) || placeById.get(p.temporary_housing_location_id);
+      if (!home) { notInHousehold.push(p.name); return; }
+      const units = Array.isArray(home.residential_units) ? home.residential_units : [];
+      const unit = unitOf(home, p.id);
+      // In a multi-dwelling building, an unassigned resident is not part of any
+      // apartment's household and must never be grouped with the others.
+      if (units.length && !unit) { notInHousehold.push(p.name); return; }
+      const key = `${home.id}::${unit?.unit_id || 'whole'}`;
+      if (!householdGroups.has(key)) {
+        householdGroups.set(key, { label: `${home.name}${unit?.unit_name ? ` — ${unit.unit_name}` : ''}`, members: [] });
+      }
+      householdGroups.get(key).members.push(p.name);
+    });
+    const households = [...householdGroups.values()].filter((h) => h.members.length);
+
+    // ── PRECEDING / FOLLOWING CHAPTERS (continuity) ──────────────────────────
+    let previousChapters = [];
+    let laterChapters = [];
+    let chapterNumber = 1;
+    if (mode !== 'create') {
+      const pages = await base44.entities.NovelChapter.filter({ novel_id: novel.id }, 'chapter_number', 120).catch(() => []);
+      const allChapters = asArray(pages).sort((a, b) => (a.chapter_number || 0) - (b.chapter_number || 0));
+      if (mode === 'redo') {
+        const target = targetChapter.chapter_number || 1;
+        previousChapters = allChapters.filter((c) => c.id !== targetChapter.id && (c.chapter_number || 0) < target);
+        laterChapters = allChapters.filter((c) => c.id !== targetChapter.id && (c.chapter_number || 0) > target);
+        chapterNumber = target;
+      } else {
+        previousChapters = allChapters;
+        chapterNumber = allChapters.length ? Math.max(...allChapters.map((c) => c.chapter_number || 0)) + 1 : 1;
+      }
+    }
     const lastChapter = previousChapters[previousChapters.length - 1];
 
     // ── PROMPT ───────────────────────────────────────────────────────────────
@@ -316,7 +368,9 @@ Deno.serve(async (req) => {
     if (knownPeople.length) {
       source.push(`\n## PEOPLE IN THEIR LIFE (established connections — draw only on those this chapter needs)`);
       knownPeople.forEach((c) => {
+        const knownAge = currentAgeOf(c);
         const bits = [
+          knownAge != null ? `age ${knownAge}` : '',
           c.known_via ? `known through ${c.known_via}` : '',
           c.occupation ? clip(c.occupation, 120) : '',
           c.profile_summary ? clip(c.profile_summary, 220) : '',
@@ -396,22 +450,45 @@ Deno.serve(async (req) => {
       source.push(messageBlock(messages, nameById));
     }
 
-    if (locations.length) {
-      source.push(`\n## ESTABLISHED PLACES`);
-      locations.forEach((l) => {
-        source.push(`- ${l.name}${l.category ? ` (${l.category})` : ''}${l.description ? `: ${clip(l.description, 300)}` : ''}`);
+    if (places.length) {
+      source.push(`\n## ESTABLISHED PLACES (authoritative appearance — never substitute another property)`);
+      places.forEach((p) => {
+        source.push(`- ${p.name}${p.category ? ` (${p.category})` : ''}${p.description ? `: ${clip(p.description, 500)}` : ''}`);
+        const zones = names(p.zones);
+        if (zones.length) {
+          source.push(`  zones: ${zones.map((z) => `${z.zone_name}${z.zone_description ? ` — ${clip(z.zone_description, 200)}` : ''}`).join('; ')}`);
+        }
       });
     }
 
-    const previousBlock = previousChapters.length
+    if (households.length || notInHousehold.length) {
+      source.push(`\n## HOUSEHOLDS — WHO ACTUALLY LIVES TOGETHER (current residential records)`);
+      households.forEach((h) => source.push(`- ${h.label}: ${h.members.join(', ')}`));
+      if (notInHousehold.length) source.push(`- Not recorded in a household: ${notInHousehold.join(', ')}`);
+      source.push(`Residents of other apartments in the same building are neighbours, not housemates.`);
+    }
+
+    const previousBlock = mode === 'redo'
       ? [
-        `\n## WHAT THIS NOVEL HAS ALREADY COVERED`,
-        `Chapters written so far:`,
-        ...previousChapters.map((c) => `- Chapter ${c.chapter_number}: ${c.title}${c.summary ? ` — ${clip(c.summary, 300)}` : ''}`),
-        `Do not retell what these chapters already covered. Continue the same book, the same voice, the same chronology.`,
-        lastChapter?.content ? `\n### THE IMMEDIATELY PRECEDING CHAPTER (for voice, tone and continuity only — do not repeat it)\n${clip(lastChapter.content, 7000)}` : '',
-      ].join('\n')
-      : `\n## THIS IS CHAPTER ONE\nEstablish the world, the people and the emotional stakes without summarizing the whole life in one chapter.`;
+        `\n## THIS CHAPTER IS BEING REWRITTEN`,
+        `Chapter ${chapterNumber} of this novel already exists and you are writing a new version of it. Replace that chapter — do not write a different part of the story, and do not summarise the whole life.`,
+        previousChapters.length
+          ? `What comes before it:\n${previousChapters.map((c) => `- Chapter ${c.chapter_number}: ${c.title}${c.summary ? ` — ${clip(c.summary, 300)}` : ''}`).join('\n')}`
+          : `It is the opening chapter of the novel.`,
+        lastChapter?.content ? `\n### THE CHAPTER IMMEDIATELY BEFORE (for voice, tone and continuity only — do not repeat it)\n${clip(lastChapter.content, 6000)}` : '',
+        laterChapters.length
+          ? `\n### CHAPTERS THAT ALREADY COME AFTER IT (fixed — never rewritten, never contradicted)\n${laterChapters.map((c) => `- Chapter ${c.chapter_number}: ${c.title}${c.summary ? ` — ${clip(c.summary, 300)}` : ''}`).join('\n')}\nYour new version must lead into them without retelling them.`
+          : '',
+      ].filter(Boolean).join('\n')
+      : previousChapters.length
+        ? [
+          `\n## WHAT THIS NOVEL HAS ALREADY COVERED`,
+          `Chapters written so far:`,
+          ...previousChapters.map((c) => `- Chapter ${c.chapter_number}: ${c.title}${c.summary ? ` — ${clip(c.summary, 300)}` : ''}`),
+          `Do not retell what these chapters already covered. Continue the same book, the same voice, the same chronology.`,
+          lastChapter?.content ? `\n### THE IMMEDIATELY PRECEDING CHAPTER (for voice, tone and continuity only — do not repeat it)\n${clip(lastChapter.content, 7000)}` : '',
+        ].join('\n')
+        : `\n## THIS IS CHAPTER ONE\nEstablish the world, the people and the emotional stakes without summarizing the whole life in one chapter.`;
 
     const perspectiveRule = perspective === 'outside_narrator'
       ? [
@@ -440,6 +517,23 @@ Deno.serve(async (req) => {
       `- RECONSTRUCTED: anything before ${centralName} entered this world — upbringing, family history, earlier life. Here restrained, plausible reconstructed dialogue is allowed, consistent with the known personalities and circumstances, as long as it establishes no new major event and contradicts nothing.`,
       `If you are unsure whether something is documented, describe or summarize it instead of quoting it.`,
       ``,
+      `## AGES — RECORDED, NEVER INVENTED`,
+      `Every person in THE PEOPLE carries their recorded age. That number is the only age you may use, and it applies to every character, not only ${centralName}.`,
+      `- Present-day scenes: use the recorded age exactly. Never substitute another number because someone looks, sounds, works or behaves a certain way.`,
+      `- Earlier periods: work the age out from the recorded date of birth or birth year and the year of the scene. Never guess, and never round toward a more dramatic age.`,
+      `- If no age or date of birth is recorded, treat that person as an adult and do not state a number for them.`,
+      `- Never infer an age from appearance, family position, relationships, occupation, behaviour or narrative convenience.`,
+      `- An earlier chapter of this novel may state an age that contradicts the records. The records win. Never repeat a mistake for the sake of literary continuity.`,
+      ``,
+      `## FAMILY IS NOT A HOUSEHOLD`,
+      `HOUSEHOLDS lists where people live now, in their current home and their actual apartment or unit, taken from the residential records.`,
+      `- Only people under the same household (same place, same unit) live together.`,
+      `- A parent, child, sibling, spouse or adopted relative listed elsewhere does not live with them. They may visit, stay over or share scenes, but that home is not theirs.`,
+      `- In a multi-dwelling residence, residents of other apartments are neighbours. Never move them into one household.`,
+      `- Never invent cohabitation from closeness, affection, adoption or family ties.`,
+      `- Earlier living arrangements may come from background and family history, but never assume an old arrangement is still current.`,
+      `- Visitors and guests stay visitors and guests.`,
+      ``,
       `## ${perspectiveRule}`,
       ``,
       `## THIS IS LITERATURE, NOT A TRANSCRIPT`,
@@ -454,16 +548,20 @@ Deno.serve(async (req) => {
       `Paragraphs separated by a blank line. No headings, no bullet points, no chapter number inside the body — the chapter title is returned separately. Open inside a moment, not with a summary of the life. End the chapter on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
       ``,
       `## ILLUSTRATIONS`,
-      `Choose 2 or 3 moments from THIS chapter — never more than 3 — spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based index of the paragraph it should follow; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the names of the people visible (use the exact names above); location is where it happens. Do not illustrate a character or event the chapter does not contain.`,
+      `Choose 2 or 3 moments from THIS chapter — never more than 3 — spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based index of the paragraph it should follow; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the exact names of the people visible; location is the exact name of the place from ESTABLISHED PLACES when the scene happens there, otherwise leave it empty and describe the setting inside scene; location_zone is one of that place's listed zones when the scene happens in a particular room or area. Do not illustrate a character or event the chapter does not contain.`,
+      `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
+      `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
       ``,
       `## NOVEL`,
-      mode === 'continue'
-        ? `This is chapter ${chapterNumber} of the existing novel "${novel.title}". Continue it — same book, same voice, moving the story forward into experience not yet covered.`
-        : `This is chapter one of a new novel. Also propose a short, evocative novel title (3–6 words, no colon unless it earns it) unless a title is supplied.`,
+      mode === 'create'
+        ? `This is chapter one of a new novel. Also propose a short, evocative novel title (3–6 words, no colon unless it earns it) unless a title is supplied.`
+        : mode === 'redo'
+          ? `This is a new version of chapter ${chapterNumber} of the existing novel "${novel.title}", rewritten at its reader's request. Same book, same voice, same point in the chronology — but built from the authoritative records rather than from whatever the old version said.`
+          : `This is chapter ${chapterNumber} of the existing novel "${novel.title}". Continue it — same book, same voice, moving the story forward into experience not yet covered.`,
       `Premise: ${premise}`,
       focus ? `Focus: ${focus}` : '',
       direction ? `Direction for this chapter: ${direction}` : '',
-      mode === 'continue' && novel.title ? `Existing title: ${novel.title}` : '',
+      mode !== 'create' && novel.title ? `Existing title: ${novel.title}` : '',
       mode === 'create' && body.title ? `The user supplied this title, use it exactly: ${body.title}` : '',
       ``,
       `## SOURCE MATERIAL`,
@@ -491,6 +589,18 @@ Deno.serve(async (req) => {
                 scene: { type: 'string' },
                 characters: { type: 'array', items: { type: 'string' } },
                 location: { type: 'string' },
+                location_zone: { type: 'string' },
+                depicted_ages: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      age: { type: 'number' },
+                    },
+                    required: ['name', 'age'],
+                  },
+                },
               },
               required: ['after_paragraph', 'caption', 'scene'],
             },
@@ -534,33 +644,77 @@ Deno.serve(async (req) => {
       ...names(user.generated_avatar_urls),
     ].slice(0, 2);
 
+    const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const findPlace = (name) => {
+      const target = normalize(name);
+      if (!target) return null;
+      return places.find((p) => normalize(p.name) === target)
+        || places.find((p) => {
+          const pn = normalize(p.name);
+          return pn && (pn.includes(target) || target.includes(pn));
+        })
+        || null;
+    };
+    const findZone = (place, zoneName) => {
+      const target = normalize(zoneName);
+      if (!place || !target) return null;
+      const zones = names(place.zones);
+      return zones.find((z) => normalize(z.zone_name) === target)
+        || zones.find((z) => {
+          const zn = normalize(z.zone_name);
+          return zn && (zn.includes(target) || target.includes(zn));
+        })
+        || null;
+    };
+
     const specs = (Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
     const imageResults = await Promise.allSettled(specs.map(async (spec) => {
-      const depictedNames = names(spec.characters).map((n) => String(n).toLowerCase());
-      const depicted = people.filter((p) => {
-        const pn = String(p.name || '').toLowerCase();
+      const depictedNames = names(spec.characters).map((n) => normalize(n));
+      const depicted = peopleList.filter((p) => {
+        const pn = normalize(p.name);
         return pn && depictedNames.some((n) => n === pn || n.includes(pn) || pn.includes(n));
       });
-      const showsUser = includeUser && depictedNames.some((n) => n.includes(String(worldName).toLowerCase()));
+      const showsUser = includeUser && depictedNames.some((n) => n.includes(normalize(worldName)));
+
+      // Established place and zone: the location's own reference photographs drive
+      // the illustration, so each property keeps its recognizable appearance.
+      const place = findPlace(spec.location);
+      const zone = findZone(place, spec.location_zone);
 
       const refs = [];
       depicted.forEach((p) => {
         if (p.avatar_url) refs.push(p.avatar_url);
-        names(p.reference_image_urls).slice(0, 2).forEach((r) => refs.push(r));
+        names(p.reference_image_urls).slice(0, 1).forEach((r) => refs.push(r));
       });
       if (showsUser) refs.push(...userRefs);
-      const matchedLocation = locations.find((l) => spec.location && String(l.name || '').toLowerCase().includes(String(spec.location).toLowerCase().slice(0, 12)));
-      if (matchedLocation) names(matchedLocation.image_urls).slice(0, 1).forEach((r) => refs.push(r));
+      const placeRefs = (zone ? names(zone.image_urls) : []).slice(0, 2);
+      if (!placeRefs.length && place) placeRefs.push(...names(place.image_urls).slice(0, 2));
+      refs.push(...placeRefs);
 
       const identity = depicted.map((p) => `${p.name}${p.ethnicities && p.ethnicities.length ? ` (${p.ethnicities.join('/')})` : ''}: ${clip(p.appearance_notes || p.profile_summary, 260)}`).join(' | ');
+
+      // A younger appearance belongs to this illustration only — never to the character.
+      const ageNotes = (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : []).map((entry) => {
+        const person = depicted.find((p) => normalize(p.name) === normalize(entry?.name));
+        const youngAge = Number(entry?.age);
+        if (!person || !Number.isFinite(youngAge) || youngAge <= 0) return '';
+        const presentAge = currentAgeOf(person);
+        if (presentAge != null && Math.round(youngAge) >= presentAge) return '';
+        return `${person.name} appears about ${Math.round(youngAge)} years old in this scene — the same person at a younger age, keeping the same recognisable face, hair and features.`;
+      }).filter(Boolean).join(' ');
+
+      const placeDescription = place ? clip(zone?.zone_description || place.description, 420) : '';
 
       const prompt = [
         `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
         spec.scene,
         depicted.length ? `People present: ${depicted.map((p) => p.name).join(', ')}. Their faces, hair and features must match the attached reference photographs exactly — same person, not a lookalike.` : '',
         showsUser ? `${worldName} must match their attached reference photographs exactly.` : '',
-        spec.location ? `Setting: ${spec.location}.` : '',
+        place
+          ? `Setting: ${place.name}${zone ? ` — ${zone.zone_name}` : ''}.${placeDescription ? ` ${placeDescription}` : ''} The architecture, furnishings, materials and atmosphere must match the attached reference photograph of this exact place — do not substitute another property or a generic interior.`
+          : (spec.location ? `Setting: ${spec.location}.` : ''),
         identity ? `Identity notes: ${identity}` : '',
+        ageNotes,
         `No text, no captions, no lettering, no borders, no collage. A single coherent moment, like a plate in an illustrated novel.`,
       ].filter(Boolean).join('\n');
 
@@ -580,24 +734,32 @@ Deno.serve(async (req) => {
       }))
       .sort((a, b) => a.after_paragraph - b.after_paragraph);
 
-    // ── PERSIST THE CHAPTER ─────────────────────────────────────────────────
-    const chapter = await base44.entities.NovelChapter.create({
-      novel_id: novel.id,
-      owner_email: user.email,
-      chapter_number: chapterNumber,
+    // ── PERSIST THE CHAPTER (novel-owned records only) ───────────────────────
+    const chapterFields = {
       title: chapterTitle,
       content,
       summary: clip(generated?.chapter_summary, 1200),
       direction,
       word_count: content.split(/\s+/).filter(Boolean).length,
       illustrations,
-    });
+    };
 
-    const updatedNovel = await base44.entities.Novel.update(novel.id, {
-      chapter_count: chapterNumber,
-      last_chapter_at: new Date().toISOString(),
-      cover_image_url: novel.cover_image_url || illustrations[0]?.url || '',
-    });
+    const chapter = mode === 'redo'
+      ? await base44.entities.NovelChapter.update(targetChapter.id, chapterFields)
+      : await base44.entities.NovelChapter.create({
+        ...chapterFields,
+        novel_id: novel.id,
+        owner_email: user.email,
+        chapter_number: chapterNumber,
+      });
+
+    const updatedNovel = await base44.entities.Novel.update(novel.id, mode === 'redo'
+      ? { last_chapter_at: new Date().toISOString(), cover_image_url: novel.cover_image_url || illustrations[0]?.url || '' }
+      : {
+        chapter_count: chapterNumber,
+        last_chapter_at: new Date().toISOString(),
+        cover_image_url: novel.cover_image_url || illustrations[0]?.url || '',
+      });
 
     return Response.json({ novel: updatedNovel, chapter });
   } catch (error) {

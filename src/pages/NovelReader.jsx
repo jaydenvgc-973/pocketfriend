@@ -7,6 +7,7 @@ import NovelChapterText from "@/components/novels/NovelChapterText";
 import NovelTableOfContents from "@/components/novels/NovelTableOfContents";
 import ContinueNovelPanel from "@/components/novels/ContinueNovelPanel";
 import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
+import NovelChapterActions from "@/components/novels/NovelChapterActions";
 
 export default function NovelReader() {
   const { novelId } = useParams();
@@ -14,7 +15,9 @@ export default function NovelReader() {
   const [activeNumber, setActiveNumber] = useState(null);
   const [showToc, setShowToc] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState("");
   const [error, setError] = useState(null);
+  const [actionError, setActionError] = useState(null);
 
   const { data: novel, isLoading: loadingNovel, isError: novelError } = useQuery({
     queryKey: ["novel", novelId],
@@ -56,9 +59,17 @@ export default function NovelReader() {
     return () => { meta.remove(); };
   }, [novelError, loadingNovel]);
 
+  const refreshNovel = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["novel-chapters", novelId] }),
+    queryClient.invalidateQueries({ queryKey: ["novel", novelId] }),
+    queryClient.invalidateQueries({ queryKey: ["novels", novel?.character_id] }),
+  ]);
+
   const handleContinue = async (direction) => {
     setBusy(true);
+    setBusyLabel(`Writing chapter ${nextChapterNumber}`);
     setError(null);
+    setActionError(null);
     try {
       const res = await base44.functions.invoke("generateNovelChapter", {
         mode: "continue",
@@ -66,16 +77,65 @@ export default function NovelReader() {
         direction,
       });
       if (res?.data?.error) throw new Error(res.data.error);
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["novel-chapters", novelId] }),
-        queryClient.invalidateQueries({ queryKey: ["novel", novelId] }),
-        queryClient.invalidateQueries({ queryKey: ["novels", novel?.character_id] }),
-      ]);
+      await refreshNovel();
       setActiveNumber(res.data.chapter?.chapter_number ?? null);
     } catch (err) {
       setError(err?.response?.data?.error || err?.message || "That chapter could not be written.");
     } finally {
       setBusy(false);
+      setBusyLabel("");
+    }
+  };
+
+  // Rewrite only the chapter being read — the rest of the novel is untouched.
+  const handleRedoChapter = async () => {
+    if (!current) return;
+    setBusy(true);
+    setBusyLabel(`Rewriting chapter ${current.chapter_number}`);
+    setError(null);
+    setActionError(null);
+    try {
+      const res = await base44.functions.invoke("generateNovelChapter", {
+        mode: "redo",
+        novel_id: novelId,
+        chapter_id: current.id,
+      });
+      if (res?.data?.error) throw new Error(res.data.error);
+      await refreshNovel();
+      setActiveNumber(res.data.chapter?.chapter_number ?? current.chapter_number);
+    } catch (err) {
+      setActionError(err?.response?.data?.error || err?.message || "That chapter could not be rewritten.");
+    } finally {
+      setBusy(false);
+      setBusyLabel("");
+    }
+  };
+
+  // Delete only this chapter and its illustrations, then keep the numbering coherent.
+  const handleDeleteChapter = async () => {
+    if (!current) return;
+    const target = current;
+    setBusy(true);
+    setBusyLabel(`Removing chapter ${target.chapter_number}`);
+    setError(null);
+    setActionError(null);
+    try {
+      await base44.entities.NovelChapter.delete(target.id);
+      const later = chapters.filter((c) => (c.chapter_number || 0) > (target.chapter_number || 0));
+      if (later.length) {
+        await base44.entities.NovelChapter.bulkUpdate(
+          later.map((c, i) => ({ id: c.id, chapter_number: (target.chapter_number || 0) + i }))
+        );
+      }
+      const remaining = chapters.length - 1;
+      await base44.entities.Novel.update(novelId, { chapter_count: remaining });
+      await refreshNovel();
+      setActiveNumber(remaining > 0 ? Math.min(target.chapter_number || 1, remaining) : null);
+    } catch (err) {
+      setActionError(err?.response?.data?.error || err?.message || "That chapter could not be removed.");
+    } finally {
+      setBusy(false);
+      setBusyLabel("");
     }
   };
 
@@ -172,6 +232,14 @@ export default function NovelReader() {
               </button>
             </div>
 
+            <NovelChapterActions
+              chapter={current}
+              onRedo={handleRedoChapter}
+              onDelete={handleDeleteChapter}
+              disabled={busy}
+              error={actionError}
+            />
+
             {isLast && (
               <ContinueNovelPanel
                 nextChapterNumber={nextChapterNumber}
@@ -184,7 +252,7 @@ export default function NovelReader() {
         )}
       </article>
 
-      <NovelGeneratingOverlay open={busy} label={`Writing chapter ${nextChapterNumber}`} />
+      <NovelGeneratingOverlay open={busy} label={busyLabel || `Writing chapter ${nextChapterNumber}`} />
     </div>
   );
 }
