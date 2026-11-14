@@ -384,6 +384,10 @@ FICTIONAL IDENTITIES ONLY — MANDATORY
 - Do not lightly alter a recognizable real name. If a name would be recognized as a real person, house, or ball, invent something genuinely different.
 - The existing characters in this event keep their own established names, identities, personalities, relationships, and histories. This rule governs the fictional ballroom world around them; it never renames or replaces them.
 - Invent houses with their own reputations, strengths, and histories, and invent ballroom personalities with believable standing in the culture. Not everyone in the room is a legend or an icon — that distinction must mean something.
+- KEEP THE INVENTIONS OFF THE PAGE. That these identities are invented is an instruction to you, never information for the reader. Inside the narrative — and in its title, preview, descriptions, house names, ball names, and people's titles — never use "fictional", "fictitious", "imaginary", "made-up", "invented", "simulated", "not real", or any equivalent. Within PocketFriend's world these houses, personalities, and balls are simply real.
+  Correct: "The House of Veymont entered the ball." / "A member of the House of Aurell approached the judges." / "Legendary Marquis prepared to walk." / "The house erupted in celebration."
+  Incorrect: "The fictional House of Veymont entered the ball." / "A member of the fictional House of Aurell approached the judges." / "A fictional ballroom legend prepared to walk."
+- The reader should feel they are at a genuine ball in this world, never read an explanation of an invented simulation. Never break the frame to comment on the story, the culture's reality, or where these names came from.
 
 THE BALL ITSELF
 - Give the ball a believable identity: its own name, a theme if it has one, and an edition number when it is a recurring ball (for example its 27th installment). An installment number is real history — the ball has happened that many times, and the people there treat that record with respect.
@@ -391,7 +395,8 @@ THE BALL ITSELF
 - Never base the ball on a real ball or a real ball series.
 
 CATEGORIES — AUTHENTIC, AND KEPT DISTINCT
-- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
+- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme Soft and Cunty, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
+- Vogue Femme Soft and Cunty and Vogue Femme Dramatics are TWO SEPARATE competitive categories. A ball may call Soft and Cunty, Dramatics, or both, and they are judged on different things. Never merge them into a single "Vogue Femme" category, never call one by the other's name, and never switch between their performance expectations mid-category. When a specific style is called, the performance, the judging, and every description of it must match that style.
 - Respect what each category actually is. Schoolboy Realness is realness — passing, presentation, and believability — not a vogue battle. Runway is walked and judged on walk, posture, garment, and presence, and the runway categories are not interchangeable. Vogue performance categories are danced. Never flatten every category into the same dance-off.
 
 QUALIFICATION AND JUDGING — HOW A CATEGORY ACTUALLY RUNS
@@ -406,7 +411,9 @@ VOGUING — RESPECT THE FORM
 - Voguing is a dance tradition created within the ballroom community. It was not invented by Madonna; she helped bring it to a mainstream audience. Do not credit its origins to her, and do not frame the culture as something mainstream culture created or discovered.
 - Old Way, New Way, and Vogue Femme are distinct styles and must read as distinct on the floor — not one generic flamboyant dance.
 - Vogue Femme is built from five core elements: hand performance, catwalk, duckwalk, floor performance, and spins and dips. Describe performances through those elements, and through the control, precision, and musicality that make them land.
-- Vogue Femme Dramatics is highly energetic, explosive, and theatrical — bigger, faster, and more dramatic than a standard femme performance, without losing technique.
+- Vogue Femme Soft and Cunty is soft, fluid, graceful, and alluring. It reads as femininity, elegance, sensuality, and controlled movement: smooth, deliberate transitions, precision and fluidity rather than force. Do not describe it as explosive, aggressive, or built on hard crashes.
+- Vogue Femme Dramatics is explosive, intense, theatrical, and high-energy. It reads as power, impact, and speed: harder movements, sharp transitions, dramatic dips, and crashes, executed with control and technique.
+- Both belong to the Vogue Femme tradition, but they are not the same category and are not interchangeable. A Soft and Cunty performance must never be written like a Dramatics performance, and vice versa.
 - A dip is called a dip. Never write "death drop" or "shablam" for it.
 - The DJ's music matters in a battle: the beat being danced to is part of the competition, and the room reacts to what the music does.
 
@@ -873,7 +880,7 @@ Deno.serve(async (req) => {
       `}`,
       ``,
       `RULES:`,
-      ...(ballroomBlock ? [`- BALL EVENT RULES (MANDATORY): this event is a ball in the LGBTQ ballroom scene. Follow the BALLROOM CULTURE section above exactly — the fiction-only naming rule, authentic categories kept distinct, tens/chopped qualification before a winner is decided, the five Vogue Femme elements, "dip" (never "death drop" or "shablam"), the commentator, the DJ, the houses, and the full range of possible conflict. Keep the existing characters as who they already are.`] : []),
+      ...(ballroomBlock ? [`- BALL EVENT RULES (MANDATORY): this event is a ball in the LGBTQ ballroom scene. Follow the BALLROOM CULTURE section above exactly — original names invented for houses, personalities and balls, but NEVER described as fictional, imaginary, invented or simulated anywhere in the narrative, its title, its preview or its descriptions; Vogue Femme Soft and Cunty and Vogue Femme Dramatics kept as two separate categories with their own performance characteristics; authentic categories kept distinct; tens/chopped qualification before a winner is decided; the five Vogue Femme elements; "dip" (never "death drop" or "shablam"); the commentator, the DJ, the houses; and the full range of possible conflict. Keep the existing characters as who they already are.`] : []),
       `- The narrative MUST follow the user's plot. Do not invent a different storyline.`,
       `- Emotional outcomes must be supported by what happens in the narrative. No random emotions.`,
       `- Relationship changes must have a meaningful reason in the narrative. No unsupported changes.`,
