@@ -1694,9 +1694,12 @@ Deno.serve(async (req) => {
               await base44.entities.LifeEvent.create({ character_id: char.id, character_name: charName, event_type: 'recovery_event', valence: 'positive', severity: 'moderate', title: 'Discharged from hospital', description: `${charName} recovered enough to leave the hospital and was sent home.`, emotional_impact: 'relieved', triggered_by: 'life_simulation', timestamp: nowIso, context_tags: ['hospitalized_end', 'discharge', 'sent_home'] });
               // TEMPORARY PATIENT ROOM — the discharge ends the room assignment with the stay.
               // The room and any other patient in it are untouched; it simply frees up.
+              // EXCEPTION: when the hospital is this character's established home, the room is
+              // where they live — discharge ends the stay, not their home space.
               try {
                 const _roomFacilityId = char.resolved_current_location_id;
-                if (_roomFacilityId) {
+                const _roomFacilityIsHome = !!_roomFacilityId && char.current_home_location_id === _roomFacilityId;
+                if (_roomFacilityId && !_roomFacilityIsHome) {
                   const _facility = await base44.asServiceRole.entities.LocationReference.get(_roomFacilityId).catch(() => null);
                   const _units = _facility?.residential_units || [];
                   if (_units.some(u => (u.occupant_character_ids || []).includes(char.id))) {

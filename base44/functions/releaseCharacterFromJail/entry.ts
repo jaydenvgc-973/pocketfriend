@@ -64,9 +64,12 @@ Deno.serve(async (req) => {
     // TEMPORARY CELL — the sentence is over, so the cell assignment ends with it.
     // The cell itself and any other inmate in it are untouched; the space simply
     // becomes available again. The stay status written above is the only trigger.
+    // EXCEPTION: when the jail is this character's established home, the cell is where they
+    // live — release ends the sentence, not their home space. The assignment stands.
     try {
       const facilityId = character.incarceration_facility_id;
-      if (facilityId) {
+      const facilityIsHome = !!facilityId && character.current_home_location_id === facilityId;
+      if (facilityId && !facilityIsHome) {
         const facility = await base44.asServiceRole.entities.LocationReference.get(facilityId).catch(() => null);
         const units = facility?.residential_units || [];
         if (units.some(u => (u.occupant_character_ids || []).includes(character_id))) {

@@ -91,6 +91,10 @@ export function getAssignableUnits(location) {
  */
 export function isTemporaryUnitAssignmentActive(location, character) {
   if (!location || !character) return false;
+  // ESTABLISHED HOME EXCEPTION — when the facility itself is this character's home, the
+  // room or cell is where they live, not a temporary placement. It stands on its own and
+  // is never ended by a medical or incarceration status changing.
+  if (character.current_home_location_id && character.current_home_location_id === location.id) return true;
   if (location.category === "medical") {
     if (character.resolved_presence_status !== "hospitalized") return false;
     return !character.resolved_current_location_id || character.resolved_current_location_id === location.id;
