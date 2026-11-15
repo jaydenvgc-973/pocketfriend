@@ -72,6 +72,36 @@ export default function NovelReader() {
     queryClient.invalidateQueries({ queryKey: ["novels", novel?.character_id] }),
   ]);
 
+  // The plates are drawn in their own request, after the chapter is already saved.
+  // A failure here costs the illustrations, never the prose.
+  const drawIllustrations = async (chapterId) => {
+    if (!chapterId) return;
+    setBusy(true);
+    setBusyLabel("Adding illustrations");
+    try {
+      const res = await base44.functions.invoke("generateNovelIllustrations", {
+        novel_id: novelId,
+        chapter_id: chapterId,
+      });
+      if (res?.data?.error) throw new Error(res.data.error);
+      await refreshNovel();
+      setNotices((prev) => [...new Set([...prev, ...(res.data.notices || [])])]);
+    } catch {
+      setNotices((prev) => [...new Set([...prev, "The illustrations could not be created this time. The chapter itself is complete and saved."])]);
+    } finally {
+      setBusy(false);
+      setBusyLabel("");
+    }
+  };
+
+  // A chapter written from the library arrives here with its plates still to draw.
+  useEffect(() => {
+    const pending = location.state?.illustrationChapterId;
+    if (!pending) return;
+    drawIllustrations(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.illustrationChapterId]);
+
   const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
     const plainDirection = typeof direction === "string" ? direction : "";
     setBusy(true);
@@ -90,12 +120,15 @@ export default function NovelReader() {
       await refreshNovel();
       setActiveNumber(res.data.chapter?.chapter_number ?? null);
       setNotices(res.data.notices || []);
-    } catch (err) {
-      setFailure(normalizeNovelError(err, { operation: "continue", direction: plainDirection }));
-    } finally {
       setBusy(false);
       setBusyLabel("");
+      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
+      return;
+    } catch (err) {
+      setFailure(normalizeNovelError(err, { operation: "continue", direction: plainDirection }));
     }
+    setBusy(false);
+    setBusyLabel("");
   };
 
   // Rewrite only the chapter being read — the rest of the novel is untouched.
@@ -117,12 +150,15 @@ export default function NovelReader() {
       await refreshNovel();
       setActiveNumber(res.data.chapter?.chapter_number ?? current.chapter_number);
       setNotices(res.data.notices || []);
-    } catch (err) {
-      setFailure(normalizeNovelError(err, { operation: "redo" }));
-    } finally {
       setBusy(false);
       setBusyLabel("");
+      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
+      return;
+    } catch (err) {
+      setFailure(normalizeNovelError(err, { operation: "redo" }));
     }
+    setBusy(false);
+    setBusyLabel("");
   };
 
   // Delete only this chapter and its illustrations, then keep the numbering coherent.
@@ -249,6 +285,7 @@ export default function NovelReader() {
               chapter={current}
               onRedo={() => handleRedoChapter()}
               onDelete={handleDeleteChapter}
+              onIllustrate={() => drawIllustrations(current.id)}
               disabled={busy}
               error={actionError}
             />

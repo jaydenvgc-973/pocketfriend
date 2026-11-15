@@ -9,6 +9,12 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 // existing access rules decide what can be seen — including across accounts.
 // The only records it ever writes are Novel and NovelChapter: its own records.
 // No character, memory, journal, relationship, message or location is touched.
+//
+// Illustration plates are drawn by generateNovelIllustrations, in their own
+// request. Writing prose and then drawing three images inside one request ran
+// past the platform's request limit, and the timeout discarded a finished
+// chapter. The prose is therefore saved here first, and the plates are resolved
+// to their records here so the next call can draw them.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const clip = (value, max) => (value == null ? '' : String(value)).replace(/\s+/g, ' ').trim().slice(0, max || 600);
@@ -40,27 +46,49 @@ const isTransientWriteFailure = (error) => {
     .test(String(error?.message || ''));
 };
 
-const serviceFailure = (error) => {
+// A cause is reported only when the response actually shows it. An HTTP code on
+// its own never becomes "the service is down", and a request that ran past its own
+// time limit is never described as an outage.
+const TIMEOUT_PATTERN = /timed? ?out|deployment_timed_out|deadline|time limit|etimedout|took too long/i;
+const CONTENT_PATTERN = /content (policy|filter)|safety (system|policy|filter)|moderation|prohibited content|responsible ai|policy violation|blocked by (the )?(content|safety)/i;
+const UNAVAILABLE_PATTERN = /service unavailable|temporarily unavailable|overloaded|at capacity|bad gateway/i;
+
+const classifyFailure = (error, stage) => {
   const status = statusOf(error);
-  const detail = String(error?.message || '');
-  const technical = status ? `HTTP ${status}${detail ? ` — ${detail}` : ''}` : detail;
+  const detail = [String(error?.message || ''), String(error?.response?.data?.error || '')]
+    .filter(Boolean).join(' ');
+  const technical = [status ? `HTTP ${status}` : '', detail].filter(Boolean).join(' — ');
+  const base = { stage, technical };
+
+  // Timeouts are checked first: a platform timeout arrives as "Service
+  // Unavailable", but what happened is that this request ran out of time.
+  if (status === 408 || TIMEOUT_PATTERN.test(detail)) {
+    return {
+      ...base, cause: 'timed_out', retryable: true, canAdjust: true,
+      message: 'The chapter was still being written when this request ran out of time, so nothing was saved. Your novel has not been changed. Trying again can work, and a narrower focus finishes faster.',
+    };
+  }
   if (status === 429 || /rate limit|too many requests/i.test(detail)) {
     return {
-      stage: 'writing',
-      cause: 'busy',
-      retryable: true,
-      canAdjust: false,
-      technical,
-      message: 'The writing service is handling too many requests right now. Your novel has not been changed. Wait a moment and try again.',
+      ...base, cause: 'busy', retryable: true, canAdjust: false,
+      message: 'The writing service is handling too many requests at the moment, so this chapter was not written. Your novel has not been changed. Wait a moment and try again.',
+    };
+  }
+  if (CONTENT_PATTERN.test(detail)) {
+    return {
+      ...base, cause: 'content_restricted', retryable: true, canAdjust: true,
+      message: 'The writing service would not write part of what this chapter asked for. Your novel has not been changed. You can adjust the chapter\'s focus and try again.',
+    };
+  }
+  if (UNAVAILABLE_PATTERN.test(detail)) {
+    return {
+      ...base, cause: 'service_unavailable', retryable: true, canAdjust: false,
+      message: 'The writing service reported that it was unavailable, so this chapter was not written. Your novel has not been changed. You can try again.',
     };
   }
   return {
-    stage: 'writing',
-    cause: 'service_unavailable',
-    retryable: true,
-    canAdjust: false,
-    technical,
-    message: 'Your chapter couldn\'t be generated because the writing service was temporarily unavailable. Your novel has not been changed. You can try again.',
+    ...base, cause: 'unknown', retryable: true, canAdjust: false,
+    message: 'This chapter could not be generated, and the specific cause could not be identified from the information available. Your novel has not been changed. You can try again.',
   };
 };
 
@@ -147,11 +175,190 @@ function messageBlock(messages, nameById) {
     const who = m.sender_type === 'character'
       ? (m.character_name || nameById.get(m.sender_character_id) || 'Character')
       : (nameById.get('user') || 'Her person');
-    const channel = m.channel || (m.sender_type === 'character' ? 'chat' : 'chat');
+    const channel = m.channel || 'chat';
     const narrative = m.is_narrative ? '[narrative] ' : '';
     const image = m.image_description ? ` [shared image: ${clip(m.image_description, 220)}]` : '';
     return `${when} · ${channel} · ${who}: ${narrative}${clip(m.content, 700)}${image}`;
   }).join('\n');
+}
+
+// ── PREMISE-DRIVEN SOURCE SELECTION ──────────────────────────────────────────
+// A character's records hold everything they have ever done. One chapter is about
+// one subject, so only the material belonging to that subject is sent to the
+// writer: unrelated adult history never crowds out the childhood a reader asked
+// for. This is a read-only decision about one attempt — no record is changed,
+// hidden or denied.
+const ROUTINE_PATTERN = /\b(nap|napped|napping|woke|wake|waking|asleep|slept|sleep|bedtime|ate|eaten|eating|breakfast|lunch|dinner|meal|shower|brushed|dressed|hygiene|energy|comfort|simulated|routine)\b/i;
+const isRoutineEntry = (text) => ROUTINE_PATTERN.test(String(text || ''));
+
+const STOP_WORDS = new Set(['the', 'and', 'his', 'her', 'their', 'about', 'from', 'with', 'that', 'this', 'into', 'over', 'after', 'before', 'when', 'where', 'which', 'while', 'would', 'could', 'should', 'have', 'been', 'being', 'they', 'them', 'then', 'than', 'there', 'these', 'those', 'very', 'just', 'also', 'more', 'most', 'some', 'such', 'only', 'other', 'what', 'your', 'chapter', 'novel', 'book', 'story', 'tell']);
+const EARLY_LIFE_PATTERN = /childhood|upbringing|early (years|life)|growing up|as a (boy|girl|kid|child)|younger (days|years)|before everything/i;
+const EARLY_LIFE_WORDS = ['child', 'children', 'boy', 'girl', 'kid', 'school', 'grade', 'mother', 'father', 'mom', 'dad', 'family', 'raised', 'born', 'young', 'home'];
+
+const tokensOf = (value) => new Set(
+  String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+    .split(' ').filter((word) => word.length > 3 && !STOP_WORDS.has(word))
+);
+
+const scoreAgainst = (tokens, text) => {
+  if (!tokens.size) return 0;
+  const words = new Set(String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' '));
+  let score = 0;
+  tokens.forEach((token) => { if (words.has(token)) score += 1; });
+  return score;
+};
+
+const PLAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: 'string' },
+    period: { type: 'string' },
+    keep_memories: { type: 'array', items: { type: 'string' } },
+    keep_life_events: { type: 'array', items: { type: 'string' } },
+    keep_story_events: { type: 'array', items: { type: 'string' } },
+    keep_relationships: { type: 'array', items: { type: 'string' } },
+    keep_messages: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['subject', 'keep_memories', 'keep_life_events', 'keep_relationships', 'keep_messages'],
+};
+
+async function selectPremiseSource({ base44, premise, focus, direction, central, memories, lifeEvents, relationships, storyEvents, messages, nameById }) {
+  const asked = [premise, focus, direction].filter(Boolean).join(' ');
+  const centralName = central?.name || 'the character';
+  const centralAge = currentAgeOf(central);
+
+  const substantiveMemories = memories.filter((m) => !isRoutineEntry(m.memory_summary || m.memory_text));
+  const substantiveLifeEvents = lifeEvents.filter((e) => !isRoutineEntry(`${e.title || ''} ${e.description || ''}`));
+  const substantiveMessages = messages.filter((m) => String(m.content || '').trim().length > 40);
+
+  const memoryItems = substantiveMemories.slice(0, 40).map((record, i) => ({
+    key: `m${i}`, record, text: clip(record.memory_summary || record.memory_text, 150),
+  }));
+  const lifeItems = substantiveLifeEvents.slice(0, 36).map((record, i) => ({
+    key: `l${i}`, record,
+    text: `${record.timestamp ? new Date(record.timestamp).toISOString().slice(0, 10) : ''} ${clip(record.title, 90)}: ${clip(record.description, 160)}`,
+  }));
+  const eventItems = storyEvents.slice(0, 12).map((record, i) => ({
+    key: `s${i}`, record,
+    text: `${record.event_date || ''} ${clip(record.title, 90)}${record.venue_name ? ` at ${record.venue_name}` : ''}`,
+  }));
+  const relationItems = relationships.slice(0, 18).map((record, i) => {
+    const outgoing = record.source_character_id === central?.id;
+    const otherName = nameById.get(outgoing ? record.target_character_id : record.source_character_id) || 'someone';
+    return {
+      key: `r${i}`, record,
+      text: `${otherName} — ${record.relationship_type || 'relationship'}${outgoing ? '' : ` (their view of ${centralName})`}`,
+    };
+  });
+  const messageItems = substantiveMessages.slice(-24).map((record, i) => ({
+    key: `c${i}`, record,
+    text: `${record.timestamp ? new Date(record.timestamp).toISOString().slice(0, 10) : ''} ${record.channel || 'chat'} · ${clip(record.content, 150)}`,
+  }));
+
+  const routineTotal = (memories.length - substantiveMemories.length) + (lifeEvents.length - substantiveLifeEvents.length);
+  const catalogue = [
+    memoryItems.length ? `--- MEMORIES ---\n${memoryItems.map((item) => `${item.key}: ${item.text}`).join('\n')}` : '',
+    lifeItems.length ? `--- LIFE JOURNAL ---\n${lifeItems.map((item) => `${item.key}: ${item.text}`).join('\n')}` : '',
+    eventItems.length ? `--- STORY EVENTS ---\n${eventItems.map((item) => `${item.key}: ${item.text}`).join('\n')}` : '',
+    relationItems.length ? `--- RELATIONSHIPS ---\n${relationItems.map((item) => `${item.key}: ${item.text}`).join('\n')}` : '',
+    messageItems.length ? `--- RECORDED CONVERSATIONS ---\n${messageItems.map((item) => `${item.key}: ${item.text}`).join('\n')}` : '',
+    routineTotal ? `--- ROUTINE ---\n${routineTotal} further entries record only sleep, naps, meals and physical needs.` : '',
+  ].filter(Boolean);
+
+  const planPrompt = [
+    `You are choosing the recorded material for ONE chapter of a novel about ${centralName}${centralAge != null ? `, who is ${centralAge} years old today` : ''}.`,
+    ``,
+    `## THE REQUEST`,
+    `Premise: ${premise}`,
+    focus ? `Focus: ${focus}` : '',
+    direction ? `Direction for this chapter: ${direction}` : '',
+    ``,
+    `## YOUR TASK`,
+    `Name the subject the reader actually asked for, and choose the recorded entries that belong to it.`,
+    ``,
+    `## RULES`,
+    `- Judge every entry against the requested subject, never against how interesting it is on its own.`,
+    `- If the request is about childhood, upbringing or early life, keep family, formative years, school and the people who raised them, and leave out adult relationships, adult experiences and everything belonging to a later life.`,
+    `- If the request is about a particular person, period, relationship or event, keep only what serves it.`,
+    `- Leave out routine housekeeping (sleep, naps, meals, needs) unless ordinary daily life is the subject.`,
+    `- Never reject an entry for being painful or difficult: a hard childhood memory is exactly what a childhood chapter needs.`,
+    `- Entries left out are not denied — they are simply not part of this chapter. Use empty lists only if nothing in the catalogue belongs to the request.`,
+    ``,
+    `## CATALOGUE`,
+    catalogue.join('\n\n'),
+    ``,
+    `## REPLY`,
+    `subject: the requested subject in one short sentence.`,
+    `period: the life period it points to (for example "childhood", "his thirties", "the present"), or an empty string.`,
+    `Then the keys you keep in keep_memories, keep_life_events, keep_story_events, keep_relationships and keep_messages.`,
+  ].filter(Boolean).join('\n');
+
+  let plan = null;
+  try {
+    plan = await base44.integrations.Core.InvokeLLM({
+      model: 'gemini_3_8_flash',
+      prompt: planPrompt,
+      response_json_schema: PLAN_SCHEMA,
+    });
+  } catch {
+    plan = null;
+  }
+
+  const keep = (items, keys) => {
+    if (!plan || !Array.isArray(keys)) return null;
+    const wanted = new Set(keys.filter((key) => typeof key === 'string'));
+    return items.filter((item) => wanted.has(item.key)).map((item) => item.record);
+  };
+
+  const planned = plan ? {
+    memories: keep(memoryItems, plan.keep_memories),
+    lifeEvents: keep(lifeItems, plan.keep_life_events),
+    storyEvents: keep(eventItems, plan.keep_story_events),
+    relationships: keep(relationItems, plan.keep_relationships),
+    messages: keep(messageItems, plan.keep_messages),
+  } : null;
+
+  const candidateCount = memoryItems.length + lifeItems.length + relationItems.length + messageItems.length;
+  const plannedCount = planned
+    ? Object.values(planned).reduce((total, list) => total + (list ? list.length : 0), 0)
+    : 0;
+
+  // The plan is used when it produced a usable selection. When no plan could be
+  // made — or it selected nothing from a catalogue that clearly holds candidates —
+  // relevance is scored against the request's own words, so the chapter is still
+  // written from the material closest to what was asked for.
+  if (planned && (!candidateCount || plannedCount > 0)) {
+    return {
+      memories: planned.memories.slice(0, 20),
+      lifeEvents: planned.lifeEvents.slice(0, 20),
+      storyEvents: planned.storyEvents.slice(0, 8),
+      relationships: planned.relationships.slice(0, 12),
+      messages: planned.messages.slice(0, 12),
+      subject: clip(plan.subject, 240) || premise,
+      period: clip(plan.period, 120),
+      planned: true,
+    };
+  }
+
+  const tokens = tokensOf(asked);
+  if (EARLY_LIFE_PATTERN.test(asked)) EARLY_LIFE_WORDS.forEach((word) => tokens.add(word));
+  const ranked = (items, limit) => items
+    .map((item) => ({ item, score: scoreAgainst(tokens, item.text) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((entry) => entry.item.record);
+
+  return {
+    memories: ranked(memoryItems, 16),
+    lifeEvents: ranked(lifeItems, 16),
+    storyEvents: ranked(eventItems, 6),
+    relationships: relationItems.slice(0, 10).map((item) => item.record),
+    messages: ranked(messageItems, 10),
+    subject: premise,
+    period: EARLY_LIFE_PATTERN.test(asked) ? 'early life' : '',
+    planned: false,
+  };
 }
 
 Deno.serve(async (req) => {
@@ -164,7 +371,13 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json().catch(() => ({}));
-    const mode = body.mode === 'continue' ? 'continue' : (body.mode === 'redo' ? 'redo' : 'create');
+    // A chapter is written in two bounded requests: an opening here, then a finish
+    // in a second call. One longer request runs past the platform's request limit,
+    // and the timeout used to throw away everything that had been written.
+    const finishing = body.part === 'finish';
+    const mode = finishing
+      ? 'continue'
+      : (body.mode === 'continue' ? 'continue' : (body.mode === 'redo' ? 'redo' : 'create'));
 
     let novel = null;
     let central = null;
@@ -195,6 +408,24 @@ Deno.serve(async (req) => {
       if (!targetChapter || targetChapter.novel_id !== novel.id) {
         return Response.json({ error: 'That chapter is not part of this novel' }, { status: 404 });
       }
+    }
+
+    // Finishing continues the opening already saved for this chapter, from the
+    // material that opening was built from.
+    let resumeChapter = null;
+    let brief = null;
+    if (finishing) {
+      if (!body.chapter_id) return Response.json({ error: 'chapter_id is required' }, { status: 400 });
+      resumeChapter = await base44.entities.NovelChapter.get(body.chapter_id)
+        .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
+      if (!resumeChapter || resumeChapter.novel_id !== novel?.id) {
+        return Response.json({ error: 'That chapter is not part of this novel' }, { status: 404 });
+      }
+      // Already finished: report it as it stands rather than writing it twice.
+      if (resumeChapter.writing_state !== 'writing') {
+        return Response.json({ novel, chapter: resumeChapter, notices: [], illustration_pending: false });
+      }
+      brief = resumeChapter.writing_brief || null;
     }
 
     const centralId = central?.id || novel.character_id;
@@ -266,8 +497,8 @@ Deno.serve(async (req) => {
         .catch(() => { sourceIssues.push('story events'); return []; }),
     ]);
 
-    const lifeEvents = asArray(lifeEventsRaw);
-    const storyEvents = asArray(storyEventsRaw);
+    let lifeEvents = asArray(lifeEventsRaw);
+    let storyEvents = asArray(storyEventsRaw);
 
     // ── HOUSEHOLD (existing residency, unit-aware, read-only) ────────────────
     const homeLocationIds = [...new Set([central?.current_home_location_id, central?.temporary_housing_location_id].filter(Boolean))];
@@ -291,8 +522,8 @@ Deno.serve(async (req) => {
       ])];
     };
     const householdIds = new Set(homeLocations.flatMap((home) => householdIdsOf(home)).filter((id) => id && id !== centralId));
-    const memories = asArray(memoriesRaw);
-    const relationships = asArray(relationshipsRaw);
+    let memories = asArray(memoriesRaw);
+    let relationships = asArray(relationshipsRaw);
     const conversations = asArray(conversationsRaw);
     const conversationIds = conversations.map((c) => c.id).filter(Boolean).slice(0, 14);
 
@@ -309,7 +540,7 @@ Deno.serve(async (req) => {
 
     const byId = new Map();
     messagePages.forEach((page) => asArray(page).forEach((m) => { if (m && m.id && !byId.has(m.id)) byId.set(m.id, m); }));
-    const messages = [...byId.values()]
+    let messages = [...byId.values()]
       .filter((m) => m.content || m.image_description)
       .filter((m) => !isExcludedName(m.character_name))
       .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
@@ -489,6 +720,19 @@ Deno.serve(async (req) => {
     }
     const lastChapter = previousChapters[previousChapters.length - 1];
 
+    // ── PREMISE-DRIVEN SOURCE SELECTION ──────────────────────────────────────
+    // The same character can be written about a hundred ways, and one chapter is
+    // about one subject. Only the material belonging to that subject goes into the
+    // request; the rest stays on the record, untouched and undiminished.
+    const selection = await selectPremiseSource({
+      base44, premise, focus, direction, central, memories, lifeEvents, relationships, storyEvents, messages, nameById,
+    });
+    memories = selection.memories;
+    lifeEvents = selection.lifeEvents;
+    relationships = selection.relationships;
+    storyEvents = selection.storyEvents;
+    messages = selection.messages;
+
     // ── PROMPT ───────────────────────────────────────────────────────────────
     const source = [];
 
@@ -658,6 +902,11 @@ Deno.serve(async (req) => {
     const instruction = [
       `You are a serious literary novelist writing one chapter of a novel about ${centralName}, built strictly from the established life recorded below.`,
       ``,
+      `## WHAT THIS CHAPTER IS ABOUT`,
+      `Requested subject: ${selection.subject || premise}`,
+      selection.period ? `Life period the request points to: ${selection.period}` : '',
+      `The material below was selected for that subject. Anything recorded elsewhere in ${centralName}'s life was deliberately left out of this attempt: do not reach for it, do not summarise the rest of their life, and never treat its absence as proof that it did not happen.`,
+      ``,
       `## THE ONE ABSOLUTE LAW — THE SOURCE IS THE ONLY AUTHORITY`,
       `Everything on the page must be consistent with the SOURCE MATERIAL and the established characters. Never invent a major event, betrayal, confession, promise, illness, death, pregnancy, crime, or new relationship that the source does not support. Never contradict chronology.`,
       ``,
@@ -693,9 +942,9 @@ Deno.serve(async (req) => {
         : '',
       ``,
       `## SELECTION — THE PREMISE DECIDES WHAT HAPPENS`,
-      `Everything in the source below is available to you; none of it is compulsory. The premise, the focus and the direction decide what this chapter is about and what it needs.`,
+      `Everything in the source below belongs to the requested subject; none of it is compulsory. The premise, the focus and the direction decide what this chapter is about and what it needs.`,
       `- Build the chapter from the memories, conversations, events and relationships that serve the requested subject. When the reader asks for a particular relationship, period or experience, that is what the chapter is made of.`,
-      `- Everything else is background: use it to understand who these people are — how they speak, what they carry, how they treat one another — without staging it as a scene. A chapter must never become a tour of unrelated records simply because they exist.`,
+      `- Everything else is background: use it to understand who these people are — how they speak, what they carry, how they treat one another — without staging it as a scene. A chapter must never become a tour of records simply because they exist.`,
       `- Do not invent a place in the chapter for someone who has nothing to do with the requested subject, and do not leave out material the premise actually requires.`,
       `- This is selection inside the telling, never a claim that anything else did not happen. Never contradict or deny what the source records.`,
       ``,
@@ -814,11 +1063,12 @@ Deno.serve(async (req) => {
           canAdjust: true,
           technical: '',
           message: restricted
-            ? 'The writing service would not write this chapter as requested. Your novel has not been changed. You can try again, or adjust the focus and leave out any material you would rather not see in this chapter.'
+            ? 'The writing service would not write this chapter as requested. Your novel has not been changed. You can try again, or adjust the focus and try again.'
             : 'The writing service returned no chapter text. Your novel has not been changed. You can try again, or adjust the focus and try again.',
         });
       }
-      return failureResponse(503, serviceFailure(writeError));
+      const classified = classifyFailure(writeError, 'writing');
+      return failureResponse(classified.cause === 'busy' ? 429 : 502, classified);
     }
 
     const content = String(generated?.content || '')
@@ -858,12 +1108,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── ILLUSTRATIONS (max 3, existing reference systems only) ──────────────
-    const userRefs = [
-      ...names(user.reference_image_urls),
-      ...names(user.generated_avatar_urls),
-    ].slice(0, 2);
-
+    // ── ILLUSTRATION NOTES (drawn by generateNovelIllustrations) ────────────
+    // Each plate's people and place are resolved to records here, while the people
+    // directory is already in hand, and stored on the chapter. Drawing happens in
+    // its own request so a finished chapter is never lost to a request timeout.
     const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const findPlace = (name) => {
       const target = normalize(name);
@@ -886,14 +1134,10 @@ Deno.serve(async (req) => {
         })
         || null;
     };
-
-    // Established people an illustration may contain: everyone already in this novel,
-    // plus their recorded family members. A name is matched to a real record here, so
-    // an established person is never drawn as a generic stranger, whatever their
-    // character type or account — and anyone without a record stays narrative-only.
-    const directoryById = new Map(peopleById);
-    familyDirectory.forEach(({ person }) => { if (!directoryById.has(person.id)) directoryById.set(person.id, person); });
-    const directory = [...directoryById.values()].filter((p) => p && p.name);
+    const directory = [...new Map([
+      ...peopleById.values(),
+      ...familyDirectory.map((entry) => entry.person),
+    ].filter((p) => p && p.name).map((p) => [p.id, p])).values()];
     const matchPerson = (name) => {
       const target = normalize(name);
       if (!target) return null;
@@ -904,133 +1148,56 @@ Deno.serve(async (req) => {
         })
         || null;
     };
-    const stageOf = (age) => {
-      const a = Number(age);
-      if (!Number.isFinite(a)) return '';
-      if (a < 1) return 'a newborn baby, held or lying down, unable to sit up, walk or speak';
-      if (a < 2) return 'a one-year-old toddler, only just beginning to walk';
-      if (a < 4) return 'a toddler';
-      if (a < 6) return 'a small child';
-      if (a < 10) return 'a young child';
-      if (a < 13) return 'an older child';
-      if (a < 18) return 'a teenager';
-      if (a < 60) return 'an adult';
-      return 'an elderly person';
-    };
 
-    stage = 'illustrations';
     const specs = (Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
-    const imageResults = await Promise.allSettled(specs.map(async (spec) => {
+    const illustrationSpecs = specs.map((spec) => {
       const depictedNames = names(spec.characters).map((n) => String(n || '').trim()).filter(Boolean);
-      const depicted = [];
-      const narrativePeople = [];
+      const personIds = [];
+      const narrativeNames = [];
       depictedNames.forEach((name) => {
         const person = matchPerson(name);
         if (person) {
-          if (!depicted.some((p) => p.id === person.id)) depicted.push(person);
-        } else if (!narrativePeople.includes(name)) {
-          narrativePeople.push(name);
+          if (!personIds.includes(person.id)) personIds.push(person.id);
+        } else if (!narrativeNames.includes(name)) {
+          narrativeNames.push(name);
         }
       });
-      const showsUser = includeUser && normalize(worldName)
-        && depictedNames.some((n) => normalize(n).includes(normalize(worldName)));
-
-      // Established place and zone: the location's own reference photographs drive
-      // the illustration, so each property keeps its recognizable appearance.
       const place = findPlace(spec.location);
       const zone = findZone(place, spec.location_zone);
+      return {
+        after_paragraph: Math.max(1, Math.round(Number(spec.after_paragraph) || 1)),
+        caption: clip(spec.caption, 240),
+        scene: clip(spec.scene, 900),
+        person_ids: personIds.slice(0, 5),
+        narrative_names: narrativeNames.slice(0, 5),
+        shows_user: includeUser && normalize(worldName)
+          && depictedNames.some((n) => normalize(n).includes(normalize(worldName))),
+        depicted_ages: (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : [])
+          .filter((entry) => entry && entry.name && Number.isFinite(Number(entry.age)))
+          .map((entry) => ({ name: String(entry.name), age: Math.round(Number(entry.age)) }))
+          .slice(0, 5),
+        location_id: place?.id || '',
+        location_label: clip(spec.location, 120),
+        zone_name: zone?.zone_name || '',
+      };
+    });
 
-      // Each established person's own photograph comes first, so a crowd or a
-      // location can never push their identity out of the reference set.
-      const refs = [];
-      depicted.forEach((p) => {
-        const primary = p.avatar_url || p.image_avatar_url;
-        if (primary) refs.push(primary);
-      });
-      if (showsUser) refs.push(...userRefs);
-      depicted.forEach((p) => names(p.reference_image_urls).slice(0, 1).forEach((r) => refs.push(r)));
-      const placeRefs = (zone ? names(zone.image_urls) : []).slice(0, 2);
-      if (!placeRefs.length && place) placeRefs.push(...names(place.image_urls).slice(0, 2));
-      refs.push(...placeRefs);
-
-      const identity = depicted.map((p) => `${p.name}${p.ethnicities && p.ethnicities.length ? ` (${p.ethnicities.join('/')})` : ''}: ${clip(p.appearance_notes || p.profile_summary, 220)}`).join(' | ');
-
-      // Ages come from the records. A younger appearance belongs to this illustration
-      // only — it never alters the character's established age.
-      const historicalAges = new Map();
-      (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : []).forEach((entry) => {
-        const person = matchPerson(entry?.name);
-        const youngAge = Number(entry?.age);
-        if (!person || !Number.isFinite(youngAge) || youngAge < 0) return;
-        const presentAge = currentAgeOf(person);
-        if (presentAge != null && Math.round(youngAge) >= presentAge) return;
-        historicalAges.set(person.id, Math.round(youngAge));
-      });
-
-      const ageNotes = depicted.map((p) => {
-        const historical = historicalAges.has(p.id) ? historicalAges.get(p.id) : null;
-        const age = historical != null ? historical : currentAgeOf(p);
-        if (age == null) return `${p.name}'s age is not recorded — keep their established appearance and do not invent an age or an extra person.`;
-        const ageStage = stageOf(age);
-        return historical != null
-          ? `${p.name} appears about ${age} years old here — the same person at a younger age, the same recognisable face and features${ageStage ? `, reading clearly as ${ageStage}` : ''}.`
-          : `${p.name} is ${age} years old${ageStage ? ` — ${ageStage}` : ''}. Depict exactly that age and stage: never older, never younger, never swapped with another child.`;
-      }).join(' ');
-
-      const placeDescription = readableText(zone?.zone_description, 420) || readableText(place?.description, 420);
-
-      const prompt = [
-        `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
-        spec.scene,
-        depicted.length ? `Established people present: ${depicted.map((p) => p.name).join(', ')}. Each keeps their own identity — face, hair, build and features matching the attached reference photographs exactly: the same person, never a generic lookalike and never a blend of two people.` : '',
-        narrativePeople.length ? `Narrative-only people with no character record, drawn generically: ${narrativePeople.join(', ')}. Believable, ordinary faces consistent with the description and with the ages stated above; they must never take on the identity of an established person.` : '',
-        (depicted.length && narrativePeople.length) ? `Established characters and these background people share the scene naturally — fill out the gathering if the moment needs it, but every established person above stays clearly present and recognisable.` : '',
-        showsUser ? `${worldName} must match their attached reference photographs exactly.` : '',
-        place
-          ? `Setting: ${place.name}${zone ? ` — ${zone.zone_name}` : ''}.${placeDescription ? ` ${placeDescription}` : ''} The architecture, furnishings, materials and atmosphere must match the attached reference photograph of this exact place — do not substitute another property or a generic interior.`
-          : (spec.location ? `Setting: ${spec.location}.` : ''),
-        identity ? `Identity notes: ${identity}` : '',
-        ageNotes,
-        `No text, no captions, no lettering, no borders, no collage. A single coherent moment, like a plate in an illustrated novel.`,
-      ].filter(Boolean).join('\n');
-
-      const result = await base44.integrations.Core.GenerateImage({
-        prompt,
-        existing_image_urls: [...new Set(refs)].slice(0, 8),
-      });
-      return { url: result?.url, spec };
-    }));
-
-    const illustrations = imageResults
-      .filter((r) => r.status === 'fulfilled' && r.value?.url)
-      .map((r) => ({
-        url: r.value.url,
-        caption: clip(r.value.spec.caption, 240),
-        after_paragraph: Math.max(1, Math.round(Number(r.value.spec.after_paragraph) || 1)),
-      }))
-      .sort((a, b) => a.after_paragraph - b.after_paragraph);
-
-    // An illustration that fails is reported, never fatal: the finished prose is
-    // kept exactly as written and the chapter is saved without that plate.
     const notices = [];
-    const missingPlates = specs.length - illustrations.length;
-    if (missingPlates > 0) {
-      notices.push(missingPlates === specs.length
-        ? 'The chapter was written but its illustrations could not be created this time. The prose is complete and saved.'
-        : `The chapter was written, but ${missingPlates === 1 ? 'one illustration' : `${missingPlates} illustrations`} could not be created this time.`);
-    }
     if (sourceIssues.length) {
       notices.push(`Some recorded background could not be retrieved for this chapter (${[...new Set(sourceIssues)].join(', ')}). Everything that was retrieved was used, and your records are unchanged.`);
     }
 
     // ── PERSIST THE CHAPTER (novel-owned records only) ───────────────────────
+    // The prose is saved before any image is drawn: a chapter that exists is worth
+    // more than a request that might not finish.
     const chapterFields = {
       title: chapterTitle,
       content,
       summary: clip(generated?.chapter_summary, 1200),
       direction,
       word_count: content.split(/\s+/).filter(Boolean).length,
-      illustrations,
+      illustrations: [],
+      illustration_specs: illustrationSpecs,
     };
 
     stage = 'saving';
@@ -1061,25 +1228,20 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Counters and cover are bookkeeping: a failure there must never discard a
-    // chapter that is already saved.
+    // Counters are bookkeeping: a failure there must never discard a chapter that
+    // is already saved.
     const updatedNovel = await base44.entities.Novel.update(novel.id, mode === 'redo'
-      ? { last_chapter_at: new Date().toISOString(), cover_image_url: novel.cover_image_url || illustrations[0]?.url || '' }
-      : {
-        chapter_count: chapterNumber,
-        last_chapter_at: new Date().toISOString(),
-        cover_image_url: novel.cover_image_url || illustrations[0]?.url || '',
-      }).catch(() => novel);
+      ? { last_chapter_at: new Date().toISOString() }
+      : { chapter_count: chapterNumber, last_chapter_at: new Date().toISOString() }).catch(() => novel);
 
-    return Response.json({ novel: updatedNovel, chapter, notices });
-  } catch (error) {
-    return failureResponse(500, {
-      stage,
-      cause: 'unexpected',
-      retryable: true,
-      canAdjust: false,
-      technical: statusOf(error) ? `HTTP ${statusOf(error)} — ${String(error?.message || '')}` : String(error?.message || ''),
-      message: 'Something went wrong while this chapter was being prepared. Your novel has not been changed. You can try again.',
+    return Response.json({
+      novel: updatedNovel,
+      chapter,
+      notices,
+      illustration_pending: illustrationSpecs.length > 0,
     });
+  } catch (error) {
+    const classified = classifyFailure(error, stage);
+    return failureResponse(classified.cause === 'timed_out' ? 504 : 500, classified);
   }
 });

@@ -21,6 +21,9 @@ export default function NovelGenerationFailure({
   if (!failure) return null;
 
   const stageText = novelStageLabel(failure.stage);
+  // "Leave something out" is only offered once something has actually been
+  // identified as the problem — otherwise it asks the reader to guess.
+  const offerExclusions = !!onExclude && !!failure.canAdjust;
 
   const add = () => {
     const value = draft.trim();
@@ -64,9 +67,9 @@ export default function NovelGenerationFailure({
         )}
       </div>
 
-      {onExclude && (
+      {offerExclusions && (
         <div className="mt-3 pt-3 border-t border-destructive/20">
-          <p className="text-[11px] font-medium text-foreground">Leave something out of the next attempt</p>
+          <p className="text-[11px] font-medium text-foreground">Leave something out of the next attempt (optional)</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">
             A person, an event or a subject. This applies to this attempt only — no character or record is changed.
           </p>

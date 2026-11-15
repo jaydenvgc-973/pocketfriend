@@ -88,6 +88,63 @@
         }
       },
       "default": []
+    },
+    "illustration_specs": {
+      "type": "array",
+      "description": "Plates chosen by the writer, with their people and place already resolved to record IDs. Drawn by generateNovelIllustrations in a separate request, then cleared.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "after_paragraph": {
+            "type": "number"
+          },
+          "caption": {
+            "type": "string"
+          },
+          "scene": {
+            "type": "string"
+          },
+          "person_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "narrative_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "shows_user": {
+            "type": "boolean"
+          },
+          "depicted_ages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "location_id": {
+            "type": "string"
+          },
+          "location_label": {
+            "type": "string"
+          },
+          "zone_name": {
+            "type": "string"
+          }
+        }
+      },
+      "default": []
     }
   },
   "required": [
