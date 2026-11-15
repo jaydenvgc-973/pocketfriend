@@ -8,6 +8,8 @@ import NovelTableOfContents from "@/components/novels/NovelTableOfContents";
 import ContinueNovelPanel from "@/components/novels/ContinueNovelPanel";
 import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
 import NovelChapterActions from "@/components/novels/NovelChapterActions";
+import ChapterCopyDialog from "@/components/novels/ChapterCopyDialog";
+import useLongPress from "@/hooks/useLongPress";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import NovelGenerationFailure from "@/components/novels/NovelGenerationFailure";
 import { normalizeNovelError } from "@/lib/novelGenerationError";
@@ -28,6 +30,10 @@ export default function NovelReader() {
   const queryClient = useQueryClient();
   const [activeNumber, setActiveNumber] = useState(null);
   const [showToc, setShowToc] = useState(false);
+  // The chapter title's press-and-hold is deliberately undisclosed: no control, label or
+  // hint anywhere in the reader. Holding it asks whether to copy the chapter's prose.
+  const [copyOpen, setCopyOpen] = useState(false);
+  const titlePress = useLongPress(() => setCopyOpen(true));
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
   const [failure, setFailure] = useState(null);
@@ -389,7 +395,15 @@ export default function NovelReader() {
               <p className="text-[10px] uppercase tracking-[0.22em] text-primary/80">
                 Chapter {current.chapter_number}
               </p>
-              <h2 className="mt-1.5 text-lg font-semibold text-foreground font-serif">{current.title}</h2>
+              {/* Unchanged visually. Holding the title (touch or pointer) is the only way
+                  in; a plain tap, scroll or text selection never opens it. */}
+              <h2
+                {...titlePress}
+                style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
+                className="mt-1.5 text-lg font-semibold text-foreground font-serif"
+              >
+                {current.title}
+              </h2>
             </div>
 
             {incomplete && (
@@ -485,6 +499,12 @@ export default function NovelReader() {
       </article>
 
       <NovelGeneratingOverlay open={busy} label={busyLabel || `Writing chapter ${nextChapterNumber}`} />
+
+      <ChapterCopyDialog
+        chapter={current}
+        open={copyOpen && !!current}
+        onClose={() => setCopyOpen(false)}
+      />
 
       <RegenerateImageModal
         isOpen={regenIndex != null}
