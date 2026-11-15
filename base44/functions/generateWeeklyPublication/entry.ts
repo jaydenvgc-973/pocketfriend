@@ -49,29 +49,29 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
-// Resolve character reference images using the SAME authority as generateImageAsync:
-//   1. reference_image_urls (user-uploaded photos) — filtered, no generated_image
-//   2. avatar_url fallback — CDN-hosted generated avatars allowed
-function resolveCharRefUrls(charRecord) {
-  const allRefs = cdnFilter(charRecord.reference_image_urls || []);
-  const refUrls = allRefs.filter(url => !url.includes('generated_image'));
-  if (refUrls.length > 0) return refUrls.slice(0, 4);
-  // Avatar fallback — allow CDN-hosted avatars even if generated_image in URL
-  if (charRecord.avatar_url) {
-    const avatarPublic = toPublicCDN(charRecord.avatar_url);
-    const isCDN = avatarPublic.startsWith('https://media.base44.com/');
-    if (isAccessible(avatarPublic) && (isCDN || !avatarPublic.includes('generated_image'))) {
-      return [avatarPublic];
-    }
+// Resolve a character's authoritative reference images with the SAME pathway the
+// app's Story Event images already use: the AVATAR is the character's canonical
+// face and is always included first, reference photographs follow. Previously the
+// avatar was dropped as soon as any loose reference photo existed, and a character
+// whose only imagery lived behind a private URL resolved to nothing at all — the
+// article photograph then fell back to a generic person.
+function resolveCharacterRefImages(charRecord) {
+  if (!charRecord) return [];
+  const out = [];
+  const pushUrl = (url) => {
+    const pub = toPublicCDN(url);
+    if (!pub || !isAccessible(pub) || out.includes(pub)) return;
+    out.push(pub);
+  };
+  pushUrl(charRecord.avatar_url);
+  pushUrl(charRecord.image_avatar_url);
+  for (const url of cdnFilter(charRecord.reference_image_urls || [])) {
+    if (out.length >= 4) break;
+    // Keep earlier scene renders out of identity anchoring once a face exists.
+    if (url.includes('generated_image') && out.length > 0) continue;
+    pushUrl(url);
   }
-  if (charRecord.image_avatar_url) {
-    const imgAvatarPublic = toPublicCDN(charRecord.image_avatar_url);
-    const isCDN = imgAvatarPublic.startsWith('https://media.base44.com/');
-    if (isAccessible(imgAvatarPublic) && (isCDN || !imgAvatarPublic.includes('generated_image'))) {
-      return [imgAvatarPublic];
-    }
-  }
-  return [];
+  return out.slice(0, 4);
 }
 
 // Build appearance lock text from character record — aligned with the proven
@@ -388,7 +388,10 @@ EDITORIAL RULES — VIOLATING THESE IS A SYSTEM FAILURE:
    DECISION 2 — If an image is present, does it depict an established character?
      - Set "image_depicts_characters" to true if the photograph is intended to visibly depict one or more established characters named in the article (e.g. a portrait, a photo of the character at an event, a character on a campaign shoot).
      - Set it to false if the image is a general environmental/crowd photograph where no particular established character is intended to be identifiable (e.g. a wide shot of a festival, a building exterior, a crowd scene).
+     - An article about one or more specific established characters depicts them: set it to true. It is false only for a genuinely general environmental or crowd photograph of no particular person.
    When image_depicts_characters is true:
+   - The image_prompt MUST name each established character who appears in the photograph, using the exact name used in the article (one to three people). The name identifies WHO is in the frame; their face, hair, skin tone and build still come only from their attached reference imagery.
+   - The image_prompt MUST describe the event or moment the article reports, so the photograph and the article show the same thing.
    - The image_prompt MUST describe the scene, activity, environment, location, pose, and editorial composition — WHAT is happening and WHERE.
    - The image_prompt MUST NOT describe the character's physical appearance (face, hair, build, race, age, etc.). Character visual identity is supplied separately from authoritative reference imagery. Describing physical appearance causes the image generator to invent a generic person.
    - The image_prompt MAY describe clothing when the article/event specifically establishes what the character is wearing (e.g. a campaign outfit, a performance costume). Otherwise leave clothing to the character's established appearance.
@@ -508,121 +511,197 @@ If no story is strong enough to be a headliner, set headliner to null.`;
 
     const editionData = llmResult;
 
-    // ── RESOLVE CHARACTER VISUAL IDENTITIES FOR IMAGE GENERATION ─────────
-    // Uses the SAME proven pathway as generateImageAsync: CDN-filtered
-    // reference_image_urls first, avatar_url fallback. Raw URLs that are
-    // private/signed/internal are rejected — the image generator cannot
-    // fetch them, so they silently fail to influence identity.
-    const charsNeedingRef = new Set();
-    if (editionData.headliner?.image_prompt && editionData.headliner.image_depicts_characters) {
-      for (const id of editionData.headliner.character_ids || []) charsNeedingRef.add(id);
-    }
-    for (const s of editionData.sections || []) {
-      if (s.image_prompt && s.image_depicts_characters) {
-        for (const id of s.character_ids || []) charsNeedingRef.add(id);
-      }
-    }
-
-    // Build a name→id map from source material (deterministic source relationships)
-    const nameToIdMap = {};
+    // ── AUTHORITATIVE PARTICIPANTS, FROM THE SOURCE RECORDS ──────────────
+    // The Weekly already knows which established characters each story involved:
+    // the StoryEvent's participant/focus character IDs, and the character ID carried
+    // by a participation or public-record entry. That association — not a name in the
+    // finished prose, and not a flag the editor model happened to set — decides who
+    // appears in an article's photograph. The IDs are preserved from the source; the
+    // editor's own character_ids are accepted only when they validate against a real
+    // record (a bare name is never treated as an identity).
+    const participantsBySourceId = new Map(); // source record id → [{ id, name }]
+    const knownPeople = new Map();            // character id → name from the source
+    const rememberPerson = (id, name) => {
+      if (!id || typeof id !== 'string') return;
+      if (!knownPeople.has(id) || (!knownPeople.get(id) && name)) knownPeople.set(id, name || '');
+    };
     for (const m of allMaterial) {
       if (m.type === 'story_event') {
-        for (const p of m.participants || []) { if (p.id && p.name) nameToIdMap[p.name] = p.id; }
-        for (const f of m.focus_characters || []) { if (f.id && f.name) nameToIdMap[f.name] = f.id; }
-      } else if (m.character_id && m.character_name) {
-        nameToIdMap[m.character_name] = m.character_id;
+        const people = [...(m.participants || []), ...(m.focus_characters || [])].filter((p) => p && p.id);
+        participantsBySourceId.set(m.id, people);
+        people.forEach((p) => rememberPerson(p.id, p.name));
+      } else if (m.character_id) {
+        participantsBySourceId.set(m.id, [{ id: m.character_id, name: m.character_name || '' }]);
+        rememberPerson(m.character_id, m.character_name);
       }
     }
 
-    // charKey -> { record, refUrls, appearanceLockText }
-    const charRefMap = {};
-    for (const charKey of charsNeedingRef) {
-      try {
-        let resolvedId = charKey;
-        // If charKey is a name in the map, use the mapped ID
-        if (nameToIdMap[charKey]) resolvedId = nameToIdMap[charKey];
+    // Deterministic name→id map built from those source associations.
+    const nameToIdMap = {};
+    for (const [id, name] of knownPeople) { if (name) nameToIdMap[name] = id; }
 
-        let char = null;
-        // Primary: look up by ID using get() — filter({ id }) does not work for
-        // the built-in id field, which caused charRefMap to never populate and
-        // every image to fall back to the generic (no-reference) path.
-        try {
-          char = await base44.asServiceRole.entities.Character.get(resolvedId);
-        } catch (_) { /* get() throws if not found */ }
-        // Fallback: try by name using the ORIGINAL charKey (which may be a name),
-        // not resolvedId (which is an ID at this point).
-        if (!char) {
-          const chars = await base44.asServiceRole.entities.Character.filter({ name: charKey }, null, 1);
-          char = chars?.[0];
-        }
-        if (char) {
-          const refUrls = resolveCharRefUrls(char);
-          const appearanceLockText = buildAppearanceLockText(char);
-          if (refUrls.length > 0 || appearanceLockText) {
-            charRefMap[charKey] = { record: char, refUrls, appearanceLockText };
+    const LOOKS_LIKE_ID = /^[0-9a-f]{20,}$/i;
+    const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const nameMentioned = (text, name) => {
+      const body = normalize(text);
+      const wanted = normalize(name);
+      if (!body || !wanted) return false;
+      if (body.includes(wanted)) return true;
+      const words = wanted.split(' ').filter((w) => w.length > 2);
+      const last = words[words.length - 1];
+      return !!last && new RegExp(`(^| )${last}( |$)`).test(body);
+    };
+
+    // Every established character an article is about, by authoritative ID.
+    const articleParticipantIds = (article) => {
+      const ids = new Set();
+      const linkedSources = (article?.story_event_ids || []).filter((sid) => participantsBySourceId.has(sid));
+      for (const sourceId of linkedSources) {
+        for (const person of participantsBySourceId.get(sourceId) || []) ids.add(person.id);
+      }
+      for (const token of article?.character_ids || []) {
+        const value = typeof token === 'string' ? token.trim() : '';
+        if (!value) continue;
+        if (nameToIdMap[value]) { ids.add(nameToIdMap[value]); continue; }
+        if (knownPeople.has(value)) { ids.add(value); continue; }
+        if (LOOKS_LIKE_ID.test(value)) ids.add(value);
+      }
+      // No authoritative story link survived onto the article: identify its people by
+      // the exact names the source records already carry. Still resolved to real
+      // records — never to a name the image generator has to guess at.
+      if (linkedSources.length === 0 && ids.size === 0) {
+        const prose = normalize([article?.title, article?.subtitle, article?.body].filter(Boolean).join(' '));
+        if (prose) {
+          for (const [id, name] of knownPeople) {
+            const wanted = normalize(name);
+            if (wanted && prose.includes(wanted)) ids.add(id);
           }
         }
+      }
+      return [...ids];
+    };
+
+    // Who is in this photograph. A participant the scene description actually names
+    // is depicted, whatever the editorial flag says — the scene prompt is the closest
+    // statement of what the image shows. Otherwise the flag decides, and an article
+    // with no identified person stays a general event photograph. Everyone mentioned
+    // in the prose is not dragged into the frame.
+    const articleDepictedIds = (article) => {
+      if (!article?.image_prompt) return [];
+      const ids = articleParticipantIds(article);
+      const named = ids.filter((id) => nameMentioned(article.image_prompt, knownPeople.get(id) || ''));
+      if (named.length) return named.slice(0, 4);
+      if (article.image_depicts_characters === false) return [];
+      return ids.slice(0, 4);
+    };
+
+    // characterId → { id, record, name, refUrls, appearanceLockText }
+    // Resolved with the service role — the existing authorized cross-account pathway
+    // this newsletter already uses for its source records. A character belonging to
+    // another Pocketfriend account resolves and supplies references exactly like one
+    // of the reader's own, and is never swapped for a generic person.
+    const charRefMap = new Map();
+    const resolveCharacterEntry = async (characterId) => {
+      if (charRefMap.has(characterId)) return charRefMap.get(characterId);
+      let entry = null;
+      try {
+        let char = null;
+        try { char = await base44.asServiceRole.entities.Character.get(characterId); } catch (_) { /* not found */ }
+        if (!char) {
+          const byName = knownPeople.get(characterId);
+          if (byName) {
+            const found = await base44.asServiceRole.entities.Character.filter({ name: byName }, null, 1);
+            char = found?.[0] || null;
+          }
+        }
+        if (char) {
+          entry = {
+            id: char.id,
+            record: char,
+            name: char.name || char.display_name || '',
+            refUrls: resolveCharacterRefImages(char),
+            appearanceLockText: buildAppearanceLockText(char),
+          };
+        }
       } catch (_) { /* non-fatal */ }
-    }
+      charRefMap.set(characterId, entry);
+      return entry;
+    };
 
     // ── GENERATE ARTICLE IMAGES ────────────────────────────────────────
     // Image generation decision and identity-reference decision are SEPARATE:
     //   - Should this article have an image? → only when image_prompt is non-null
-    //   - If image_depicts_characters, supply character refs + identity-lock prompt
+    //   - Who is in it? → the article's authoritative participants (articleDepictedIds),
+    //     resolved to live character records with their avatars and reference photos
     // The headliner always has an image. Sections only when image_prompt is non-null.
+    // Each character record is fetched once per edition and reused across articles.
     async function generateArticleImage(article) {
       if (!article?.image_prompt) return;
 
       const sceneDesc = article.image_prompt;
-      const depictsChars = article.image_depicts_characters === true;
+      // The depicted people are the article's authoritative participants — resolved
+      // by ID from the source records, including characters owned by other accounts.
+      const depictedIds = articleDepictedIds(article);
       const charEntries = [];
-      if (depictsChars) {
-        for (const id of article.character_ids || []) {
-          if (charRefMap[id]) charEntries.push(charRefMap[id]);
-        }
+      for (const id of depictedIds) {
+        const entry = await resolveCharacterEntry(id);
+        if (entry) charEntries.push(entry);
       }
-      const hasCharRefs = charEntries.length > 0 && charEntries.some(e => e.refUrls.length > 0);
 
-      console.log(`[WeeklyImageGen] article="${article.title?.substring(0, 50)}" depicts_chars=${depictsChars} char_entries=${charEntries.length} has_char_refs=${hasCharRefs}`);
-      if (depictsChars && charEntries.length > 0) {
-        for (const e of charEntries) {
-          console.log(`[WeeklyImageGen]   char="${e.record.name}" ref_urls=${e.refUrls.length} has_lock=${!!e.appearanceLockText}`);
-          e.refUrls.forEach((u, i) => console.log(`[WeeklyImageGen]     ref[${i}]: ${u}`));
-        }
+      console.log(`[WeeklyImageGen] article="${article.title?.substring(0, 50)}" depicted_ids=${depictedIds.length} resolved=${charEntries.length}`);
+      for (const e of charEntries) {
+        console.log(`[WeeklyImageGen]   char="${e.name}" id=${e.id} ref_urls=${e.refUrls.length} has_lock=${!!e.appearanceLockText}`);
+        e.refUrls.forEach((u, i) => console.log(`[WeeklyImageGen]     ref[${i}]: ${u}`));
+      }
+      if (depictedIds.length > 0 && charEntries.length === 0) {
+        console.warn(`[WeeklyImageGen]   ${depictedIds.length} identified participant(s) could not be resolved to character records: ${depictedIds.join(', ')}`);
       }
 
       let prompt;
       let existingImageUrls;
 
-      if (depictsChars && hasCharRefs) {
+      if (charEntries.length > 0) {
         // ── IDENTITY-AWARE PATH: build a prompt that instructs the model ──
         // to use the reference images as face identity photos, exactly like
         // generateImageAsync does. The model must know WHICH images are WHO.
         const allRefUrls = [];
         const subjectBlocks = [];
+        // Reference images are budgeted so their numbering stays true: every
+        // subject's images are attached, and the indexes in the prompt match them.
+        const perSubjectRefAllowance = Math.min(3, Math.max(1, Math.floor(6 / charEntries.length)));
         let imgIdx = 1;
         for (const entry of charEntries) {
-          const charName = entry.record.name || entry.record.display_name || 'the character';
-          const refs = entry.refUrls.slice(0, 3);
-          if (refs.length === 0) continue;
+          const charName = entry.name || 'the character';
+          const refs = entry.refUrls.slice(0, perSubjectRefAllowance);
           const start = imgIdx;
           const end = imgIdx + refs.length - 1;
-          const refRange = refs.length === 1 ? `Image ${start}` : `Images ${start}–${end}`;
-          allRefUrls.push(...refs);
+          const refRange = refs.length === 0 ? null : (refs.length === 1 ? `Image ${start}` : `Images ${start}–${end}`);
+          if (refs.length > 0) {
+            allRefUrls.push(...refs);
+            imgIdx = end + 1;
+          }
           const lines = [];
           lines.push(`SUBJECT: "${charName}"`);
-          lines.push(`${refRange} are FACE/IDENTITY reference photographs for "${charName}".`);
-          lines.push('Extract ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, facial hair, body type.');
-          lines.push('⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.');
-          lines.push('⛔ FACE RESEMBLANCE IS MANDATORY: the person in this image MUST be recognizably the same person as shown in the reference photos.');
-          lines.push('⛔ DO NOT generate a "similar" person, lookalike, or generic substitute.');
+          if (refRange) {
+            lines.push(`${refRange} are FACE/IDENTITY reference photographs for "${charName}".`);
+            lines.push('Extract ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, facial hair, body type.');
+            lines.push('⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.');
+            lines.push('⛔ FACE RESEMBLANCE IS MANDATORY: the person in this image MUST be recognizably the same person as shown in the reference photos.');
+            lines.push('⛔ DO NOT generate a "similar" person, lookalike, or generic substitute.');
+          } else {
+            lines.push('No reference photograph could be attached for this subject. Render them from the appearance record below and nothing else — ⛔ never a generic, default-looking, or stand-in person.');
+          }
           if (entry.appearanceLockText) {
             lines.push(`APPEARANCE LOCK (ABSOLUTE): ${entry.appearanceLockText}`);
             lines.push('⛔ DO NOT default to Caucasian/white/European. Render EXACTLY the ethnicity and features specified.');
           }
           subjectBlocks.push(lines.join('\n'));
-          imgIdx = end + 1;
         }
+
+        const depictedNames = charEntries.map((e) => e.name).filter(Boolean);
+        const depictedLine = depictedNames.length
+          ? `\nThe people in this photograph are ${depictedNames.join(' and ')} — the attached reference subjects. They are the subject of the photograph, not bystanders: ⛔ do not replace, foreground, or model any of them with an unnamed or generic person. Anyone else visible in the frame is unnamed background and must stay visually distinct from them.`
+          : '';
 
         const subjectBlockText = subjectBlocks.length === 1
           ? subjectBlocks[0]
@@ -653,7 +732,7 @@ ${subjectBlockText}${multiRule}
 ═══════════════════════════════════════════════════════════
 SCENE — NEWSPAPER PHOTOGRAPH
 ═══════════════════════════════════════════════════════════
-${sceneDesc}
+${sceneDesc}${depictedLine}
 
 Photorealistic newspaper photograph, photojournalism style. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.
 
