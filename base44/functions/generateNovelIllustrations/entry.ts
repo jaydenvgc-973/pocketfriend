@@ -61,6 +61,27 @@ function currentAgeOf(c) {
 
 const normalizeText = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
+// ── WHO THE PROMPT NAMES ─────────────────────────────────────────────────────
+// The name a plate's own prompt carries IS the identity in that plate. Nobody is
+// drawn into an illustration their moment never names — not the novel's central
+// character, not a relative, not the account holder — and no established person's
+// reference photographs are attached to a plate that does not mention them.
+const WEAK_NAME_WORDS = new Set(['the', 'and', 'his', 'her', 'their', 'mr', 'mrs', 'ms', 'dr', 'sir', 'miss']);
+const nameWords = (value) => normalizeText(value)
+  .split(' ').filter((word) => word.length > 2 && !WEAK_NAME_WORDS.has(word));
+const mentionsName = (text, name) => {
+  const body = normalizeText(text);
+  const wanted = normalizeText(name);
+  if (!body || !wanted) return false;
+  if (body.includes(wanted)) return true;
+  return nameWords(name).some((word) => new RegExp(`(^| )${word}( |$)`).test(body));
+};
+const personNames = (person) => [
+  person?.name,
+  ...names(person?.aliases).map((a) => (typeof a === 'string' ? a : a?.name || a?.alias || a?.display_name)),
+].filter(Boolean);
+const isNamedInPlate = (text, person) => personNames(person).some((name) => mentionsName(text, name));
+
 const ageStageNote = (age) => {
   const years = Number(age);
   if (!Number.isFinite(years)) return '';
@@ -177,19 +198,22 @@ const REASON_NOTE = {
 // Everything a plate needs is resolved here: who is depicted as established people,
 // which established users appear, who is genuinely narrative-only, the place and its
 // zone, and the ages the records allow. Nothing is invented for anyone with a record.
-async function renderPlate({ base44, spec, sceneText, reason, people, userPeople, ownerName, ownerRefs, place, placeZoneName }) {
-  const depicted = people || [];
-  const users = userPeople || [];
+async function renderPlate({ base44, spec, sceneText, reason, people, userPeople, ownerName, ownerRefs, place, placeZoneName, includeAll = false }) {
+  // Only the people this plate's own prompt names are depicted. includeAll is the one
+  // exception: the reader corrected who belongs in this plate themselves, and that
+  // answer is final even when their description does not repeat the names.
+  const depicted = (people || []).filter((p) => includeAll || isNamedInPlate(sceneText, p));
+  const users = (userPeople || []).filter((u) => includeAll || mentionsName(sceneText, u.name));
 
-  // The account holder's world name is an identity reference too. When it is named —
-  // in the plate's notes or in the moment itself — that person is the owner, drawn from
-  // their own reference photographs, never as a generic face.
+  // The account holder's world name is an identity reference too — but only when the
+  // moment actually names them. A world name that belongs to an established character
+  // in the scene is that character, never the account holder as well.
   const recordedNames = names(spec.narrative_names);
   const ownerNormalized = normalizeText(ownerName);
-  const ownerNamed = !!ownerNormalized && recordedNames.some((name) => normalizeText(name) === ownerNormalized);
-  const ownerMentioned = ownerNormalized.length > 2 && normalizeText(sceneText).includes(ownerNormalized);
-  const ownerPresent = !!ownerName
-    && (spec.shows_user === true || ownerNamed || ownerMentioned || ownerRefs?.includeOwner === true);
+  const ownerShadowedByPerson = !!ownerNormalized
+    && [...depicted, ...users].some((p) => normalizeText(p.name) === ownerNormalized);
+  const ownerPresent = !!ownerName && !ownerShadowedByPerson
+    && (ownerRefs?.includeOwner === true || mentionsName(sceneText, ownerName));
 
   const zone = place
     ? names(place.zones).find((z) => normalizeText(z.zone_name) === normalizeText(placeZoneName)) || null
@@ -199,7 +223,9 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
   // the account holder, or a person who genuinely has no record.
   const isUser = (name) => users.some((u) => normalizeText(u.name) === normalizeText(name));
   const isOwner = (name) => !!ownerName && normalizeText(ownerName) === normalizeText(name);
-  const narrativePeople = recordedNames.filter((name) => !isUser(name) && !isOwner(name));
+  const narrativePeople = recordedNames
+    .filter((name) => !isUser(name) && !isOwner(name))
+    .filter((name) => includeAll || mentionsName(sceneText, name));
 
   // Each established person's own photograph comes first, so a crowd or a location can
   // never push their identity out of the reference set.
@@ -403,9 +429,12 @@ Deno.serve(async (req) => {
         people,
         userPeople,
         ownerName: resolvedOwnerName,
-        ownerRefs: { images: callerRefs.length ? callerRefs : ownerRefs, includeOwner },
+        // A stored plate can claim the account holder was in it when the moment never
+        // named them: only the reader's own subject choice forces them in now.
+        ownerRefs: { images: callerRefs.length ? callerRefs : ownerRefs, includeOwner: pickerDecided && includeOwner },
         place,
         placeZoneName,
+        includeAll: pickerDecided,
       });
       if (!url) {
         return Response.json({
