@@ -68,6 +68,127 @@ function monthLabelForKey(key) {
 }
 
 /**
+ * Every saved illustration belonging to the novels of ONE character.
+ *
+ * An illustration belongs to the central character whose novel produced it
+ * (Novel.character_id), never to the people depicted in the plate, so the folder it
+ * belongs to is decided by the novel alone. Only the current saved plates are read —
+ * `illustrations` is the record the app rewrites when a plate is regenerated or a
+ * chapter is redone — which is why the gallery can never show an outdated version.
+ * Nothing is written, regenerated or duplicated: one record per stored file.
+ */
+async function loadNovelIllustrations(base44, characterId) {
+  const empty = { images: [], characterName: null, lastImageAt: null };
+  if (!characterId) return empty;
+
+  const character = await base44.entities.Character.get(characterId).catch(() => null);
+  const characterName = character?.display_name || character?.name || null;
+
+  const novelPages = await base44.entities.Novel
+    .filter({ character_id: characterId }, '-created_date', 200)
+    .catch(() => []);
+  const novels = (Array.isArray(novelPages) ? novelPages : []).filter((n) => n?.id);
+  if (!novels.length) return { ...empty, characterName };
+
+  const novelById = new Map(novels.map((n) => [n.id, n]));
+
+  // Chapters are read in small $in batches so a long shelf of novels stays inside
+  // one request's limits.
+  const chapters = [];
+  for (let i = 0; i < novels.length; i += 20) {
+    const ids = novels.slice(i, i + 20).map((n) => n.id);
+    const page = await base44.entities.NovelChapter
+      .filter({ novel_id: { $in: ids } }, '-created_date', 200)
+      .catch(() => []);
+    if (Array.isArray(page)) chapters.push(...page);
+  }
+
+  // Neatest first: the chapter's own date, then its place in the novel, then the
+  // plate's position in the prose.
+  const plates = [];
+  for (const chapter of chapters) {
+    const novel = novelById.get(chapter.novel_id);
+    if (!novel) continue;
+    (Array.isArray(chapter.illustrations) ? chapter.illustrations : []).forEach((illustration, index) => {
+      if (!illustration?.url) return;
+      plates.push({ chapter, novel, illustration, index });
+    });
+  }
+  plates.sort((a, b) => {
+    const dateA = a.chapter.created_date ? new Date(a.chapter.created_date).getTime() : 0;
+    const dateB = b.chapter.created_date ? new Date(b.chapter.created_date).getTime() : 0;
+    if (dateB !== dateA) return dateB - dateA;
+    if ((a.chapter.chapter_number || 0) !== (b.chapter.chapter_number || 0)) {
+      return (a.chapter.chapter_number || 0) - (b.chapter.chapter_number || 0);
+    }
+    return (Number(a.illustration.after_paragraph) || 0) - (Number(b.illustration.after_paragraph) || 0);
+  });
+
+  const seenUrls = new Set();
+  const images = [];
+  for (const { chapter, novel, illustration, index } of plates) {
+    const dedupKey = normalizeUrlForDedup(illustration.url);
+    if (seenUrls.has(dedupKey)) continue;
+    seenUrls.add(dedupKey);
+
+    const caption = illustration.caption || null;
+    images.push({
+      id: `${chapter.id}:${index}`,
+      url: illustration.url,
+      description: caption,
+      imageDescription: caption || '',
+      displayPrompt: caption,
+      originalPrompt: caption,
+      generationPrompt: null,
+      scenePrompt: null,
+      imageType: 'novel_illustration',
+      subjects: [],
+      subjectIds: [],
+      subjectNames: [],
+      subjectCount: 0,
+      locationName: null,
+      locationId: null,
+      zoneName: null,
+      generationContext: null,
+      imageCategory: 'novel_illustration',
+      senderType: 'character',
+      senderName: novel.character_name || characterName || 'Character',
+      senderCharacterId: characterId,
+      characterId,
+      conversationId: null,
+      timestamp: chapter.created_date || null,
+      messageId: null,
+      ownerEmail: chapter.owner_email || novel.owner_email || null,
+      folderKey: `character:${characterId}`,
+      folderKind: NOVEL_FOLDER_KEY,
+      folderName: NOVEL_FOLDER_LABEL,
+      storyEventId: null,
+      storyEventTitle: null,
+      source_type: 'novel_illustration',
+      source_id: chapter.id,
+      parent_entity: 'NovelChapter',
+      parent_owner_email: chapter.owner_email || novel.owner_email || null,
+      parent_conversation_id: null,
+      novelTitle: novel.title || null,
+      chapterTitle: chapter.title || null,
+      chapterNumber: chapter.chapter_number || null,
+    });
+  }
+
+  return {
+    images,
+    characterName,
+    // A chapter's date is its newest edit, so this is the date of the newest plate.
+    lastImageAt: plates[0]?.chapter?.created_date || null,
+  };
+}
+
+// The Novel folder is a single destination inside a character folder, so its key is a
+// word rather than a month. It is never a month bucket and never contains one.
+const NOVEL_FOLDER_KEY = 'novel';
+const NOVEL_FOLDER_LABEL = 'Novel';
+
+/**
  * Normalize URL for deduplication — strips query strings (signed tokens, CDN params).
  */
 function normalizeUrlForDedup(url) {
@@ -189,7 +310,10 @@ Deno.serve(async (req) => {
     const searchLower = (searchTerm || '').toLowerCase().trim();
     const requestedFolderKey = typeof folderKey === 'string' && folderKey ? folderKey : null;
     const isMonthMode = mode === 'months';
-    const requestedMonthKey = typeof monthKey === 'string' && /^\d{4}-\d{2}$/.test(monthKey) ? monthKey : null;
+    const requestedMonthKey = typeof monthKey === 'string'
+      && (/^\d{4}-\d{2}$/.test(monthKey) || monthKey === NOVEL_FOLDER_KEY)
+      ? monthKey
+      : null;
     // Folder tiles, month buckets, a chosen month and search results all report a
     // count the user compares against what they see, so each of those scans its whole
     // scope instead of stopping at the requested page. Only plain unfiltered paging
@@ -205,6 +329,68 @@ Deno.serve(async (req) => {
       : imageEndIndex + 1; // +1 to prove hasMore
 
     console.log(`[fetchMediaGalleryPage] v5 owner=${ownerEmail} mode=${mode} folder=${requestedFolderKey || 'ALL'} page=${safePage} pageSize=${safePageSize} imageStart=${imageStartIndex}`);
+
+    const folderCharacterId = requestedFolderKey && requestedFolderKey.startsWith('character:')
+      ? requestedFolderKey.slice('character:'.length)
+      : null;
+
+    // The Novel tile sits inside a character folder, at the same level as that
+    // character's month folders. It is the only tile whose key is not a month.
+    const novelMonthTile = async () => {
+      const novelFolder = folderCharacterId
+        ? await loadNovelIllustrations(base44, folderCharacterId)
+        : { images: [], lastImageAt: null };
+      return {
+        key: NOVEL_FOLDER_KEY,
+        kind: NOVEL_FOLDER_KEY,
+        label: NOVEL_FOLDER_LABEL,
+        year: null,
+        month: null,
+        imageCount: novelFolder.images.length,
+        coverImageUrl: novelFolder.images[0]?.url || null,
+        lastImageAt: novelFolder.lastImageAt || null,
+      };
+    };
+
+    // ── THE NOVEL FOLDER ITSELF ──────────────────────────────────────────────
+    // Opening Novel returns every illustration from this character's novels in one
+    // place, read from the novel records rather than from conversations, so the
+    // message scan is never run for it. No month bucket exists inside it.
+    if (mode === 'images' && requestedMonthKey === NOVEL_FOLDER_KEY) {
+      const novelFolder = folderCharacterId
+        ? await loadNovelIllustrations(base44, folderCharacterId)
+        : { images: [], characterName: null, lastImageAt: null };
+      const total = novelFolder.images.length;
+      const enoughForRequestedPage = total > imageStartIndex;
+      const hasMore = total > imageEndIndex;
+      const pageSlice = enoughForRequestedPage
+        ? novelFolder.images.slice(imageStartIndex, imageEndIndex)
+        : [];
+      return Response.json({
+        images: pageSlice,
+        currentUserEmail: ownerEmail,
+        page: safePage,
+        pageSize: safePageSize,
+        totalImages: total,
+        hasMore,
+        enoughForRequestedPage,
+        proof: {
+          requestedPage: safePage,
+          pageSize: safePageSize,
+          imageStartIndex,
+          imageEndIndex,
+          uniqueImagesCollected: total,
+          enoughForRequestedPage,
+          hasMore,
+          terminationReason: 'novel_illustrations',
+          runtimeMs: Date.now() - scanStart,
+          pageImagesReturned: pageSlice.length,
+          totalImagesInIndex: total,
+          source: 'novel_illustrations',
+          currentUserEmail: ownerEmail,
+        },
+      });
+    }
 
     // ── FETCH CONVERSATIONS ──────────────────────────────────────────────────
     // Scoped by created_by OR owner_email so both user-created conversations
@@ -445,7 +631,16 @@ Deno.serve(async (req) => {
         return Response.json({ mode: 'folders', folders, totalImages: 0, currentUserEmail: ownerEmail, proof: emptyProof });
       }
       if (isMonthMode) {
-        return Response.json({ mode: 'months', folderKey: requestedFolderKey, months: [], totalImages: 0, currentUserEmail: ownerEmail, proof: emptyProof });
+        // A character with no chat or text images still has its Novel folder here.
+        const months = folderCharacterId ? [await novelMonthTile()] : [];
+        return Response.json({
+          mode: 'months',
+          folderKey: requestedFolderKey,
+          months,
+          totalImages: months.reduce((sum, bucket) => sum + bucket.imageCount, 0),
+          currentUserEmail: ownerEmail,
+          proof: emptyProof,
+        });
       }
       return Response.json({ images: [], currentUserEmail: ownerEmail, page: safePage, pageSize: safePageSize, totalImages: 0, hasMore: false, enoughForRequestedPage: false, proof: emptyProof });
     }
@@ -684,7 +879,12 @@ Deno.serve(async (req) => {
     // ── MONTH MODE: month-and-year subfolders for the requested character folder ──
     // Newest month first. Only months that actually hold images are returned.
     if (isMonthMode) {
-      const months = Object.values(monthStats).sort((a, b) => b.key.localeCompare(a.key));
+      const monthBuckets = Object.values(monthStats).sort((a, b) => b.key.localeCompare(a.key));
+      // The Novel folder is added beside the month folders, never mixed into them:
+      // the month buckets keep their own contents, counts, covers and order, and
+      // Novel holds every illustration with no month level of its own.
+      const novelTile = folderCharacterId ? await novelMonthTile() : null;
+      const months = novelTile ? [novelTile, ...monthBuckets] : monthBuckets;
       return Response.json({
         mode: 'months',
         folderKey: requestedFolderKey,

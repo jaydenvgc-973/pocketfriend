@@ -515,6 +515,12 @@ export default function MediaGallery() {
   };
 
   const handleSelectImage = (image) => {
+    // Novel illustrations are held on their chapter, not on a message, so there is
+    // nothing further to load for them.
+    if (image.parent_entity && image.parent_entity !== 'Message') {
+      setSelectedImage(image);
+      return;
+    }
     const msgId = image.messageId || image.id;
     // Fetch the full Message record so editor has all fields (user_edited_description, visual_analysis_description, etc.)
     base44.entities.Message.filter({ id: msgId }, '-created_date', 1).then(results => {
@@ -583,7 +589,7 @@ export default function MediaGallery() {
               </h1>
               <p className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
                 {isShowingMonths
-                  ? `${months.length} ${months.length === 1 ? 'month' : 'months'}`
+                  ? `${months.length} ${months.length === 1 ? 'folder' : 'folders'}`
                   : activeFolder
                   ? `${totalImages ?? 0} images • Page ${currentPage}${hasMore ? '+' : ''}`
                   : debouncedSearch.trim()
@@ -689,7 +695,9 @@ export default function MediaGallery() {
           <>
             {activeFolder && (
               <p className="text-xs text-muted-foreground mb-3">
-                {activeMonth
+                {activeMonth?.kind === 'novel'
+                  ? `Every illustration from ${activeFolder.name}'s novels, newest first.`
+                  : activeMonth
                   ? `Images generated in ${activeMonth.label}.`
                   : `Images generated from ${activeFolder.name}'s chat or text page.`}
               </p>
@@ -720,6 +728,8 @@ export default function MediaGallery() {
                 activeFolder
                   ? debouncedSearch.trim()
                     ? `No images in ${activeFolder.name} match your search.`
+                    : activeMonth?.kind === 'novel'
+                    ? `${activeFolder.name} has no novel illustrations yet.`
                     : `${activeFolder.name} has no images yet.`
                   : 'No images match your search across your folders.'
               }
@@ -766,6 +776,10 @@ function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
   // Use the centralized description resolver
   const displayDescription = resolveBestImageDescription(image);
 
+  // A novel plate lives on its chapter, not on a message: it has no chat description
+  // to edit and nothing here deletes it. It can still be sent to a character.
+  const isNovelIllustration = image.source_type === 'novel_illustration';
+
   const handleDescriptionSaved = async (updatedImage) => {
     // Refetch full image data from backend to ensure consistency
     try {
@@ -808,6 +822,17 @@ function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
             <p className="text-sm text-foreground">{image.senderName}</p>
           </div>
 
+          {isNovelIllustration && image.novelTitle && (
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Novel</p>
+              <p className="text-sm text-foreground">
+                {image.novelTitle}
+                {image.chapterNumber ? ` · Chapter ${image.chapterNumber}` : ''}
+                {image.chapterTitle ? ` — ${image.chapterTitle}` : ''}
+              </p>
+            </div>
+          )}
+
           {/* Subjects shown in the image */}
           {image.subjectNames && image.subjectNames.length > 0 && (
             <div>
@@ -825,19 +850,23 @@ function ImageDetailModal({ image: initialImage, onClose, onSend, onDelete }) {
           )}
 
           {/* Description editor — centralized UI for all description types */}
-          <MediaGalleryDescriptionEditor
-            image={image}
-            onClose={onClose}
-            onSaved={handleDescriptionSaved}
-          />
+          {!isNovelIllustration && (
+            <MediaGalleryDescriptionEditor
+              image={image}
+              onClose={onClose}
+              onSaved={handleDescriptionSaved}
+            />
+          )}
         </div>
         <div className="flex-shrink-0 border-t border-border p-4 bg-card flex gap-2">
           <button onClick={onSend} className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90 flex items-center justify-center gap-2 text-sm font-medium">
             <Send className="w-4 h-4" /> Send to Character
           </button>
-          <button onClick={onDelete} className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2">
-            <Trash2 className="w-4 h-4" /> Delete
-          </button>
+          {!isNovelIllustration && (
+            <button onClick={onDelete} className="px-4 py-2 bg-destructive/10 text-destructive rounded-lg hover:bg-destructive/20 flex items-center justify-center gap-2">
+              <Trash2 className="w-4 h-4" /> Delete
+            </button>
+          )}
         </div>
       </motion.div>
     </motion.div>

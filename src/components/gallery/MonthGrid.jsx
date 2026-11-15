@@ -1,5 +1,5 @@
 import React from "react";
-import { Calendar, Image as ImageIcon } from "lucide-react";
+import { BookOpen, Calendar, Image as ImageIcon } from "lucide-react";
 
 /**
  * MonthGrid — the month-and-year subfolders inside a character's Media Gallery folder.
@@ -41,7 +41,10 @@ export default function MonthGrid({ months = [], isLoading, error, onOpen, onRet
 
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-      {months.map((month) => (
+      {months.map((month) => {
+        // The Novel folder sits at this same level but is not a month.
+        const Icon = month.kind === 'novel' ? BookOpen : Calendar;
+        return (
         <div
           key={month.key}
           role="button"
@@ -63,7 +66,7 @@ export default function MonthGrid({ months = [], isLoading, error, onOpen, onRet
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center">
-                <Calendar className="w-10 h-10 text-muted-foreground/50" />
+                <Icon className="w-10 h-10 text-muted-foreground/50" />
               </div>
             )}
 
@@ -74,11 +77,12 @@ export default function MonthGrid({ months = [], isLoading, error, onOpen, onRet
           </div>
 
           <div className="px-3 py-2.5 flex items-center gap-2 border-t border-border">
-            <Calendar className="w-4 h-4 text-primary flex-shrink-0" />
+            <Icon className="w-4 h-4 text-primary flex-shrink-0" />
             <p className="text-sm font-medium text-foreground truncate">{month.label}</p>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
