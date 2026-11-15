@@ -447,6 +447,7 @@ export default function NovelReader() {
               }}
               disabled={busy || incomplete}
               redoDisabled={busy}
+              deleteDisabled={busy}
               error={actionError}
             />
 
