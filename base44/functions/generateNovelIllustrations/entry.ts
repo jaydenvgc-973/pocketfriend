@@ -199,11 +199,50 @@ const REASON_NOTE = {
 // which established users appear, who is genuinely narrative-only, the place and its
 // zone, and the ages the records allow. Nothing is invented for anyone with a record.
 async function renderPlate({ base44, spec, sceneText, reason, people, userPeople, ownerName, ownerRefs, place, placeZoneName, includeAll = false }) {
-  // Only the people this plate's own prompt names are depicted. includeAll is the one
-  // exception: the reader corrected who belongs in this plate themselves, and that
-  // answer is final even when their description does not repeat the names.
-  const depicted = (people || []).filter((p) => includeAll || isNamedInPlate(sceneText, p));
-  const users = (userPeople || []).filter((u) => includeAll || mentionsName(sceneText, u.name));
+  // ── ONE IDENTITY PER NAME ────────────────────────────────────────────────
+  // Only the people this plate's own prompt names are depicted, and a name resolves to
+  // exactly one identity. An exact recorded name always beats a shared word, so the
+  // account holder is never drawn in place of a character with a similar name (or the
+  // reverse) because one word of a longer name happened to match. includeAll is the one
+  // exception: the reader corrected who belongs here themselves, and that answer is
+  // final even when their description does not repeat the names.
+  const plateBody = normalizeText(sceneText);
+  const exactInText = (name) => {
+    const wanted = normalizeText(name);
+    return !!wanted && plateBody.includes(wanted);
+  };
+  const scoreOf = (person) => {
+    if (exactInText(person?.name)) return 2;
+    return isNamedInPlate(sceneText, person) ? 1 : 0;
+  };
+
+  const characterHits = (people || []).map((person) => ({ person, score: scoreOf(person) }))
+    .filter((hit) => includeAll || hit.score > 0);
+  const userHits = (userPeople || []).map((person) => ({ person, score: scoreOf(person) }))
+    .filter((hit) => includeAll || hit.score > 0);
+
+  const ownerScore = !ownerName ? 0 : (exactInText(ownerName) ? 2 : (mentionsName(sceneText, ownerName) ? 1 : 0));
+
+  // The words of a name matched exactly belong to that identity alone, so a weaker
+  // one-word match can neither steal them nor stand in for the same person.
+  const claimedWords = new Set();
+  [...characterHits, ...userHits].forEach((hit) => {
+    if (hit.score === 2) normalizeText(hit.person.name).split(' ').forEach((w) => claimedWords.add(w));
+  });
+  if (ownerScore === 2) normalizeText(ownerName).split(' ').forEach((w) => claimedWords.add(w));
+
+  // A weaker match survives only on a word the plate actually uses and nobody owns.
+  const unclaimedWordInText = (name) => nameWords(name)
+    .some((word) => !claimedWords.has(word) && new RegExp(`(^| )${word}( |$)`).test(plateBody));
+  const uncontested = (hit) => hit.score === 2 || unclaimedWordInText(hit.person.name);
+
+  const depicted = characterHits.filter(uncontested).map((hit) => hit.person);
+  const depictedNames = new Set(depicted.map((p) => normalizeText(p.name)));
+  // A world name that is also a recorded character in this plate is that character: the
+  // user identity is never attached to the same name, and never added alongside it.
+  const users = userHits.filter(uncontested)
+    .map((hit) => hit.person)
+    .filter((u) => !depictedNames.has(normalizeText(u.name)));
 
   // The account holder's world name is an identity reference too — but only when the
   // moment actually names them. A world name that belongs to an established character
@@ -212,8 +251,9 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
   const ownerNormalized = normalizeText(ownerName);
   const ownerShadowedByPerson = !!ownerNormalized
     && [...depicted, ...users].some((p) => normalizeText(p.name) === ownerNormalized);
-  const ownerPresent = !!ownerName && !ownerShadowedByPerson
-    && (ownerRefs?.includeOwner === true || mentionsName(sceneText, ownerName));
+  const ownerUncontested = ownerScore === 2 || unclaimedWordInText(ownerName);
+  const ownerPresent = !!ownerName && !ownerShadowedByPerson && ownerUncontested
+    && (ownerRefs?.includeOwner === true || ownerScore > 0);
 
   const zone = place
     ? names(place.zones).find((z) => normalizeText(z.zone_name) === normalizeText(placeZoneName)) || null
@@ -223,8 +263,9 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
   // the account holder, or a person who genuinely has no record.
   const isUser = (name) => users.some((u) => normalizeText(u.name) === normalizeText(name));
   const isOwner = (name) => !!ownerName && normalizeText(ownerName) === normalizeText(name);
+  const isCharacter = (name) => depictedNames.has(normalizeText(name));
   const narrativePeople = recordedNames
-    .filter((name) => !isUser(name) && !isOwner(name))
+    .filter((name) => !isUser(name) && !isOwner(name) && !isCharacter(name))
     .filter((name) => includeAll || mentionsName(sceneText, name));
 
   // Each established person's own photograph comes first, so a crowd or a location can
@@ -273,6 +314,15 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
     || readableText(place?.description, 420)
     || readableText(spec.location_label, 200);
 
+  // Who every name in this plate actually is, stated explicitly, so an action or a look
+  // described for one name can never land on another person in the scene.
+  const identityBinding = [
+    ...depicted.map((p) => `${p.name} = the established character ${p.name}, from their own records`),
+    ...users.map((u) => `${u.name} = an established Pocketfriend user, from their own records`),
+    ...(ownerPresent ? [`${ownerName} = the account holder whose world this is`] : []),
+    ...narrativePeople.map((n) => `${n} = a narrative-only person with no record`),
+  ];
+
   const prompt = [
     `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
     sceneText,
@@ -281,6 +331,7 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
     narrativePeople.length ? `Narrative-only people with no character or user record, drawn generically: ${narrativePeople.join(', ')}. Believable, ordinary faces consistent with the description and with the ages stated above; they must never take on the identity of an established person.` : '',
     (depicted.length || users.length) && narrativePeople.length ? `Established people and these background people share the scene naturally — fill out the gathering if the moment needs it, but every established person above stays clearly present and recognisable.` : '',
     ownerPresent ? `${ownerName} must match their attached reference photographs exactly.` : '',
+    identityBinding.length ? `IDENTITY BINDS TO THE NAME: ${identityBinding.join('; ')}. Whatever the description has a named person doing, saying, wearing or looking like is done by that exact identity and by nobody else — never by a person with a similar name, never by another person in the scene, and never swapped between the account holder and a character. Each named person keeps their own body, face, clothing and action; do not merge two people into one figure and do not give one person's description to another.` : '',
     place
       ? `Setting: ${place.name || spec.location_label || ''}${zone ? ` — ${zone.zone_name}` : (placeZoneName ? ` — ${placeZoneName}` : '')}.${placeDescription ? ` ${placeDescription}` : ''} The architecture, furnishings, materials and atmosphere must match the attached reference photograph of this exact place — do not substitute another property or a generic interior.`
       : (spec.location_label ? `Setting: ${spec.location_label}.` : ''),

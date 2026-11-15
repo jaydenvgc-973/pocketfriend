@@ -1103,6 +1103,7 @@ Deno.serve(async (req) => {
       `In characters, use the recorded name of every established person — including each family member listed under FAMILY MEMBERS WHO EXIST AS CHARACTERS — never "his children", "a child", "his daughter" or any description, and never give a recorded person's name to somebody invented. A person who exists only in this prose and has no character record has no recorded name: describe them in a few words instead (for example "the soup-kitchen mother", "an unnamed neighbour"). Established people and narrative-only people may share one illustration.`,
       `A name inside scene IS the person in that plate. Write the exact recorded name of everyone visible into scene, and list in characters only the people scene itself names. Never list anyone the moment does not include — above all, never add the novel's central character to a plate that does not show them.`,
       `When an established user appears — the account holder or anyone known by their world name — name them exactly as the prose names them, so the illustration can resolve that same person's own appearance. Never swap a world name for a description like "a man" or "his friend".`,
+      `Whoever the moment has acting is the person named for it. If the account holder is named as doing something, that action, outfit and look belong to the account holder — never to a character with a similar name. If a character is named, it belongs to that character. Never leave a described action attached to an unnamed figure, and never let one person's name carry another person's action.`,
       `Whatever category a ball scene is walking, the illustration must show that category: realness as a styled, convincing presentation that is walked and posed rather than danced (student styling for Schoolboy and School Girl Realness, professional tailoring for Executive Realness), runway as a walk and a fashion presentation, voguing as the dance the style actually calls.`,
       `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
       `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
@@ -1463,9 +1464,23 @@ Deno.serve(async (req) => {
       // The plate's own words decide who is in it: a name the description never says
       // is never illustrated, however it reached the characters list.
       const plateText = [spec.scene, spec.caption].filter(Boolean).join(' ');
-      const depictedNames = names(spec.characters)
-        .map((n) => String(n || '').trim()).filter(Boolean)
-        .filter((name) => mentionsName(plateText, name));
+      const plateFlat = normalize(plateText);
+      const exactMention = (name) => {
+        const wanted = normalize(name);
+        return !!wanted && plateFlat.includes(wanted);
+      };
+      const wordInText = (name, word) => new RegExp(`(^| )${word}( |$)`).test(plateFlat)
+        && nameWords(name).includes(word);
+      // One identity per name here too: a name the plate uses in full owns its words, so
+      // a character matched only by a shared word never takes the account holder's line,
+      // and the account holder never takes a character's.
+      const listed = names(spec.characters).map((n) => String(n || '').trim()).filter(Boolean);
+      const claimedWords = new Set();
+      listed.filter(exactMention).forEach((name) => normalize(name).split(' ').forEach((w) => claimedWords.add(w)));
+      if (exactMention(worldName)) normalize(worldName).split(' ').forEach((w) => claimedWords.add(w));
+      const unclaimedWordInText = (name) => nameWords(name)
+        .some((word) => !claimedWords.has(word) && wordInText(name, word));
+      const depictedNames = listed.filter((name) => exactMention(name) || unclaimedWordInText(name));
       const personIds = [];
       const narrativeNames = [];
       depictedNames.forEach((name) => {
@@ -1488,7 +1503,7 @@ Deno.serve(async (req) => {
         // and never when that name is an established character already in the plate.
         shows_user: includeUser && !!normalize(worldName)
           && !depictedNames.some((n) => normalize(n) === normalize(worldName))
-          && mentionsName(plateText, worldName),
+          && (exactMention(worldName) || unclaimedWordInText(worldName)),
         depicted_ages: (Array.isArray(spec.depicted_ages) ? spec.depicted_ages : [])
           .filter((entry) => entry && entry.name && Number.isFinite(Number(entry.age)))
           .map((entry) => ({ name: String(entry.name), age: Math.round(Number(entry.age)) }))
