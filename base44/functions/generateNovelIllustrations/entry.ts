@@ -268,20 +268,54 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
     .filter((name) => !isUser(name) && !isOwner(name) && !isCharacter(name))
     .filter((name) => includeAll || mentionsName(sceneText, name));
 
-  // Each established person's own photograph comes first, so a crowd or a location can
-  // never push their identity out of the reference set.
-  const refs = [];
-  depicted.forEach((p) => {
-    const primary = p.avatar_url || p.image_avatar_url;
-    if (primary) refs.push(primary);
-  });
-  users.forEach((u) => { if (u.avatar_url) refs.push(u.avatar_url); });
-  if (ownerPresent) refs.push(...names(ownerRefs?.images));
-  depicted.forEach((p) => names(p.reference_image_urls).slice(0, 1).forEach((ref) => refs.push(ref)));
-  users.forEach((u) => names(u.reference_images).slice(0, 2).forEach((ref) => refs.push(ref)));
+  // ── REFERENCE ORDER FOLLOWS THE DESCRIPTION, NOT THE RECORD ──────────────
+  // An image model reads a description in order and its reference photographs in order,
+  // and it will happily pair the first-named person with the first photograph. Each
+  // identity's own photographs are therefore grouped and attached in the order that
+  // identity is first named in the description, and the prompt states which photograph
+  // is whom — so a name can never pick up the face of whoever happened to be listed
+  // first in the records.
+  const mentionRank = (name) => {
+    const wanted = normalizeText(name);
+    const at = wanted ? plateBody.indexOf(wanted) : -1;
+    if (at >= 0) return at;
+    const positions = nameWords(name)
+      .map((word) => plateBody.search(new RegExp(`(^| )${word}( |$)`)))
+      .filter((index) => index >= 0);
+    return positions.length ? Math.min(...positions) : Number.MAX_SAFE_INTEGER;
+  };
+
+  const identityGroups = [
+    ...depicted.map((p) => ({
+      name: p.name,
+      images: [...new Set([p.avatar_url || p.image_avatar_url, ...names(p.reference_image_urls).slice(0, 1)].filter(Boolean))].slice(0, 2),
+    })),
+    ...users.map((u) => ({
+      name: u.name,
+      images: [...new Set([u.avatar_url, ...names(u.reference_images).slice(0, 2)].filter(Boolean))].slice(0, 2),
+    })),
+    ...(ownerPresent ? [{ name: ownerName, images: [...new Set(names(ownerRefs?.images))].slice(0, 2) }] : []),
+  ].sort((a, b) => mentionRank(a.name) - mentionRank(b.name));
 
   const placeRefs = (zone ? names(zone.image_urls) : []).slice(0, 2);
   if (!placeRefs.length && place) placeRefs.push(...names(place.image_urls).slice(0, 2));
+
+  const refs = [];
+  const referenceLegend = [];
+  identityGroups.forEach((group) => {
+    const room = 8 - placeRefs.length - refs.length;
+    if (room <= 0) return;
+    const images = group.images.slice(0, Math.min(2, room));
+    if (!images.length) {
+      referenceLegend.push(`${group.name} has no photograph on record — keep their established written appearance`);
+      return;
+    }
+    const first = refs.length + 1;
+    refs.push(...images);
+    referenceLegend.push(images.length === 1
+      ? `image ${first} is ${group.name}`
+      : `images ${first}–${refs.length} are ${group.name}`);
+  });
   refs.push(...placeRefs);
 
   const identity = depicted
@@ -326,12 +360,19 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
   const prompt = [
     `Literary novel illustration — painterly cinematic realism, natural light, restrained colour, editorial dignity.`,
     sceneText,
+    // The description assigns every action to a named person. Being named first is not a
+    // role: it carries no subject, no prominence and no permission to take another
+    // person's described action.
+    `THE DESCRIPTION ABOVE IS THE ONLY AUTHORITY ON WHO DOES WHAT. Every action, posture, position, gesture, expression, gaze, item held and garment named in it belongs to the exact person it is written against, and to nobody else. Being named first means nothing: the first person named is not the subject of the picture, not the one acting, and not the one to inherit another person's line. If one person is described sitting while another is described standing, then that person sits and that person stands, exactly as written — never swapped, never reassigned, never softened into an interchangeable arrangement. Including both people is not enough: each must be doing what the description gives them.`,
+    referenceLegend.length
+      ? `IDENTITY REFERENCE MAP — attached photographs, in order: ${referenceLegend.join('; ')}. Each photograph belongs to the name stated for it and to no other name. Pair a face with its own name only, never with the order in which people are described.`
+      : '',
     depicted.length ? `Established people present: ${depicted.map((p) => p.name).join(', ')}. Each keeps their own identity — face, hair, build and features matching the attached reference photographs exactly: the same person, never a generic lookalike and never a blend of two people.` : '',
     users.length ? `Established people present, by their world names: ${users.map((u) => u.name).join(', ')}. These are existing Pocketfriend users, not background people — each must match their own attached reference photographs exactly. A named world name is never a cue for a generic or substitute person.` : '',
     narrativePeople.length ? `Narrative-only people with no character or user record, drawn generically: ${narrativePeople.join(', ')}. Believable, ordinary faces consistent with the description and with the ages stated above; they must never take on the identity of an established person.` : '',
     (depicted.length || users.length) && narrativePeople.length ? `Established people and these background people share the scene naturally — fill out the gathering if the moment needs it, but every established person above stays clearly present and recognisable.` : '',
     ownerPresent ? `${ownerName} must match their attached reference photographs exactly.` : '',
-    identityBinding.length ? `IDENTITY BINDS TO THE NAME: ${identityBinding.join('; ')}. Whatever the description has a named person doing, saying, wearing or looking like is done by that exact identity and by nobody else — never by a person with a similar name, never by another person in the scene, and never swapped between the account holder and a character. Each named person keeps their own body, face, clothing and action; do not merge two people into one figure and do not give one person's description to another.` : '',
+    identityBinding.length ? `IDENTITY BINDS TO THE NAME: ${identityBinding.join('; ')}. Whatever the description has a named person doing, saying, wearing or looking like is done by that exact identity and by nobody else — never by a person with a similar name, never by another person in the scene, and never swapped between the account holder and a character. Each named person keeps their own body, face, clothing and action; do not merge two people into one figure and do not give one person's description to another. The action is part of the identity: the account holder is never handed a character's described action, and a character is never handed the account holder's — each stands, sits, speaks or holds exactly as written against their own name.` : '',
     place
       ? `Setting: ${place.name || spec.location_label || ''}${zone ? ` — ${zone.zone_name}` : (placeZoneName ? ` — ${placeZoneName}` : '')}.${placeDescription ? ` ${placeDescription}` : ''} The architecture, furnishings, materials and atmosphere must match the attached reference photograph of this exact place — do not substitute another property or a generic interior.`
       : (spec.location_label ? `Setting: ${spec.location_label}.` : ''),
