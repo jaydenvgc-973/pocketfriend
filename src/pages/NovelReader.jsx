@@ -9,7 +9,9 @@ import ContinueNovelPanel from "@/components/novels/ContinueNovelPanel";
 import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
 import NovelChapterActions from "@/components/novels/NovelChapterActions";
 import ChapterCopyDialog from "@/components/novels/ChapterCopyDialog";
+import ChapterEditDialog from "@/components/novels/ChapterEditDialog";
 import useLongPress from "@/hooks/useLongPress";
+import { useAuth } from "@/lib/AuthContext";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import NovelGenerationFailure from "@/components/novels/NovelGenerationFailure";
 import { normalizeNovelError } from "@/lib/novelGenerationError";
@@ -34,6 +36,12 @@ export default function NovelReader() {
   // hint anywhere in the reader. Holding it asks whether to copy the chapter's prose.
   const [copyOpen, setCopyOpen] = useState(false);
   const titlePress = useLongPress(() => setCopyOpen(true));
+  // Holding the chapter body is a separate target with a separate result: a direct
+  // correction of the saved prose. It never opens the copy dialog, and the copy press
+  // never opens the editor.
+  const [editOpen, setEditOpen] = useState(false);
+  const [editFocus, setEditFocus] = useState("");
+  const { user } = useAuth();
   const [busy, setBusy] = useState(false);
   const [busyLabel, setBusyLabel] = useState("");
   const [failure, setFailure] = useState(null);
@@ -54,6 +62,18 @@ export default function NovelReader() {
     queryFn: () => base44.entities.Novel.get(novelId),
     enabled: !!novelId,
     retry: false,
+  });
+
+  // The chapter-level character selector offers the same eligible people the novel was
+  // started from: the user's own characters (shared cache — this key is the roster the
+  // rest of the app already loads) plus the connected characters of other accounts,
+  // which the candidates function supplies. Read-only.
+  const { data: ownedCharacters = [] } = useQuery({
+    queryKey: ["characters", user?.email],
+    queryFn: () => base44.entities.Character.filter({ owner_email: user.email }, "created_date", 300),
+    enabled: !!user?.email,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
   });
 
   const { data: chapters = [], isLoading: loadingChapters } = useQuery({
@@ -231,20 +251,42 @@ export default function NovelReader() {
   // A new chapter: only its opening is requested here. The finish and the plates are
   // performed by the server-side continuation the saved chapter starts, so the chapter
   // completes whether or not this page is still open.
-  const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
+  const handleContinue = async (direction, exclusionsForAttempt = exclusions, focus = null) => {
     const plainDirection = typeof direction === "string" ? direction : "";
+    // The people chosen for this chapter alone. An empty list is a real answer: this
+    // chapter needs nobody extra, and the novel's starting cast is never forced in.
+    const focusIds = Array.isArray(focus?.focusIds) ? focus.focusIds : [];
     const opened = await openChapter(
       {
         mode: "continue",
         novel_id: novelId,
         direction: plainDirection,
+        focus_character_ids: focusIds,
+        focus_mode: focusIds.length ? "selected" : undefined,
         exclusions: exclusionsForAttempt,
       },
       `Writing chapter ${nextChapterNumber}`,
     );
     if (!opened) {
-      setFailure((prev) => (prev ? { ...prev, direction: plainDirection } : prev));
+      setFailure((prev) => (prev ? { ...prev, direction: plainDirection, focusIds } : prev));
     }
+  };
+
+  // A direct correction of this chapter's saved text. Nothing is generated: the prose
+  // the reader writes becomes the chapter, and the title, premise, perspective,
+  // illustrations and every other chapter are left exactly as they were.
+  const handleSaveChapterText = async (text) => {
+    if (!current) return;
+    const content = String(text || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (!content) throw new Error("A chapter cannot be empty.");
+    await base44.entities.NovelChapter.update(current.id, {
+      content,
+      word_count: content.split(/\s+/).filter(Boolean).length,
+    });
+    await refreshNovel();
   };
 
   // Rewrite only the chapter being read — the rest of the novel is untouched. The
@@ -311,7 +353,7 @@ export default function NovelReader() {
       handleRedoChapter(redoPremise, exclusions);
       return;
     }
-    handleContinue(failure?.direction || "", exclusions);
+    handleContinue(failure?.direction || "", exclusions, { focusIds: failure?.focusIds });
   };
 
   if (loadingNovel || loadingChapters) {
@@ -395,6 +437,28 @@ export default function NovelReader() {
               </h2>
             </div>
 
+            {/* The same chapters, reachable without reading to the bottom. Both rows
+                use the one set of saved chapters and the one order. */}
+            <div className="flex items-center justify-between mb-6">
+              <button
+                onClick={() => previous && setActiveNumber(previous.chapter_number)}
+                disabled={!previous}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-25 transition-colors"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" /> Previous chapter
+              </button>
+              <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+                {current.chapter_number} of {chapters.length}
+              </span>
+              <button
+                onClick={() => next && setActiveNumber(next.chapter_number)}
+                disabled={!next}
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-25 transition-colors"
+              >
+                Next chapter <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
             {incomplete && (
               <div className="mb-7 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
@@ -416,6 +480,9 @@ export default function NovelReader() {
               chapter={current}
               onWhyRegenerate={(index) => { setRegenError(null); setRegenIndex(index); }}
               regeneratingIndex={regenBusy ? regenIndex : null}
+              // Holding the prose corrects it. A chapter that is still being written
+              // is left alone, so the finishing stage cannot land on an edit.
+              onEditText={incomplete ? null : (pressed) => { setEditFocus(pressed || ""); setEditOpen(true); }}
             />
 
             <div className="flex items-center justify-between mt-10">
@@ -483,6 +550,8 @@ export default function NovelReader() {
                 nextChapterNumber={nextChapterNumber}
                 onGenerate={handleContinue}
                 busy={busy}
+                character={{ id: novel.character_id, name: novel.character_name }}
+                characters={ownedCharacters}
               />
             )}
           </>
@@ -495,6 +564,14 @@ export default function NovelReader() {
         chapter={current}
         open={copyOpen && !!current}
         onClose={() => setCopyOpen(false)}
+      />
+
+      <ChapterEditDialog
+        chapter={current}
+        open={editOpen && !!current}
+        focusText={editFocus}
+        onClose={() => setEditOpen(false)}
+        onSave={handleSaveChapterText}
       />
 
       <RegenerateImageModal

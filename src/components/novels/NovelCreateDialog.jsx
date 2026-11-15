@@ -12,6 +12,7 @@ export default function NovelCreateDialog({
   const [title, setTitle] = useState("");
   const [focus, setFocus] = useState("");
   const [premise, setPremise] = useState("");
+  const [chapterPremise, setChapterPremise] = useState("");
   const [perspective, setPerspective] = useState("character");
   const [focusIds, setFocusIds] = useState([]);
   const [focusMode, setFocusMode] = useState("selected");
@@ -23,7 +24,7 @@ export default function NovelCreateDialog({
     useNovelCharacterCandidates(character?.id, open);
 
   const reset = () => {
-    setTitle(""); setFocus(""); setPremise(""); setPerspective("character");
+    setTitle(""); setFocus(""); setPremise(""); setChapterPremise(""); setPerspective("character");
     setFocusIds([]); setFocusMode("selected"); setIncludeUser(false);
     setExclusions([]); setLocalError(null);
   };
@@ -38,6 +39,7 @@ export default function NovelCreateDialog({
     title: title.trim(),
     focus: focus.trim(),
     premise: premise.trim(),
+    direction: chapterPremise.trim(),
     perspective,
     focusCharacterIds: focusMode === "known" ? [] : focusIds,
     focusMode,
@@ -47,14 +49,20 @@ export default function NovelCreateDialog({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!premise.trim()) { setLocalError("Describe what the novel should explore."); return; }
+    if (!premise.trim() && !chapterPremise.trim()) {
+      setLocalError("Give the novel a premise, or say what chapter one should be about.");
+      return;
+    }
     setLocalError(null);
     onSubmit(payload());
   };
 
   // Retrying keeps everything the reader typed, including what they chose to leave out.
   const handleRetry = () => {
-    if (!premise.trim()) { setLocalError("Describe what the novel should explore."); return; }
+    if (!premise.trim() && !chapterPremise.trim()) {
+      setLocalError("Give the novel a premise, or say what chapter one should be about.");
+      return;
+    }
     setLocalError(null);
     onSubmit(payload());
   };
@@ -95,13 +103,32 @@ export default function NovelCreateDialog({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-foreground">Premise</label>
+            <label className="text-xs font-medium text-foreground">Novel premise</label>
+            <p className="text-[10px] text-muted-foreground mb-1.5">
+              Optional. The book&apos;s overall subject or direction — background, never a rule that every
+              chapter must repeat the same story.
+            </p>
             <textarea
               value={premise}
               onChange={(e) => setPremise(e.target.value)}
+              rows={3}
+              placeholder="What should this novel explore overall?"
+              className="w-full px-3 py-2 rounded-lg bg-secondary/60 border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-foreground">Chapter 1 premise</label>
+            <p className="text-[10px] text-muted-foreground mb-1.5">
+              What the first chapter should actually be about. This decides chapter one — it stands on its
+              own and outranks the novel premise for this chapter.
+            </p>
+            <textarea
+              value={chapterPremise}
+              onChange={(e) => setChapterPremise(e.target.value)}
               rows={4}
-              placeholder="What should this novel explore?"
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-secondary/60 border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
+              placeholder="What should chapter one be about?"
+              className="w-full px-3 py-2 rounded-lg bg-secondary/60 border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary resize-none"
             />
           </div>
 

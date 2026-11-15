@@ -58,7 +58,7 @@
     },
     "content": {
       "type": "string",
-      "description": "Chapter prose. Paragraphs are separated by blank lines; illustrations are anchored by paragraph index."
+      "description": "Chapter prose. Paragraphs are separated by blank lines; illustrations are anchored by paragraph index. A manual text correction writes here and becomes the authoritative version of this chapter."
     },
     "summary": {
       "type": "string",
@@ -67,6 +67,29 @@
     "direction": {
       "type": "string",
       "description": "The chapter-specific premise this chapter was written from. Retained so a Redo can offer it back for review and editing."
+    },
+    "focus_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "The people this chapter was asked to focus on, chosen for this chapter alone. Never the novel's standing cast: a later chapter may choose different people, fewer, or none, and a Redo reuses this chapter's own choice."
+    },
+    "focus_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "focus_mode": {
+      "type": "string",
+      "enum": [
+        "selected",
+        "known"
+      ],
+      "description": "How this chapter's people were chosen: selected = only the people picked for it, known = anyone the central character has an established connection with. Kept per chapter so finishing a chapter reads the same selection its opening was written from."
     },
     "writing_state": {
       "type": "string",

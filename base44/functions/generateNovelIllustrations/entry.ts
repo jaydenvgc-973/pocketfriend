@@ -96,6 +96,37 @@ const ageStageNote = (age) => {
   return 'an elderly person';
 };
 
+// ── AGE-ACCURATE DEPICTION OF A YOUNGER APPEARANCE ───────────────────────────
+// The same age rules Pocketfriend's Story Event images already use: identity comes
+// from the reference photographs, developmental stage comes from the recorded age at
+// this moment. The reference portrait is the adult they are today, so an adult-only
+// feature that had not developed yet must not be carried into a younger depiction —
+// a ten-year-old is never shown with his grown beard, a girl is never given adult
+// physical development. The person stays recognisable; only the stage changes.
+function youngerAppearanceDirective(name, age) {
+  const years = Number(age);
+  const lines = [
+    `${name} appears here at ${years} years old — younger than they are today.`,
+    `- Identity comes from the reference photographs: facial structure, eye shape, nose, mouth, complexion, hair colour and texture, and every inherited feature. It must read as this same person at ${years}, never a stranger of that age.`,
+    `- Developmental stage comes from the age, not from the portrait: height, body proportions, build and facial maturity follow ${years}.`,
+  ];
+  if (years < 13) {
+    lines.push(`- No facial hair of any kind — no beard, goatee, moustache, stubble or shadow. A child this age has a smooth face even when the adult has a full beard.`);
+    lines.push(`- A child's body: a child's proportions, torso and limbs. No adult musculature, no adult jaw or brow, and no adult secondary sexual characteristics.`);
+    lines.push(`- Do not shrink the adult portrait into a child's height — rebuild this same person at ${years}.`);
+  } else if (years < 16) {
+    lines.push(`- Facial hair only as far as it had actually developed at ${years}: sparse, patchy or none. Never the adult's finished beard, goatee or moustache.`);
+    lines.push(`- Body proportions and development are those of an early adolescent — no adult physique.`);
+  } else if (years < 18) {
+    lines.push(`- Facial hair, build and development are those of a ${years}-year-old: adult features may be emerging, never the adult's finished ones.`);
+    lines.push(`- No fully matured adult physique.`);
+  } else {
+    lines.push(`- Adults do not visibly transform on a schedule: do not smooth them into a younger-looking person, and do not add age markers they did not have.`);
+  }
+  lines.push(`- The recorded appearance notes describe this person today. Where they name an adult-only feature — a full beard, an adult build, adult development — it must not appear at ${years}.`);
+  return lines.join('\n');
+}
+
 // ── BALLROOM CATEGORY ACCURACY ───────────────────────────────────────────────
 // A plate of a ball must show the category the story actually called. This is the
 // same established ballroom knowledge Pocketfriend uses for Ball Story Events,
@@ -340,7 +371,7 @@ async function renderPlate({ base44, spec, sceneText, reason, people, userPeople
     if (age == null) return `${p.name}'s age is not recorded — keep their established appearance and do not invent an age or an extra person.`;
     const stage = ageStageNote(age);
     return historical != null
-      ? `${p.name} appears about ${age} years old here — the same person at a younger age, the same recognisable face and features${stage ? `, reading clearly as ${stage}` : ''}.`
+      ? youngerAppearanceDirective(p.name, age)
       : `${p.name} is ${age} years old${stage ? ` — ${stage}` : ''}. Depict exactly that age and stage: never older, never younger, never swapped with another child.`;
   }).join(' ');
 

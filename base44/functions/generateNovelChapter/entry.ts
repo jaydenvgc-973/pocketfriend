@@ -276,7 +276,11 @@ const PLAN_SCHEMA = {
 };
 
 async function selectPremiseSource({ base44, premise, focus, direction, central, memories, lifeEvents, relationships, storyEvents, messages, nameById }) {
-  const asked = [premise, focus, direction].filter(Boolean).join(' ');
+  // The chapter's own direction is the instruction. The novel's premise is the book's
+  // broader direction behind it, and never a second subject competing for the chapter.
+  const asked = direction
+    ? [direction, premise ? `background: ${premise}` : '', focus].filter(Boolean).join(' ')
+    : [premise, focus].filter(Boolean).join(' ');
   const centralName = central?.name || 'the character';
   const centralAge = currentAgeOf(central);
 
@@ -322,15 +326,16 @@ async function selectPremiseSource({ base44, premise, focus, direction, central,
     `You are choosing the recorded material for ONE chapter of a novel about ${centralName}${centralAge != null ? `, who is ${centralAge} years old today` : ''}.`,
     ``,
     `## THE REQUEST`,
-    `Premise: ${premise}`,
+    direction ? `Chapter direction — THIS decides the chapter's subject: ${direction}` : '',
+    premise ? `Novel premise — background direction for the whole book only: ${premise}` : '',
     focus ? `Focus: ${focus}` : '',
-    direction ? `Direction for this chapter: ${direction}` : '',
     ``,
     `## YOUR TASK`,
     `Name the subject the reader actually asked for, and choose the recorded entries that belong to it.`,
     ``,
     `## RULES`,
     `- Judge every entry against the requested subject, never against how interesting it is on its own.`,
+    `- The chapter direction outranks the novel premise. When they point at different things, follow the direction; never select entries merely because they belong to the novel's overall premise.`,
     `- If the request is about childhood, upbringing or early life, keep family, formative years, school and the people who raised them, and leave out adult relationships, adult experiences and everything belonging to a later life.`,
     `- If the request is about a particular person, period, relationship or event, keep only what serves it.`,
     `- Leave out routine housekeeping (sleep, naps, meals, needs) unless ordinary daily life is the subject.`,
@@ -472,7 +477,13 @@ Deno.serve(async (req) => {
 
     if (mode === 'create') {
       if (!body.character_id) return Response.json({ error: 'character_id is required' }, { status: 400 });
-      if (!body.premise || !String(body.premise).trim()) return Response.json({ error: 'A premise is required' }, { status: 400 });
+      // The novel's overall premise is optional. A chapter-1 premise on its own is a
+      // complete instruction: it says what the first chapter is about.
+      const hasNovelPremise = !!String(body.premise || '').trim();
+      const hasChapterPremise = !!String(body.direction || '').trim();
+      if (!hasNovelPremise && !hasChapterPremise) {
+        return Response.json({ error: 'Give the novel a premise, or say what chapter one should be about.' }, { status: 400 });
+      }
       central = await base44.entities.Character.get(body.character_id)
         .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
       if (!central) return Response.json({ error: 'Character not found' }, { status: 404 });
@@ -539,12 +550,38 @@ Deno.serve(async (req) => {
     const centralId = central?.id || novel.character_id;
     const centralName = central?.name || novel.character_name || 'the character';
     const perspective = mode === 'create' ? (body.perspective === 'outside_narrator' ? 'outside_narrator' : 'character') : novel.perspective;
-    const focusIds = names(mode === 'create' ? body.focus_character_ids : novel.focus_character_ids).filter((id) => id && id !== centralId);
-    const focusMode = mode === 'create'
-      ? (body.focus_mode === 'known' ? 'known' : 'selected')
-      : (novel.focus_mode === 'known' ? 'known' : 'selected');
+    // ── WHOSE CHAPTER THIS IS ────────────────────────────────────────────────
+    // The people chosen when a novel began are its starting cast, never a standing
+    // requirement. Each chapter carries its own choice: a later chapter may pick
+    // different people, fewer, more, or none, and that never rewrites the novel's own
+    // record. A Redo reuses the chapter's own selection; finishing a chapter reuses the
+    // selection its opening was written from.
+    const askedFocus = Array.isArray(body.focus_character_ids)
+      ? names(body.focus_character_ids).filter((id) => typeof id === 'string' && id)
+      : null;
+    const storedChapterFocus = (chapter) => (
+      Array.isArray(chapter?.focus_character_ids) ? names(chapter.focus_character_ids) : null
+    );
+    const chapterFocusIds = mode === 'create'
+      ? (askedFocus || [])
+      : finishing
+        ? (storedChapterFocus(resumeChapter) || askedFocus || names(novel.focus_character_ids))
+        : mode === 'redo'
+          ? (storedChapterFocus(targetChapter) || askedFocus || names(novel.focus_character_ids))
+          : (askedFocus || names(novel.focus_character_ids));
+    const focusIds = chapterFocusIds.filter((id) => id && id !== centralId).slice(0, 12);
+    const requestedFocusMode = body.focus_mode === 'known' || body.focus_mode === 'selected' ? body.focus_mode : null;
+    const storedChapterFocusMode = mode === 'create'
+      ? null
+      : (finishing ? resumeChapter?.focus_mode : mode === 'redo' ? targetChapter?.focus_mode : null);
+    const focusMode = requestedFocusMode
+      || (storedChapterFocusMode === 'known' || storedChapterFocusMode === 'selected'
+        ? storedChapterFocusMode
+        : (mode === 'create' ? 'selected' : (novel.focus_mode === 'known' ? 'known' : 'selected')));
     const includeUser = mode === 'create' ? !!body.include_user : !!novel.include_user;
-    const premise = mode === 'create' ? String(body.premise).trim() : novel.premise;
+    // The novel's overall premise is optional; an empty one is simply no background
+    // direction, never the literal word "undefined".
+    const premise = mode === 'create' ? String(body.premise || '').trim() : (novel.premise || '');
     const focus = mode === 'create' ? clip(body.focus, 600) : (novel.focus || '');
     // The chapter is written from the premise confirmed for it. A Redo carries the
     // premise the reader reviewed in the box; when none is supplied, the chapter's own
@@ -1107,6 +1144,7 @@ Deno.serve(async (req) => {
       `Write every action against the name of the person doing it, never by position in the sentence: "Susan sits while Tom stands", not "one of them sits as the other stands". The order names appear in means nothing — the person named first is not the subject of the plate, and no action may be inferred from who is mentioned first.`,
       `Whatever category a ball scene is walking, the illustration must show that category: realness as a styled, convincing presentation that is walked and posed rather than danced (student styling for Schoolboy and School Girl Realness, professional tailoring for Executive Realness), runway as a walk and a fashion presentation, voguing as the dance the style actually calls.`,
       `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
+      `When someone appears younger than they are today, that age — not their current avatar — decides facial hair, build and physical development: a boy shown at ten has no beard, goatee or moustache, a girl shown in childhood has a child's body, and a teenager's development is appropriate to that age. Write the age-appropriate appearance into scene and always return that person's age here in depicted_ages.`,
       `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
       `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
     ].join('\n');
@@ -1141,8 +1179,11 @@ Deno.serve(async (req) => {
       `You are a serious literary novelist writing one chapter of a novel about ${centralName}, built strictly from the established life recorded below.`,
       ``,
       `## WHAT THIS CHAPTER IS ABOUT`,
-      `Requested subject: ${selection.subject || premise}`,
+      `Requested subject: ${selection.subject || direction || premise}`,
       selection.period ? `Life period the request points to: ${selection.period}` : '',
+      direction ? `The chapter direction for this chapter: ${direction}` : '',
+      premise ? `The novel's overall premise (background direction for the book, never a rule that every chapter must repeat or complete it): ${premise}` : '',
+      `PRECEDENCE: ${direction ? "The chapter direction above decides what this chapter covers. It outranks the novel's overall premise whenever the two differ." : "No chapter-specific direction was given, so the novel's overall premise guides this chapter."} The overall premise must never override a chapter instruction, and must never cause the same storyline to be retold, continued or finished in every chapter: each chapter explores its own subject, period and people within the book's wider direction.`,
       `The material below was selected for that subject. Anything recorded elsewhere in ${centralName}'s life was deliberately left out of this attempt: do not reach for it, do not summarise the rest of their life, and never treat its absence as proof that it did not happen.`,
       ``,
       `## THE ONE ABSOLUTE LAW — THE SOURCE IS THE ONLY AUTHORITY`,
@@ -1212,7 +1253,7 @@ Deno.serve(async (req) => {
           : mode === 'redo'
             ? `This is a new version of chapter ${chapterNumber} of the existing novel "${novel.title}", rewritten at its reader's request. Same book, same voice, same point in the chronology — but built from the authoritative records rather than from whatever the old version said.`
             : `This is chapter ${chapterNumber} of the existing novel "${novel.title}". Continue it — same book, same voice, moving the story forward into experience not yet covered.`,
-      `Premise: ${premise}`,
+      premise ? `Novel premise (background direction): ${premise}` : '',
       focus ? `Focus: ${focus}` : '',
       direction ? `Direction for this chapter: ${direction}` : '',
       mode !== 'create' && novel.title ? `Existing title: ${novel.title}` : '',
@@ -1544,6 +1585,11 @@ Deno.serve(async (req) => {
         title: chapterTitle,
         content,
         direction,
+        // This chapter's own people, kept so a Redo rewrites it with the same focus
+        // rather than the novel's starting cast.
+        focus_character_ids: focusIds,
+        focus_character_names: focusCharacters.map((c) => c.name),
+        focus_mode: focusMode,
         word_count: wordCount,
         illustrations: [],
         illustration_specs: [],

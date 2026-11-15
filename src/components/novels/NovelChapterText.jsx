@@ -1,14 +1,38 @@
-import { Fragment } from "react";
+import { Fragment, useRef } from "react";
 import NovelIllustration from "./NovelIllustration";
+import useLongPress from "@/hooks/useLongPress";
 
 /**
  * Renders a chapter as literary prose: paragraphs with the chapter's illustrations
  * placed inline at the paragraph they belong to — never as a separate gallery.
  *
  * Each plate carries its own index so a correction can target that one plate.
+ *
+ * Holding the prose itself (never the title, which keeps its own hidden copy press)
+ * opens the chapter's full text for a direct correction. The press only fires on a
+ * stationary hold over a paragraph, so tapping, scrolling and ordinary reading are
+ * untouched, and the browser's own text selection still works.
  */
-export default function NovelChapterText({ chapter, onWhyRegenerate = null, regeneratingIndex = null }) {
+export default function NovelChapterText({
+  chapter,
+  onWhyRegenerate = null,
+  regeneratingIndex = null,
+  onEditText = null,
+}) {
   const paragraphs = (chapter?.content || "").split(/\n\s*\n/).filter((p) => p.trim());
+  const pressedParagraph = useRef("");
+
+  const editPress = useLongPress(() => {
+    if (!onEditText) return;
+    window.getSelection?.()?.removeAllRanges?.();
+    onEditText(pressedParagraph.current);
+  }, { delay: 650, suppressContextMenu: false });
+
+  const handlePointerDown = (event) => {
+    if (!onEditText) return;
+    if (!event.target?.closest?.("[data-chapter-prose]")) return;
+    editPress.onPointerDown(event);
+  };
 
   // Plate order is the chapter's own order; the index is the plate's identity for a
   // single-plate correction.
@@ -25,10 +49,23 @@ export default function NovelChapterText({ chapter, onWhyRegenerate = null, rege
   });
 
   return (
-    <div className="space-y-5">
+    <div
+      className="space-y-5"
+      onPointerDown={handlePointerDown}
+      onPointerMove={editPress.onPointerMove}
+      onPointerUp={editPress.onPointerUp}
+      onPointerLeave={editPress.onPointerLeave}
+      onPointerCancel={editPress.onPointerCancel}
+      onClick={editPress.onClick}
+      onContextMenu={editPress.onContextMenu}
+    >
       {paragraphs.map((text, index) => (
         <Fragment key={index}>
-          <p className="text-[15.5px] leading-[1.85] text-foreground/90 font-serif">
+          <p
+            data-chapter-prose=""
+            onPointerDown={() => { pressedParagraph.current = text.trim(); }}
+            className="text-[15.5px] leading-[1.85] text-foreground/90 font-serif"
+          >
             {text.trim()}
           </p>
           {(byParagraph.get(index + 1) || []).map(({ img, index: plateIndex }) => (

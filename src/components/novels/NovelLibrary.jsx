@@ -34,6 +34,9 @@ export default function NovelLibrary({ character, characters = [], currentUser =
         title: form.title || undefined,
         focus: form.focus,
         premise: form.premise,
+        // The chapter's own premise — chapter one — is its direction, never the
+        // novel's overall premise.
+        direction: form.direction || undefined,
         perspective: form.perspective,
         focus_character_ids: form.focusCharacterIds,
         focus_mode: form.focusMode,

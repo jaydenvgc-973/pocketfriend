@@ -10,7 +10,10 @@ import { useCallback, useEffect, useRef } from "react";
  * a press that has already fired is swallowed, so the element's normal tap keeps its
  * own behavior.
  */
-export default function useLongPress(onLongPress, { delay = 550, moveTolerance = 10 } = {}) {
+export default function useLongPress(
+  onLongPress,
+  { delay = 550, moveTolerance = 10, suppressContextMenu = true } = {}
+) {
   const timer = useRef(null);
   const origin = useRef(null);
   const fired = useRef(false);
@@ -66,6 +69,8 @@ export default function useLongPress(onLongPress, { delay = 550, moveTolerance =
     onPointerLeave: end,
     onPointerCancel: end,
     onClick,
-    onContextMenu,
+    // Prose keeps the browser's own menu and text selection; only an undisclosed
+    // title uses the press with the menu suppressed.
+    onContextMenu: suppressContextMenu ? onContextMenu : undefined,
   };
 }
