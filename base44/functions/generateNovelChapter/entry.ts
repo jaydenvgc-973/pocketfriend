@@ -550,9 +550,11 @@ Deno.serve(async (req) => {
     // premise the reader reviewed in the box; when none is supplied, the chapter's own
     // stored premise is used — never the novel's overall premise, which is a different
     // instruction and would produce a different chapter.
-    const direction = clip(body.direction, 1200)
-      || clip(targetChapter?.direction, 1200)
-      || clip(resumeChapter?.direction, 1200);
+    // Stored exactly as the reader wrote it. A long premise is never cut short, so the
+    // Redo box always shows the whole instruction this chapter was written from.
+    const direction = [body.direction, targetChapter?.direction, resumeChapter?.direction]
+      .map((value) => String(value || '').trim())
+      .find(Boolean) || '';
 
     // ── EXCLUSIONS (this attempt only) ───────────────────────────────────────
     // The reader may leave people, events or subjects out of ONE chapter. This
