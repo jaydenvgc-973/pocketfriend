@@ -1,0 +1,56 @@
+{
+  "name": "TestCharacterPreservation",
+  "type": "object",
+  "description": "Records the settings a pre-existing character had at the moment it was designated eligible for testing, so the designation can never silently change how that character appears elsewhere in Pocketfriend (homepage placement, type, status, visibility). Written only when a character is designated for testing; never written for test-created fixtures.",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "The pre-existing character this record preserves"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name at the moment of designation"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Account that owns the character"
+    },
+    "designated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character was designated eligible for testing"
+    },
+    "homepage_visible_before_testing": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when the character was displayed on the homepage before the designation. The homepage honours this recorded placement, so designation never changes it."
+    },
+    "protected_settings": {
+      "type": "object",
+      "description": "Snapshot of the character's protected settings at designation: name, type, status, active status, visibility, ownership and display fields. Written so any change made during a test can be identified against it."
+    },
+    "restored_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the preserved settings were last confirmed against the character"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_email"
+  ]
+}

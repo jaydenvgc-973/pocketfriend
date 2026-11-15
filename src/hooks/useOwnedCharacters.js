@@ -28,6 +28,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { lfcRead, lfcWrite } from "@/lib/localFirstCache.js";
+import { preservedHomepageCharacterIds } from "@/lib/testCharacterPreservation";
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -75,9 +76,15 @@ export function useOwnedCharacters(
       // consumers can inspect/manage terminal records where legitimate. Live-
       // operational slices (activeCreated, npcFictitious, etc.) apply their own
       // lifecycle exclusion — retrievable record ≠ eligible for a live surface.
+      // TEST DESIGNATION NEVER CHANGES HOMEPAGE PRESENCE.
+      // A pre-existing character designated for testing keeps the placement it had
+      // before the designation, recorded when it was designated. Only characters
+      // with no such record — test-created fixtures and never-visible records —
+      // stay out of the user's world.
+      const preservedIds = await preservedHomepageCharacterIds(fresh);
       const freshFiltered = fresh.filter(c =>
-        c.is_test_character !== true &&
-        c.diagnostic_only !== true
+        c.diagnostic_only !== true &&
+        (c.is_test_character !== true || preservedIds.has(c.id))
       );
 
       // Persist to localStorage so next page load is instant

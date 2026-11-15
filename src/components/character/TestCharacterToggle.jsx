@@ -2,6 +2,7 @@ import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, ShieldCheck, Trash2 } from "lucide-react";
+import { recordTestingPreservation, clearTestingPreservation } from "@/lib/testCharacterPreservation";
 
 /**
  * TestCharacterToggle
@@ -35,12 +36,18 @@ export default function TestCharacterToggle({ character }) {
     }
   };
 
-  const toggleTest = () =>
-    save(
-      isTest
-        ? { is_test_character: false }
-        : { is_test_character: true, is_disposable: false }
-    );
+  // Designating a character for testing adds eligibility and nothing else. Its
+  // pre-test settings and homepage placement are recorded before the designation
+  // changes, so being chosen for a test can never alter how it appears in Pocketfriend.
+  const toggleTest = async () => {
+    if (isTest) {
+      await save({ is_test_character: false });
+      await clearTestingPreservation(character.id);
+      return;
+    }
+    await recordTestingPreservation(character);
+    await save({ is_test_character: true, is_disposable: false });
+  };
 
   return (
     <div className="mx-4 mt-3 rounded-2xl border border-border bg-card px-4 py-3">
