@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { fetchLatestWeeklyEdition } from '@/lib/latestWeeklyEdition';
 import { Newspaper, Loader2, Star, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -14,10 +14,7 @@ export default function WeeklyPublicationCard() {
 
   const { data: edition, isLoading } = useQuery({
     queryKey: ['latestWeeklyPublication'],
-    queryFn: async () => {
-      const results = await base44.entities.WeeklyPublication.list('-published_at', 1);
-      return results[0] || null;
-    },
+    queryFn: fetchLatestWeeklyEdition,
     staleTime: 5 * 60 * 1000,
   });
 

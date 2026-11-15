@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
+import { fetchLatestWeeklyEdition } from '@/lib/latestWeeklyEdition';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RefreshCw, Loader2, Newspaper } from 'lucide-react';
 
@@ -36,10 +37,7 @@ export default function TheWeekly() {
 
   const { data: edition, isLoading } = useQuery({
     queryKey: ['latestWeeklyPublication'],
-    queryFn: async () => {
-      const results = await base44.entities.WeeklyPublication.list('-published_at', 1);
-      return results[0] || null;
-    },
+    queryFn: fetchLatestWeeklyEdition,
     staleTime: 2 * 60 * 1000,
   });
 

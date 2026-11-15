@@ -341,12 +341,21 @@ Deno.serve(async (req) => {
     // ── NO MATERIAL — PUBLISH QUIET WEEK ──────────────────────────────────
     if (allMaterial.length === 0) {
       if (mode === 'manual_refresh') {
-        // Don't replace existing edition with empty one for manual refresh
+        // A refresh that finds nothing must never publish an empty edition: an empty
+        // record carries a newer published_at than the real edition and would replace
+        // it on screen with nothing. It also must not hand back an empty record that
+        // already exists for this week. The reader keeps the newest edition that
+        // actually has stories, and no record is written.
+        const hasContent = (edition) => !!edition
+          && (!!edition.headliner || (edition.sections || []).length > 0 || (edition.around_town || []).length > 0);
         const existing = await base44.asServiceRole.entities.WeeklyPublication.filter(
           { week_start: weekStartStr }, null, 1
         );
-        if (existing[0]) {
-          return Response.json({ success: true, message: 'No new material — existing edition remains current', edition: existing[0], created: false, up_to_date: true });
+        const current = (hasContent(existing[0]) ? existing[0] : null)
+          || allEditions.find(hasContent)
+          || null;
+        if (current) {
+          return Response.json({ success: true, message: 'No new material — existing edition remains current', edition: current, created: false, up_to_date: true });
         }
       }
       const edition = await base44.asServiceRole.entities.WeeklyPublication.create({
