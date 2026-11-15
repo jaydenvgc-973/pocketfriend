@@ -4,7 +4,7 @@ import RedoChapterDialog from "@/components/novels/RedoChapterDialog";
 import DeleteChapterDialog from "@/components/novels/DeleteChapterDialog";
 
 /** Per-chapter controls: rewrite this chapter, delete this chapter, or draw its plates. */
-export default function NovelChapterActions({ chapter, defaultPremise = "", onRedo, onDelete, onIllustrate = null, disabled = false, error = null }) {
+export default function NovelChapterActions({ chapter, defaultPremise = "", onRedo, onDelete, onIllustrate = null, disabled = false, redoDisabled = disabled, error = null }) {
   const [confirming, setConfirming] = useState(null);
 
   if (!chapter) return null;
@@ -22,7 +22,7 @@ export default function NovelChapterActions({ chapter, defaultPremise = "", onRe
       <div className="flex items-center gap-3">
         <button
           onClick={() => setConfirming("redo")}
-          disabled={disabled}
+          disabled={redoDisabled}
           className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
         >
           <RotateCcw className="w-3 h-3" /> Redo chapter

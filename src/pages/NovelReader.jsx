@@ -446,6 +446,7 @@ export default function NovelReader() {
                 drawIllustrations(current.id).finally(() => setBusy(false));
               }}
               disabled={busy || incomplete}
+              redoDisabled={busy}
               error={actionError}
             />
 
