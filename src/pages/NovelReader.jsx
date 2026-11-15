@@ -10,6 +10,7 @@ import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
 import NovelChapterActions from "@/components/novels/NovelChapterActions";
 import NovelGenerationFailure from "@/components/novels/NovelGenerationFailure";
 import { normalizeNovelError } from "@/lib/novelGenerationError";
+import { deleteNovelChapterRecords } from "@/lib/novelDeletion";
 
 export default function NovelReader() {
   const { novelId } = useParams();
@@ -210,7 +211,9 @@ export default function NovelReader() {
     setBusyLabel(`Removing chapter ${target.chapter_number}`);
     setActionError(null);
     try {
-      await base44.entities.NovelChapter.delete(target.id);
+      // Chapter-scoped only: this chapter and its illustrations, never the novel's
+      // character or any other record.
+      await deleteNovelChapterRecords(target.id);
       const later = chapters.filter((c) => (c.chapter_number || 0) > (target.chapter_number || 0));
       if (later.length) {
         await base44.entities.NovelChapter.bulkUpdate(

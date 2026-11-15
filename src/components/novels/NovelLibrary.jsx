@@ -8,6 +8,7 @@ import NovelCreateDialog from "./NovelCreateDialog";
 import NovelGeneratingOverlay from "./NovelGeneratingOverlay";
 import DeleteNovelDialog from "./DeleteNovelDialog";
 import { normalizeNovelError } from "@/lib/novelGenerationError";
+import { deleteNovelRecords } from "@/lib/novelDeletion";
 
 export default function NovelLibrary({ character, characters = [], currentUser = null, worldName = "" }) {
   const navigate = useNavigate();
@@ -63,8 +64,9 @@ export default function NovelLibrary({ character, characters = [], currentUser =
     if (!toDelete) return;
     const novel = toDelete;
     setToDelete(null);
-    await base44.entities.NovelChapter.deleteMany({ novel_id: novel.id });
-    await base44.entities.Novel.delete(novel.id);
+    // Novel-scoped only: the novel, its chapters and their illustrations. The
+    // character the novel is written about, and everyone in it, stays untouched.
+    await deleteNovelRecords(novel.id);
     queryClient.setQueryData(["novels", character?.id], (old = []) => old.filter((n) => n.id !== novel.id));
   };
 
