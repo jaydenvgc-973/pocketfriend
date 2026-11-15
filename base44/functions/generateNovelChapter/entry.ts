@@ -104,6 +104,59 @@ const RESTRICTED_MATERIAL_NOTE = [
 const REFUSAL_PATTERN = /^(i'm sorry|i am sorry|i can't|i cannot|i won't|i will not|i'm not able|unable to (comply|continue|help|write)|as an ai|certainly[,!]? here)/i;
 const looksLikeRefusal = (text) => String(text || '').trim().length < 500 && REFUSAL_PATTERN.test(String(text || '').trim());
 
+// ── CONTINUATION ASSEMBLY ────────────────────────────────────────────────────
+// A finishing response can echo the opening it was given before it carries on —
+// the same paragraphs, word for word — and joining that blindly saves a chapter
+// with its own beginning written twice. Paragraphs that only repeat prose the
+// chapter already contains are therefore dropped before the two parts are joined.
+// The comparison is deliberately narrow: only near-identical language goes. A
+// callback, a remembered conversation or a reflection that adds something new
+// shares a subject and names, not most of its words, and is always kept.
+const paragraphsOf = (value) => String(value || '').replace(/\r\n?/g, '\n')
+  .split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
+const wordSet = (value) => new Set(
+  String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean)
+);
+const overlapOf = (a, b) => {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  a.forEach((word) => { if (b.has(word)) shared += 1; });
+  return shared / (a.size + b.size - shared);
+};
+const DUPLICATE_OVERLAP = 0.85;
+
+function joinContinuation(opening, continuation) {
+  const openingParagraphs = paragraphsOf(opening);
+  const openingText = ` ${openingParagraphs.map((p) => p.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).join(' ')} `;
+  const seen = openingParagraphs.map(wordSet);
+  const kept = [];
+  let dropped = 0;
+  let addedWords = 0;
+  paragraphsOf(continuation).forEach((paragraph) => {
+    const words = wordSet(paragraph);
+    const normalized = paragraph.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    // A substantial paragraph is repeated when it is built from the same language
+    // as one already written.
+    const repeatsExisting = words.size >= 12
+      && seen.some((other) => overlapOf(words, other) >= DUPLICATE_OVERLAP);
+    // A short line — a name, half a sentence of dialogue — carries too little
+    // language to compare, so it only counts as repeated when it appears word for
+    // word already.
+    const repeatsVerbatim = words.size >= 4 && words.size < 12
+      && openingText.includes(` ${normalized} `);
+    if (repeatsExisting || repeatsVerbatim) { dropped += 1; return; }
+    kept.push(paragraph);
+    seen.push(words);
+    addedWords += String(paragraph).split(/\s+/).filter(Boolean).length;
+  });
+  return {
+    content: [String(opening || '').trim(), kept.join('\n\n')].filter(Boolean).join('\n\n')
+      .replace(/\n{3,}/g, '\n\n').trim(),
+    dropped,
+    addedWords,
+  };
+}
+
 // ── AGES ─────────────────────────────────────────────────────────────────────
 // Ages come only from recorded data. A recorded age is authoritative; a recorded
 // date of birth or birth year gives the age for any period. Nothing else — not
@@ -951,6 +1004,17 @@ Deno.serve(async (req) => {
       ? `Roughly 1,400–2,200 words, 16–32 paragraphs.`
       : `Roughly 1,800–2,800 words, 20–40 paragraphs.`;
 
+    // The finish writes only the remainder of the chapter, so its length is what is
+    // still missing — never the length of the whole chapter a second time.
+    const openingWords = finishing
+      ? String(resumeChapter.content || '').split(/\s+/).filter(Boolean).length
+      : 0;
+    const continuationRule = `roughly ${Math.max(650, 2200 - openingWords)}–${Math.max(950, 2900 - openingWords)} words of new prose`;
+    const openingTail = finishing
+      ? clip((String(resumeChapter.content || '').trim()
+        .match(/[^.!?…]*[.!?…]["')\]]*\s*$/) || [''])[0].trim(), 320)
+      : '';
+
     // The chapter is written in two bounded requests. These are the only rules that
     // differ between them: what to write now, and what the plates must account for.
     const openingShapeRules = [
@@ -960,10 +1024,13 @@ Deno.serve(async (req) => {
     ].join('\n');
 
     const finishShapeRules = [
-      `## FINISH THIS CHAPTER — CONTINUE IT, DO NOT RESTART IT`,
-      `The chapter already opens with the text under THE CHAPTER SO FAR. Continue from exactly where it stops and write it to a real ending, so the finished chapter comes to the length described above in total.`,
-      `Your first paragraph must follow the last one as one continuous piece of prose — same voice, same tense, same scene if it is still running. Never repeat, re-describe, summarise or restart what is already written, and never announce that the chapter is continuing.`,
-      `End on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
+      `## FINISH THIS CHAPTER — WRITE ONLY WHAT COMES NEXT`,
+      `The prose under THE CHAPTER SO FAR is already written and saved. It is context, not material to write.`,
+      `Your content returns ONLY the new prose that follows its final sentence: ${continuationRule}, carrying the chapter on to a real ending.`,
+      `- Never retype, re-include, summarise, paraphrase or re-describe any part of THE CHAPTER SO FAR. Not one sentence, not one paragraph.`,
+      `- Do not re-open the scene or restate the situation. If something has already happened on the page — a bag packed, a message read, a conversation had — it has happened. Write forward from it.`,
+      `- Your first paragraph begins the next beat, continuing as one uninterrupted piece of prose: same voice, same tense, same scene if it is still running. Never announce that the chapter is continuing.`,
+      `- End on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
     ].join('\n');
 
     const illustrationRules = [
@@ -1067,7 +1134,14 @@ Deno.serve(async (req) => {
       source.join('\n'),
       previousBlock,
       finishing && resumeChapter?.content
-        ? `\n## THE CHAPTER SO FAR — CONTINUE FROM THE END OF THIS, NEVER REPEAT OR RESTATE ANY OF IT\n${resumeChapter.content}`
+        ? [
+          `\n## THE CHAPTER SO FAR — ALREADY WRITTEN AND SAVED. CONTEXT ONLY.`,
+          `No part of the passage below may appear in your reply.`,
+          resumeChapter.content,
+          `---`,
+          `The chapter stops at this sentence: "${openingTail}"`,
+          `Begin immediately after it with the next thing that happens. Your content must contain none of the passage above.`,
+        ].join('\n')
         : '',
     ].filter(Boolean).join('\n');
 
@@ -1084,7 +1158,12 @@ Deno.serve(async (req) => {
         properties: {
           novel_title: { type: 'string' },
           chapter_title: { type: 'string' },
-          content: { type: 'string' },
+          content: {
+            type: 'string',
+            description: finishing
+              ? 'ONLY the new prose that continues after the saved opening. Never include or repeat the opening itself.'
+              : 'The chapter prose, paragraphs separated by a blank line.',
+          },
           chapter_summary: { type: 'string' },
           illustrations: {
             type: 'array',
@@ -1182,10 +1261,27 @@ Deno.serve(async (req) => {
     }
 
     // The two parts are one piece of prose: the finish is joined onto the saved
-    // opening with a single blank line between paragraphs, never a marker.
-    const content = finishing
-      ? `${String(resumeChapter.content || '').trimEnd()}\n\n${written}`.replace(/\n{3,}/g, '\n\n').trim()
-      : written;
+    // opening with a single blank line between paragraphs, never a marker — after
+    // any prose the finish repeated from the opening has been removed, so a chapter
+    // can never be saved with its own beginning written twice.
+    let content = written;
+    if (finishing) {
+      const joined = joinContinuation(resumeChapter.content, written);
+      content = joined.content;
+      // Nothing but repetition came back, so the chapter gained nothing: the saved
+      // opening is reported back intact and the reader can finish it again.
+      if (joined.dropped > 0 && joined.addedWords < 200) {
+        return failureResponse(422, {
+          stage: 'writing',
+          cause: 'repeated_opening',
+          retryable: true,
+          canAdjust: false,
+          technical: '',
+          message: `The writing service returned this chapter's own opening again instead of what comes after it, so nothing was added. The opening of this chapter is saved and safe. Finishing it again continues from where that opening ends.`,
+        });
+      }
+    }
+    const totalParagraphs = paragraphsOf(content).length;
 
     const chapterTitle = clip(generated?.chapter_title, 160)
       || (finishing ? resumeChapter.title : '')
@@ -1268,7 +1364,7 @@ Deno.serve(async (req) => {
       const place = findPlace(spec.location);
       const zone = findZone(place, spec.location_zone);
       return {
-        after_paragraph: Math.max(1, Math.round(Number(spec.after_paragraph) || 1)),
+        after_paragraph: Math.min(totalParagraphs, Math.max(1, Math.round(Number(spec.after_paragraph) || 1))),
         caption: clip(spec.caption, 240),
         scene: clip(spec.scene, 900),
         person_ids: personIds.slice(0, 5),

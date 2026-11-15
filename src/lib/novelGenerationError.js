@@ -37,6 +37,13 @@ const BY_CAUSE = {
     retryable: true,
     canAdjust: true,
   },
+  repeated_opening: {
+    title: "The chapter came back repeated",
+    message:
+      "The writing service returned this chapter's own opening again instead of what comes after it, so nothing was added. The opening of this chapter is saved and safe. You can finish it again.",
+    retryable: true,
+    canAdjust: false,
+  },
   empty_response: {
     title: "No chapter came back",
     message:
