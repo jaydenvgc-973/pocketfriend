@@ -267,21 +267,10 @@ export default function NovelReader() {
     if (!opened) return;
   };
 
-  // A chapter written from the library arrives here with its finish still to do.
-  useEffect(() => {
-    const pendingFinish = location.state?.finishChapterId;
-    if (pendingFinish) finishChapter(pendingFinish);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state?.finishChapterId]);
-
-  // A chapter written from the library arrives here with its plates still to draw.
-  useEffect(() => {
-    const pending = location.state?.illustrationChapterId;
-    if (!pending) return;
-    setBusy(true);
-    drawIllustrations(pending).finally(() => setBusy(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state?.illustrationChapterId]);
+  // A chapter's remaining stages are started by the write that saves its opening —
+  // on the server, by the continuation, and restarted by the recovery sweep if that
+  // request is cut off. The reader never starts them, so closing this page (or
+  // leaving the app) cannot leave a chapter half-written.
 
   // Delete only this chapter and its illustrations, then keep the numbering coherent.
   const handleDeleteChapter = async () => {

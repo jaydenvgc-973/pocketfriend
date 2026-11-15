@@ -1492,6 +1492,9 @@ Deno.serve(async (req) => {
         illustration_specs: illustrationSpecs,
         writing_state: 'complete',
         writing_brief: {},
+        // The prose is finished, so the plate stage starts with its own allowance of
+        // automatic restarts.
+        writing_attempts: 0,
         // The replacement is written and saved: the version it replaced is released.
         previous_version: {},
       }
@@ -1516,6 +1519,8 @@ Deno.serve(async (req) => {
           }
           : {},
         writing_state: 'writing',
+        // This attempt starts the chapter's allowance of automatic restarts afresh.
+        writing_attempts: 0,
         writing_brief: {
           subject: clip(selection.subject, 240),
           period: clip(selection.period, 120),

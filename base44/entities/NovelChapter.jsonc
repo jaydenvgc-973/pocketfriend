@@ -81,6 +81,16 @@
       ],
       "description": "writing = only the opening of this chapter is saved and the finishing stage has not completed yet. complete = the whole chapter is written."
     },
+    "writing_attempts": {
+      "type": "number",
+      "default": 0,
+      "description": "How many times the recovery sweep has restarted an interrupted stage for this chapter. Reset to 0 when the chapter's prose is finished, so the plates get their own allowance. Caps automatic retries: an interrupted stage is tried a few times and then left to the reader's own Finish action, never retried forever."
+    },
+    "writing_last_attempt_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the last automatic restart of an interrupted stage was started for this chapter. A stage is only restarted once this is older than the abandonment window, which is far longer than any stage request can last \u2014 so a stage that is genuinely still running is never started twice."
+    },
     "writing_brief": {
       "type": "object",
       "description": "The material the opening of this chapter was built from, by record ID: the subject, the period, and the exact memories, life events, story events, relationships and conversations selected for it. The finishing request reads this instead of planning the selection a second time. Empty on complete chapters.",

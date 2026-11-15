@@ -39,6 +39,15 @@ Deno.serve(async (req) => {
   // The opening is saved and the finishing request has not completed. Finishing
   // continues from what is already on the record; it never restarts the chapter.
   if (chapter.writing_state === 'writing') {
+    // A finishing request that is running, or that has just failed and been handed
+    // back, must not be started a second time by a second trigger: two finishes at
+    // once would cost two generations and race over one chapter. Only the recovery
+    // sweep may restart it, and it says so explicitly with resume: true.
+    const lastAttempt = Date.parse(chapter.writing_last_attempt_at || '') || 0;
+    if (!body.resume && Date.now() - lastAttempt < 5 * 60 * 1000) {
+      console.log(`[advanceNovelGeneration] ${chapter.id}: finish skipped — attempt ${new Date(lastAttempt).toISOString()} is recent`);
+      return Response.json({ stage: 'finish', ok: false, skipped: 'recent_attempt' });
+    }
     const res = await sr.functions
       .invoke('generateNovelChapter', {
         mode: 'continue',

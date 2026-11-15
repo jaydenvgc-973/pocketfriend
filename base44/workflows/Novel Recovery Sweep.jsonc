@@ -1,0 +1,45 @@
+{
+  "name": "Novel Recovery Sweep",
+  "description": "Restarts a novel chapter's interrupted stage on the server, so a chapter can never stay half-written because a generation request was cut off or because the reader left the page. Writes only the chapter's own attempt bookkeeping and calls the existing continuation, which performs just the stage the record still needs. Each interrupted stage is restarted at most three times, never rewritten from scratch.",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "interval",
+      "cron_expression": null,
+      "one_time_date": null,
+      "timezone": "America/New_York",
+      "interval_value": 10,
+      "interval_unit": "minutes",
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "novel_recovery_sweep",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "resume_interrupted_chapters": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "resumeInterruptedNovelChapters",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Restart interrupted novel stages",
+            "description": "Finish the prose, then the plates"
+          }
+        }
+      }
+    ]
+  }
+}
