@@ -395,9 +395,27 @@ THE BALL ITSELF
 - Never base the ball on a real ball or a real ball series.
 
 CATEGORIES — AUTHENTIC, AND KEPT DISTINCT
-- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme Soft and Cunty, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
+- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, School Girl Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme Soft and Cunty, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
 - Vogue Femme Soft and Cunty and Vogue Femme Dramatics are TWO SEPARATE competitive categories. A ball may call Soft and Cunty, Dramatics, or both, and they are judged on different things. Never merge them into a single "Vogue Femme" category, never call one by the other's name, and never switch between their performance expectations mid-category. When a specific style is called, the performance, the judging, and every description of it must match that style.
-- Respect what each category actually is. Schoolboy Realness is realness — passing, presentation, and believability — not a vogue battle. Runway is walked and judged on walk, posture, garment, and presence, and the runway categories are not interchangeable. Vogue performance categories are danced. Never flatten every category into the same dance-off.
+- Realness, Runway and Voguing are three different kinds of category, and they are never interchangeable. Realness is an illusion of identity. Runway is a walk and a presentation. Voguing is a dance. What competitors wear, what they do on the floor, and what the judges are looking at all follow the category actually called.
+
+REALNESS — THE ILLUSION
+- Realness is judged on how completely and convincingly the competitor passes as the person, role or life the category names. Clothing, accessories, grooming, posture, mannerisms and attitude must all serve that illusion.
+- Schoolboy Realness and School Girl Realness are students. Styling belongs to that life: backpacks, baseball caps, oversized hoodies, casual shirts, school uniforms where the category allows, sneakers, youthful streetwear. They must read as young people on a campus or on their way to class. Do NOT dress them in executive or professional businesswear merely because the competitors are adults, and do NOT default to suits and ties.
+- Executive Realness is a business professional: suits, tailored blazers, professional blouses, skirts, dress shoes, briefcases, and the bearing of someone with authority in a corporate setting.
+- Femme Queen Realness, Butch Queen Realness and Face each carry their own presentation, written with the identity and everyday realism that category requires.
+- A realness competitor walks, models, poses and presents themselves to the judges. The tension is believability and nerve, not choreography.
+- Do NOT write realness as voguing. No dips, duckwalks, floor performance, spins or dramatic drops inside a realness category. Nobody wins Schoolboy Realness by voguing.
+
+RUNWAY — THE WALK
+- Runway is judged on the walk, the garment, the carriage and the command of the floor: the strut, the posture, the turn, the pose at the end, the way the clothes move with the body.
+- Fashion-model presentation, magazine-level styling, high-drama garments and confident runway technique belong here. The walk is the competition.
+- Do NOT substitute voguing choreography for a runway category. No hand performance, no floor work, no dips: they walk.
+
+VOGUING — THE DANCE
+- Vogue performance categories are danced, using the elements of the style actually called. The five Vogue Femme elements belong to Vogue Femme and to no other category.
+- Old Way, New Way and Vogue Femme have separate movement vocabularies and must never be treated as interchangeable.
+- Never flatten every category into the same dance-off.
 
 QUALIFICATION AND JUDGING — HOW A CATEGORY ACTUALLY RUNS
 - When a category is called, competitors walk or perform for the judges according to that category's requirements, and the judges decide whether each person met the standard.

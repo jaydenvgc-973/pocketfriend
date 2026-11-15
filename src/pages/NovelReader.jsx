@@ -8,9 +8,19 @@ import NovelTableOfContents from "@/components/novels/NovelTableOfContents";
 import ContinueNovelPanel from "@/components/novels/ContinueNovelPanel";
 import NovelGeneratingOverlay from "@/components/novels/NovelGeneratingOverlay";
 import NovelChapterActions from "@/components/novels/NovelChapterActions";
+import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import NovelGenerationFailure from "@/components/novels/NovelGenerationFailure";
 import { normalizeNovelError } from "@/lib/novelGenerationError";
 import { deleteNovelChapterRecords } from "@/lib/novelDeletion";
+
+/** The moment a plate sits in, used when a plate has no stored scene note. */
+function plateScene(chapter, plate) {
+  const paragraphs = (chapter?.content || "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const index = Math.min(paragraphs.length, Math.max(1, Number(plate?.after_paragraph) || 1)) - 1;
+  const paragraph = paragraphs[index] || "";
+  const caption = plate?.caption ? `Moment: ${plate.caption}` : "";
+  return [paragraph, caption].filter(Boolean).join("\n");
+}
 
 export default function NovelReader() {
   const { novelId } = useParams();
@@ -26,6 +36,10 @@ export default function NovelReader() {
   const [notices, setNotices] = useState(location.state?.notices || []);
   // Delete is not a generation attempt: its failures stay a plain line of text.
   const [actionError, setActionError] = useState(null);
+  // Why Regenerate on ONE plate: which plate, and what happened to it.
+  const [regenIndex, setRegenIndex] = useState(null);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenError, setRegenError] = useState(null);
 
   const { data: novel, isLoading: loadingNovel, isError: novelError } = useQuery({
     queryKey: ["novel", novelId],
@@ -75,6 +89,58 @@ export default function NovelReader() {
     queryClient.invalidateQueries({ queryKey: ["novel", novelId] }),
     queryClient.invalidateQueries({ queryKey: ["novels", novel?.character_id] }),
   ]);
+
+  // ── WHY REGENERATE, ONE PLATE ────────────────────────────────────────────
+  // The plate's own note is the scene description; a chapter drawn before notes were
+  // kept falls back to the paragraph the plate follows. The chapter's prose, title and
+  // every other plate stay exactly as they are.
+  const orderedPlates = [...(current?.illustrations || [])]
+    .sort((a, b) => (Number(a.after_paragraph) || 0) - (Number(b.after_paragraph) || 0));
+  const regenPlate = regenIndex != null ? orderedPlates[regenIndex] : null;
+  const regenSpec = regenIndex != null ? (current?.illustration_specs || [])[regenIndex] || null : null;
+  const regenPrompt = regenSpec?.scene || (regenPlate ? plateScene(current, regenPlate) : "");
+  const regenContext = {
+    character_id: (regenSpec?.person_ids || [])[0] || null,
+    character_name: null,
+    subjects: (regenSpec?.person_ids || []).map((id) => ({ subject_type: "character", subject_id: id })),
+    location_id: regenSpec?.location_id || null,
+    zone_name: regenSpec?.zone_name || null,
+    location_name: regenSpec?.location_label || null,
+  };
+
+  const handlePlateRegenerate = async (reasonId, customPrompt, locationId, zoneName, locationImages, locationName, subjectPayload) => {
+    if (regenIndex == null || !current) return;
+    setRegenBusy(true);
+    setRegenError(null);
+    try {
+      const res = await base44.functions.invoke("generateNovelIllustrations", {
+        novel_id: novelId,
+        chapter_id: current.id,
+        mode: "regenerate",
+        illustration_index: regenIndex,
+        reason: reasonId,
+        custom_prompt: customPrompt || undefined,
+        location_id: locationId || undefined,
+        zone_name: zoneName || undefined,
+        location_name: locationName || undefined,
+        location_images: locationImages?.length ? locationImages : undefined,
+        // A subject answer from the picker is authoritative; without one, the plate's
+        // own recorded people decide who is in it.
+        subject_picker_used: !!subjectPayload,
+        intended_subject_ids: subjectPayload?.intendedSubjectIds?.length ? subjectPayload.intendedSubjectIds : undefined,
+        include_user: subjectPayload?.includeUser === true,
+        user_ref_images: subjectPayload?.userRefImages || undefined,
+        user_name: subjectPayload?.userName || undefined,
+      });
+      if (res?.data?.error) throw new Error(res.data.error);
+      await refreshNovel();
+      setRegenIndex(null);
+    } catch (err) {
+      setRegenError(err?.response?.data?.error || err?.message || "That illustration could not be redrawn. The plate you have is unchanged.");
+    } finally {
+      setRegenBusy(false);
+    }
+  };
 
   // The plates are drawn in their own request, after the chapter is already saved.
   // A failure here costs the illustrations, never the prose.
@@ -333,7 +399,11 @@ export default function NovelReader() {
               </div>
             )}
 
-            <NovelChapterText chapter={current} />
+            <NovelChapterText
+              chapter={current}
+              onWhyRegenerate={(index) => { setRegenError(null); setRegenIndex(index); }}
+              regeneratingIndex={regenBusy ? regenIndex : null}
+            />
 
             <div className="flex items-center justify-between mt-10">
               <button
@@ -404,6 +474,16 @@ export default function NovelReader() {
       </article>
 
       <NovelGeneratingOverlay open={busy} label={busyLabel || `Writing chapter ${nextChapterNumber}`} />
+
+      <RegenerateImageModal
+        isOpen={regenIndex != null}
+        onClose={() => { setRegenIndex(null); setRegenError(null); }}
+        onSelect={handlePlateRegenerate}
+        isRegenerating={regenBusy}
+        error={regenError}
+        originalPrompt={regenPrompt}
+        generationContext={regenContext}
+      />
     </div>
   );
 }

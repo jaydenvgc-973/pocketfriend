@@ -1037,10 +1037,38 @@ Deno.serve(async (req) => {
       `## ILLUSTRATIONS`,
       `Choose 2 or 3 moments from the whole chapter — the opening given to you and what you write now — never more than 3, spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based paragraph index in the finished chapter; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the exact names of the people visible; location is the exact name of the place from ESTABLISHED PLACES when the scene happens there, otherwise leave it empty and describe the setting inside scene; location_zone is one of that place's listed zones when the scene happens in a particular room or area. Do not illustrate a character or event the chapter does not contain.`,
       `In characters, use the recorded name of every established person — including each family member listed under FAMILY MEMBERS WHO EXIST AS CHARACTERS — never "his children", "a child", "his daughter" or any description, and never give a recorded person's name to somebody invented. A person who exists only in this prose and has no character record has no recorded name: describe them in a few words instead (for example "the soup-kitchen mother", "an unnamed neighbour"). Established people and narrative-only people may share one illustration.`,
+      `When an established user appears — the account holder or anyone known by their world name — name them exactly as the prose names them, so the illustration can resolve that same person's own appearance. Never swap a world name for a description like "a man" or "his friend".`,
+      `Whatever category a ball scene is walking, the illustration must show that category: realness as a styled, convincing presentation that is walked and posed rather than danced (student styling for Schoolboy and School Girl Realness, professional tailoring for Executive Realness), runway as a walk and a fashion presentation, voguing as the dance the style actually calls.`,
       `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
       `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
       `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
     ].join('\n');
+
+    // ── BALLROOM CATEGORY ACCURACY ───────────────────────────────────────────
+    // Only when this chapter is about a ball does the ballroom guidance apply. It is
+    // the same established knowledge Pocketfriend already uses for Ball Story Events,
+    // carried into the novel so a ball chapter is written with the categories kept
+    // distinct — Realness is an illusion of identity, Runway is a walk, Voguing is a
+    // dance — instead of every category collapsing into the same performance.
+    const BALLROOM_CHAPTER_SIGNAL = /\b(vogue|voguing|realness|ballroom|kiki ball|house ball|femme queen|butch queen|schoolboy|school boy|executive realness|007s?|tens across the board)\b/i;
+    const BALL_CHAPTER_SIGNAL = /\bball\b/i;
+    const ballroomChapterText = [premise, focus, direction, novel?.title, novel?.focus,
+      targetChapter?.title, targetChapter?.content, resumeChapter?.title].filter(Boolean).join('\n');
+    const ballroomChapter = BALLROOM_CHAPTER_SIGNAL.test(ballroomChapterText)
+      || (BALL_CHAPTER_SIGNAL.test(ballroomChapterText)
+        && /\b(categor(?:y|ies)|walk(?:ing)?|runway|house|judges?|chop(?:ped)?|dip)\b/i.test(ballroomChapterText));
+    const ballroomBlock = ballroomChapter
+      ? [
+        `## BALLROOM CATEGORY ACCURACY — THIS CHAPTER IS SET AT A BALL`,
+        `A ball is one event inside the LGBTQ ballroom scene, written from inside that culture as it is actually lived. Every rule about invented houses, personalities and ball names already established for Pocketfriend's Ball Story Events applies here too: original names for houses and ballroom personalities, and never describe any house, character or ball as fictional, invented or simulated.`,
+        `Realness, Runway and Voguing are three different kinds of category and are never interchangeable. What is worn, what happens on the floor, and what the judges are watching all follow the category actually called.`,
+        `- REALNESS is an illusion of identity: how completely the competitor passes as the person or role the category names. Clothing, grooming, posture and attitude serve that illusion, and the competitor walks, models and presents to the judges. Schoolboy Realness and School Girl Realness look like students — backpacks, caps, oversized hoodies, casual shirts, school uniforms where allowed, sneakers, youthful streetwear — never executive businesswear, and never suits and ties because the competitors are adults. Executive Realness is professional tailoring and corporate bearing. Femme Queen Realness carries its own presentation. Realness is never voguing: no dips, duckwalks, floor performance or spins inside a realness category.`,
+        `- RUNWAY is the walk: strut, posture, carriage, the turn at the end, the garment moving with the body, fashion-model presentation and command of the floor. Runway is walked, never danced — no hand performance, no floor work, no dips.`,
+        `- VOGUING is a dance. Vogue Femme is built from hand performance, catwalk, duckwalk, floor performance, and spins and dips. Vogue Femme Soft and Cunty is soft, fluid, graceful and alluring, with controlled precision rather than force. Vogue Femme Dramatics is explosive and high-energy, with harder movement, sharp transitions and dramatic dips. They are two separate categories and are never merged, renamed for each other, or performed the same way. Old Way and New Way have their own movement vocabularies and are not interchangeable with Vogue Femme.`,
+        `- A dip is a dip. Never write "death drop" or "shablam".`,
+        `Whatever a chapter states a competitor wore and did must remain consistent within that performance: a realness walk stays a realness walk, and a drama category stays a drama category from the call to the judging.`,
+      ].join('\n')
+      : '';
 
     const instruction = [
       `You are a serious literary novelist writing one chapter of a novel about ${centralName}, built strictly from the established life recorded below.`,
@@ -1096,6 +1124,8 @@ Deno.serve(async (req) => {
       `- When such language belongs to the moment the premise asks for, write them as these people actually speak.`,
       `- When it does not belong to the requested subject, leave it out. Never import mature material into a chapter that has no use for it, and never reach for it for effect.`,
       `- If a particular moment cannot be depicted, write around it — imply it, cut away from it, or summarise it in a sentence — and keep the chapter. Never return a refusal in place of prose, and never silently change what is established about a character.`,
+      ``,
+      ballroomBlock,
       ``,
       `## CHAPTER SHAPE`,
       lengthRule,
