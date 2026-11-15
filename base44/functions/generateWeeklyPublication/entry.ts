@@ -756,7 +756,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
 
         const depictedNames = charEntries.map((e) => e.name).filter(Boolean);
         const depictedLine = depictedNames.length
-          ? `\nThe people in this photograph are ${depictedNames.join(' and ')} — the attached reference subjects. They are the subject of the photograph, not bystanders: ⛔ do not replace, foreground, or model any of them with an unnamed or generic person. Anyone else visible in the frame is unnamed background and must stay visually distinct from them.`
+          ? `\nThe people in this photograph are ${depictedNames.join(' and ')} — the attached reference subjects, and they are the people taking part in the event itself: the family, guests or performers at the centre of the action. ⛔ Every figure at the centre of the action must be one of them, rendered as the same recognisable person as their reference photograph; do not put an unnamed participant in their place, do not add another performer alongside them, and do not replace, blend or average any of them. Any crowd, audience or spectators are background only and must stay clearly distinct from them.`
           : '';
 
         const subjectBlockText = subjectBlocks.length === 1
