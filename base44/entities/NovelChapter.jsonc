@@ -66,7 +66,7 @@
     },
     "direction": {
       "type": "string",
-      "description": "User direction supplied for this chapter, if any"
+      "description": "The chapter-specific premise this chapter was written from. Retained so a Redo can offer it back for review and editing."
     },
     "writing_state": {
       "type": "string",
@@ -79,7 +79,7 @@
         "green",
         "yellow"
       ],
-      "description": "writing = only the opening of this chapter is saved and the finishing request has not completed yet. complete = the whole chapter is written."
+      "description": "writing = only the opening of this chapter is saved and the finishing stage has not completed yet. complete = the whole chapter is written."
     },
     "writing_brief": {
       "type": "object",
@@ -120,6 +120,51 @@
           "items": {
             "type": "string"
           }
+        }
+      }
+    },
+    "previous_version": {
+      "type": "object",
+      "description": "While a Redo is in progress, the version of this chapter it is replacing. The replaced chapter's prose, illustrations and stored premise are kept here until the replacement is written and saved; if the redo fails, they are put back exactly as they were. Empty otherwise.",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "word_count": {
+          "type": "number"
+        },
+        "illustrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "caption": {
+                "type": "string"
+              },
+              "after_paragraph": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "illustration_specs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "direction": {
+          "type": "string"
+        },
+        "saved_at": {
+          "type": "string",
+          "format": "date-time"
         }
       }
     },

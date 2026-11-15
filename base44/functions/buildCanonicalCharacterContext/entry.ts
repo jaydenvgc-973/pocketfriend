@@ -952,18 +952,10 @@ function buildModeBlock(interactionContext) {
 }
 
 // ── MARKETING / PROMOTION CAPABILITY BLOCK ────────────────────────────────────
-// Injects behavioral instructions for active Marketing/Promotion traits AND connects
-// them to existing real-world information (world_context_cache, daily_weather_cache)
-// already fetched daily by fetchDailyWorldContext / fetchDailyWeather but previously
-// unused by character reasoning. Also enforces truthfulness: a character can only
-// claim to have researched/found something when genuine research occurred.
-//
-// TRAIT INDEPENDENCE: Only active traits receive instructions. An unselected
-// neighboring trait is never silently granted. Selected traits cooperate naturally.
-//
-// REAL-WORLD INFO: Injected ONLY when traits that need it are active, and ONLY
-// the relevant portions — not a raw data dump. The character draws on this when
-// their traits, circumstances, or conversation make it meaningful.
+// Instructions for active Marketing/Promotion traits, connected to the real-world
+// information (world_context_cache, daily_weather_cache) already fetched daily.
+// Only active traits receive instructions, and only the relevant portions are
+// injected. A character may claim research only when genuine research occurred.
 function buildMarketingPromotionBlock(character, worldContextCache = null, weatherCache = null) {
   const c = character;
   const traits = {
@@ -1290,20 +1282,10 @@ Deno.serve(async (req) => {
     });
 
     // ── Step 1b: Reconnect to the One Truth location authority ───────────────
-    // buildCanonicalCharacterContext must NOT trust raw DB resolved_presence_status
-    // / resolved_current_location_* fields when they may be stale. The DB can
-    // say 'napping' at home while the character is actually on an active work
-    // shift — the exact One Truth violation where Chat/Text conversational
-    // context believes home while Homepage/Travel show at_work.
-    //
-    // Call the existing authority (enforceCharacterLocationPresence) with no
-    // requested transition. Its legacy recompute path evaluates work, school,
-    // sleep, and home — and commits the correct canonical state. Overlay the
-    // committed result onto the character object so every downstream consumer
-    // (buildHardFacts, buildCoPresenceBlock, world state reconciliation) reads
-    // the same authoritative resolved live-presence result used by Homepage
-    // and Travel. This is the existing authority — no new resolver, no second
-    // canonical state, no cache, no sync layer.
+    // Raw DB resolved_* fields can be stale (say 'napping' at home during an active
+    // shift). Call the existing authority with no requested transition, then overlay
+    // its committed result so every downstream consumer reads the same canonical
+    // state Homepage and Travel use — no new resolver, cache or sync layer.
     try {
       const authRes = await base44.functions.invoke('enforceCharacterLocationPresence', {
         character_id: character.id,
@@ -2092,6 +2074,21 @@ Deno.serve(async (req) => {
       console.warn(`[buildCanonicalCharacterContext] weekly_publication_awareness delegate error (non-blocking): ${wpErr.message}`);
     }
 
+    // ── Step 10e: Novel awareness — the character's own completed chapters ───
+    // READ-ONLY. A completed chapter of this character's own novel is their own lived
+    // experience; the delegate decides which chapter, if any. Same pattern as above.
+    let novelAwarenessBlock = '';
+    try {
+      const novelData = (await base44.functions.invoke('buildNovelAwarenessBlock', {
+        characterId,
+        recentText: [...(recentUserMessages || []), ...(recentMessages || [])].map((m) => m.content || '').filter(Boolean).slice(0, 12),
+      }))?.data;
+      novelAwarenessBlock = novelData?.awarenessBlock || '';
+      contextLog.push({ step: 'novel_awareness', injected: !!novelAwarenessBlock, completedChapters: novelData?.completedChapters ?? 0, matched: novelData?.matchedConversation ?? false, delegate: 'buildNovelAwarenessBlock' });
+    } catch (novelErr) {
+      contextLog.push({ step: 'novel_awareness', status: 'error', error: novelErr.message, delegate: 'buildNovelAwarenessBlock' });
+    }
+
     // ── Step 10c: Pre-build Vick identity override BEFORE prompt construction ──
     // CRITICAL ORDER: Vick's character fields must be overridden BEFORE buildFullCanonicalPrompt
     // is called. The LLM anchors on the first "WHO YOU ARE" block — if old NPC content
@@ -2178,7 +2175,7 @@ Deno.serve(async (req) => {
     }
 
     // travelContextBlock + communityEventsBlock injected alongside todayLocationBlock
-    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + weeklyPublicationBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null, activeStoryEventBlock);
+    const systemPrompt = buildFullCanonicalPrompt(character, memories, worldName, interactionContext, lifeJournalBlock, worldStateContext + travelContextBlock + communityEventsBlock + worldPhoneAwarenessBlock + commitmentAwarenessBlock + weeklyPublicationBlock + novelAwarenessBlock + recentMessageBlock, coPresence, userBirthdayFact, educationBlock, todayLocationBlock, worshipLocation, familyGraphBlock, wardrobeBlock, selfClothingBlock, clothingAwarenessBlock, settings?.user_gender || null, activeStoryEventBlock);
 
     // ── VICK SERVICIO DIAGNOSTIC AUTHORITY OVERRIDE ──────────────────────────
     // Vick is the conversational face of the Account Help & Repair system.

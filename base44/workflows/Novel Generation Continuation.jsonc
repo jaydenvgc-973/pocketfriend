@@ -1,0 +1,41 @@
+{
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "novel_generation_continuation",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "advance_generation": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "advanceNovelGeneration",
+            "args": {
+              "chapter_id": "${ .trigger.entity_id }"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Continue the chapter",
+            "description": "Finish the prose, then the plates"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create",
+        "update"
+      ],
+      "entity_name": "NovelChapter"
+    }
+  },
+  "name": "Novel Generation Continuation",
+  "description": "Completes a novel chapter that has only been partly written, then draws that chapter's illustrations \u2014 on the server, so generation finishes whether or not the Novel reader is still open. Fires whenever a NovelChapter record is written; advanceNovelGeneration reads the chapter and performs only the stage the record still needs, so a stage that already ran is a no-op and no chapter is written twice."
+}

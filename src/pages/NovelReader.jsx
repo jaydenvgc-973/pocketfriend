@@ -32,6 +32,8 @@ export default function NovelReader() {
   const [busyLabel, setBusyLabel] = useState("");
   const [failure, setFailure] = useState(null);
   const [exclusions, setExclusions] = useState([]);
+  // The premise confirmed in the Redo box, kept so a retry rewrites from the same one.
+  const [redoPremise, setRedoPremise] = useState("");
   // Notices carried over from an earlier request, e.g. a plate that failed to render.
   const [notices, setNotices] = useState(location.state?.notices || []);
   // Delete is not a generation attempt: its failures stay a plain line of text.
@@ -55,6 +57,12 @@ export default function NovelReader() {
       return [...rows].sort((a, b) => (a.chapter_number || 0) - (b.chapter_number || 0));
     },
     enabled: !!novelId,
+    // The chapter is finished and illustrated on the server, so this page never drives
+    // it. While one is still being written the reader keeps the record in step; as soon
+    // as nothing is in progress it stops asking.
+    refetchInterval: (query) => (
+      (query.state.data || []).some((chapter) => chapter.writing_state === "writing") ? 6000 : false
+    ),
   });
 
   const current = activeNumber
@@ -203,7 +211,8 @@ export default function NovelReader() {
       setActiveNumber(res.data.chapter?.chapter_number ?? numberHint ?? null);
       setNotices((prev) => [...new Set([...prev, ...(res.data.notices || [])])]);
       completed = true;
-      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
+      // The chapter's plates are drawn by the continuation workflow that this write
+      // starts — the page does not start a second round of generation.
     } catch (err) {
       setFailure({ ...normalizeNovelError(err, { operation: "finish" }), chapterId });
     } finally {
@@ -213,7 +222,9 @@ export default function NovelReader() {
     return completed;
   };
 
-  // One chapter, start to finish: opening, finish, then its plates.
+  // A new chapter: only its opening is requested here. The finish and the plates are
+  // performed by the server-side continuation the saved chapter starts, so the chapter
+  // completes whether or not this page is still open.
   const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
     const plainDirection = typeof direction === "string" ? direction : "";
     const opened = await openChapter(
@@ -227,30 +238,27 @@ export default function NovelReader() {
     );
     if (!opened) {
       setFailure((prev) => (prev ? { ...prev, direction: plainDirection } : prev));
-      return;
-    }
-    if (opened.needs_finish && opened.chapter?.id) {
-      await finishChapter(opened.chapter.id, opened.chapter?.chapter_number || nextChapterNumber);
     }
   };
 
-  // Rewrite only the chapter being read — the rest of the novel is untouched.
-  const handleRedoChapter = async (exclusionsForAttempt = exclusions) => {
+  // Rewrite only the chapter being read — the rest of the novel is untouched. The
+  // replacement is written from the premise the reader confirmed in the Redo box; the
+  // chapter being replaced stays on the record until the new version is saved.
+  const handleRedoChapter = async (premise, exclusionsForAttempt = exclusions) => {
     if (!current) return;
     const number = current.chapter_number;
+    setRedoPremise(premise || "");
     const opened = await openChapter(
       {
         mode: "redo",
         novel_id: novelId,
         chapter_id: current.id,
+        direction: premise || undefined,
         exclusions: exclusionsForAttempt,
       },
       `Rewriting chapter ${number}`,
     );
     if (!opened) return;
-    if (opened.needs_finish && opened.chapter?.id) {
-      await finishChapter(opened.chapter.id, number);
-    }
   };
 
   // A chapter written from the library arrives here with its finish still to do.
@@ -304,7 +312,8 @@ export default function NovelReader() {
       return;
     }
     if (failure?.operation === "redo") {
-      handleRedoChapter(exclusions);
+      // Retried with the premise that was confirmed for this rewrite.
+      handleRedoChapter(redoPremise, exclusions);
       return;
     }
     handleContinue(failure?.direction || "", exclusions);
@@ -386,8 +395,9 @@ export default function NovelReader() {
             {incomplete && (
               <div className="mb-7 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  This chapter is only partly written. What you read below is its opening, saved as it was
-                  written; the rest has not been written yet.
+                  This chapter is still being written. Its opening is saved below and the rest is being
+                  finished for you now — you can leave this page or close the app and come back. If it has
+                  not continued, finish it here.
                 </p>
                 <button
                   onClick={() => finishChapter(current.id, current.chapter_number)}
@@ -425,7 +435,8 @@ export default function NovelReader() {
 
             <NovelChapterActions
               chapter={current}
-              onRedo={() => handleRedoChapter()}
+              defaultPremise={current.direction || novel.premise || ""}
+              onRedo={(premise) => handleRedoChapter(premise)}
               onDelete={handleDeleteChapter}
               onIllustrate={() => {
                 setBusy(true);

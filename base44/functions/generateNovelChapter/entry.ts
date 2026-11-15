@@ -414,16 +414,50 @@ async function selectPremiseSource({ base44, premise, focus, direction, central,
   };
 }
 
+// A Redo writes its replacement over the chapter it replaces. While that is happening
+// the version being replaced is kept on the chapter itself, so a redo that fails can
+// put it back exactly as it was — prose, title, word count, plates and stored premise.
+async function restoreReplacedChapter(base44, chapter) {
+  const previous = chapter?.previous_version;
+  if (!previous || !previous.content) return false;
+  const restored = await base44.entities.NovelChapter.update(chapter.id, {
+    content: previous.content,
+    title: previous.title || chapter.title,
+    word_count: previous.word_count || 0,
+    illustrations: Array.isArray(previous.illustrations) ? previous.illustrations : [],
+    illustration_specs: Array.isArray(previous.illustration_specs) ? previous.illustration_specs : [],
+    direction: previous.direction || '',
+    writing_state: 'complete',
+    writing_brief: {},
+    previous_version: {},
+  }).catch(() => null);
+  return !!restored;
+}
+
 Deno.serve(async (req) => {
   // Which part of the work we are in, so an unexpected crash can still say where
   // it happened instead of returning a bare code.
   let stage = 'source';
+  // Set once a Redo has begun replacing a chapter: a failure below must hand that
+  // chapter back, not leave a half-written replacement in its place.
+  let redoRevert = null;
   try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me().catch((e) => (e.status === 401 ? null : Promise.reject(e)));
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
+    const base44Base = createClientFromRequest(req);
+    const sr = base44Base.asServiceRole;
+    const user = await base44Base.auth.me().catch(() => null);
     const body = await req.json().catch(() => ({}));
+
+    // Server-side continuation: the "Novel Generation Continuation" workflow starts the
+    // finishing stage with no user session, so a chapter completes even when the Novel
+    // reader is no longer open. Only the finishing stage may run that way, and only on
+    // a chapter that is already partly written — never a new or a completed chapter.
+    const internalFinish = !user && body.part === 'finish';
+    if (!user && !internalFinish) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // The internal stage reads the records it needs by ID, so it runs with service-role
+    // access. Every caller with a session keeps their own scope, exactly as before.
+    const base44 = user ? base44Base : sr;
+    const ownerEmail = user?.email || null;
     // A chapter is written in two bounded requests: an opening here, then a finish
     // in a second call. One longer request runs past the platform's request limit,
     // and the timeout used to throw away everything that had been written.
@@ -446,7 +480,7 @@ Deno.serve(async (req) => {
       if (!body.novel_id) return Response.json({ error: 'novel_id is required' }, { status: 400 });
       novel = await base44.entities.Novel.get(body.novel_id).catch((e) => (e.status === 404 ? null : Promise.reject(e)));
       if (!novel) return Response.json({ error: 'Novel not found' }, { status: 404 });
-      if (novel.created_by_id !== user.id && user.role !== 'admin') {
+      if (user && novel.created_by_id !== user.id && user.role !== 'admin') {
         return Response.json({ error: 'Forbidden' }, { status: 403 });
       }
       central = await base44.entities.Character.get(novel.character_id)
@@ -479,7 +513,28 @@ Deno.serve(async (req) => {
         return Response.json({ novel, chapter: resumeChapter, notices: [], illustration_pending: false });
       }
       brief = resumeChapter.writing_brief || null;
+      // A redo's replacement is being written over a kept copy of the chapter it
+      // replaces: if anything below fails, that copy goes back.
+      if (resumeChapter?.previous_version?.content) {
+        redoRevert = { client: base44, chapter: resumeChapter };
+      }
     }
+
+    // Every failure in this request is reported the same way — and, when a redo was
+    // under way, the chapter it was replacing is handed back first.
+    const failureOf = async (status, failure) => {
+      if (redoRevert) {
+        const restored = await restoreReplacedChapter(redoRevert.client, redoRevert.chapter);
+        redoRevert = null;
+        if (restored) {
+          return failureResponse(status, {
+            ...failure,
+            message: `${failure.message} The chapter this rewrite was replacing is back in place, unchanged.`,
+          });
+        }
+      }
+      return failureResponse(status, failure);
+    };
 
     const centralId = central?.id || novel.character_id;
     const centralName = central?.name || novel.character_name || 'the character';
@@ -491,7 +546,13 @@ Deno.serve(async (req) => {
     const includeUser = mode === 'create' ? !!body.include_user : !!novel.include_user;
     const premise = mode === 'create' ? String(body.premise).trim() : novel.premise;
     const focus = mode === 'create' ? clip(body.focus, 600) : (novel.focus || '');
-    const direction = clip(body.direction, 1200);
+    // The chapter is written from the premise confirmed for it. A Redo carries the
+    // premise the reader reviewed in the box; when none is supplied, the chapter's own
+    // stored premise is used — never the novel's overall premise, which is a different
+    // instruction and would produce a different chapter.
+    const direction = clip(body.direction, 1200)
+      || clip(targetChapter?.direction, 1200)
+      || clip(resumeChapter?.direction, 1200);
 
     // ── EXCLUSIONS (this attempt only) ───────────────────────────────────────
     // The reader may leave people, events or subjects out of ONE chapter. This
@@ -511,9 +572,10 @@ Deno.serve(async (req) => {
     const sourceIssues = [];
 
     // ── USER PERSONA (world name only — never "the user") ────────────────────
-    const settings = await base44.entities.UserSettings.filter({ owner_email: user.email }, null, 1).catch(() => []);
+    const settingsOwner = ownerEmail || novel?.owner_email || resumeChapter?.owner_email || targetChapter?.owner_email || '';
+    const settings = await base44.entities.UserSettings.filter({ owner_email: settingsOwner }, null, 1).catch(() => []);
     const settingsRow = asArray(settings)[0] || {};
-    const worldName = settingsRow.fictional_world_name || user.full_name || 'the one who stays';
+    const worldName = settingsRow.fictional_world_name || user?.full_name || 'the one who stays';
 
     // ── FOCUS CHARACTERS ─────────────────────────────────────────────────────
     // The user picked these people in the selection list, which is itself built from
@@ -526,7 +588,7 @@ Deno.serve(async (req) => {
       const found = new Set(readable.map((c) => c.id));
       const missing = wanted.filter((id) => !found.has(id));
       const recovered = missing.length
-        ? asArray(await base44.asServiceRole.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
+        ? asArray(await sr.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
         : [];
       focusCharacters = [...readable, ...recovered].filter(usableCharacter)
         .filter((c) => !isExcludedName(c.name));
@@ -583,7 +645,7 @@ Deno.serve(async (req) => {
       : [];
     const unreadableHomeIds = homeLocationIds.filter((id) => !homeLocations.some((h) => h.id === id));
     if (unreadableHomeIds.length) {
-      homeLocations = homeLocations.concat(asArray(await base44.asServiceRole.entities.LocationReference
+      homeLocations = homeLocations.concat(asArray(await sr.entities.LocationReference
         .filter({ id: { $in: unreadableHomeIds } }, null, unreadableHomeIds.length).catch(() => [])));
     }
     const householdIdsOf = (home) => {
@@ -666,7 +728,7 @@ Deno.serve(async (req) => {
       const found = new Set(readable.map((c) => c.id));
       const missing = candidateIds.filter((id) => !found.has(id));
       const recovered = missing.length
-        ? asArray(await base44.asServiceRole.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
+        ? asArray(await sr.entities.Character.filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
         : [];
       knownPeople = [...readable, ...recovered]
         .filter(usableCharacter)
@@ -723,7 +785,7 @@ Deno.serve(async (req) => {
       const readableIds = new Set(readableFamily.map((c) => c?.id));
       const unreadableFamilyIds = wanted.filter((id) => !readableIds.has(id));
       const recoveredFamily = unreadableFamilyIds.length
-        ? asArray(await base44.asServiceRole.entities.Character
+        ? asArray(await sr.entities.Character
           .filter({ id: { $in: unreadableFamilyIds } }, null, unreadableFamilyIds.length).catch(() => []))
         : [];
       [...readableFamily, ...recoveredFamily].forEach((c) => {
@@ -753,7 +815,7 @@ Deno.serve(async (req) => {
       : [];
     const unreadablePlaceIds = placeIds.filter((id) => !places.some((p) => p.id === id));
     if (unreadablePlaceIds.length) {
-      places = places.concat(asArray(await base44.asServiceRole.entities.LocationReference
+      places = places.concat(asArray(await sr.entities.LocationReference
         .filter({ id: { $in: unreadablePlaceIds } }, null, unreadablePlaceIds.length).catch(() => [])));
     }
     const placeById = new Map(places.map((p) => [p.id, p]));
@@ -1257,7 +1319,7 @@ Deno.serve(async (req) => {
     if (!generated) {
       if (writeError?.cause === 'content_restricted' || writeError?.cause === 'empty_response') {
         const restricted = writeError.cause === 'content_restricted';
-        return failureResponse(422, {
+        return failureOf(422, {
           stage: 'writing',
           cause: writeError.cause,
           retryable: true,
@@ -1269,7 +1331,7 @@ Deno.serve(async (req) => {
         });
       }
       const classified = classifyFailure(writeError, 'writing');
-      return failureResponse(classified.cause === 'busy' ? 429 : 502, finishing
+      return failureOf(classified.cause === 'busy' ? 429 : 502, finishing
         ? { ...classified, message: classified.message.replace('Your novel has not been changed.', unchanged) }
         : classified);
     }
@@ -1280,7 +1342,7 @@ Deno.serve(async (req) => {
       .replace(/\n{3,}/g, '\n\n')
       .trim();
     if (!written) {
-      return failureResponse(422, {
+      return failureOf(422, {
         stage: 'writing',
         cause: 'empty_response',
         retryable: true,
@@ -1301,7 +1363,7 @@ Deno.serve(async (req) => {
       // Nothing but repetition came back, so the chapter gained nothing: the saved
       // opening is reported back intact and the reader can finish it again.
       if (joined.dropped > 0 && joined.addedWords < 200) {
-        return failureResponse(422, {
+        return failureOf(422, {
           stage: 'writing',
           cause: 'repeated_opening',
           retryable: true,
@@ -1322,7 +1384,7 @@ Deno.serve(async (req) => {
       novel = await base44.entities.Novel.create({
         character_id: centralId,
         character_name: centralName,
-        owner_email: user.email,
+        owner_email: ownerEmail || '',
         title: clip(body.title, 160) || clip(generated?.novel_title, 160) || `${centralName}: A Life`,
         focus,
         premise,
@@ -1430,6 +1492,8 @@ Deno.serve(async (req) => {
         illustration_specs: illustrationSpecs,
         writing_state: 'complete',
         writing_brief: {},
+        // The replacement is written and saved: the version it replaced is released.
+        previous_version: {},
       }
       : {
         title: chapterTitle,
@@ -1438,6 +1502,19 @@ Deno.serve(async (req) => {
         word_count: wordCount,
         illustrations: [],
         illustration_specs: [],
+        // A redo keeps the chapter it is replacing — prose, plates, stored premise —
+        // until the new version is written and saved. A new chapter replaces nothing.
+        previous_version: mode === 'redo'
+          ? {
+            content: targetChapter.content || '',
+            title: targetChapter.title || '',
+            word_count: targetChapter.word_count || 0,
+            illustrations: Array.isArray(targetChapter.illustrations) ? targetChapter.illustrations : [],
+            illustration_specs: Array.isArray(targetChapter.illustration_specs) ? targetChapter.illustration_specs : [],
+            direction: targetChapter.direction || '',
+            saved_at: new Date().toISOString(),
+          }
+          : {},
         writing_state: 'writing',
         writing_brief: {
           subject: clip(selection.subject, 240),
@@ -1460,7 +1537,7 @@ Deno.serve(async (req) => {
           : await base44.entities.NovelChapter.create({
             ...chapterFields,
             novel_id: novel.id,
-            owner_email: user.email,
+            owner_email: ownerEmail || novel.owner_email || '',
             chapter_number: chapterNumber,
           }));
     } catch (error) {
@@ -1470,7 +1547,7 @@ Deno.serve(async (req) => {
       if (mode === 'create' && novel?.id) {
         await base44.entities.Novel.delete(novel.id).catch(() => {});
       }
-      return failureResponse(500, {
+      return failureOf(500, {
         stage: 'saving',
         cause: 'save_failed',
         retryable: true,
@@ -1479,6 +1556,9 @@ Deno.serve(async (req) => {
         message: `The chapter was written but could not be saved. ${unchanged} ${recovery}`,
       });
     }
+
+    // The chapter is saved: nothing is owed back to the version a redo replaced.
+    redoRevert = null;
 
     // Counters are bookkeeping: a failure there must never discard a chapter that
     // is already saved.
@@ -1496,6 +1576,11 @@ Deno.serve(async (req) => {
       illustration_pending: illustrationSpecs.length > 0,
     });
   } catch (error) {
+    // A crash during a redo must not cost the reader the chapter being replaced.
+    if (redoRevert) {
+      await restoreReplacedChapter(redoRevert.client, redoRevert.chapter);
+      redoRevert = null;
+    }
     const classified = classifyFailure(error, stage);
     return failureResponse(classified.cause === 'timed_out' ? 504 : 500, classified);
   }

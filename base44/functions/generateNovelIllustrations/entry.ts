@@ -106,14 +106,15 @@ async function resolveUserWorldNames(base44, candidateNames, ownerWorldName) {
   if (ownerWorldName) wanted.delete(normalizeText(ownerWorldName));
   if (!wanted.size) return [];
 
-  const settings = asArray(await base44.asServiceRole.entities.UserSettings
+  const srClient = base44.asServiceRole || base44;
+  const settings = asArray(await srClient.entities.UserSettings
     .list(null, 500).catch(() => []));
   const matched = settings.filter((s) => wanted.has(normalizeText(s.fictional_world_name)));
   if (!matched.length) return [];
 
   const emails = [...new Set(matched.map((s) => s.owner_email).filter(Boolean))];
   const users = emails.length
-    ? asArray(await base44.asServiceRole.entities.User
+    ? asArray(await srClient.entities.User
       .filter({ email: { $in: emails } }, null, emails.length).catch(() => []))
     : [];
   const userByEmail = new Map(users.map((u) => [u.email, u]));
@@ -139,8 +140,9 @@ async function resolvePeopleByIds(base44, ids) {
   const readable = asArray(await base44.entities.Character
     .filter({ id: { $in: wanted } }, null, wanted.length).catch(() => []));
   const missing = wanted.filter((id) => !readable.some((p) => p?.id === id));
+  const recoverClient = base44.asServiceRole || base44;
   const recovered = missing.length
-    ? asArray(await base44.asServiceRole.entities.Character
+    ? asArray(await recoverClient.entities.Character
       .filter({ id: { $in: missing } }, null, missing.length).catch(() => []))
     : [];
   return new Map([...readable, ...recovered].filter(usableCharacter).map((p) => [p.id, p]));
@@ -153,9 +155,10 @@ async function resolveLocation(base44, locationId, zoneName, directImages) {
   }
   const readable = asArray(await base44.entities.LocationReference
     .filter({ id: { $in: [locationId] } }, null, 1).catch(() => []));
+  const recoverClient = base44.asServiceRole || base44;
   const recovered = readable.length
     ? []
-    : asArray(await base44.asServiceRole.entities.LocationReference
+    : asArray(await recoverClient.entities.LocationReference
       .filter({ id: { $in: [locationId] } }, null, 1).catch(() => []));
   const place = readable[0] || recovered[0] || null;
   return place ? { ...place, zoneName: zoneName || '', images: [], zones: names(place.zones) } : null;
@@ -280,17 +283,28 @@ function paragraphScene(chapter, illustration) {
 
 Deno.serve(async (req) => {
   try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me().catch((e) => (e.status === 401 ? null : Promise.reject(e)));
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
+    const base44Base = createClientFromRequest(req);
+    const sr = base44Base.asServiceRole;
+    const user = await base44Base.auth.me().catch(() => null);
     const body = await req.json().catch(() => ({}));
+
+    // Drawing a saved chapter's plates is also started by the "Novel Generation
+    // Continuation" workflow, which runs with no user session, so the plates appear
+    // even when the reader has left. A single-plate redraw is the reader's own action
+    // and always requires their session.
+    const internal = !user;
+    if (internal && body.mode === 'regenerate') {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    // Reading by ID: an internal run uses service-role access, a caller keeps their scope.
+    const base44 = user ? base44Base : sr;
+
     if (!body.novel_id) return Response.json({ error: 'novel_id is required' }, { status: 400 });
 
     const novel = await base44.entities.Novel.get(body.novel_id)
       .catch((e) => (e.status === 404 ? null : Promise.reject(e)));
     if (!novel) return Response.json({ error: 'Novel not found' }, { status: 404 });
-    if (novel.created_by_id !== user.id && user.role !== 'admin') {
+    if (user && novel.created_by_id !== user.id && user.role !== 'admin') {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -300,8 +314,13 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'That chapter is not part of this novel' }, { status: 404 });
     }
 
-    const ownerWorldName = String(novel.user_world_name || user.full_name || '').trim();
-    const ownerRefs = [...names(user.reference_image_urls), ...names(user.generated_avatar_urls)].slice(0, 2);
+    // The account holder's own references, when the caller is the account holder.
+    const ownerRecord = user || (novel.owner_email
+      ? asArray(await sr.entities.User.filter({ email: novel.owner_email }, null, 1).catch(() => []))[0] || {}
+      : {});
+
+    const ownerWorldName = String(novel.user_world_name || ownerRecord.full_name || '').trim();
+    const ownerRefs = [...names(ownerRecord.reference_image_urls), ...names(ownerRecord.generated_avatar_urls)].slice(0, 2);
 
     // ── ONE PLATE, REDRAWN ───────────────────────────────────────────────────
     // Why Regenerate on a single illustration. The chapter's prose, title, other plates
@@ -436,7 +455,7 @@ Deno.serve(async (req) => {
       : [];
     const unreadablePlaces = placeIds.filter((id) => !readablePlaces.some((p) => p?.id === id));
     const recoveredPlaces = unreadablePlaces.length
-      ? asArray(await base44.asServiceRole.entities.LocationReference.filter({ id: { $in: unreadablePlaces } }, null, unreadablePlaces.length).catch(() => []))
+      ? asArray(await sr.entities.LocationReference.filter({ id: { $in: unreadablePlaces } }, null, unreadablePlaces.length).catch(() => []))
       : [];
     const placeById = new Map([...readablePlaces, ...recoveredPlaces].map((p) => [p.id, p]));
 

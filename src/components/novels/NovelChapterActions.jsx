@@ -4,7 +4,7 @@ import RedoChapterDialog from "@/components/novels/RedoChapterDialog";
 import DeleteChapterDialog from "@/components/novels/DeleteChapterDialog";
 
 /** Per-chapter controls: rewrite this chapter, delete this chapter, or draw its plates. */
-export default function NovelChapterActions({ chapter, onRedo, onDelete, onIllustrate = null, disabled = false, error = null }) {
+export default function NovelChapterActions({ chapter, defaultPremise = "", onRedo, onDelete, onIllustrate = null, disabled = false, error = null }) {
   const [confirming, setConfirming] = useState(null);
 
   if (!chapter) return null;
@@ -52,8 +52,9 @@ export default function NovelChapterActions({ chapter, onRedo, onDelete, onIllus
 
       <RedoChapterDialog
         chapter={confirming === "redo" ? chapter : null}
+        defaultPremise={defaultPremise}
         onCancel={() => setConfirming(null)}
-        onConfirm={() => confirm(onRedo)}
+        onConfirm={(premise) => confirm(() => onRedo(premise))}
       />
       <DeleteChapterDialog
         chapter={confirming === "delete" ? chapter : null}
