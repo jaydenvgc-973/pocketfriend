@@ -500,6 +500,29 @@ Deno.serve(async (req) => {
     let lifeEvents = asArray(lifeEventsRaw);
     let storyEvents = asArray(storyEventsRaw);
 
+    // Finishing continues from the material the opening was built from, fetched by
+    // the exact IDs stored with the chapter — the same selection, with none of the
+    // planning work repeated.
+    let briefMemories = null;
+    let briefRelationships = null;
+    if (finishing && brief) {
+      const idsOf = (list, cap) => names(list).slice(0, cap);
+      const memoryIds = idsOf(brief.memory_ids, 30);
+      const lifeIds = idsOf(brief.life_event_ids, 30);
+      const eventIds = idsOf(brief.story_event_ids, 12);
+      const relationIds = idsOf(brief.relationship_ids, 30);
+      const [bMemories, bLife, bEvents, bRelations] = await Promise.all([
+        memoryIds.length ? base44.entities.CharacterMemory.filter({ id: { $in: memoryIds } }, null, memoryIds.length).catch(() => []) : [],
+        lifeIds.length ? base44.entities.LifeEvent.filter({ id: { $in: lifeIds } }, null, lifeIds.length).catch(() => []) : [],
+        eventIds.length ? base44.entities.StoryEvent.filter({ id: { $in: eventIds } }, null, eventIds.length).catch(() => []) : [],
+        relationIds.length ? base44.entities.CharacterRelationship.filter({ id: { $in: relationIds } }, null, relationIds.length).catch(() => []) : [],
+      ]);
+      if (asArray(bMemories).length) briefMemories = asArray(bMemories);
+      if (asArray(bLife).length) lifeEvents = asArray(bLife);
+      if (asArray(bEvents).length) storyEvents = asArray(bEvents);
+      if (asArray(bRelations).length) briefRelationships = asArray(bRelations);
+    }
+
     // ── HOUSEHOLD (existing residency, unit-aware, read-only) ────────────────
     const homeLocationIds = [...new Set([central?.current_home_location_id, central?.temporary_housing_location_id].filter(Boolean))];
     let homeLocations = homeLocationIds.length
@@ -545,6 +568,12 @@ Deno.serve(async (req) => {
       .filter((m) => !isExcludedName(m.character_name))
       .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0))
       .slice(-90);
+
+    // Finishing reuses the exact conversations the opening was built from.
+    if (finishing && brief && names(brief.message_ids).length) {
+      const wanted = new Set(names(brief.message_ids));
+      messages = messages.filter((m) => wanted.has(m.id));
+    }
 
     // ── ANYONE THEY KNOW (only when the user chose that option) ──────────────
     // Candidates come from the central character's own readable records: family,
@@ -708,7 +737,14 @@ Deno.serve(async (req) => {
     if (mode !== 'create') {
       const pages = await base44.entities.NovelChapter.filter({ novel_id: novel.id }, 'chapter_number', 120).catch(() => []);
       const allChapters = asArray(pages).sort((a, b) => (a.chapter_number || 0) - (b.chapter_number || 0));
-      if (mode === 'redo') {
+      if (finishing) {
+        // Finishing rewrites nothing and adds nothing: it completes the chapter it
+        // was given, so that chapter is never counted as one that came before.
+        const target = resumeChapter.chapter_number || 1;
+        previousChapters = allChapters.filter((c) => c.id !== resumeChapter.id && (c.chapter_number || 0) < target);
+        laterChapters = allChapters.filter((c) => c.id !== resumeChapter.id && (c.chapter_number || 0) > target);
+        chapterNumber = target;
+      } else if (mode === 'redo') {
         const target = targetChapter.chapter_number || 1;
         previousChapters = allChapters.filter((c) => c.id !== targetChapter.id && (c.chapter_number || 0) < target);
         laterChapters = allChapters.filter((c) => c.id !== targetChapter.id && (c.chapter_number || 0) > target);
@@ -724,9 +760,23 @@ Deno.serve(async (req) => {
     // The same character can be written about a hundred ways, and one chapter is
     // about one subject. Only the material belonging to that subject goes into the
     // request; the rest stays on the record, untouched and undiminished.
-    const selection = await selectPremiseSource({
-      base44, premise, focus, direction, central, memories, lifeEvents, relationships, storyEvents, messages, nameById,
-    });
+    // Finishing does not select again: the opening already decided what this
+    // chapter is built from, and re-planning would both cost another call and risk
+    // handing the second half a different set of records than the first.
+    const selection = finishing && brief
+      ? {
+        memories: briefMemories || memories,
+        lifeEvents,
+        relationships: briefRelationships || relationships,
+        storyEvents,
+        messages,
+        subject: brief.subject || premise,
+        period: brief.period || '',
+        planned: true,
+      }
+      : await selectPremiseSource({
+        base44, premise, focus, direction, central, memories, lifeEvents, relationships, storyEvents, messages, nameById,
+      });
     memories = selection.memories;
     lifeEvents = selection.lifeEvents;
     relationships = selection.relationships;
@@ -881,7 +931,9 @@ Deno.serve(async (req) => {
           `Do not retell what these chapters already covered. Continue the same book, the same voice, the same chronology.`,
           lastChapter?.content ? `\n### THE IMMEDIATELY PRECEDING CHAPTER (for voice, tone and continuity only — do not repeat it)\n${clip(lastChapter.content, 7000)}` : '',
         ].join('\n')
-        : `\n## THIS IS CHAPTER ONE\nEstablish the world, the people and the emotional stakes without summarizing the whole life in one chapter.`;
+        : (finishing
+          ? ''
+          : `\n## THIS IS CHAPTER ONE\nEstablish the world, the people and the emotional stakes without summarizing the whole life in one chapter.`);
 
     const perspectiveRule = perspective === 'outside_narrator'
       ? [
@@ -898,6 +950,30 @@ Deno.serve(async (req) => {
     const lengthRule = previousChapters.length > 3
       ? `Roughly 1,400–2,200 words, 16–32 paragraphs.`
       : `Roughly 1,800–2,800 words, 20–40 paragraphs.`;
+
+    // The chapter is written in two bounded requests. These are the only rules that
+    // differ between them: what to write now, and what the plates must account for.
+    const openingShapeRules = [
+      `## WRITE THE OPENING OF THIS CHAPTER`,
+      `Open inside a moment, not with a summary of the life. Write roughly 900–1,200 words, 10–16 paragraphs, and stop at a natural break in the movement: a change of scene, of time, or of focus.`,
+      `Do not conclude the chapter, do not summarise the life, and do not wrap anything up. The rest is written immediately after, continuing from your last line, so leave it mid-breath rather than closing it.`,
+    ].join('\n');
+
+    const finishShapeRules = [
+      `## FINISH THIS CHAPTER — CONTINUE IT, DO NOT RESTART IT`,
+      `The chapter already opens with the text under THE CHAPTER SO FAR. Continue from exactly where it stops and write it to a real ending, so the finished chapter comes to the length described above in total.`,
+      `Your first paragraph must follow the last one as one continuous piece of prose — same voice, same tense, same scene if it is still running. Never repeat, re-describe, summarise or restart what is already written, and never announce that the chapter is continuing.`,
+      `End on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
+    ].join('\n');
+
+    const illustrationRules = [
+      `## ILLUSTRATIONS`,
+      `Choose 2 or 3 moments from the whole chapter — the opening given to you and what you write now — never more than 3, spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based paragraph index in the finished chapter; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the exact names of the people visible; location is the exact name of the place from ESTABLISHED PLACES when the scene happens there, otherwise leave it empty and describe the setting inside scene; location_zone is one of that place's listed zones when the scene happens in a particular room or area. Do not illustrate a character or event the chapter does not contain.`,
+      `In characters, use the recorded name of every established person — including each family member listed under FAMILY MEMBERS WHO EXIST AS CHARACTERS — never "his children", "a child", "his daughter" or any description, and never give a recorded person's name to somebody invented. A person who exists only in this prose and has no character record has no recorded name: describe them in a few words instead (for example "the soup-kitchen mother", "an unnamed neighbour"). Established people and narrative-only people may share one illustration.`,
+      `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
+      `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
+      `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
+    ].join('\n');
 
     const instruction = [
       `You are a serious literary novelist writing one chapter of a novel about ${centralName}, built strictly from the established life recorded below.`,
@@ -956,21 +1032,22 @@ Deno.serve(async (req) => {
       ``,
       `## CHAPTER SHAPE`,
       lengthRule,
-      `Paragraphs separated by a blank line. No headings, no bullet points, no chapter number inside the body — the chapter title is returned separately. Open inside a moment, not with a summary of the life. End the chapter on a real turn: an image, a decision, a shift in understanding, or a quiet consequence.`,
+      `Paragraphs separated by a blank line. No headings, no bullet points, no chapter number inside the body — the chapter title is returned separately.`,
       ``,
-      `## ILLUSTRATIONS`,
-      `Choose 2 or 3 moments from THIS chapter — never more than 3 — spread across it, each one a moment the prose actually describes. For each: after_paragraph is the 1-based index of the paragraph it should follow; caption is a short literary line; scene is a precise visual description for an illustrator (who is present, what they are doing, the setting, framing, light, mood); characters lists the exact names of the people visible; location is the exact name of the place from ESTABLISHED PLACES when the scene happens there, otherwise leave it empty and describe the setting inside scene; location_zone is one of that place's listed zones when the scene happens in a particular room or area. Do not illustrate a character or event the chapter does not contain.`,
-      `In characters, use the recorded name of every established person — including each family member listed under FAMILY MEMBERS WHO EXIST AS CHARACTERS — never "his children", "a child", "his daughter" or any description, and never give a recorded person's name to somebody invented. A person who exists only in this prose and has no character record has no recorded name: describe them in a few words instead (for example "the soup-kitchen mother", "an unnamed neighbour"). Established people and narrative-only people may share one illustration.`,
-      `Every established person is illustrated at their recorded age and stage: a newborn is a baby held in arms who cannot sit up or walk, never a child.`,
-      `When someone appears younger than they are now (a historical moment), return depicted_ages with that person's name and their age in this scene, worked out from recorded chronology — never invented. Do not list anyone who appears at their present age.`,
-      `ESTABLISHED PLACES must look like their records. An elegant, well-maintained residence stays elegant and well-maintained; a different home keeps its own distinct interior, never a copy of another property and never a generic interior. One character's hard past never makes an established present-day place look rundown, neglected or disorganised.`,
+      finishing ? finishShapeRules : openingShapeRules,
+      ``,
+      finishing
+        ? illustrationRules
+        : `Return illustrations as an empty array: the plates are chosen once the whole chapter exists.`,
       ``,
       `## NOVEL`,
       mode === 'create'
         ? `This is chapter one of a new novel. Also propose a short, evocative novel title (3–6 words, no colon unless it earns it) unless a title is supplied.`
-        : mode === 'redo'
-          ? `This is a new version of chapter ${chapterNumber} of the existing novel "${novel.title}", rewritten at its reader's request. Same book, same voice, same point in the chronology — but built from the authoritative records rather than from whatever the old version said.`
-          : `This is chapter ${chapterNumber} of the existing novel "${novel.title}". Continue it — same book, same voice, moving the story forward into experience not yet covered.`,
+        : finishing
+          ? `You are finishing chapter ${chapterNumber} of the existing novel "${novel.title}". It is a single continuous piece of prose; the opening is already written.`
+          : mode === 'redo'
+            ? `This is a new version of chapter ${chapterNumber} of the existing novel "${novel.title}", rewritten at its reader's request. Same book, same voice, same point in the chronology — but built from the authoritative records rather than from whatever the old version said.`
+            : `This is chapter ${chapterNumber} of the existing novel "${novel.title}". Continue it — same book, same voice, moving the story forward into experience not yet covered.`,
       `Premise: ${premise}`,
       focus ? `Focus: ${focus}` : '',
       direction ? `Direction for this chapter: ${direction}` : '',
@@ -989,6 +1066,9 @@ Deno.serve(async (req) => {
       `## SOURCE MATERIAL`,
       source.join('\n'),
       previousBlock,
+      finishing && resumeChapter?.content
+        ? `\n## THE CHAPTER SO FAR — CONTINUE FROM THE END OF THIS, NEVER REPEAT OR RESTATE ANY OF IT\n${resumeChapter.content}`
+        : '',
     ].filter(Boolean).join('\n');
 
     stage = 'writing';
@@ -1037,6 +1117,10 @@ Deno.serve(async (req) => {
       },
     });
 
+    // A refusal or an empty answer comes back quickly, so it is worth one corrected
+    // retry inside this request. A failed call is never retried here: a second full
+    // attempt would run past the request's own time limit, and the retry is a fresh
+    // request anyway.
     for (let attempt = 0; attempt < 2 && !generated; attempt += 1) {
       try {
         const result = await askForChapter(attempt === 0 ? '' : RESTRICTED_MATERIAL_NOTE);
@@ -1048,10 +1132,18 @@ Deno.serve(async (req) => {
         generated = result;
       } catch (error) {
         writeError = error;
-        if (attempt === 0 && isTransientWriteFailure(error)) continue;
         break;
       }
     }
+
+    // What a failed attempt leaves behind differs by part: nothing at all when the
+    // opening failed, and a saved opening when only the finish failed.
+    const unchanged = finishing
+      ? 'The opening of this chapter is saved and safe; the rest of it was not written.'
+      : 'Your novel has not been changed.';
+    const recovery = finishing
+      ? 'Finish the chapter again, and it continues from where the saved opening ends.'
+      : 'You can try again.';
 
     if (!generated) {
       if (writeError?.cause === 'content_restricted' || writeError?.cause === 'empty_response') {
@@ -1063,31 +1155,41 @@ Deno.serve(async (req) => {
           canAdjust: true,
           technical: '',
           message: restricted
-            ? 'The writing service would not write this chapter as requested. Your novel has not been changed. You can try again, or adjust the focus and try again.'
-            : 'The writing service returned no chapter text. Your novel has not been changed. You can try again, or adjust the focus and try again.',
+            ? `The writing service would not write this part of the chapter as requested. ${unchanged} ${recovery}`
+            : `The writing service returned no chapter text. ${unchanged} ${recovery}`,
         });
       }
       const classified = classifyFailure(writeError, 'writing');
-      return failureResponse(classified.cause === 'busy' ? 429 : 502, classified);
+      return failureResponse(classified.cause === 'busy' ? 429 : 502, finishing
+        ? { ...classified, message: classified.message.replace('Your novel has not been changed.', unchanged) }
+        : classified);
     }
 
-    const content = String(generated?.content || '')
+    const written = String(generated?.content || '')
       .replace(/\r\n?/g, '\n')
       .replace(/^\s*chapter\s+[0-9ivxlc]+[^\n]*\n+/i, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
-    if (!content) {
+    if (!written) {
       return failureResponse(422, {
         stage: 'writing',
         cause: 'empty_response',
         retryable: true,
         canAdjust: true,
         technical: '',
-        message: 'The writing service returned no usable chapter text. Your novel has not been changed. You can try again.',
+        message: `The writing service returned no usable chapter text. ${unchanged} ${recovery}`,
       });
     }
 
-    const chapterTitle = clip(generated?.chapter_title, 160) || `Chapter ${chapterNumber}`;
+    // The two parts are one piece of prose: the finish is joined onto the saved
+    // opening with a single blank line between paragraphs, never a marker.
+    const content = finishing
+      ? `${String(resumeChapter.content || '').trimEnd()}\n\n${written}`.replace(/\n{3,}/g, '\n\n').trim()
+      : written;
+
+    const chapterTitle = clip(generated?.chapter_title, 160)
+      || (finishing ? resumeChapter.title : '')
+      || `Chapter ${chapterNumber}`;
 
     // ── PERSIST THE NOVEL RECORD (only novel-owned records are written) ──────
     if (mode === 'create') {
@@ -1149,7 +1251,8 @@ Deno.serve(async (req) => {
         || null;
     };
 
-    const specs = (Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
+    // Plates are chosen in the finishing request, when the whole chapter exists.
+    const specs = (finishing && Array.isArray(generated?.illustrations) ? generated.illustrations : []).slice(0, 3);
     const illustrationSpecs = specs.map((spec) => {
       const depictedNames = names(spec.characters).map((n) => String(n || '').trim()).filter(Boolean);
       const personIds = [];
@@ -1189,28 +1292,51 @@ Deno.serve(async (req) => {
 
     // ── PERSIST THE CHAPTER (novel-owned records only) ───────────────────────
     // The prose is saved before any image is drawn: a chapter that exists is worth
-    // more than a request that might not finish.
-    const chapterFields = {
-      title: chapterTitle,
-      content,
-      summary: clip(generated?.chapter_summary, 1200),
-      direction,
-      word_count: content.split(/\s+/).filter(Boolean).length,
-      illustrations: [],
-      illustration_specs: illustrationSpecs,
-    };
+    // more than a request that might not finish. The opening is stored as writing
+    // in progress, together with the material it was built from, so finishing it
+    // costs no second planning pass — and never a second selection.
+    const wordCount = content.split(/\s+/).filter(Boolean).length;
+    const chapterFields = finishing
+      ? {
+        content,
+        word_count: wordCount,
+        illustrations: [],
+        illustration_specs: illustrationSpecs,
+        writing_state: 'complete',
+        writing_brief: {},
+      }
+      : {
+        title: chapterTitle,
+        content,
+        direction,
+        word_count: wordCount,
+        illustrations: [],
+        illustration_specs: [],
+        writing_state: 'writing',
+        writing_brief: {
+          subject: clip(selection.subject, 240),
+          period: clip(selection.period, 120),
+          memory_ids: memories.map((m) => m.id).filter(Boolean).slice(0, 30),
+          life_event_ids: lifeEvents.map((e) => e.id).filter(Boolean).slice(0, 30),
+          story_event_ids: storyEvents.map((e) => e.id).filter(Boolean).slice(0, 12),
+          relationship_ids: relationships.map((r) => r.id).filter(Boolean).slice(0, 30),
+          message_ids: messages.map((m) => m.id).filter(Boolean).slice(0, 20),
+        },
+      };
 
     stage = 'saving';
     let chapter = null;
     try {
-      chapter = mode === 'redo'
-        ? await base44.entities.NovelChapter.update(targetChapter.id, chapterFields)
-        : await base44.entities.NovelChapter.create({
-          ...chapterFields,
-          novel_id: novel.id,
-          owner_email: user.email,
-          chapter_number: chapterNumber,
-        });
+      chapter = finishing
+        ? await base44.entities.NovelChapter.update(resumeChapter.id, chapterFields)
+        : (mode === 'redo'
+          ? await base44.entities.NovelChapter.update(targetChapter.id, chapterFields)
+          : await base44.entities.NovelChapter.create({
+            ...chapterFields,
+            novel_id: novel.id,
+            owner_email: user.email,
+            chapter_number: chapterNumber,
+          }));
     } catch (error) {
       // A novel created moments ago by this very attempt has no chapters and is
       // removed, so a retry never leaves a duplicate behind. An existing novel is
@@ -1224,7 +1350,7 @@ Deno.serve(async (req) => {
         retryable: true,
         canAdjust: false,
         technical: statusOf(error) ? `HTTP ${statusOf(error)} — ${String(error?.message || '')}` : String(error?.message || ''),
-        message: 'The chapter was written but could not be saved. Your novel has not been changed. You can try again.',
+        message: `The chapter was written but could not be saved. ${unchanged} ${recovery}`,
       });
     }
 
@@ -1238,6 +1364,9 @@ Deno.serve(async (req) => {
       novel: updatedNovel,
       chapter,
       notices,
+      // The opening is saved, not finished: the reader is told to call once more to
+      // complete this same chapter before it is shown as a chapter.
+      needs_finish: !finishing,
       illustration_pending: illustrationSpecs.length > 0,
     });
   } catch (error) {

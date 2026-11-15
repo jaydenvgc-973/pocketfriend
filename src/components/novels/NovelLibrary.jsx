@@ -43,9 +43,15 @@ export default function NovelLibrary({ character, characters = [], currentUser =
       const notices = res.data.notices || [];
       await queryClient.invalidateQueries({ queryKey: ["novels", character.id] });
       setCreating(false);
-      // The plates are drawn by the reader in a second request, once the chapter exists.
-      const illustrationChapterId = res.data.illustration_pending ? res.data.chapter?.id : null;
-      navigate(`/novel/${res.data.novel.id}`, { state: { notices, illustrationChapterId } });
+      // The reader finishes the chapter and draws its plates in their own requests,
+      // so the chapter one is saved the moment its opening exists.
+      const finishChapterId = res.data.needs_finish ? res.data.chapter?.id : null;
+      const illustrationChapterId = !finishChapterId && res.data.illustration_pending
+        ? res.data.chapter?.id
+        : null;
+      navigate(`/novel/${res.data.novel.id}`, {
+        state: { notices, finishChapterId, illustrationChapterId },
+      });
     } catch (err) {
       setFailure(normalizeNovelError(err, { operation: "create" }));
     } finally {

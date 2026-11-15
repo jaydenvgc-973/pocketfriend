@@ -21,7 +21,7 @@ export default function NovelReader() {
   const [busyLabel, setBusyLabel] = useState("");
   const [failure, setFailure] = useState(null);
   const [exclusions, setExclusions] = useState([]);
-  // Notices carried over from the first chapter, e.g. a plate that failed to render.
+  // Notices carried over from an earlier request, e.g. a plate that failed to render.
   const [notices, setNotices] = useState(location.state?.notices || []);
   // Delete is not a generation attempt: its failures stay a plain line of text.
   const [actionError, setActionError] = useState(null);
@@ -50,6 +50,9 @@ export default function NovelReader() {
   const next = index >= 0 && index < chapters.length - 1 ? chapters[index + 1] : null;
   const isLast = index >= 0 && index === chapters.length - 1;
   const nextChapterNumber = (chapters[chapters.length - 1]?.chapter_number || 0) + 1;
+  // A chapter whose finishing request has not completed is never shown as a
+  // finished chapter: it says so, and finishing it continues from where it stops.
+  const incomplete = current?.writing_state === "writing";
 
   useEffect(() => {
     window.scrollTo({ top: 0 });
@@ -76,7 +79,6 @@ export default function NovelReader() {
   // A failure here costs the illustrations, never the prose.
   const drawIllustrations = async (chapterId) => {
     if (!chapterId) return;
-    setBusy(true);
     setBusyLabel("Adding illustrations");
     try {
       const res = await base44.functions.invoke("generateNovelIllustrations", {
@@ -88,78 +90,117 @@ export default function NovelReader() {
       setNotices((prev) => [...new Set([...prev, ...(res.data.notices || [])])]);
     } catch {
       setNotices((prev) => [...new Set([...prev, "The illustrations could not be created this time. The chapter itself is complete and saved."])]);
+    }
+  };
+
+  // A chapter is written in two bounded requests: the opening, then the finish that
+  // completes it. Each one stays inside the platform's request limit, and the
+  // opening is saved as soon as it exists, so a failed finish never loses prose.
+  const openChapter = async (payload, label) => {
+    setBusy(true);
+    setBusyLabel(label);
+    setFailure(null);
+    setNotices([]);
+    setActionError(null);
+    try {
+      const res = await base44.functions.invoke("generateNovelChapter", payload);
+      if (res?.data?.error) throw new Error(res.data.error);
+      await refreshNovel();
+      setActiveNumber(res.data.chapter?.chapter_number ?? null);
+      return res.data;
+    } catch (err) {
+      setFailure(normalizeNovelError(err, { operation: payload.mode === "redo" ? "redo" : "open" }));
+      return null;
     } finally {
       setBusy(false);
       setBusyLabel("");
     }
   };
 
-  // A chapter written from the library arrives here with its plates still to draw.
-  useEffect(() => {
-    const pending = location.state?.illustrationChapterId;
-    if (!pending) return;
-    drawIllustrations(pending);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state?.illustrationChapterId]);
-
-  const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
-    const plainDirection = typeof direction === "string" ? direction : "";
+  const finishChapter = async (chapterId, numberHint = null) => {
+    if (!chapterId) return false;
     setBusy(true);
-    setBusyLabel(`Writing chapter ${nextChapterNumber}`);
+    setBusyLabel(`Finishing chapter ${numberHint || nextChapterNumber}`);
     setFailure(null);
-    setNotices([]);
     setActionError(null);
+    let completed = false;
     try {
       const res = await base44.functions.invoke("generateNovelChapter", {
+        mode: "continue",
+        part: "finish",
+        novel_id: novelId,
+        chapter_id: chapterId,
+      });
+      if (res?.data?.error) throw new Error(res.data.error);
+      await refreshNovel();
+      setActiveNumber(res.data.chapter?.chapter_number ?? numberHint ?? null);
+      setNotices((prev) => [...new Set([...prev, ...(res.data.notices || [])])]);
+      completed = true;
+      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
+    } catch (err) {
+      setFailure({ ...normalizeNovelError(err, { operation: "finish" }), chapterId });
+    } finally {
+      setBusy(false);
+      setBusyLabel("");
+    }
+    return completed;
+  };
+
+  // One chapter, start to finish: opening, finish, then its plates.
+  const handleContinue = async (direction, exclusionsForAttempt = exclusions) => {
+    const plainDirection = typeof direction === "string" ? direction : "";
+    const opened = await openChapter(
+      {
         mode: "continue",
         novel_id: novelId,
         direction: plainDirection,
         exclusions: exclusionsForAttempt,
-      });
-      if (res?.data?.error) throw new Error(res.data.error);
-      await refreshNovel();
-      setActiveNumber(res.data.chapter?.chapter_number ?? null);
-      setNotices(res.data.notices || []);
-      setBusy(false);
-      setBusyLabel("");
-      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
+      },
+      `Writing chapter ${nextChapterNumber}`,
+    );
+    if (!opened) {
+      setFailure((prev) => (prev ? { ...prev, direction: plainDirection } : prev));
       return;
-    } catch (err) {
-      setFailure(normalizeNovelError(err, { operation: "continue", direction: plainDirection }));
     }
-    setBusy(false);
-    setBusyLabel("");
+    if (opened.needs_finish && opened.chapter?.id) {
+      await finishChapter(opened.chapter.id, opened.chapter?.chapter_number || nextChapterNumber);
+    }
   };
 
   // Rewrite only the chapter being read — the rest of the novel is untouched.
   const handleRedoChapter = async (exclusionsForAttempt = exclusions) => {
     if (!current) return;
-    setBusy(true);
-    setBusyLabel(`Rewriting chapter ${current.chapter_number}`);
-    setFailure(null);
-    setNotices([]);
-    setActionError(null);
-    try {
-      const res = await base44.functions.invoke("generateNovelChapter", {
+    const number = current.chapter_number;
+    const opened = await openChapter(
+      {
         mode: "redo",
         novel_id: novelId,
         chapter_id: current.id,
         exclusions: exclusionsForAttempt,
-      });
-      if (res?.data?.error) throw new Error(res.data.error);
-      await refreshNovel();
-      setActiveNumber(res.data.chapter?.chapter_number ?? current.chapter_number);
-      setNotices(res.data.notices || []);
-      setBusy(false);
-      setBusyLabel("");
-      if (res.data.illustration_pending) await drawIllustrations(res.data.chapter?.id);
-      return;
-    } catch (err) {
-      setFailure(normalizeNovelError(err, { operation: "redo" }));
+      },
+      `Rewriting chapter ${number}`,
+    );
+    if (!opened) return;
+    if (opened.needs_finish && opened.chapter?.id) {
+      await finishChapter(opened.chapter.id, number);
     }
-    setBusy(false);
-    setBusyLabel("");
   };
+
+  // A chapter written from the library arrives here with its finish still to do.
+  useEffect(() => {
+    const pendingFinish = location.state?.finishChapterId;
+    if (pendingFinish) finishChapter(pendingFinish);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.finishChapterId]);
+
+  // A chapter written from the library arrives here with its plates still to draw.
+  useEffect(() => {
+    const pending = location.state?.illustrationChapterId;
+    if (!pending) return;
+    setBusy(true);
+    drawIllustrations(pending).finally(() => setBusy(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.illustrationChapterId]);
 
   // Delete only this chapter and its illustrations, then keep the numbering coherent.
   const handleDeleteChapter = async () => {
@@ -186,6 +227,18 @@ export default function NovelReader() {
       setBusy(false);
       setBusyLabel("");
     }
+  };
+
+  const retry = () => {
+    if (failure?.operation === "finish") {
+      finishChapter(failure.chapterId || current?.id, current?.chapter_number);
+      return;
+    }
+    if (failure?.operation === "redo") {
+      handleRedoChapter(exclusions);
+      return;
+    }
+    handleContinue(failure?.direction || "", exclusions);
   };
 
   if (loadingNovel || loadingChapters) {
@@ -261,6 +314,22 @@ export default function NovelReader() {
               <h2 className="mt-1.5 text-lg font-semibold text-foreground font-serif">{current.title}</h2>
             </div>
 
+            {incomplete && (
+              <div className="mb-7 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  This chapter is only partly written. What you read below is its opening, saved as it was
+                  written; the rest has not been written yet.
+                </p>
+                <button
+                  onClick={() => finishChapter(current.id, current.chapter_number)}
+                  disabled={busy}
+                  className="mt-3 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                >
+                  Finish this chapter
+                </button>
+              </div>
+            )}
+
             <NovelChapterText chapter={current} />
 
             <div className="flex items-center justify-between mt-10">
@@ -285,8 +354,11 @@ export default function NovelReader() {
               chapter={current}
               onRedo={() => handleRedoChapter()}
               onDelete={handleDeleteChapter}
-              onIllustrate={() => drawIllustrations(current.id)}
-              disabled={busy}
+              onIllustrate={() => {
+                setBusy(true);
+                drawIllustrations(current.id).finally(() => setBusy(false));
+              }}
+              disabled={busy || incomplete}
               error={actionError}
             />
 
@@ -296,14 +368,16 @@ export default function NovelReader() {
                 exclusions={exclusions}
                 onExclude={(value) => setExclusions((prev) => (prev.includes(value) ? prev : [...prev, value]))}
                 onRemoveExclusion={(value) => setExclusions((prev) => prev.filter((v) => v !== value))}
-                onRetry={() => (
-                  failure.operation === "redo"
-                    ? handleRedoChapter(exclusions)
-                    : handleContinue(failure.direction || "", exclusions)
-                )}
+                onRetry={retry}
                 busy={busy}
                 onDismiss={() => setFailure(null)}
-                retryLabel={failure.operation === "redo" ? "Rewrite chapter" : `Write chapter ${nextChapterNumber}`}
+                retryLabel={
+                  failure.operation === "redo"
+                    ? "Rewrite chapter"
+                    : failure.operation === "finish"
+                      ? "Finish this chapter"
+                      : `Write chapter ${nextChapterNumber}`
+                }
               />
             )}
 
@@ -315,7 +389,7 @@ export default function NovelReader() {
               </div>
             )}
 
-            {isLast && (
+            {isLast && !incomplete && (
               <ContinueNovelPanel
                 nextChapterNumber={nextChapterNumber}
                 onGenerate={handleContinue}

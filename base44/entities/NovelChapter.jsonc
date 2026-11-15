@@ -68,6 +68,61 @@
       "type": "string",
       "description": "User direction supplied for this chapter, if any"
     },
+    "writing_state": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "writing"
+      ],
+      "default": "complete",
+      "enumColors": [
+        "green",
+        "yellow"
+      ],
+      "description": "writing = only the opening of this chapter is saved and the finishing request has not completed yet. complete = the whole chapter is written."
+    },
+    "writing_brief": {
+      "type": "object",
+      "description": "The material the opening of this chapter was built from, by record ID: the subject, the period, and the exact memories, life events, story events, relationships and conversations selected for it. The finishing request reads this instead of planning the selection a second time. Empty on complete chapters.",
+      "properties": {
+        "subject": {
+          "type": "string"
+        },
+        "period": {
+          "type": "string"
+        },
+        "memory_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "life_event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "story_event_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relationship_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "message_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "word_count": {
       "type": "number"
     },
