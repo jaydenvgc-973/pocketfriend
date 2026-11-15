@@ -628,6 +628,59 @@ If no story is strong enough to be a headliner, set headliner to null.`;
       return entry;
     };
 
+    // ── CULTURAL SCENE ACCURACY ────────────────────────────────────────
+    // A keyword is not a scene. In this world "ballroom" almost always means LGBTQ
+    // ballroom culture — houses, categories walked on a runway, vogue performance,
+    // judges and the community around the floor — while a photograph of couples in
+    // closed partner-dance posture is a different event entirely. The article's own
+    // words decide which one this is, and the answer is added to the image request
+    // itself, so the scene is read as the culture being reported whether or not the
+    // article names anyone.
+    const BALLROOM_CULTURE = /\b(vogue|voguing|vogue femme|realness|kiki ball|house ball|femme queen|butch queen|tens across the board|007s?|ballroom (?:&|and) vogue)\b/i;
+    const BALLROOM_HOUSES = /\b(?:the |local |competing )houses\b/i;
+
+    const articleSceneText = (article) => {
+      const parts = [article?.title, article?.subtitle, article?.body, article?.image_prompt, article?.pull_quote];
+      (article?.story_event_ids || []).forEach((sid) => {
+        const material = allMaterial.find((m) => m.id === sid);
+        if (material) parts.push(material.title, material.plot, material.venue_name);
+      });
+      return parts.filter(Boolean).join(' ');
+    };
+
+    // The categories the article actually names, so the styling follows the category
+    // being presented instead of one generic "ballroom" look.
+    const ballroomCategoryLines = (text) => {
+      const lines = [];
+      if (/schoolboy|school boy|school girl|schoolgirl/i.test(text)) lines.push('Schoolboy / School Girl Realness — student styling (caps, backpacks, oversized hoodies, sneakers, school uniforms where allowed); never businesswear.');
+      if (/executive realness/i.test(text)) lines.push('Executive Realness — professional tailoring and corporate bearing.');
+      if (/femme queen/i.test(text)) lines.push('Femme Queen Realness — its own established presentation.');
+      if (/runway/i.test(text)) lines.push('Runway — the walk: strut, posture, carriage, the turn, the garment moving with the body. Walked, never danced.');
+      if (/vogue femme|cunty|dramatics|vogu(?:e|ing)/i.test(text)) lines.push('Vogue performance — hand performance, catwalk, duckwalk, floor work, spins and dips.');
+      return lines;
+    };
+
+    const cultureSceneGuide = (article) => {
+      const text = articleSceneText(article);
+      // A culture signal outranks the phrase "ballroom dance" in the same article: the
+      // article about a Vogue Social is exactly the one that calls it a ballroom dance
+      // competition. Only an article with no culture signal at all is left alone.
+      const ballroomCulture = BALLROOM_CULTURE.test(text)
+        || (/ballroom/i.test(text) && BALLROOM_HOUSES.test(text));
+      if (!ballroomCulture) return '';
+      const categoryLines = ballroomCategoryLines(text);
+      return [
+        '',
+        '═══════════════════════════════════════════════════════════',
+        'SCENE CULTURE — LGBTQ BALLROOM CULTURE, NOT A FORMAL DANCE',
+        '═══════════════════════════════════════════════════════════',
+        'This is a community ball in LGBTQ ballroom culture: a runway or floor where categories are presented, vogue performance, judges scoring, houses and the community crowded around the floor. Styling, posture and activity follow the category being presented.',
+        categoryLines.length ? `Categories this article names:\n- ${categoryLines.join('\n- ')}` : '',
+        '⛔ NOT a traditional partner ballroom dance. No waltz, foxtrot, quickstep, tango, ballgowns, tuxedoed couples, chandeliered dance hall, and no couple in closed partner-dance posture. A photograph showing that is a different event and is invalid for this article.',
+        '⛔ A venue named "ballroom" is not a formal dance hall. Read the event from the article, never from the word alone.',
+      ].filter(Boolean).join('\n');
+    };
+
     // ── GENERATE ARTICLE IMAGES ────────────────────────────────────────
     // Image generation decision and identity-reference decision are SEPARATE:
     //   - Should this article have an image? → only when image_prompt is non-null
@@ -639,6 +692,9 @@ If no story is strong enough to be a headliner, set headliner to null.`;
       if (!article?.image_prompt) return;
 
       const sceneDesc = article.image_prompt;
+      // How this event is read — added to the image request whether or not the article
+      // names anyone, so a generic crowd is still the right kind of crowd.
+      const cultureGuide = cultureSceneGuide(article);
       // The depicted people are the article's authoritative participants — resolved
       // by ID from the source records, including characters owned by other accounts.
       const depictedIds = articleDepictedIds(article);
@@ -648,7 +704,7 @@ If no story is strong enough to be a headliner, set headliner to null.`;
         if (entry) charEntries.push(entry);
       }
 
-      console.log(`[WeeklyImageGen] article="${article.title?.substring(0, 50)}" depicted_ids=${depictedIds.length} resolved=${charEntries.length}`);
+      console.log(`[WeeklyImageGen] article="${article.title?.substring(0, 50)}" depicted_ids=${depictedIds.length} resolved=${charEntries.length} culture=${cultureGuide ? 'ballroom' : 'none'}`);
       for (const e of charEntries) {
         console.log(`[WeeklyImageGen]   char="${e.name}" id=${e.id} ref_urls=${e.refUrls.length} has_lock=${!!e.appearanceLockText}`);
         e.refUrls.forEach((u, i) => console.log(`[WeeklyImageGen]     ref[${i}]: ${u}`));
@@ -732,7 +788,7 @@ ${subjectBlockText}${multiRule}
 ═══════════════════════════════════════════════════════════
 SCENE — NEWSPAPER PHOTOGRAPH
 ═══════════════════════════════════════════════════════════
-${sceneDesc}${depictedLine}
+${sceneDesc}${depictedLine}${cultureGuide}
 
 Photorealistic newspaper photograph, photojournalism style. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.
 
@@ -740,7 +796,7 @@ Photorealistic newspaper photograph, photojournalism style. Natural lighting, ca
         existingImageUrls = allRefUrls.slice(0, 6);
       } else {
         // ── GENERAL EVENT IMAGE: no character identity references ──
-        prompt = `Realistic newspaper photograph, photojournalism style: ${sceneDesc}. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.`;
+        prompt = `Realistic newspaper photograph, photojournalism style: ${sceneDesc}. Natural lighting, candid moment, high quality documentary photography. Ultra-detailed. Real human proportions. Not an illustration.${cultureGuide}`;
         existingImageUrls = undefined;
       }
 
