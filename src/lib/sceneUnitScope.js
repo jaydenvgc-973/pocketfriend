@@ -45,17 +45,19 @@ export function getSceneUnitScope(location, unitId) {
  * Corrects a canonical context block that was built for the property so it no longer
  * asserts that everyone in the building is physically in this space.
  *
- * The one line removed is the property-wide co-presence roster ("OTHER VERIFIED
- * CHARACTERS PRESENT HERE … You must recognize these characters as physically present
- * with you"). Everything else — identity, memories, relationship, schedule facts — is
- * passed through untouched.
+ * Only the CURRENT co-presence roster is removed ("OTHER VERIFIED CHARACTERS PRESENT
+ * HERE … You must recognize these characters as physically present with you"). Everything
+ * else — identity, memories, relationships, schedule facts, and every visit or shared
+ * experience these people actually had — is passed through untouched, and the correction
+ * says so, so a past visit is never read as never having happened.
  */
 export function scopeCanonicalContext(text, scope) {
   if (!text || !scope) return text;
   return String(text)
     .replace(/\nOTHER VERIFIED CHARACTERS PRESENT HERE:[\s\S]*?You must recognize these characters as physically present with you\.\n/g, '\n')
     .replace(/\nOTHERS PRESENT: [^\n]*\n/g, '\n')
-    .replace(/Your current location: ([^\n]*)/, (match, loc) => `Your current location: ${loc} — inside ${scope.unitLabel}`);
+    .replace(/Your current location: ([^\n]*)/, (match, loc) => `Your current location: ${loc} — inside ${scope.unitLabel}`)
+    .concat(`\n(That roster listed everyone in the whole ${scope.facilityNoun} as physically present. Only ${scope.unitLabel} is this scene, so anyone in another ${scope.unitNoun} is elsewhere right now. This changes nothing about the past: a visit, a conversation, or time these people actually spent together — including a visit to this ${scope.unitNoun} — really happened, is remembered, and is spoken about normally.)`);
 }
 
 /**
@@ -66,8 +68,11 @@ export function buildUnitBoundaryBlock(scope) {
   const { unitLabel, unitNoun, unitNounPlural, facilityName, facilityNoun } = scope;
   return `\n=== THE SPACE THIS SCENE IS IN (NOT THE WHOLE ${String(facilityNoun).toUpperCase()}) ===
 This moment happens inside ${unitLabel} — one ${unitNoun} inside ${facilityName}, with its own occupants.
-- ${facilityName}'s other ${unitNounPlural} are separate spaces. Anyone assigned to another ${unitNoun} is elsewhere in the ${facilityNoun}, not in this one.
-- Living in the same ${facilityNoun}, being treated in it, or being held in it is NOT being in this ${unitNoun}. Never present those people as roommates, cellmates, visitors, or as someone who entered, knocked, passed through, or spent time here, unless an established event in this scene puts them here.
+- Who is in this ${unitNoun} right now is decided by this scene, not by the ${facilityNoun} someone belongs to.
+- Being assigned to another ${unitNoun} — living, being treated, or being held in it — is NOT being in this ${unitNoun}. Building membership alone never makes someone a roommate, cellmate or visitor here, and never means they entered, knocked, passed through, or spent time here.
+- Anyone actually here (the people listed as present, plus the place's own people) really is here, and that stands.
+- A visit that really happened stays true. If someone did come into this ${unitNoun} — earlier in this scene, in a recorded memory, or in a story these people already told — then they really did visit: they remember it, may bring it up, and speak about it as something that happened to them. It is never undone, rewritten, denied, or treated as though it never took place.
+- The distinction is only about this moment: another ${unitNoun} of the same ${facilityNoun} is somewhere else right now. Past visits, conversations and shared time in this ${unitNoun} are unaffected and remain part of these people's lives.
 - Knowing people exist elsewhere in the ${facilityNoun} is ordinary awareness. It never becomes a visit, an entry, a complaint about strangers in the space, or a memory of one.
 - Shared areas of the ${facilityNoun} (lobby, hallway, waiting room, common area) are outside this ${unitNoun}; encounters there happen only when the scene is actually in one of them.
 - An identical reference image or identical décor does not make another ${unitNoun} this one.

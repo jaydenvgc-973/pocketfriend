@@ -819,7 +819,8 @@ export default function Scene() {
         // Inside one unit of a multi-unit property, the scene stays in that space and the
         // speaker the observer chose keeps their own name.
         unitScope: sceneUnitScope,
-        spokenByName: speaker?.name || null,
+        // Speak As: the identified character (their own record ID) is the speaker.
+        spokenBy: speaker?.id ? { id: speaker.id, name: speaker.name, content: spoken } : null,
         ambient: ambientHere,
         npcSpeakers: backgroundCast,
         watchNote: watchContext

@@ -65,7 +65,9 @@ function backgroundCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && (c.isNpc === true || String(c.id).startsWith('npc_')));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, unitScope = null, spokenByName = null }) {
+// `spokenBy` is the character the observer spoke as, resolved from the existing Speak As
+// selection: { id, name, content }. The words are that character's own, not the observer's.
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, unitScope = null, spokenBy = null }) {
   const cast = realCast(participants);
   const selectedBackground = backgroundCast(npcSpeakers);
   if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
@@ -111,7 +113,10 @@ export async function generateObserveBeat({ participants, responders, location, 
   const transcript = (messages || [])
     .filter((m) => m.sender === 'character' || (m.is_canon_event && m.content))
     .slice(-18)
-    .map((m) => (m.is_canon_event ? `(already happened, before this moment) ${m.content}` : `${m.senderName}: ${m.content}`))
+    // A character line is spoken dialogue, written as such: who said it, and their words.
+    .map((m) => (m.is_canon_event
+      ? `(already happened, before this moment) ${m.content}`
+      : `${m.senderName} says out loud: "${m.content}"`))
     .join('\n');
 
   const nameList = [...speaking.map((c) => c.name), ...bgSpeaking.map((n) => n.name)].join(', ');
@@ -145,8 +150,21 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
   const namesRule = `=== NAMES ARE EXACT IDENTITY ===
 - Every person here is exactly the name given in PARTICIPANTS and in the transcript. Use those names, and only those, for those people.
 - Never substitute a different or similar-sounding name for anyone, never shorten one person's name into another person's, and never merge two people because their names look or sound alike. A speaker named in a line is that speaker and nobody else.
-- Nobody is addressed by another person's name by accident, and no one is addressed as a person who is not in this scene.
-${spokenByName ? `- ${spokenByName} spoke the last line. The others are answering ${spokenByName} — that exact person, under that exact name. It was not the user, not an observer, and not anyone else.` : ''}`;
+- Nobody is addressed by another person's name by accident, and no one is addressed as a person who is not in this scene.`;
+
+  // SPEAK AS ATTRIBUTION — the words typed through Speak As belong to that character,
+  // identified by their own record ID. They are not the observer's words, and the others
+  // answer that character, never the person operating the interface.
+  const spokenAttribution = spokenBy?.id && spokenBy?.name ? `
+=== THE LAST LINE WAS SPOKEN BY ${spokenBy.name} — THEIR OWN WORDS ===
+${spokenBy.name} (character ID ${spokenBy.id}) just said this out loud, in this scene:
+"${spokenBy.content || ''}"
+- These are ${spokenBy.name}'s own words, spoken aloud in this room by ${spokenBy.name}, and by nobody else.
+- ${spokenBy.name} is a person in this scene, exactly as recorded under that ID. The answer is directed to ${spokenBy.name}, under that name.
+- Everyone else present is answering ${spokenBy.name} — never the person watching. The observer is not in this scene, has no name in it, and is never spoken to, addressed, thanked, asked, or answered.
+- This line is never re-attributed to another character, to an unnamed person, to the place, or to anyone who is not here.
+- Do not repeat the line back, summarise it, or quote it as new speech. Answer it.
+===` : '';
   // Inside one apartment / patient room / cell a property-wide co-presence roster must not
   // survive: it says everyone in the building is standing in this space. The boundary
   // block below states the real space instead.
@@ -201,11 +219,12 @@ ${unitBlock}
 ${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
 ${backgroundRule}
 
-${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.${unitScope ? ` These records were written for the whole ${unitScope.facilityNoun}: anyone named in them as living, staying or being kept elsewhere in it is not in this ${unitScope.unitNoun}.` : ''}\n${canonicalSection}\n===` : ''}
+${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.${unitScope ? ` These records were written for the whole ${unitScope.facilityNoun}: anyone named in them as living, staying or being kept elsewhere in it is not in this ${unitScope.unitNoun} right now. Everything in them that actually happened still happened — a visit someone made to this ${unitScope.unitNoun}, a conversation, time spent together — and is remembered and spoken about normally.` : ''}\n${canonicalSection}\n===` : ''}
 ${namesRule}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'Nothing has passed between them yet in this scene. It opens from where they already are.'}
+${spokenAttribution}
 ${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThey are watching this together, in the same room. They may talk about it, react to it, or ignore it like real people do.\n===` : ''}
 ${narrative ? ESTABLISHED_NARRATIVE(narrative) : ''}
 ${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
@@ -215,7 +234,7 @@ WRITE THE NEXT MOMENT:
 ${narrative ? `- These people have ALREADY lived the events above. Continue from the situation those events left behind: what is said and done now is the consequence of them.
 - Never reenact, re-announce, or question them. Anything quoted above was already said and must not be spoken again.` : ''}
 ${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.${actorName ? `\n- ${actorName} is the one doing it, as their own ordinary action. Everyone else reacts to ${actorName}.` : ''}` : ''}
-- ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.
+- ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.${spokenBy?.name ? `\n- The line just spoken belongs to ${spokenBy.name}. The others answer ${spokenBy.name} as the person who said it.` : ''}
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
 - Give each speaking participant at most one turn, 1-2 sentences, natural and in-character.
