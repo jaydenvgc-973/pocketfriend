@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { Plus, ChevronDown, ChevronRight, Trash2, X, UserPlus, Building2 } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
+import PositionInput from "@/components/location/PositionInput";
+import { Input } from "@/components/ui/input";
 
 /**
  * WorkplaceManager — the individual businesses inside ONE location.
@@ -24,6 +26,8 @@ import GroupedCharacterSelector from "@/components/location/GroupedCharacterSele
  *   allCharacters         characters who may be employed here
  *   nameById              id → display name fallback
  *   shifts / jobTitles    the location's existing worker_shifts / worker_job_titles
+ *   payType / payRates    the location's existing worker_pay_type / worker_pay_rates
+ *   onUpdate(field, value) → the form's own update, used for those existing fields
  *   onToggleWorker(workplaceId, characterId, add)
  *   getCharacterAvailability(char) → existing availability result
  */
@@ -60,11 +64,17 @@ export default function WorkplaceManager({
   nameById = {},
   shifts = {},
   jobTitles = {},
+  payType = {},
+  payRates = {},
+  onUpdate,
   onToggleWorker,
   getCharacterAvailability = null,
 }) {
   const [expandedId, setExpandedId] = useState(null);
   const [pickingFor, setPickingFor] = useState(null);
+  // Which employee's own employment controls are open. One at a time keeps the
+  // section compact; it never changes what is saved.
+  const [editingKey, setEditingKey] = useState(null);
 
   const list = workplaces || [];
   const zoneNames = (zones || []).map(z => z.zone_name).filter(Boolean);
@@ -238,28 +248,122 @@ export default function WorkplaceManager({
                     {employees.length === 0 ? (
                       <p className="text-[10px] text-muted-foreground italic">No employees yet.</p>
                     ) : (
-                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <div className="space-y-1 max-h-64 overflow-y-auto">
                         {employees.map(characterId => {
                           const character = allCharacters.find(c => c.id === characterId);
-                          const shift = shifts?.[characterId];
-                          const shiftLabel = shift?.start && shift?.end ? `${shift.start}–${shift.end}` : null;
+                          const shift = shifts?.[characterId] || {};
+                          const shiftDays = shift.days || [1, 2, 3, 4, 5];
+                          const shiftLabel = shift.start && shift.end ? `${shift.start}–${shift.end}` : null;
+                          const rowKey = `${workplace.workplace_id}:${characterId}`;
+                          const isEditing = editingKey === rowKey;
+                          const category = workplace.business_category || "workplace";
                           return (
-                            <div key={characterId} className="flex items-center gap-2 py-0.5 group">
-                              {character
-                                ? <CharacterAvatar character={character} size="sm" />
-                                : <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[8px] font-bold text-muted-foreground flex-shrink-0">?</div>}
-                              <span className="text-xs text-foreground flex-1 truncate">
-                                {resolveName(characterId)}
-                                {jobTitles?.[characterId] ? <span className="text-muted-foreground/70"> · {jobTitles[characterId]}</span> : null}
-                                {shiftLabel ? <span className="text-muted-foreground/70"> · {shiftLabel}</span> : null}
-                              </span>
-                              <button
-                                onClick={() => onToggleWorker?.(workplace.workplace_id, characterId, false)}
-                                title="Remove from this workplace"
-                                className="p-0.5 text-muted-foreground hover:text-destructive transition-colors rounded-lg opacity-0 group-hover:opacity-100"
-                              >
-                                <X className="w-3 h-3" />
-                              </button>
+                            <div key={characterId} className="rounded-lg bg-secondary/40 border border-border">
+                              <div className="flex items-center gap-2 py-1 px-1.5 group">
+                                <button
+                                  onClick={() => setEditingKey(isEditing ? null : rowKey)}
+                                  className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                                >
+                                  {isEditing
+                                    ? <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                                    : <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
+                                  {character
+                                    ? <CharacterAvatar character={character} size="sm" />
+                                    : <div className="w-5 h-5 rounded-full bg-secondary flex items-center justify-center text-[8px] font-bold text-muted-foreground flex-shrink-0">?</div>}
+                                  <span className="text-xs text-foreground flex-1 truncate">
+                                    {resolveName(characterId)}
+                                    {jobTitles?.[characterId] ? <span className="text-muted-foreground/70"> · {jobTitles[characterId]}</span> : null}
+                                    {shiftLabel ? <span className="text-muted-foreground/70"> · {shiftLabel}</span> : null}
+                                  </span>
+                                </button>
+                                <button
+                                  onClick={() => onToggleWorker?.(workplace.workplace_id, characterId, false)}
+                                  title="Remove from this workplace"
+                                  className="p-0.5 text-muted-foreground hover:text-destructive transition-colors rounded-lg flex-shrink-0"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+
+                              {isEditing && (
+                                <div className="px-1.5 pb-1.5 space-y-1.5 border-t border-border pt-1.5">
+                                  <div className="grid grid-cols-3 gap-1.5">
+                                    <div className="flex flex-col gap-0.5">
+                                      <label className="text-[9px] text-muted-foreground uppercase tracking-wider">Type</label>
+                                      <select
+                                        value={payType?.[characterId] || "hourly"}
+                                        onChange={e => onUpdate?.("worker_pay_type", { ...payType, [characterId]: e.target.value })}
+                                        className="text-[10px] px-1.5 py-1 bg-input border border-border rounded text-foreground"
+                                      >
+                                        <option value="hourly">Hourly</option>
+                                        <option value="annual">Annual</option>
+                                      </select>
+                                    </div>
+                                    <div className="flex flex-col gap-0.5">
+                                      <label className="text-[9px] text-muted-foreground uppercase tracking-wider">Rate</label>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[10px]">$</span>
+                                        <Input
+                                          type="number"
+                                          value={payRates?.[characterId] || 0}
+                                          onChange={e => onUpdate?.("worker_pay_rates", { ...payRates, [characterId]: parseFloat(e.target.value) || 0 })}
+                                          className="h-7 text-[10px] flex-1"
+                                          placeholder="15"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="flex flex-col gap-0.5">
+                                      <label className="text-[9px] text-muted-foreground uppercase tracking-wider">Position</label>
+                                      <PositionInput
+                                        category={category}
+                                        value={jobTitles?.[characterId] || ""}
+                                        onChange={val => onUpdate?.("worker_job_titles", { ...jobTitles, [characterId]: val })}
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <div className="flex flex-col gap-0.5">
+                                      <label className="text-[9px] text-muted-foreground uppercase tracking-wider">Shift Start</label>
+                                      <Input
+                                        type="time"
+                                        value={shift.start || "09:00"}
+                                        onChange={e => onUpdate?.("worker_shifts", { ...shifts, [characterId]: { ...shift, start: e.target.value } })}
+                                        className="h-7 text-[10px]"
+                                      />
+                                    </div>
+                                    <div className="flex flex-col gap-0.5">
+                                      <label className="text-[9px] text-muted-foreground uppercase tracking-wider">Shift End</label>
+                                      <Input
+                                        type="time"
+                                        value={shift.end || "17:00"}
+                                        onChange={e => onUpdate?.("worker_shifts", { ...shifts, [characterId]: { ...shift, end: e.target.value } })}
+                                        className="h-7 text-[10px]"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div>
+                                    <label className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
+                                    <div className="flex gap-1 flex-wrap">
+                                      {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d, i) => {
+                                        const active = shiftDays.includes(i);
+                                        return (
+                                          <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => {
+                                              const nextDays = active ? shiftDays.filter(x => x !== i) : [...shiftDays, i].sort();
+                                              onUpdate?.("worker_shifts", { ...shifts, [characterId]: { ...shift, days: nextDays } });
+                                            }}
+                                            className={`w-6 h-6 rounded-full text-[9px] font-medium border transition-colors ${active ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                                          >
+                                            {d}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -294,8 +398,8 @@ export default function WorkplaceManager({
                       </button>
                     )}
                     <p className="text-[10px] text-muted-foreground/70">
-                      Shifts, pay and positions are set in Workers &amp; Employees below. Business hours
-                      follow this property's Mixed-Use Environments — residential access is unaffected.
+                      Tap an employee to set their shift, pay and position for this business. Business
+                      hours follow this property's Mixed-Use Environments — residential access is unaffected.
                     </p>
                   </div>
                 </div>

@@ -1371,7 +1371,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           Several independent businesses can operate in one Home. Each is its own
           establishment; the property keeps its Home category, its residents and its
           units, and its businesses use the existing employment records below. */}
-      {homeWithWorkplace && (
+      {(homeWithWorkplace || (form.workplaces || []).length > 0) && (
         <WorkplaceManager
           workplaces={form.workplaces || []}
           onChange={(list) => update('workplaces', list)}
@@ -1382,13 +1382,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           nameById={characterNameById}
           shifts={form.worker_shifts}
           jobTitles={form.worker_job_titles}
+          payType={form.worker_pay_type}
+          payRates={form.worker_pay_rates}
+          onUpdate={update}
           onToggleWorker={toggleWorkplaceWorker}
           getCharacterAvailability={(char) => getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
         />
       )}
 
-      {/* ── WORKERS ── */}
-      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation' || homeWithWorkplace) && (
+      {/* ── WORKERS ──
+          A Home that contains workplaces has no building-wide worker section: every
+          employee belongs to the individual business they were assigned to, and their
+          employment controls live inside that business's own section above. */}
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
 
@@ -1554,8 +1560,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         />
       )}
 
-      {/* ── UNIFORMS (all location types that can have workers/roles) ── */}
-      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery' || form.category === 'transportation' || homeWithWorkplace) && (
+      {/* ── UNIFORMS (all location types that can have workers/roles) ──
+          A Home with workplaces has no building-wide staff configuration: each business
+          keeps its own employees inside its own section. Existing uniform data is kept
+          exactly as stored and is still saved with the location. */}
+      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery' || form.category === 'transportation') && (
         <div className="space-y-2">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Uniforms & Staff Attire</label>
           <p className="text-xs text-muted-foreground">Optional. Define uniforms for staff roles. Visitors, customers, and patrons are never given uniforms. Changes persist when you save the location.</p>
