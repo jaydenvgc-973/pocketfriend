@@ -533,6 +533,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "is_primary_category": {
+            "type": "boolean",
+            "default": false,
+            "description": "True only when the user explicitly marked this zone as part of the location's main selected category. Set by the user in the zone image references \u2014 never inferred from the zone name, description, or category."
           }
         },
         "required": [

@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
@@ -391,7 +392,7 @@ const SUBTYPE_LABELS = {
   all_you_can_eat_buffet: "All-You-Can-Eat Buffet",
 };
 
-function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
+function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
   const [uploading, setUploading] = useState(false);
 
   const handleUpload = async (e) => {
@@ -441,6 +442,15 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
         <X className="w-3.5 h-3.5" />
         </button>}
       </div>
+      {!readOnly && (
+        <label className="flex items-center gap-2 cursor-pointer select-none -mt-1">
+          <Checkbox
+            checked={!!zone.is_primary_category}
+            onCheckedChange={(checked) => onTogglePrimaryCategory?.(checked === true)}
+          />
+          <span className="text-[11px] text-muted-foreground">Part of Main Category</span>
+        </label>
+      )}
       {imgCount > 0 && (
         <div className="grid grid-cols-4 gap-1.5">
           {zone.image_urls.map((url, i) => (
@@ -816,6 +826,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     update("zones", updated);
   };
 
+  // Explicit, user-set designation: does this zone belong to the location's main
+  // selected category? Never inferred from a zone name — only what the user checked.
+  const updateZonePrimaryCategory = (i, value) => {
+    const updated = form.zones.map((z, idx) => idx === i ? { ...z, is_primary_category: value } : z);
+    update("zones", updated);
+  };
+
   const isGenericHome = form.is_default_generic;
   const canSave = form.name.trim() && (isGenericHome || form.zones.length > 0);
 
@@ -1053,6 +1070,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               key={i} 
               zone={zone} 
               onUpdateImages={(urls) => updateZoneImages(i, urls)} 
+              onTogglePrimaryCategory={(value) => updateZonePrimaryCategory(i, value)}
               onDelete={() => removeZone(i)} 
               readOnly={false}
               locationName={form.name}

@@ -94,7 +94,13 @@ export function useSceneImageGenerator() {
     // mixing them is what made a zone render as a different room. When a zone has no
     // images of its own, the location's own reference images are used; another zone's
     // room is never substituted.
-    const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone) || locationZones[0];
+    // A zone the user explicitly marked as Part of Main Category (Places > Zones & Images)
+    // is the main-category space of this location, so it is preferred over an arbitrary
+    // first zone when the active zone is not one of them. Nothing is reclassified: an
+    // unchecked zone simply keeps the existing behavior.
+    const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone)
+      || locationZones.find((z) => z.is_primary_category === true)
+      || locationZones[0];
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
     const envRefs = activeZoneImagesForAction.length > 0
       ? activeZoneImagesForAction.slice(0, 4)

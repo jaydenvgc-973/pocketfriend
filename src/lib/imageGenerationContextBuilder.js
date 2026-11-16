@@ -258,13 +258,19 @@ export async function buildImageGenerationContext({
       if (locationRecord) {
         // Resolve zone images
         const zones = (locationRecord.zones || []).filter(z => (z.image_urls || []).length > 0);
+        // The zone the user marked as Part of Main Category is the location's own main
+        // space (Places > Zones & Images). It is preferred when no specific zone is
+        // requested or the requested one has no images — never inferred, only user-set.
+        const primaryZone = zones.find(z => z.is_primary_category === true);
         if (zoneName && zones.length > 0) {
           const matchedZone = zones.find(z => z.zone_name?.toLowerCase() === zoneName.toLowerCase());
-          zoneImages = matchedZone?.image_urls || zones[0]?.image_urls || [];
-          effectiveZoneName = matchedZone?.zone_name || zones[0]?.zone_name;
+          const fallbackZone = primaryZone || zones[0];
+          zoneImages = matchedZone?.image_urls || fallbackZone?.image_urls || [];
+          effectiveZoneName = matchedZone?.zone_name || fallbackZone?.zone_name;
         } else if (zones.length > 0) {
-          zoneImages = zones[0]?.image_urls || [];
-          effectiveZoneName = zones[0]?.zone_name;
+          const defaultZone = primaryZone || zones[0];
+          zoneImages = defaultZone?.image_urls || [];
+          effectiveZoneName = defaultZone?.zone_name;
         } else {
           zoneImages = locationRecord.image_urls || [];
         }
