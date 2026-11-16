@@ -609,17 +609,44 @@ function buildVenueDishActions(location) {
  * @param {boolean} options.isCharacterAsleep - Block all activities
  * @param {number} options.sleepStartHour - Character's scheduled sleep start (default 23)
  */
+/**
+ * The business whose zones the current zone belongs to, when this location contains
+ * workplaces. A Home keeps its Home category; inside one of its businesses' own zones,
+ * that business's venue type decides the activity library — the same catalog, prices and
+ * staff rules every location of that type already uses. Null when the zone belongs to no
+ * business, in which case the location is resolved exactly as before.
+ */
+export function resolveWorkplaceVenue(location, activeZone) {
+  if (!activeZone || !Array.isArray(location?.workplaces) || location.workplaces.length === 0) return null;
+  const zone = String(activeZone).toLowerCase();
+  return location.workplaces.find(w =>
+    w?.business_type && (w.zone_names || []).some(z => String(z).toLowerCase() === zone)
+  ) || null;
+}
+
 export function generateLocationActions(location, activeZone = null, hour = 12, options = {}) {
   if (!location) return DEFAULT_ACTIONS;
   if (options.isCharacterAsleep) return [];
 
-  let actions = resolveActionLibrary(location);
+  // Venue identity: the business this zone belongs to, or the location itself.
+  const workplace = resolveWorkplaceVenue(location, activeZone);
+  const venue = workplace
+    ? {
+        ...location,
+        category: workplace.business_category || location.category,
+        subtype: [workplace.business_type],
+        name: workplace.name || location.name,
+        venue_identity: workplace.name || location.venue_identity,
+      }
+    : location;
+
+  let actions = resolveActionLibrary(venue);
 
   // Venue food additions — additive only. Existing actions and prices are untouched.
   // Bars offer food only when the user enabled food service on that location.
   const venueExtras = [];
-  if (actions === BAR_CLUB_ACTIONS && offersFoodService(location)) venueExtras.push(...BAR_FOOD_ACTIONS);
-  venueExtras.push(...buildVenueDishActions(location));
+  if (actions === BAR_CLUB_ACTIONS && offersFoodService(venue)) venueExtras.push(...BAR_FOOD_ACTIONS);
+  venueExtras.push(...buildVenueDishActions(venue));
   if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
 
   // Caffeine filter: only restrict within 2 hours of character's scheduled sleep.

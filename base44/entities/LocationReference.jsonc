@@ -693,6 +693,61 @@
         ]
       }
     },
+    "venue_types": {
+      "type": "array",
+      "default": [],
+      "description": "Additional venue capabilities explicitly enabled on this location without changing its category. 'workplace' = the property may contain individual businesses inside it. Empty on every location that has none.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "workplaces": {
+      "type": "array",
+      "default": [],
+      "description": "Individual businesses operating inside this location, each its own establishment with its own name, business type, zones and employees. Never a location of its own: the property keeps its category, residents and units, and its employees are the same workers listed in worker_character_ids \u2014 the existing employment records, shifts and schedules remain the single authority.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "workplace_id": {
+            "type": "string",
+            "description": "Stable unique ID for this business (UUID or slug)"
+          },
+          "name": {
+            "type": "string",
+            "description": "The business's own name (e.g. 'Ground Floor Restaurant')"
+          },
+          "business_category": {
+            "type": "string",
+            "description": "The existing location category whose functionality this business uses (e.g. food_drink, gym, business)"
+          },
+          "business_type": {
+            "type": "string",
+            "description": "The business's existing venue type within that category (e.g. casual_restaurant, yoga_studio, clothing_store)"
+          },
+          "zone_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Zones of this property that belong to this business"
+          },
+          "worker_character_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Characters employed by this business. Each one is also listed in the property's worker_character_ids \u2014 the same employment records, schedules and shifts remain the single authority."
+          }
+        },
+        "required": [
+          "workplace_id",
+          "name"
+        ]
+      }
+    },
     "worker_character_ids": {
       "type": "array",
       "items": {

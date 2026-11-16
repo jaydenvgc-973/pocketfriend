@@ -27,6 +27,7 @@ import ReligiousMemberSection from "@/components/location/ReligiousMemberSection
 import { Link } from "react-router-dom";
 import EnvironmentManager from "@/components/location/EnvironmentManager";
 import ApartmentManager from "@/components/location/ApartmentManager";
+import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
 import { describeCharacterResidence } from "@/lib/residenceDisplay";
@@ -737,6 +738,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     religious_members: editingLocation?.religious_members || [],
     environments: editingLocation?.environments || [],
     residential_units: editingLocation?.residential_units || [],
+    venue_types: editingLocation?.venue_types || [],
+    workplaces: editingLocation?.workplaces || [],
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -753,6 +756,29 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
 
+  // Businesses inside this property share its single employment record per character
+  // (worker_character_ids / worker_shifts / worker_pay_rates / worker_job_titles).
+  // Adding someone to a workplace adds them as a worker of the property; removing them
+  // from their last workplace removes them from the property's worker list. Living here
+  // never employs anyone.
+  const toggleWorkplaceWorker = (workplaceId, characterId, add) => {
+    setForm(p => {
+      const workplaces = (p.workplaces || []).map(w => w.workplace_id === workplaceId
+        ? {
+            ...w,
+            worker_character_ids: add
+              ? [...new Set([...(w.worker_character_ids || []), characterId])]
+              : (w.worker_character_ids || []).filter(id => id !== characterId),
+          }
+        : w);
+      const stillEmployed = workplaces.some(w => (w.worker_character_ids || []).includes(characterId));
+      let workerIds = p.worker_character_ids || [];
+      if (add && !workerIds.includes(characterId)) workerIds = [...workerIds, characterId];
+      if (!add && !stillEmployed) workerIds = workerIds.filter(id => id !== characterId);
+      return { ...p, workplaces, worker_character_ids: workerIds };
+    });
+  };
+
   // Update worker_character_ids when allCharacters data loads
   React.useEffect(() => {
     if (editingLocation && allCharacters.length > 0) {
@@ -763,6 +789,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const presets = ZONE_PRESETS[form.category] || ZONE_PRESETS.other;
   const existingZoneNames = form.zones.map(z => z.zone_name.toLowerCase());
+  // A Home with the Workplace venue capability enabled. The property keeps its Home
+  // category — this only makes the existing Workplace-category capabilities (employees,
+  // uniforms) available inside it.
+  const homeWithWorkplace = form.category === 'home' && (form.venue_types || []).includes('workplace');
 
   const addPresetZone = (name) => {
     if (existingZoneNames.includes(name.toLowerCase())) return;
@@ -813,6 +843,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     onSave({
       ...formRest,
       ...(shouldWriteLocationType ? { location_type: effectiveType } : {}),
+      venue_types: form.venue_types || [],
+      // Each business keeps its own name, type, zones and employees. Its employee list is
+      // always a subset of the property's workers — employment stays a single record.
+      workplaces: (form.workplaces || [])
+        .filter(w => w.name?.trim())
+        .map(w => ({
+          ...w,
+          name: w.name.trim(),
+          worker_character_ids: (w.worker_character_ids || []).filter(id => (form.worker_character_ids || []).includes(id)),
+        })),
       keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
       character_name: charObj?.name || "",
       owner_character_name: ownerChar?.name || form.owner_character_name || "",
@@ -915,6 +955,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ── ADDITIONAL VENUE TYPES (Home only) ──
+          A Home can also carry the Workplace capability without becoming a workplace
+          property: its category, venue types, residents and units are untouched. */}
+      {form.category === 'home' && (
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Additional Venue Types</label>
+          <p className="text-xs text-muted-foreground mb-2">Optional. Adds a capability to this home without changing its category.</p>
+          <button
+            onClick={() => update("venue_types", (form.venue_types || []).includes("workplace")
+              ? (form.venue_types || []).filter(v => v !== "workplace")
+              : [...(form.venue_types || []), "workplace"])}
+            className={`w-full py-2 px-3 rounded-xl text-xs border transition-colors text-left ${(form.venue_types || []).includes("workplace") ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+          >
+            💼 Workplace — this property contains businesses
+          </button>
         </div>
       )}
 
@@ -1309,8 +1367,28 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         );
       })()}
 
+      {/* ── WORKPLACES INSIDE THIS HOME ──
+          Several independent businesses can operate in one Home. Each is its own
+          establishment; the property keeps its Home category, its residents and its
+          units, and its businesses use the existing employment records below. */}
+      {homeWithWorkplace && (
+        <WorkplaceManager
+          workplaces={form.workplaces || []}
+          onChange={(list) => update('workplaces', list)}
+          zones={form.zones}
+          subtypeOptions={SUBTYPE_OPTIONS}
+          subtypeLabels={SUBTYPE_LABELS}
+          allCharacters={allAssignableCharacters}
+          nameById={characterNameById}
+          shifts={form.worker_shifts}
+          jobTitles={form.worker_job_titles}
+          onToggleWorker={toggleWorkplaceWorker}
+          getCharacterAvailability={(char) => getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
+        />
+      )}
+
       {/* ── WORKERS ── */}
-      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation') && (
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'jail_prison' || form.category === 'transportation' || homeWithWorkplace) && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
 
@@ -1341,7 +1419,17 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                         <span className="text-sm font-medium text-foreground">{workerName}</span>
                         {isUserWorker && <span className="text-[10px] text-primary/60 font-medium">Player</span>}
                       </div>
-                      <button onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+                      <button onClick={() => {
+                        update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx));
+                        // Removing a worker removes them from the businesses they were
+                        // listed under — the worker list is the authority.
+                        if ((form.workplaces || []).length > 0) {
+                          update("workplaces", form.workplaces.map(w => ({
+                            ...w,
+                            worker_character_ids: (w.worker_character_ids || []).filter(id => id !== workerId),
+                          })));
+                        }
+                      }} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -1467,7 +1555,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── UNIFORMS (all location types that can have workers/roles) ── */}
-      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery' || form.category === 'transportation') && (
+      {(form.category === 'jail_prison' || form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'social' || form.category === 'medical' || form.category === 'school' || form.category === 'education' || form.category === 'gym' || form.category === 'religion' || form.category === 'government' || form.category === 'community' || form.category === 'grocery' || form.category === 'transportation' || homeWithWorkplace) && (
         <div className="space-y-2">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Uniforms & Staff Attire</label>
           <p className="text-xs text-muted-foreground">Optional. Define uniforms for staff roles. Visitors, customers, and patrons are never given uniforms. Changes persist when you save the location.</p>
