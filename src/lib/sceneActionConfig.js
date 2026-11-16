@@ -88,6 +88,11 @@ export const HOUSEHOLD_ACTION_IDS = [
   "home_brush_teeth", "home_shower", "home_make_bed",
 ];
 
+// ── EATING / DRINKING ACTIVITIES ──────────────────────────────────────────────
+// One authority for which actions record an ordinary meal or drink against the
+// person who actually has it.
+export const EATING_ACTION_IDS = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch', 'sk_soup', 'sk_sandwich', 'sk_hot_meal', 'sk_pasta', 'sk_bread', 'sk_fruit', 'buffet_plate', 'bar_food_tacos', 'bar_food_sliders', 'bar_food_burger', 'bar_food_wings', 'bar_food_nachos', 'bar_food_pizza', 'bar_food_sandwich', 'bar_food_fries', 'bar_food_hotdog'];
+
 // ── DIRECTED INTERACTION PROMPTS ──────────────────────────────────────────────
 // Kiss / Flirt With / Argue With are interactions BETWEEN two specific people, so the
 // prompt always names both of them and states the body language plainly. A directed

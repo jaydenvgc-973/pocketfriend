@@ -10,9 +10,13 @@ import { X, Users } from "lucide-react";
  * target is ever chosen automatically. Selecting a person hands them back to the scene,
  * which runs the interaction through the existing narrative/interaction pathway.
  */
-export default function SceneTargetPicker({ action, targets = [], onSelect, onClose }) {
+export default function SceneTargetPicker({ action, targets = [], onSelect, onClose, heading = null, hint = null }) {
   if (!action) return null;
   const verb = String(action.label || "").toLowerCase();
+  // The same picker also chooses WHO performs an activity in a watched scene, so its
+  // heading can be asked differently without changing how a target is chosen.
+  const title = heading || `${action.emoji} ${action.label} — who?`;
+  const subtitle = hint || "Only people who are here can be chosen.";
 
   return createPortal(
     <AnimatePresence>
@@ -34,10 +38,10 @@ export default function SceneTargetPicker({ action, targets = [], onSelect, onCl
             <div>
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <span className="text-base leading-none">{action.emoji}</span>
-                {action.label} — who?
+                {title}
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Only people who are here can be chosen.
+                {subtitle}
               </p>
             </div>
             <button onClick={onClose} className="p-1 hover:bg-secondary rounded-lg transition-colors">

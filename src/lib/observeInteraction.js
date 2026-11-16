@@ -39,8 +39,21 @@ ${direction}
 This has NOT happened yet. It is what should now take place in the moment you are writing.
 - Carry it out for real: the characters take these actions as the scene moves.
 - When words are attributed to a character, that character says them out loud here, in their own voice, as part of the moment.
+- A name given with the direction is the person who does it: "<action> — <Name>" means that named person takes that action. Nobody else performs it.
 - Never answer with agreement, commentary, or acknowledgement of the instruction itself. Play the scene out.
 - There is no director, no instruction, no author, and no observer anywhere in this scene.
+===`;
+
+// WHO ACTS — the chosen person performs and experiences the action themselves.
+// Chosen to belong to them, never evidence that anyone is operating them.
+const WHO_TAKES_THE_ACTION = (actorName) => `
+=== WHO DOES THIS, AND HOW THEY EXPERIENCE IT ===
+${actorName} is the one who does this, themselves, as part of their own ordinary day.
+- ${actorName} performs it and experiences it: the others here respond to ${actorName}, not to anybody else.
+- It is ${actorName}'s own decision and appetite in the moment. Nobody hands it to them and nothing about it feels arranged.
+- It is never mentioned, thanked, credited, blamed, or referred to as anything other than what ${actorName} did.
+- Nobody refers to a direction, an instruction, a choice, a button, or being told to do it — that wording never exists in this scene.
+- ${actorName} does not say their own name out loud.
 ===`;
 
 function realCast(list) {
@@ -51,7 +64,7 @@ function backgroundCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && (c.isNpc === true || String(c.id).startsWith('npc_')));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [] }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null }) {
   const cast = realCast(participants);
   const selectedBackground = backgroundCast(npcSpeakers);
   if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
@@ -159,9 +172,10 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
 
 THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - Nobody is watching this. There is no observer in the room, nearby, or at the edge of it.
-- A person who is not part of this scene may read it afterwards. That person does not exist in this moment: their name must never appear, and no character may address, greet, name, glance toward, speak to, think about, or perform for anyone outside the participant list below.
-- Never write dialogue, thoughts, or actions for anyone who is not the people listed here or in THE PLACE below.
-- Nobody here is aware of being observed. Nothing may hint at an audience or a narrator.
+- The person who directs this scene is NOT in it. They are not standing with these people, not sitting at their table, not at the bar with them, and not within sight or hearing of them. Nobody greets, addresses, names as being here, hands something to, waits on, glances toward, performs for, or includes that person in the moment.
+- Never write dialogue, thoughts, or physical actions at this place for anyone who is not the people listed here or in THE PLACE below.
+- An absent person is still part of these people's lives. They may be mentioned, remembered, discussed, missed, or credited for something that already happened — exactly the way real people talk about someone who is somewhere else. A mention is never presence: the absent person stays absent, does nothing here, and the moment stays with the people who are actually in this place. Never invent a physical arrival for them.
+- Nobody here is aware of being observed, directed, or operated. Nothing may hint at an audience, a narrator, or anyone outside this scene.
 
 PARTICIPANTS (the people this moment is about):
 ${castLines || '(no established Pocketfriend character is in this moment)'}
@@ -173,18 +187,19 @@ ${placeBlock}
 ${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
 ${backgroundRule}
 
-${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody in this scene addresses, names, or plays to anyone outside the participant list.\n${canonicalSection}\n===` : ''}
+${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.\n${canonicalSection}\n===` : ''}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'Nothing has passed between them yet in this scene. It opens from where they already are.'}
 ${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThey are watching this together, in the same room. They may talk about it, react to it, or ignore it like real people do.\n===` : ''}
 ${narrative ? ESTABLISHED_NARRATIVE(narrative) : ''}
 ${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
+${direction && actorName ? WHO_TAKES_THE_ACTION(actorName) : ''}
 
 WRITE THE NEXT MOMENT:
 ${narrative ? `- These people have ALREADY lived the events above. Continue from the situation those events left behind: what is said and done now is the consequence of them.
 - Never reenact, re-announce, or question them. Anything quoted above was already said and must not be spoken again.` : ''}
-${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.` : ''}
+${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.${actorName ? `\n- ${actorName} is the one doing it, as their own ordinary action. Everyone else reacts to ${actorName}.` : ''}` : ''}
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.

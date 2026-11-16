@@ -32,7 +32,7 @@ import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory, recordNarrativeMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
-import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS } from "@/lib/sceneActionConfig";
+import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
@@ -128,6 +128,9 @@ export default function Scene() {
   const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
   const [directedAction, setDirectedAction] = useState(null);
+  // In a watched scene an activity belongs to a person IN the scene. When more than one
+  // eligible character is here, the observer says who before anything happens.
+  const [actorAction, setActorAction] = useState(null);
   const [showSharedConversation, setShowSharedConversation] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
@@ -646,6 +649,16 @@ export default function Scene() {
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
 
+  // The people actually here who can DO something: an activity belongs to one of them.
+  // Background people of the venue are never puppeted and infants cannot act on cue.
+  const observeActors = useMemo(
+    () => observeCast.filter((c) => c.id
+      && c.isNpc !== true
+      && !String(c.id).startsWith("npc_")
+      && !isInfantCharacter(c)),
+    [observeCast.map((c) => c.id).join(',')]
+  );
+
   // ── THE PLACE IS POPULATED ──
   // A public venue keeps its ordinary people while the characters are in it. Private
   // residences and restricted/staff-only zones get none. These people are already part
@@ -709,14 +722,20 @@ export default function Scene() {
     const action = directedAction;
     setDirectedAction(null);
     if (!action || !target?.id) return;
-    const label = `[${action.emoji} ${action.label} — ${target.name}]`;
     // The top scene image must show the interaction itself — the person acting and the
-    // person it is aimed at. In a watched scene the actor is the character in the moment;
-    // when the user is present, the user is the one acting.
+    // person it is aimed at. In a watched scene the actor is the character the observer
+    // picked (or the only one here); when the user is present, the user is the one acting.
     const actor = observeMode
-      ? (observeCast.find((c) => c.id !== target.id && sceneParticipants.some((p) => p.id === c.id)) || null)
+      ? (action.actorName
+        ? { id: action.actorId, name: action.actorName }
+        : (observeCast.find((c) => c.id !== target.id && sceneParticipants.some((p) => p.id === c.id)) || null))
       : userParticipant;
     const actorName = actor?.name || actor?.display_name || null;
+    // The direction names the person taking the action, so the moment belongs to them
+    // and never to the absent observer.
+    const label = observeMode && actorName
+      ? `[${action.emoji} ${action.label} — ${actorName} with ${target.name}]`
+      : `[${action.emoji} ${action.label} — ${target.name}]`;
     if (actor?.id && actorName) {
       generateSceneImage({
         location, locationZones, activeZone, sceneParticipants, userParticipant,
@@ -734,7 +753,7 @@ export default function Scene() {
     }
     // A watched scene stages the moment between the people in it: the cast acts on it.
     if (observeMode) {
-      runObserveBeat({ direction: label });
+      runObserveBeat({ direction: label, actorName });
       return;
     }
     sendMessage(label, true, null, null, null, null, null, false, {
@@ -744,7 +763,9 @@ export default function Scene() {
     });
   };
 
-  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null } = {}) => {
+  // `actorName` names the person taking the directed action, so the moment is written as
+  // theirs and never as anyone else's — the observer above all.
+  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
     // Established people carry identity and memory. Background people of the venue
@@ -790,6 +811,7 @@ export default function Scene() {
         participants: characterCast, responders, location, activeZone,
         messages: priorLine ? [...messages, priorLine] : messages,
         direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
+        actorName: actorName || null,
         ambient: ambientHere,
         npcSpeakers: backgroundCast,
         watchNote: watchContext
@@ -1101,26 +1123,68 @@ export default function Scene() {
 
   const handleAskToLeave = (type, narrativeText) => { setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: narrativeText || `You ask the ${type} to leave.`, timestamp: new Date().toISOString() }]); };
 
-  // In a watched scene the observer does nothing themselves: choosing something from
-  // the strip is what the people in the scene do, and the scene re-renders with it.
+  // In a watched scene the observer does nothing themselves: choosing something from the
+  // strip is what a person IN the scene does. The action belongs to that character — one
+  // eligible character acts by default, and with several the observer says which one.
+  // Choosing it never puts the observer at the location.
   const handleObserveAction = (action) => {
     if (actionCooldown) return;
+    const actors = observeActors;
+    if (actors.length === 0) {
+      setMessages((prev) => [...prev, { id: `obs_nobody_${Date.now()}`, sender: "narrative", content: "No one is here to do that — pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
+      return;
+    }
+    if (actors.length === 1) { performObserveAction(action, actors[0]); return; }
+    setActorAction({ action, mode: "activity" });
+  };
+
+  // The chosen character performs and experiences the activity themselves: the picture
+  // shows them doing it, the moment is played out between the people here, and an ordinary
+  // meal or drink is recorded against the person who actually has it.
+  const performObserveAction = (action, actor) => {
+    if (actionCooldown || !actor?.id) return;
     setActionCooldown(true);
     try {
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      const involved = observeCast.length > 0 ? observeCast : sceneParticipants;
-      const whoDesc = involved.length > 0 ? involved.map((c) => c.name).join(" and ") : "no one — the space is empty";
       if (actionImageFn) {
-        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: sceneAmbientPopulation, actionOverridePrompt: actionImageFn(location?.name || location?.category, whoDesc) });
+        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: sceneAmbientPopulation, actionFocusIds: [actor.id], actionOverridePrompt: actionImageFn(location?.name || location?.category, actor.name) });
+      }
+      if (EATING_ACTION_IDS.includes(action.id)) {
+        const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal';
+        base44.functions.invoke('recordEatingEvent', { characterId: actor.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       }
       if (observeCast.length >= 2) {
-        runObserveBeat({ direction: `[${action.emoji} ${action.label}]` });
+        runObserveBeat({ direction: `[${action.emoji} ${action.label} — ${actor.name}]`, actorName: actor.name });
       } else {
-        setMessages((prev) => [...prev, { id: `obs_act_${Date.now()}`, sender: "narrative", content: `${observeCast.map((c) => c.name).join(" and ") || "They"} ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+        setMessages((prev) => [...prev, { id: `obs_act_${Date.now()}`, sender: "narrative", content: `${actor.name} ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
       }
     } finally {
       setTimeout(() => setActionCooldown(false), 600);
     }
+  };
+
+  // Who performs it: the person the observer picked. A directed interaction still asks for
+  // its target afterwards, so the one acting and the one it is aimed at stay distinct.
+  const handleActorSelect = (person) => {
+    const pending = actorAction;
+    setActorAction(null);
+    if (!pending || !person?.id) return;
+    if (pending.mode === "directed") setDirectedAction({ ...pending.action, actorId: person.id, actorName: person.name });
+    else performObserveAction(pending.action, person);
+  };
+
+  const handleDirectedSelect = (directed) => {
+    if (actionCooldown) return;
+    if (!observeMode) { setDirectedAction(directed); return; }
+    // Only someone here can start it, and only toward someone else who is here.
+    const actors = observeActors.filter((c) => directedTargets.filter((t) => t.id !== c.id).length > 0);
+    if (actors.length === 0) {
+      setMessages((prev) => [...prev, { id: `obs_nopair_${Date.now()}`, sender: "narrative", content: "No one else is here to try that with yet — pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
+      return;
+    }
+    if (actors.length === 1) { setDirectedAction({ ...directed, actorId: actors[0].id, actorName: actors[0].name }); return; }
+    setActorAction({ action: directed, mode: "directed" });
   };
 
   const handleAction = async (action) => {
@@ -1133,7 +1197,7 @@ export default function Scene() {
       // Explicitly free food (soup kitchen meal, complimentary bar snack) — shown in the
       // Shopfeed card at no charge, never through the purchase path.
       const isFreeOfferingAction = !!action.free_offering && !!action.action_category;
-      const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch', 'sk_soup', 'sk_sandwich', 'sk_hot_meal', 'sk_pasta', 'sk_bread', 'sk_fruit', 'buffet_plate', 'bar_food_tacos', 'bar_food_sliders', 'bar_food_burger', 'bar_food_wings', 'bar_food_nachos', 'bar_food_pizza', 'bar_food_sandwich', 'bar_food_fries', 'bar_food_hotdog'];
+      const eatingActionIds = EATING_ACTION_IDS;
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
@@ -1253,7 +1317,7 @@ export default function Scene() {
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
           {directedTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => (
-            <button key={directed.id} onClick={() => { if (actionCooldown) return; setDirectedAction(directed); }} disabled={actionCooldown} title={`${directed.label} — choose who`} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={directed.id} onClick={() => handleDirectedSelect(directed)} disabled={actionCooldown} title={`${directed.label} — choose who`} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{directed.emoji}</span>
               <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{directed.label}</span>
             </button>
@@ -1298,7 +1362,18 @@ export default function Scene() {
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
-      <SceneTargetPicker action={directedAction} targets={directedTargets} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
+      {/* Who performs it — asked only when more than one eligible character is here. */}
+      <SceneTargetPicker
+        action={actorAction?.action}
+        targets={actorAction?.mode === "directed"
+          ? observeActors.filter((c) => directedTargets.filter((t) => t.id !== c.id).length > 0)
+          : observeActors}
+        onSelect={handleActorSelect}
+        onClose={() => setActorAction(null)}
+        heading={actorAction ? `${actorAction.action.emoji} ${actorAction.action.label} — who does it?` : null}
+        hint={actorAction?.mode === "directed" ? "The person who starts it. Only people who are here can be chosen." : "Only people who are here can do it — you are not in the scene."}
+      />
+      <SceneTargetPicker action={directedAction} targets={directedTargets.filter((t) => t.id !== directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
