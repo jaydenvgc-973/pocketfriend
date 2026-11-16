@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { MapPin, X, ChevronDown, ChevronUp, Briefcase, DollarSign } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { resolveEmployerIdentity } from "@/lib/employerIdentity";
 
 /**
  * OccupationLocationPicker
@@ -83,11 +84,17 @@ export default function OccupationLocationPicker({
 
   const filteredLocations = locations.filter(loc => {
     const matchesCat = relevantCats.includes(loc.category);
-    const matchesSearch = !search || loc.name.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search
+      || loc.name.toLowerCase().includes(search.toLowerCase())
+      // A business inside the property is found by its own name too.
+      || (loc.workplaces || []).some(w => w?.name?.toLowerCase().includes(search.toLowerCase()));
     return matchesCat && matchesSearch;
   });
 
   const selectedLocation = locations.find(l => l.id === currentLocationId);
+  // The linked record is the physical location; the employer may be a configured
+  // business operating inside it. Both are read from the existing workplace assignments.
+  const selectedEmployer = resolveEmployerIdentity(selectedLocation, characterId);
 
   const handleSelect = (location) => {
     setShowPicker(false);
@@ -203,7 +210,12 @@ export default function OccupationLocationPicker({
         ) : selectedLocation ? (
           <div className="flex items-center gap-2 p-2.5 rounded-xl bg-primary/10 border border-primary/30">
             <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-            <span className="text-sm text-foreground flex-1 truncate">{selectedLocation.name}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-foreground truncate">{selectedEmployer?.employer_name || selectedLocation.name}</p>
+              {selectedEmployer?.shows_location && (
+                <p className="text-[10px] text-muted-foreground truncate">Location: {selectedEmployer.location_name}</p>
+              )}
+            </div>
             <button
               onClick={handleClear}
               className="text-muted-foreground hover:text-destructive transition-colors"
@@ -248,19 +260,26 @@ export default function OccupationLocationPicker({
                   <p className="text-[10px] text-muted-foreground">Enter a non-physical workplace</p>
                 </div>
               </button>
-              {filteredLocations.map(loc => (
-                <button
-                  key={loc.id}
-                  onClick={() => handleSelect(loc)}
-                  className="w-full flex items-center gap-2 p-2.5 text-left hover:bg-secondary transition-colors border-b border-border/50 last:border-b-0"
-                >
-                  <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-foreground truncate">{loc.name}</p>
-                    <p className="text-[10px] text-muted-foreground capitalize">{loc.category?.replace('_', ' ')}</p>
-                  </div>
-                </button>
-              ))}
+              {filteredLocations.map(loc => {
+                // When this character already works for a configured business inside the
+                // property, name that business — the property is only the location.
+                const employer = resolveEmployerIdentity(loc, characterId);
+                return (
+                  <button
+                    key={loc.id}
+                    onClick={() => handleSelect(loc)}
+                    className="w-full flex items-center gap-2 p-2.5 text-left hover:bg-secondary transition-colors border-b border-border/50 last:border-b-0"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-foreground truncate">{employer?.employer_name || loc.name}</p>
+                      <p className="text-[10px] text-muted-foreground capitalize">
+                        {employer?.shows_location ? loc.name : loc.category?.replace('_', ' ')}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}

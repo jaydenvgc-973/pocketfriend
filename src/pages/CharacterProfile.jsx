@@ -18,6 +18,7 @@ import { format } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 import { getReciprocalRole, getRelationshipLabel } from "@/lib/relationshipUtils";
+import { resolveEmployerIdentity } from "@/lib/employerIdentity";
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
 import NPCPromotionModal from "@/components/character/NPCPromotionModal";
 import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";
@@ -975,6 +976,10 @@ export default function CharacterProfile() {
                     {workLocations.map((loc) => {
                       const payRate = loc.worker_pay_rates?.[characterId];
                       const payType = loc.worker_pay_type?.[characterId];
+                      // The income source is the actual employer — the configured business inside
+                      // the property when one already employs this character, otherwise the
+                      // location itself. The physical location is secondary information.
+                      const employer = resolveEmployerIdentity(loc, characterId);
                       // Fallback: if location has no worker_job_titles entry for this character,
                       // use the character's own occupation field (set when occupation_location_id is assigned).
                       // This covers the case where a character is linked to a location via occupation_location_id
@@ -986,8 +991,9 @@ export default function CharacterProfile() {
                           <div className="flex items-center gap-2 flex-1 min-w-0">
                             <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
                             <div className="min-w-0">
-                              <span className="text-foreground font-medium truncate block">{loc.name}</span>
+                              <span className="text-foreground font-medium truncate block">{employer?.employer_name || loc.name}</span>
                               {jobTitle && <span className="text-muted-foreground/70 truncate block">{jobTitle}</span>}
+                              {employer?.shows_location && <span className="text-muted-foreground/40 truncate block">Location: {employer.location_name}</span>}
                               {shift && <span className="text-muted-foreground/50 truncate block">{shift}</span>}
                             </div>
                           </div>
