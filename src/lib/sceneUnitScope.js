@@ -42,6 +42,25 @@ export function getSceneUnitScope(location, unitId) {
 }
 
 /**
+ * The space this scene is inside when it is ONE WORKPLACE of a mixed-use property.
+ * Same mechanism, different wording: a business is not an apartment, and the property's
+ * residents are not inside its walls just because they live in the same building.
+ */
+export function getWorkspaceSceneScope(location, workplace) {
+  if (!location || !workplace?.workplace_id) return null;
+  return {
+    unitId: `workspace:${workplace.workplace_id}`,
+    unitLabel: workplace.name,
+    unitNoun: 'workplace',
+    unitNounPlural: 'workplaces',
+    facilityName: location.name || 'the building',
+    facilityNoun: location.category === 'home' ? 'building' : 'property',
+    isWorkspace: true,
+    businessType: workplace.business_type || null,
+  };
+}
+
+/**
  * Corrects a canonical context block that was built for the property so it no longer
  * asserts that everyone in the building is physically in this space.
  *
@@ -53,11 +72,14 @@ export function getSceneUnitScope(location, unitId) {
  */
 export function scopeCanonicalContext(text, scope) {
   if (!text || !scope) return text;
+  const elsewherePhrase = scope.isWorkspace
+    ? `so anyone in another part of the ${scope.facilityNoun} — another workplace or an apartment — is elsewhere right now`
+    : `so anyone in another ${scope.unitNoun} is elsewhere right now`;
   return String(text)
     .replace(/\nOTHER VERIFIED CHARACTERS PRESENT HERE:[\s\S]*?You must recognize these characters as physically present with you\.\n/g, '\n')
     .replace(/\nOTHERS PRESENT: [^\n]*\n/g, '\n')
     .replace(/Your current location: ([^\n]*)/, (match, loc) => `Your current location: ${loc} — inside ${scope.unitLabel}`)
-    .concat(`\n(That roster listed everyone in the whole ${scope.facilityNoun} as physically present. Only ${scope.unitLabel} is this scene, so anyone in another ${scope.unitNoun} is elsewhere right now. This changes nothing about the past: a visit, a conversation, or time these people actually spent together — including a visit to this ${scope.unitNoun} — really happened, is remembered, and is spoken about normally.)`);
+    .concat(`\n(That roster listed everyone in the whole ${scope.facilityNoun} as physically present. Only ${scope.unitLabel} is this scene, ${elsewherePhrase}. This changes nothing about the past: a visit, a conversation, or time these people actually spent together — including a visit to this ${scope.unitNoun} — really happened, is remembered, and is spoken about normally.)`);
 }
 
 /**
@@ -66,6 +88,18 @@ export function scopeCanonicalContext(text, scope) {
 export function buildUnitBoundaryBlock(scope) {
   if (!scope) return '';
   const { unitLabel, unitNoun, unitNounPlural, facilityName, facilityNoun } = scope;
+
+  if (scope.isWorkspace) {
+    return `\n=== THE SPACE THIS SCENE IS IN (ONE WORKPLACE, NOT THE WHOLE ${String(facilityNoun).toUpperCase()}) ===
+This moment happens inside ${unitLabel}, a workplace inside ${facilityName}${scope.businessType ? ` (${String(scope.businessType).replace(/_/g, ' ')})` : ''}.
+- The people here are ${unitLabel}'s own people — the ones whose shift has them working here now — plus anyone who actually came in.
+- Living in ${facilityName} does not put a resident inside ${unitLabel}. Apartments and their households are elsewhere in the ${facilityNoun} right now, and are never present, never watching, and never part of this moment.
+- Other businesses inside ${facilityName} are separate establishments. Their staff and customers are elsewhere; being employed in the ${facilityNoun} is not being in ${unitLabel}.
+- Someone employed at ${unitLabel} who is not working now is not here. No one is described as on shift unless they actually are.
+- A visit that really happened stays true. If someone did come into ${unitLabel} — earlier in this scene, in a recorded memory, or in a story these people already told — they really did visit, remember it, and speak about it normally.
+- This is a working place, not a residence: no one lives here, and no one treats ${unitLabel} as home.
+===`;
+  }
   return `\n=== THE SPACE THIS SCENE IS IN (NOT THE WHOLE ${String(facilityNoun).toUpperCase()}) ===
 This moment happens inside ${unitLabel} — one ${unitNoun} inside ${facilityName}, with its own occupants.
 - Who is in this ${unitNoun} right now is decided by this scene, not by the ${facilityNoun} someone belongs to.

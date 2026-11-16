@@ -32,6 +32,7 @@ import { useStableLocationReferences } from "@/hooks/useStableLocationReferences
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
 import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds, getUnitZoneName } from "@/lib/residentialUnits";
+import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName } from "@/lib/locationWorkspaces";
 
 
 export default function Travel() {
@@ -61,8 +62,22 @@ export default function Travel() {
   // apartments in a residence, patient rooms in a hospital or clinic, cells in a prison
   // or jail. Choosing one carries it into Scenes. Every other location is unchanged.
   const selectedUnits = getAssignableUnits(selectedLocation);
-  // The apartment belongs to the property: choosing another destination releases it.
+  // The businesses configured inside this property (Places > Workplaces). Each one is a
+  // destination of its own, listed after the apartments in the same dropdown.
+  const selectedWorkplaces = getWorkplaceSpaces(selectedLocation);
+  // The apartment / room / workplace belongs to the property: choosing another
+  // destination releases it.
   useEffect(() => { setSelectedUnitId(null); }, [selectedLocation?.id]);
+
+  /**
+   * The zone that identifies the chosen space. A workspace opens in one of its OWN zones
+   * — never an apartment or another business's room. Every other space keeps the
+   * existing rule (a patient room / cell keeps the facility's own zone, all else null).
+   */
+  const getSelectedSpaceZoneName = (loc) => {
+    if (!selectedUnitId) return null;
+    return getWorkplaceZoneName(loc, getWorkplaceById(loc, selectedUnitId)) || getUnitZoneName(loc);
+  };
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);
   const [showMap, setShowMap] = useState(false);
@@ -537,7 +552,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
     // that facility's own Patient Room / Cell zone. Every other visit keeps its
     // environment's zone exactly as before.
-    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const unitZone = getSelectedSpaceZoneName(selectedLocation);
     const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     // Carry the selected environment itself so the arrival gate validates the
@@ -582,7 +597,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
     // that facility's own Patient Room / Cell zone. Every other visit keeps its
     // environment's zone exactly as before.
-    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const unitZone = getSelectedSpaceZoneName(selectedLocation);
     const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
@@ -603,7 +618,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
     // that facility's own Patient Room / Cell zone. Every other visit keeps its
     // environment's zone exactly as before.
-    const unitZone = selectedUnitId ? getUnitZoneName(selectedLocation) : null;
+    const unitZone = getSelectedSpaceZoneName(selectedLocation);
     const envZone = unitZone || selectedEnvironment?.zone_names?.[0] || null;
     if (envZone) params.set("zoneName", envZone);
     if (selectedEnvironment?.id) params.set("environmentId", selectedEnvironment.id);
@@ -627,9 +642,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     }
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId });
-    // A chosen apartment, patient room or cell travels with a solo visit to that property.
-    if (selectedUnitId && getResidentialUnits(location).some((u) => u.unit_id === selectedUnitId)) params.set("unitId", selectedUnitId);
-    const unitZone = selectedUnitId ? getUnitZoneName(location) : null;
+    // A chosen apartment, patient room, cell or workplace travels with a solo visit to
+    // that property — the destination is that space, never the property as a whole.
+    if (selectedUnitId && (getResidentialUnits(location).some((u) => u.unit_id === selectedUnitId) || getWorkplaceById(location, selectedUnitId))) params.set("unitId", selectedUnitId);
+    const unitZone = getSelectedSpaceZoneName(location);
     if (unitZone) params.set("zoneName", unitZone);
     navigate(`/scene?${params.toString()}`);
   };
@@ -858,10 +874,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                         {selectedCharacterIds.length === 0 ? "Going alone" : `${selectedCharacterIds.length + 1} people`}
                       </p>
                     )}
-                    {selectedUnits.length > 0 && (
+                    {(selectedUnits.length > 0 || selectedWorkplaces.length > 0) && (
                       <div className="mt-1">
                         <ApartmentSwitcher
                           units={selectedUnits}
+                          workspaces={selectedWorkplaces}
                           activeUnitId={selectedUnitId}
                           onSelect={setSelectedUnitId}
                           location={selectedLocation}

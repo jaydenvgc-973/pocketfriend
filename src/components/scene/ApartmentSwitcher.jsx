@@ -14,6 +14,10 @@ import { getUnitKind, getUnitLabel } from "@/lib/residentialUnits";
  * on Scenes that row scrolls horizontally, and a clipped menu is what let the
  * conversation appear over the apartment options. It shows four units at a time and
  * scrolls for the rest, opening upward where the caller asks for it.
+ *
+ * A mixed-use property also has WORKSPACES inside it (Places > Workplaces). They are
+ * listed as their own section after the apartments and each one is selectable on its
+ * own; the whole building and the apartment list are untouched.
  */
 
 const ROW_HEIGHT = 32; // one option row
@@ -23,6 +27,7 @@ const MENU_CHROME = 44; // header + padding
 
 export default function ApartmentSwitcher({
   units = [],
+  workspaces = [],
   activeUnitId = null,
   onSelect = () => {},
   location = null,
@@ -78,22 +83,25 @@ export default function ApartmentSwitcher({
     if (up && spaceAbove < 96) up = false;
     else if (!up && spaceBelow < 96) up = true;
     const available = up ? spaceAbove : spaceBelow;
-    // Four apartments stay visible; the optional "whole building" row sits on top of them.
-    const rows = VISIBLE_ROWS + (allowNone ? 1 : 0);
+    // Four apartments stay visible; the optional "whole building" row sits on top of them,
+    // and each workspace adds its own row plus the section labels.
+    const rows = VISIBLE_ROWS + (allowNone ? 1 : 0) + (workspaces.length > 0 ? workspaces.length + 2 : 0);
     const listMax = Math.max(ROW_HEIGHT, Math.min(rows * ROW_HEIGHT, available - MENU_CHROME));
     const width = Math.min(window.innerWidth - 16, Math.max(MENU_WIDTH, r.width));
     const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
     setPos(up
       ? { left, width, bottom: window.innerHeight - r.top + 6, listMax }
       : { left, width, top: r.bottom + 6, listMax });
-  }, [open, direction, allowNone]);
+  }, [open, direction, allowNone, workspaces.length]);
 
-  if (units.length === 0) return null;
+  if (units.length === 0 && workspaces.length === 0) return null;
 
   const kind = getUnitKind(location);
   const noneText = noneLabel || kind.none;
+  const activeWorkspace = workspaces.find((w) => w.unit_id === activeUnitId) || null;
   const active = units.find((u) => u.unit_id === activeUnitId) || null;
-  const buttonLabel = active ? getUnitLabel(active.unit_name, location) : noneText;
+  // A workplace is shown by its own name, exactly as Places stores it.
+  const buttonLabel = activeWorkspace ? activeWorkspace.name : active ? getUnitLabel(active.unit_name, location) : noneText;
 
   const choose = (unitId) => {
     setOpen(false);
@@ -113,7 +121,7 @@ export default function ApartmentSwitcher({
         aria-expanded={open}
         aria-haspopup="listbox"
         className={`max-w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-          active
+          (active || activeWorkspace)
             ? "bg-primary/10 border-primary/40 text-primary"
             : "bg-secondary border-border text-muted-foreground hover:text-foreground"
         }`}
@@ -137,10 +145,15 @@ export default function ApartmentSwitcher({
           </div>
           <div className="overflow-y-auto py-1" style={{ maxHeight: pos.listMax }}>
             {allowNone && (
-              <button onClick={() => choose(null)} className={optionClass(!active)}>
+              <button onClick={() => choose(null)} className={optionClass(!active && !activeWorkspace)}>
                 <span className="flex-1 truncate">{noneText}</span>
-                {!active && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
+                {!active && !activeWorkspace && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
               </button>
+            )}
+            {workspaces.length > 0 && units.length > 0 && (
+              <p className="px-3 pt-1.5 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                {kind.plural}
+              </p>
             )}
             {units.map((unit) => {
               const isActive = unit.unit_id === activeUnitId;
@@ -151,6 +164,22 @@ export default function ApartmentSwitcher({
                 </button>
               );
             })}
+            {workspaces.length > 0 && (
+              <>
+                <p className="px-3 pt-2 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider border-t border-border mt-1">
+                  Workplaces
+                </p>
+                {workspaces.map((workspace) => {
+                  const isActive = workspace.unit_id === activeUnitId;
+                  return (
+                    <button key={workspace.unit_id} onClick={() => choose(workspace.unit_id)} className={optionClass(isActive)}>
+                      <span className="flex-1 truncate">{workspace.name}</span>
+                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </div>
         </div>,
         document.body

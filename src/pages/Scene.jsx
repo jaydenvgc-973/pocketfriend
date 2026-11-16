@@ -57,7 +57,8 @@ import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName } from "@/lib/residentialUnits";
-import { getSceneUnitScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
+import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName, getResidentialZoneName } from "@/lib/locationWorkspaces";
+import { getSceneUnitScope, getWorkspaceSceneScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -257,9 +258,19 @@ export default function Scene() {
   // space inside the facility that Places already defines. A hotel keeps its own flow.
   const locationUnits = getAssignableUnits(location);
   const activeUnit = getUnitById(location, activeUnitId);
-  // The space this scene is inside (apartment / patient room / cell), from the existing
-  // unit assignments. Null when the whole property is the scene.
-  const sceneUnitScope = getSceneUnitScope(location, activeUnitId);
+  // ── WORKPLACE (A BUSINESS INSIDE THE PROPERTY) ──
+  // A mixed-use property — a residence such as Gateway House among them — keeps its
+  // businesses in workplaces (Places). A workplace is a selectable space of its own,
+  // exactly like an apartment: it travels in the visit, and Scenes opens inside THAT
+  // establishment instead of reading the property as a home.
+  const locationWorkplaces = getWorkplaceSpaces(location);
+  const activeWorkspace = getWorkplaceById(location, activeUnitId);
+  const isWorkspaceScene = !!activeWorkspace;
+  const workspaceEmployeeIds = new Set(activeWorkspace?.worker_character_ids || []);
+  // The space this scene is inside (apartment / patient room / cell / workplace), from the
+  // existing assignments. Null when the whole property is the scene.
+  const sceneUnitScope = getSceneUnitScope(location, activeUnitId)
+    || getWorkspaceSceneScope(location, activeWorkspace);
   const unitPresentOccupantIds = locationUnits.length > 0 ? getUnitPresentOccupantIds(location, activeUnitId, characters) : [];
   const unitAutoSelectedIdsRef = useRef([]);
   const unitManualDeselectRef = useRef(new Set());
@@ -289,6 +300,17 @@ export default function Scene() {
   const handleUnitChange = (unitId) => {
     setActiveUnitId(unitId);
     const unit = getUnitById(location, unitId);
+    const workspace = getWorkplaceById(location, unitId);
+    // A workplace shows itself through one of its OWN zones — never an apartment or
+    // another business's room. Leaving a workplace back into the property restores the
+    // property's own (non-business) zone, so the residence is shown as a residence.
+    if (workspace) {
+      const workspaceZone = getWorkplaceZoneName(location, workspace);
+      if (workspaceZone) setActiveZone(workspaceZone);
+    } else if (isWorkspaceScene) {
+      const residentialZone = getResidentialZoneName(location);
+      if (residentialZone) setActiveZone(residentialZone);
+    }
     // A room or cell identifies the space; the zone identifies the kind of space. Moving
     // between a hospital's patient rooms (or a jail's cells) keeps that facility's own
     // Patient Room / Cell zone — its reference images and dropdown are unchanged.
@@ -296,11 +318,17 @@ export default function Scene() {
     if (unitZone) setActiveZone(unitZone);
     if (observeMode) {
       // Choosing the whole facility releases the unit cast back to the default selection.
-      setObserveCastIds(unitId ? getUnitPresentOccupantIds(location, unitId, characters) : null);
+      // Inside one workplace, the people working there now are the ones offered.
+      setObserveCastIds(
+        workspace
+          ? [...onShiftIds].filter((id) => workspaceEmployeeIds.has(id))
+          : unitId ? getUnitPresentOccupantIds(location, unitId, characters) : null
+      );
       return;
     }
-    if (!unit) return;
-    setMessages((prev) => [...prev, { id: `unit_${Date.now()}`, sender: "narrative", content: `You move to ${getUnitLabel(unit.unit_name, location)}.`, timestamp: new Date().toISOString() }]);
+    if (!unit && !workspace) return;
+    const spaceLabel = workspace ? workspace.name : getUnitLabel(unit.unit_name, location);
+    setMessages((prev) => [...prev, { id: `unit_${Date.now()}`, sender: "narrative", content: `You move to ${spaceLabel}.`, timestamp: new Date().toISOString() }]);
   };
 
   const getFamilyNpcLocationId = (fm) => {
@@ -444,6 +472,12 @@ export default function Scene() {
         const otherUnit = getUnitForCharacter(location, entity.id);
         if (otherUnit && otherUnit.unit_id !== activeUnitId) continue;
       }
+      // Visiting ONE workplace: the people here are that establishment's own people —
+      // its employees whose existing shift says they are working now — plus whoever
+      // traveled in. The property's residents, another business's employees, and staff
+      // who are not on shift are elsewhere in the building, not in this room.
+      if (isWorkspaceScene && !characterIds.includes(entity.id)
+        && !(workspaceEmployeeIds.has(entity.id) && onShiftIds.has(entity.id))) continue;
       // The observer is never a participant in an observed scene.
       if (observeMode && entity.id === currentUser?.id) continue;
       // The user is one person: their resolved presence is the user participant,
@@ -941,7 +975,13 @@ export default function Scene() {
       // A supervised household is pictured as it is: the caregiver on duty AND the
       // children they are looking after. The image never shows the child alone, and never
       // pulls in a neighbour's child from another unit of the same building.
-      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : [])]);
+      const selectedIds = new Set([
+        ...broughtCharacters.map((c) => c.id),
+        // Inside a workplace the frame holds that establishment's own people who are
+        // working now — never the property's residents from their apartments.
+        ...(isWorkspaceScene ? sceneParticipants.filter((p) => workspaceEmployeeIds.has(p.id)).map((p) => p.id) : []),
+        ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : []),
+      ]);
       return sceneParticipants.filter((p) => selectedIds.has(p.id));
     }
     // At a public venue the chosen cast still decides the picture: whoever the user
@@ -1215,7 +1255,7 @@ export default function Scene() {
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      if (actionImageFn) { const presentPeople = [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoNames = presentPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
+      if (actionImageFn) { const presentPeople = [...(isWorkspaceScene ? [] : homeResidentsPresent), ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoNames = presentPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
@@ -1284,9 +1324,9 @@ export default function Scene() {
 
       {/* Character presence strip */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0 overflow-x-auto scrollbar-hide">
-        {locationUnits.length > 0 && (
+        {(locationUnits.length > 0 || locationWorkplaces.length > 0) && (
           <>
-            <ApartmentSwitcher units={locationUnits} activeUnitId={activeUnitId} onSelect={handleUnitChange} location={location} allowNone />
+            <ApartmentSwitcher units={locationUnits} workspaces={locationWorkplaces} activeUnitId={activeUnitId} onSelect={handleUnitChange} location={location} allowNone />
             <div className="w-px h-6 bg-border flex-shrink-0" />
           </>
         )}
@@ -1300,10 +1340,10 @@ export default function Scene() {
         <div className="text-center space-y-2">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             {observeMode
-              ? `Watching ${observeCast.map((c) => c.name).join(", ") || "them"} at ${location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
-              : `You're at ${location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
+              ? `Watching ${observeCast.map((c) => c.name).join(", ") || "them"} at ${activeWorkspace ? `${activeWorkspace.name} · ${location.name}` : location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
+              : `You're at ${activeWorkspace ? `${activeWorkspace.name} · ${location.name}` : location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
           </span>
-          {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
+          {!isWorkspaceScene && (homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
           {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">{homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away</span></div>}
           {workerCharacters.length > 0 && <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">{workerCharacters.map((c) => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working</span></div>}
           {!observeMode && (() => { const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)); return presentHere.length > 0 ? <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">{presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact</span></div> : null; })()}
