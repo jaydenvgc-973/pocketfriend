@@ -57,6 +57,7 @@ import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName } from "@/lib/residentialUnits";
+import { getSceneUnitScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -256,6 +257,9 @@ export default function Scene() {
   // space inside the facility that Places already defines. A hotel keeps its own flow.
   const locationUnits = getAssignableUnits(location);
   const activeUnit = getUnitById(location, activeUnitId);
+  // The space this scene is inside (apartment / patient room / cell), from the existing
+  // unit assignments. Null when the whole property is the scene.
+  const sceneUnitScope = getSceneUnitScope(location, activeUnitId);
   const unitPresentOccupantIds = locationUnits.length > 0 ? getUnitPresentOccupantIds(location, activeUnitId, characters) : [];
   const unitAutoSelectedIdsRef = useRef([]);
   const unitManualDeselectRef = useRef(new Set());
@@ -812,6 +816,10 @@ export default function Scene() {
         messages: priorLine ? [...messages, priorLine] : messages,
         direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
         actorName: actorName || null,
+        // Inside one unit of a multi-unit property, the scene stays in that space and the
+        // speaker the observer chose keeps their own name.
+        unitScope: sceneUnitScope,
+        spokenByName: speaker?.name || null,
         ambient: ambientHere,
         npcSpeakers: backgroundCast,
         watchNote: watchContext
@@ -1039,7 +1047,9 @@ export default function Scene() {
       const selectedBackground = speakingEligible.filter((c) => c.isNpc === true);
       const addressedBackground = findAddressedBackgroundPeople(text, selectedBackground);
       const backgroundRule = buildBackgroundResponderRule({ addressed: addressedBackground, selected: selectedBackground });
-      const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`).join('\n\n');
+      // Inside one apartment / patient room / cell, the property-wide co-presence roster in
+      // the canonical context is corrected: it says the whole building is in this space.
+      const canonicalSection = eligibleKnownChars.filter((c) => canonicalCtx[c.id]).map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${scopeCanonicalContext(canonicalCtx[c.id], sceneUnitScope)}\n=== END ${c.name} ===`).join('\n\n');
       const memSection = eligibleKnownChars.filter((c) => crossMem[c.id]).map((c) => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
       const infantRule = infantCharacters.length > 0
         ? `\nINFANT PRESENT — CANNOT SPEAK (mandatory): ${infantCharacters.map((c) => c.name).join(", ")} ${infantCharacters.length === 1 ? "is a newborn baby" : "are newborn babies"}. They are physically present but non-verbal: they may only be described non-verbally (crying, cooing, babbling, reaching, sleeping). ⛔ Do NOT give them words, sentences, questions, answers, or dialogue of any kind. ⛔ Do NOT include them in the responses array. Other people present may respond and may react to the baby.`
@@ -1061,8 +1071,11 @@ export default function Scene() {
         locationsById: locationMap,
       });
 
+      // The scene stays in the selected space; the rest of the property is elsewhere.
+      const unitBoundary = buildUnitBoundaryBlock(sceneUnitScope);
+
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 

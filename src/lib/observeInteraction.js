@@ -18,6 +18,7 @@ import { filterDashes } from '@/lib/dashFilter';
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from '@/lib/sceneBackgroundResponse';
 import { buildSceneCircumstances } from '@/lib/sceneCircumstances';
 import { isInfantCharacter, childSpeechLimit } from '@/lib/characterAgeStage';
+import { scopeCanonicalContext, buildUnitBoundaryBlock } from '@/lib/sceneUnitScope';
 
 // NARRATIVE — events that have ALREADY HAPPENED. Canon, not an instruction.
 const ESTABLISHED_NARRATIVE = (narrative) => `
@@ -64,7 +65,7 @@ function backgroundCast(list) {
   return (list || []).filter((c) => c && c.id && c.name && (c.isNpc === true || String(c.id).startsWith('npc_')));
 }
 
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, unitScope = null, spokenByName = null }) {
   const cast = realCast(participants);
   const selectedBackground = backgroundCast(npcSpeakers);
   if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
@@ -121,7 +122,7 @@ export async function generateObserveBeat({ participants, responders, location, 
   // established people in it.
   const ambientLine = (ambient || []).filter((a) => a && a.name);
   const placeBlock = `=== THE PLACE THEY ARE IN (RIGHT NOW) ===
-${location.name}${activeZone ? ` — ${activeZone}` : ''} (${location.category?.replace(/_/g, ' ') || 'venue'}) is a real, working place, not an empty stage.
+${unitScope ? `${unitScope.unitLabel}, inside ${unitScope.facilityName}` : location.name}${activeZone ? ` — ${activeZone}` : ''} (${location.category?.replace(/_/g, ' ') || 'venue'}) is a real, working place, not an empty stage.
 ${ambientLine.length > 0
   ? `Other people are here, living their ordinary day:
 ${ambientLine.map((a) => `- ${a.name}${a.role ? `, ${String(a.role).toLowerCase()}` : ''}`).join('\n')}
@@ -137,9 +138,21 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
 - Nobody says they just got here, just arrived, just made it, finally got there, or announces walking in.
 - Nobody re-enters the room, discovers where they are, or is surprised to be here.
 - The moment continues from what these people were already doing before it began.`;
+  const unitBlock = buildUnitBoundaryBlock(unitScope);
+
+  // Names here are identities, not labels that may drift. Two similar names are two
+  // different people, and whoever the observer spoke AS stays that person.
+  const namesRule = `=== NAMES ARE EXACT IDENTITY ===
+- Every person here is exactly the name given in PARTICIPANTS and in the transcript. Use those names, and only those, for those people.
+- Never substitute a different or similar-sounding name for anyone, never shorten one person's name into another person's, and never merge two people because their names look or sound alike. A speaker named in a line is that speaker and nobody else.
+- Nobody is addressed by another person's name by accident, and no one is addressed as a person who is not in this scene.
+${spokenByName ? `- ${spokenByName} spoke the last line. The others are answering ${spokenByName} — that exact person, under that exact name. It was not the user, not an observer, and not anyone else.` : ''}`;
+  // Inside one apartment / patient room / cell a property-wide co-presence roster must not
+  // survive: it says everyone in the building is standing in this space. The boundary
+  // block below states the real space instead.
   const canonicalSection = cast
     .filter((c) => canonicalCtx[c.id])
-    .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${canonicalCtx[c.id]}\n=== END ${c.name} ===`)
+    .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${scopeCanonicalContext(canonicalCtx[c.id], unitScope)}\n=== END ${c.name} ===`)
     .join('\n\n');
   const memorySection = cast
     .filter((c) => memoryCtx[c.id])
@@ -184,10 +197,12 @@ ${nonverbalRule}
 ${speechLimitRuleText ? `\nAGE SPEECH RULES (mandatory):\n${speechLimitRuleText}` : ''}
 
 ${placeBlock}
+${unitBlock}
 ${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
 ${backgroundRule}
 
-${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.\n${canonicalSection}\n===` : ''}
+${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.${unitScope ? ` These records were written for the whole ${unitScope.facilityNoun}: anyone named in them as living, staying or being kept elsewhere in it is not in this ${unitScope.unitNoun}.` : ''}\n${canonicalSection}\n===` : ''}
+${namesRule}
 ${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'Nothing has passed between them yet in this scene. It opens from where they already are.'}
