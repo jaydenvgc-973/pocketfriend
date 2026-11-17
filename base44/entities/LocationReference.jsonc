@@ -722,6 +722,10 @@
             "type": "string",
             "description": "The business's own name (e.g. 'Ground Floor Restaurant')"
           },
+          "description": {
+            "type": "string",
+            "description": "This business's own description, separate from the parent property's description (e.g. what Agency (NJ) is and does, distinct from Gateway House)."
+          },
           "business_category": {
             "type": "string",
             "description": "The existing location category whose functionality this business uses (e.g. food_drink, gym, business)"
@@ -737,6 +741,29 @@
             },
             "default": [],
             "description": "Zones of this property that belong to this business"
+          },
+          "zone_images": {
+            "type": "array",
+            "default": [],
+            "description": "Images generated for THIS business's own zones, each keeping the zone name it belongs to. The same image URLs are also part of the parent location's zone image_urls, so the existing Scenes reference usage is unchanged.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "zone_name": {
+                  "type": "string",
+                  "description": "The zone of the parent property this image belongs to"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "The generated image URL, also present in that parent zone's image_urls"
+                }
+              },
+              "required": [
+                "zone_name",
+                "url"
+              ]
+            }
           },
           "worker_character_ids": {
             "type": "array",

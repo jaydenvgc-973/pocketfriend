@@ -3,6 +3,7 @@ import { Plus, ChevronDown, ChevronRight, Trash2, X, UserPlus, Building2 } from 
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
 import PositionInput from "@/components/location/PositionInput";
+import WorkplaceZoneImages from "@/components/location/WorkplaceZoneImages";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -69,6 +70,12 @@ export default function WorkplaceManager({
   onUpdate,
   onToggleWorker,
   getCharacterAvailability = null,
+  locationName = "",
+  category = "",
+  subtype = [],
+  locationDescription = "",
+  onAddZoneImage,
+  onRemoveZoneImage,
 }) {
   const [expandedId, setExpandedId] = useState(null);
   const [pickingFor, setPickingFor] = useState(null);
@@ -198,6 +205,17 @@ export default function WorkplaceManager({
                   </div>
 
                   <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Description</label>
+                    <textarea
+                      value={workplace.description || ""}
+                      onChange={e => updateWorkplace(workplace.workplace_id, { description: e.target.value })}
+                      placeholder={`What is ${workplace.name?.trim() || "this business"} — separate from the property itself`}
+                      rows={2}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 resize-y"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Business Type</label>
                     <select
                       value={typeValue}
@@ -242,6 +260,17 @@ export default function WorkplaceManager({
                       </div>
                     )}
                   </div>
+
+                  <WorkplaceZoneImages
+                    workplace={workplace}
+                    locationZones={zones}
+                    locationName={locationName}
+                    category={category}
+                    subtype={subtype}
+                    locationDescription={locationDescription}
+                    onAddImage={(zoneName, url) => onAddZoneImage?.(workplace.workplace_id, zoneName, url)}
+                    onRemoveImage={(zoneName, url) => onRemoveZoneImage?.(workplace.workplace_id, zoneName, url)}
+                  />
 
                   <div className="space-y-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Employees</label>

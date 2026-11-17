@@ -392,7 +392,7 @@ const SUBTYPE_LABELS = {
   all_you_can_eat_buffet: "All-You-Can-Eat Buffet",
 };
 
-function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
+function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "", workplaceByImageUrl = {} }) {
   const [uploading, setUploading] = useState(false);
 
   const handleUpload = async (e) => {
@@ -453,17 +453,25 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, r
       )}
       {imgCount > 0 && (
         <div className="grid grid-cols-4 gap-1.5">
-          {zone.image_urls.map((url, i) => (
-            <div key={i} className="relative group">
-              <img src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
-              {!readOnly && <button
-                onClick={() => removeImage(i)}
-                className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <X className="w-3 h-3 text-white" />
-              </button>}
-            </div>
-          ))}
+          {zone.image_urls.map((url, i) => {
+            const workplaceName = workplaceByImageUrl[url];
+            return (
+              <div key={i} className="relative group">
+                <img src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
+                {!readOnly && <button
+                  onClick={() => removeImage(i)}
+                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3 text-white" />
+                </button>}
+                {workplaceName && (
+                  <p className="text-[9px] text-muted-foreground truncate text-center mt-0.5" title={`${zone.zone_name}, ${workplaceName}`}>
+                    {workplaceName}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       {!readOnly && imgCount < 5 && (
@@ -822,8 +830,57 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   };
 
   const updateZoneImages = (i, newUrls) => {
-    const updated = form.zones.map((z, idx) => idx === i ? { ...z, image_urls: newUrls } : z);
-    update("zones", updated);
+    setForm(p => {
+      const zoneName = p.zones[i]?.zone_name;
+      const zones = p.zones.map((z, idx) => idx === i ? { ...z, image_urls: newUrls } : z);
+      // A workspace image that lives in this zone's list stays attributed to its business.
+      // Once the image itself is removed here, its attribution goes with it.
+      const workplaces = (p.workplaces || []).map(w => {
+        const kept = (w.zone_images || []).filter(zi => zi.zone_name !== zoneName || newUrls.includes(zi.url));
+        return kept.length === (w.zone_images || []).length ? w : { ...w, zone_images: kept };
+      });
+      return { ...p, zones, workplaces };
+    });
+  };
+
+  // ── WORKSPACE ZONE IMAGES ──
+  // A business generates its own zone images inside its own section. The image joins the
+  // parent zone's image list (the reference list Scenes already reads) AND stays recorded
+  // against that business and zone, so the master list can name whose room it is.
+  const addWorkplaceZoneImage = (workplaceId, zoneName, url) => {
+    if (!url || !zoneName) return;
+    setForm(p => ({
+      ...p,
+      workplaces: (p.workplaces || []).map(w => w.workplace_id === workplaceId
+        ? {
+            ...w,
+            zone_images: [
+              ...(w.zone_images || []).filter(zi => !(zi.zone_name === zoneName && zi.url === url)),
+              { zone_name: zoneName, url },
+            ],
+          }
+        : w),
+      zones: (p.zones || []).map(z => z.zone_name === zoneName && !(z.image_urls || []).includes(url)
+        ? { ...z, image_urls: [...(z.image_urls || []), url] }
+        : z),
+    }));
+  };
+
+  const removeWorkplaceZoneImage = (workplaceId, zoneName, url) => {
+    setForm(p => {
+      const workplaces = (p.workplaces || []).map(w => w.workplace_id === workplaceId
+        ? { ...w, zone_images: (w.zone_images || []).filter(zi => !(zi.zone_name === zoneName && zi.url === url)) }
+        : w);
+      // Another business may have generated the same picture for the same zone: only the
+      // last attribution being removed takes it out of the parent zone's list.
+      const stillAttributed = workplaces.some(w => (w.zone_images || []).some(zi => zi.url === url));
+      const zones = stillAttributed
+        ? p.zones
+        : (p.zones || []).map(z => z.zone_name === zoneName
+          ? { ...z, image_urls: (z.image_urls || []).filter(u => u !== url) }
+          : z);
+      return { ...p, workplaces, zones };
+    });
   };
 
   // Explicit, user-set designation: does this zone belong to the location's main
@@ -835,6 +892,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const isGenericHome = form.is_default_generic;
   const canSave = form.name.trim() && (isGenericHome || form.zones.length > 0);
+
+  // Which business, if any, each zone image belongs to. A workplace image sits in its zone's
+  // own image list — the same list Scenes reads — and is named here so it never reads as a
+  // generic image of the whole property.
+  const workplaceNameByImageUrl = {};
+  (form.workplaces || []).forEach(w => (w.zone_images || []).forEach(zi => {
+    if (zi?.url && w.name?.trim()) workplaceNameByImageUrl[zi.url] = w.name.trim();
+  }));
 
   const handleSave = () => {
     if (!canSave) return;
@@ -1077,6 +1142,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               category={form.category}
               subtype={form.subtype}
               locationDescription={form.description}
+              workplaceByImageUrl={workplaceNameByImageUrl}
             />
           ))}
         </div>
@@ -1405,6 +1471,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           onUpdate={update}
           onToggleWorker={toggleWorkplaceWorker}
           getCharacterAvailability={(char) => getWorkerAvailabilityV2(char, allLocations, editingLocation?.id)}
+          locationName={form.name}
+          category={form.category}
+          subtype={form.subtype}
+          locationDescription={form.description}
+          onAddZoneImage={addWorkplaceZoneImage}
+          onRemoveZoneImage={removeWorkplaceZoneImage}
         />
       )}
 
