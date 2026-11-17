@@ -268,6 +268,7 @@ export default function WorkplaceManager({
                     category={category}
                     subtype={subtype}
                     locationDescription={locationDescription}
+                    otherWorkplaces={workplaces.filter(w => w.workplace_id !== workplace.workplace_id)}
                     onAddImage={(zoneName, url) => onAddZoneImage?.(workplace.workplace_id, zoneName, url)}
                     onRemoveImage={(zoneName, url) => onRemoveZoneImage?.(workplace.workplace_id, zoneName, url)}
                   />

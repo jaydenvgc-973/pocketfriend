@@ -15,6 +15,8 @@ import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
  *   locationName           the parent property's name
  *   category / subtype     the parent property's category / venue types (fallbacks)
  *   locationDescription    the parent property's description (fallback)
+ *   otherWorkplaces        the property's other businesses, so a picture already
+ *                          attached to another business is never shown here
  *   onAddImage(zoneName, url)
  *   onRemoveImage(zoneName, url)
  */
@@ -25,12 +27,29 @@ export default function WorkplaceZoneImages({
   category = "",
   subtype = [],
   locationDescription = "",
+  otherWorkplaces = [],
   onAddImage,
   onRemoveImage,
 }) {
   const zoneNames = workplace?.zone_names || [];
   const zoneImages = workplace?.zone_images || [];
   const businessName = workplace?.name?.trim() || "this business";
+
+  // A picture that already sits on one of this business's zones in the property is this
+  // business's picture, even when it was made before the business had its own image
+  // record — the master zone list is the authority on what exists. Only pictures that
+  // another business has claimed for itself are left out.
+  const claimedByOtherBusinesses = new Set();
+  otherWorkplaces.forEach(w => (w.zone_images || []).forEach(zi => { if (zi?.url) claimedByOtherBusinesses.add(zi.url); }));
+  const imagesForZone = (zoneName) => {
+    const own = zoneImages.filter(i => i.zone_name === zoneName);
+    const ownUrls = new Set(own.map(i => i.url));
+    const parentZone = (locationZones || []).find(z => z.zone_name === zoneName);
+    const existing = (parentZone?.image_urls || [])
+      .filter(url => url && !ownUrls.has(url) && !claimedByOtherBusinesses.has(url))
+      .map(url => ({ zone_name: zoneName, url }));
+    return [...own, ...existing];
+  };
 
   return (
     <div className="space-y-1.5">
@@ -40,7 +59,7 @@ export default function WorkplaceZoneImages({
       ) : (
         <div className="space-y-1.5">
           {zoneNames.map(zoneName => {
-            const images = zoneImages.filter(i => i.zone_name === zoneName);
+            const images = imagesForZone(zoneName);
             const parentZone = (locationZones || []).find(z => z.zone_name === zoneName);
             return (
               <div key={zoneName} className="rounded-lg bg-secondary/40 border border-border p-2 space-y-1.5">
