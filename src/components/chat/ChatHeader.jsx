@@ -74,46 +74,85 @@ export default function ChatHeader({
     };
   };
 
+  // A Right Now selection always ends with a narrative in the conversation. If the
+  // invocation fails, the same existing call is retried; if it still returns nothing,
+  // the reader gets the character's verified present state — never a technical message.
+  const buildStateFallback = (state) => {
+    const name = character?.name || 'They';
+    const place = state?.location_name;
+    const activity = state?.current_activity;
+    if (activity && place) return `${name} is at ${place}, ${activity}.`;
+    if (activity) return `${name} is ${activity}.`;
+    if (place) return `${name} is at ${place} right now, in the middle of their day.`;
+    return `${name} is somewhere in the middle of their day right now.`;
+  };
+
   const handleRightNow = async () => {
-    console.log('[RightNow] Clicked | char:', character?.name, '| convoId:', conversationId);
     if (!character || !conversationId || isGeneratingRightNow) return;
     setIsGeneratingRightNow(true);
-    
-    // 1. Create placeholder message immediately for instant feedback
-    const placeholderMsg = await base44.entities.Message.create({
-      conversation_id: conversationId,
-      sender_type: 'character',
-      character_id: characterId,
-      character_name: character.name,
-      content: '...',
-      is_narrative: true,
-      is_read: true,
-      timestamp: new Date().toISOString(),
-    });
 
-    if (setMessages && placeholderMsg?.id) {
-      setMessages(prev => [...prev, placeholderMsg]);
+    // 1. Placeholder for instant feedback — replaced as soon as the narrative exists.
+    let placeholderMsg = null;
+    try {
+      placeholderMsg = await base44.entities.Message.create({
+        conversation_id: conversationId,
+        sender_type: 'character',
+        character_id: characterId,
+        character_name: character.name,
+        content: '...',
+        is_narrative: true,
+        is_read: true,
+        timestamp: new Date().toISOString(),
+      });
+      if (setMessages && placeholderMsg?.id) setMessages(prev => [...prev, placeholderMsg]);
+    } catch (placeholderErr) {
+      console.error('[RightNow] Placeholder could not be created:', placeholderErr.message);
     }
 
-    // 2. Generate real narrative in background
+    // 2. Generate the narrative. Two attempts, then the verified state line.
+    let narrativeText = null;
+    let authoritativeState = null;
     try {
-      const authoritativeState = await buildAuthoritativeState();
-      const res = await base44.functions.invoke('generateAutomaticNarrative', {
-        characterId,
-        trigger: 'manual_right_now',
-        forceGenerate: true,
-        authoritativeState,
-      });
-      const narrativeText = res?.data?.narrativeText;
-      
-      if (narrativeText && placeholderMsg?.id) {
-        // Update placeholder with real narrative
+      authoritativeState = await buildAuthoritativeState();
+      for (let attempt = 1; attempt <= 2 && !narrativeText; attempt++) {
+        try {
+          const res = await base44.functions.invoke('generateAutomaticNarrative', {
+            characterId,
+            trigger: 'manual_right_now',
+            forceGenerate: true,
+            authoritativeState,
+          });
+          narrativeText = res?.data?.narrativeText?.trim() || null;
+          if (!narrativeText) console.warn('[RightNow] Attempt', attempt, 'returned no narrative:', res?.data?.reason || res?.data?.error);
+        } catch (attemptErr) {
+          console.warn('[RightNow] Attempt', attempt, 'failed:', attemptErr.message);
+        }
+      }
+      if (!narrativeText) narrativeText = buildStateFallback(authoritativeState);
+
+      if (placeholderMsg?.id) {
         await base44.entities.Message.update(placeholderMsg.id, { content: narrativeText });
         setMessages(prev => prev.map(m => m.id === placeholderMsg.id ? { ...m, content: narrativeText } : m));
+      } else {
+        const saved = await base44.entities.Message.create({
+          conversation_id: conversationId,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          content: narrativeText,
+          is_narrative: true,
+          is_read: true,
+          timestamp: new Date().toISOString(),
+        });
+        if (setMessages) setMessages(prev => prev.some(m => m.id === saved.id) ? prev : [...prev, saved]);
       }
     } catch (err) {
-      console.error('[RightNow] Background generation failed:', err.message);
-      // Placeholder stays visible even if generation fails
+      console.error('[RightNow] Generation failed:', err.message);
+      const fallback = buildStateFallback(authoritativeState);
+      if (placeholderMsg?.id) {
+        await base44.entities.Message.update(placeholderMsg.id, { content: fallback }).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === placeholderMsg.id ? { ...m, content: fallback } : m));
+      }
     } finally {
       setIsGeneratingRightNow(false);
     }

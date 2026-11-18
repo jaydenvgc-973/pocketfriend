@@ -262,16 +262,25 @@ Deno.serve(async (req) => {
       'incarcerated', 'house_arrest', 'confined', 'hospitalized',
       'rabbit_hole', 'under_supervision', 'temporary_housing',
     ];
+    // ONE TRUTH FOR ACTIVE CHARACTERS: resolved_presence_status is the committed sleep
+    // state. It is written by the location authority and read as-is by Home, Chat and
+    // Travel. 'home' therefore means AWAKE AT HOME — the clock alone must never turn it
+    // into sleep, which is how a character at home kept being written asleep. The
+    // schedule window remains the sleep derivation for NPC types only, mirroring
+    // sleepUtils, and is a fallback for a record with no presence state at all.
+    const _isNpcSleepType = ['npc_regular', 'npc_family_member', 'npc_fictitious', 'npc', 'promoted_npc'].includes(character.character_type);
     let isAsleep;
     if (_sleepingPresenceStates.includes(_presenceStatusEarly)) {
       isAsleep = true;
-    } else if (_activeAwakeStates.includes(_presenceStatusEarly)) {
+    } else if (_activeAwakeStates.includes(_presenceStatusEarly) || _presenceStatusEarly === 'home') {
       isAsleep = false;
     } else {
-      // Home or unspecified — fall back to schedule-based sleep derivation
+      // No ordinary presence state (NPC schedule window, or a record with none at all).
       const wakeHour = character.wake_up_time ? parseInt(character.wake_up_time.split(':')[0]) : 7;
       const sleepHour = character.sleep_start_time ? parseInt(character.sleep_start_time.split(':')[0]) : 23;
-      isAsleep = hour >= sleepHour || hour < wakeHour;
+      isAsleep = _isNpcSleepType
+        ? (hour >= sleepHour || hour < wakeHour)
+        : false;
     }
     const sleepState = isAsleep ? 'asleep' : 'awake';
 
@@ -366,6 +375,24 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── THE SPACE INSIDE THE HOME ─────────────────────────────────────────
+    // A multi-dwelling residence keeps each household's space in residential_units.
+    // The assignment is the authority, so a character at home is placed in their own
+    // apartment instead of a generic house — never in an invented room.
+    let homeUnitName = null;
+    if (location && Array.isArray(location.residential_units)) {
+      const _unit = location.residential_units.find(u => (u.occupant_character_ids || []).includes(characterId));
+      if (_unit?.unit_name) homeUnitName = _unit.unit_name;
+    }
+
+    // ── RECENT NARRATIVE BEATS — what they have most recently LIVED ─────────
+    // The last chat message is not the last thing the character experienced. The newest
+    // narrative records are their own lived moments, and the present continues from them.
+    // Read-only, and started now so it runs alongside the canonical context build.
+    const recentBeatsPromise = base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+      { character_id: characterId }, '-timestamp', 3
+    ).catch(() => []);
+
     // ── NEEDS SNAPSHOT ────────────────────────────────────────────────────
     const needsSnapshot = {
       hunger: character.hunger_value ?? 70,
@@ -382,8 +409,14 @@ Deno.serve(async (req) => {
     // Resolve any actions completed since last narrative
     let reconciliationUpdates = {};
     try {
-      const { enforceTimeReconciliation } = await import('https://cdn.jsdelivr.net/gh/base44/app@latest/lib/actionExpirationEngine.js');
-      const reconciliation = enforceTimeReconciliation(character, character.updated_date);
+      // The module is fetched from a CDN on every run. A slow fetch must never hold up
+      // the narrative, so the load is bounded: if it does not arrive quickly the
+      // reconciliation is skipped exactly as it already is when the load fails.
+      const _reconModule = await Promise.race([
+        import('https://cdn.jsdelivr.net/gh/base44/app@latest/lib/actionExpirationEngine.js'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('reconciliation module timed out')), 1500)),
+      ]);
+      const reconciliation = _reconModule.enforceTimeReconciliation(character, character.updated_date);
       if (reconciliation.expired && Object.keys(reconciliation.updates).length > 0) {
         console.log(`[generateAutomaticNarrative] ✓ Resolved expired action | Updates:`, reconciliation.updates);
         Object.assign(character, reconciliation.updates);
@@ -459,6 +492,23 @@ Deno.serve(async (req) => {
       console.log(`[generateAutomaticNarrative] Canonical place/presence blocks reconciled to snapshot: ${authName} | presence=${authPresenceRaw || 'none'}`);
     }
 
+    // ── RECENT NARRATIVE BEATS (resolved) ────────────────────────────────────
+    // Oldest first, newest last: the newest beat is what the present continues from.
+    const recentBeats = ((await recentBeatsPromise) || [])
+      .filter(b => b?.narrative_text?.trim())
+      .reverse();
+    const recentBeatsBlock = recentBeats.length > 0
+      ? `\nRECENT NARRATIVE BEATS — WHAT ${narrativeName} HAS MOST RECENTLY LIVED (oldest first, newest last):
+${recentBeats.map((b, i) => `BEAT ${i + 1} (${b.local_time || ''}${b.location_name ? ` at ${b.location_name}` : ''}): ${b.narrative_text.trim()}`).join('\n')}
+
+HOW TO USE THEM:
+- These are what actually happened to ${narrativeName}. They outrank any older message, text, or promise when deciding how they currently feel and what they were doing a moment ago.
+- The newest beat is the state to continue from. Do NOT re-narrate, restate, or rewind it, and do not repeat its wording or its activity.
+- The last thing ${narrativeName} SAID is not necessarily the last thing they EXPERIENCED. When a later beat shows a different emotional direction, the beat wins.
+- Anything a beat established that the SITUATION block or the current needs contradict is history and has passed.
+`
+      : "";
+
     // ── FULL DIAGNOSTIC LOG ───────────────────────────────────────────────────
     console.log(
       `[generateAutomaticNarrative] route=automatic_narrative` +
@@ -495,7 +545,8 @@ Deno.serve(async (req) => {
 - Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
 - Do NOT depict them at home, relaxing, or away from work.
 - WORK STATUS WORDING: This narrative establishes CURRENT STATE, not a transition. Describe ${narrativeName} as currently AT WORK (e.g., "${narrativeName} is at work at ${resolvedLocationName}." / "${narrativeName} is working at ${resolvedLocationName}."). Do NOT use transition wording ("has gone to work", "gone to work", "went to work", "headed to work", "left for work", "arrived at work") — the notification timing is NOT the moment they left or arrived. The schedule determines the work state; a delayed notification does NOT imply late arrival.
-- WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.${activityLine}`;
+- WORK EXPERIENCE IS CHARACTER-DERIVED: There is no default attitude toward work. Derive their experience from their personality, education, history, and actual circumstances. They may love their work, find it routine, feel neutral, or dislike it. A problem is not automatically stress — a knowledgeable character may find problems engaging. A normal workday does not require a crisis, conflict, or emotional arc. Ordinary competence and routine are valid. Do NOT default to work stress, dread, resentment, or the assumption they would rather not be working.
+- WORK IS UNDERWAY, NOT PAUSED: show a specific task, duty, customer, coworker or piece of the job in progress — not standing around, waiting, doing nothing, or staring off. A genuine lull in a slow shift is fine, but it must read as this job at this workplace, not idleness.${activityLine}`;
     } else if (presenceStatus === 'at_school') {
       situationBlock = `SITUATION: ${narrativeName} is AT SCHOOL right now.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
@@ -538,8 +589,11 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
       situationBlock = `SITUATION: ${narrativeName} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
 - Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
 - Category: ${locationCategory}
-${locationDescription ? `- Environment: ${locationDescription}` : ''}
-- Narrative must reflect what they'd realistically be doing here at this time.${activityLine}`;
+${homeUnitName && presenceStatus === 'home' ? `- Their own living space: ${homeUnitName}\n` : ''}${locationDescription ? `- Environment: ${locationDescription}` : ''}
+- BEING HOME IS NOT AN ACTIVITY AND IS NOT SLEEP. ${narrativeName} is awake. Do not write them asleep, dozing, lying in bed, drifting off, staring into space, or simply "letting time pass" — this state says awake and at home.
+- Show them in the middle of ONE concrete thing they are actually doing: cooking or eating something, cleaning or tidying, laundry, showering or grooming, getting dressed, reading, watching something, music, a personal project, studying, exercising, a call or a conversation with someone who is there, having just come in, or getting ready to head out. Ordinary domestic life is the point.
+- Choose the activity from their current needs, this hour, their personality, their occupation and their established habits. Quiet or restful is allowed only when their needs, health or the hour genuinely support it — it must never be the default.
+- Do NOT open a new drama, a new conversation, an emotional confrontation or a location change. This is a snapshot of a living day, not a plot event.${activityLine}`;
     }
 
     // SCHEDULED SHIFT COMPLETION overrides the working-state framing. The existing
@@ -812,7 +866,7 @@ Generate a vivid, present-moment narrative (2-4 sentences) describing exactly wh
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
 
-${situationBlock}${userPresenceLine}
+${situationBlock}${userPresenceLine}${recentBeatsBlock}
 LOCATION AUTHORITY — ${narrativeName}'s residence (home address in the profile) is where they LIVE, not where they are. It is never the scene by default. Write them at home only when the SITUATION block above says home. A previous narrative, an earlier activity, a home routine, or a remembered address is never authority to place them there now.
 ${needsLine}${quirkLine}${householdActivityBlock}${healthActivityBlock}
 
@@ -1031,6 +1085,13 @@ CRITICAL RULES:
 6. 2-4 sentences only. No preamble, no labels.
 7. Vary sentence structure, tone, and pacing — do not repeat patterns from prior outputs.
 
+PRESENT ACTIVITY — REQUIRED FOR THIS NARRATIVE:
+This is a snapshot of a person's day in progress, not a mood piece.
+- ${narrativeName} must be doing something specific and physical that a camera could see: handling an object, moving through the space, cooking, eating, cleaning, washing, dressing, working on a task, reading, exercising, talking with someone who is there, arriving, or getting ready to leave. Name the thing and where it is happening.
+- FORBIDDEN unless the state above says they are asleep or genuinely ill: sitting or lying still doing nothing, staring into space or out of a window, and atmosphere-only writing such as "the quiet wraps around", "the silence remains unbroken", "the stillness settles", "lost in thought", "letting time pass", "simply existing", "their own internal rhythm", or "the weight of the evening". Atmosphere may accompany the action; it can never replace it.
+- Do not make them idle because it is late, because it is quiet, or because they are at home. An awake person at midnight is still doing something.
+- Do not introduce a new drama, dilemma, argument, realization, conversation or location change. Keep it ordinary, alive and specific.
+
 RESPOND WITH JSON:
 Return a JSON object with:
 {
@@ -1058,7 +1119,7 @@ Do NOT return a negative hunger change for eating. Eating always makes hunger go
 Only include action_effects if the narrative describes concrete actions (eating, sleeping, showering, socializing, etc.).
 If no actions occur, return empty action_effects array.`;
 
-    const narrativeRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+    const _invokeNarrative = () => base44.asServiceRole.integrations.Core.InvokeLLM({
       prompt: narrativePrompt,
       model: 'gemini_3_flash',
       response_json_schema: {
@@ -1084,6 +1145,20 @@ If no actions occur, return empty action_effects array.`;
         required: ['narrative_text', 'action_effects'],
       },
     });
+
+    // One internal retry. A transient model or transport error must never become the
+    // user's outcome, so the same existing call is repeated once. The state-based line
+    // below stays the last resort, so this path always ends with a narrative.
+    let narrativeRes = null;
+    for (let _attempt = 1; _attempt <= 2; _attempt++) {
+      try {
+        const _res = await _invokeNarrative();
+        if (_res?.narrative_text?.trim()) { narrativeRes = _res; break; }
+        console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} returned no text`);
+      } catch (_llmErr) {
+        console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} failed: ${_llmErr.message}`);
+      }
+    }
 
     let narrativeText = narrativeRes?.narrative_text?.trim() ||
       `${narrativeName} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
