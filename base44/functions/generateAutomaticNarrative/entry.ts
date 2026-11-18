@@ -386,12 +386,51 @@ Deno.serve(async (req) => {
     }
 
     // ── RECENT NARRATIVE BEATS — what they have most recently LIVED ─────────
-    // The last chat message is not the last thing the character experienced. The newest
-    // narrative records are their own lived moments, and the present continues from them.
+    // The last chat message is not the last thing the character experienced. A narrative
+    // is a narrative no matter WHICH writer produced it: Right Now, the automatic system,
+    // Let Them Act, Insert Serenity, Insert Drama, Show Action, a Story Event, or a
+    // narrative the user wrote and shared. Every one of them is stored as a narrative
+    // record or a narrative message, so they are read together into ONE chronological
+    // sequence and the three most recent are kept — never three per writer.
     // Read-only, and started now so it runs alongside the canonical context build.
-    const recentBeatsPromise = base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
-      { character_id: characterId }, '-timestamp', 3
-    ).catch(() => []);
+    const _beatMs = (entry) => new Date(entry?.timestamp || 0).getTime();
+    const recentBeatsPromise = (async () => {
+      const [automaticBeats, narrativeMessages] = await Promise.all([
+        base44.asServiceRole.entities.CharacterAutomaticNarrative
+          .filter({ character_id: characterId }, '-timestamp', 8).catch(() => []),
+        base44.asServiceRole.entities.Message
+          .filter({ character_id: characterId }, '-timestamp', 60).catch(() => []),
+      ]);
+      const seenTexts = new Set();
+      const combined = [];
+      const push = (entry) => {
+        const text = (entry?.text || '').trim();
+        if (text.length < 40) return; // empty placeholders and one-liners are not narratives
+        const key = text.replace(/\s+/g, ' ').slice(0, 140).toLowerCase();
+        if (seenTexts.has(key)) return; // the same moment stored twice is one beat
+        seenTexts.add(key);
+        combined.push(entry);
+      };
+      for (const b of automaticBeats || []) {
+        if (!b?.narrative_text?.trim()) continue;
+        push({ text: b.narrative_text, timestamp: b.timestamp, local_time: b.local_time, location_name: b.location_name });
+      }
+      for (const m of narrativeMessages || []) {
+        // Stored representations of is_narrative differ (true, 1, "true"), so the flag is
+        // read by truthiness instead of a strict DB equality filter.
+        if (!m?.is_narrative) continue;
+        if (m.recovery_signal || m.canon_excluded) continue;
+        push({
+          text: m.content,
+          timestamp: m.timestamp || m.created_date,
+          local_time: m.timestamp
+            ? new Date(m.timestamp).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
+            : '',
+          location_name: null,
+        });
+      }
+      return combined.sort((a, b) => _beatMs(b) - _beatMs(a)).slice(0, 3);
+    })();
 
     // ── NEEDS SNAPSHOT ────────────────────────────────────────────────────
     const needsSnapshot = {
@@ -495,11 +534,12 @@ Deno.serve(async (req) => {
     // ── RECENT NARRATIVE BEATS (resolved) ────────────────────────────────────
     // Oldest first, newest last: the newest beat is what the present continues from.
     const recentBeats = ((await recentBeatsPromise) || [])
-      .filter(b => b?.narrative_text?.trim())
+      .filter(b => b?.text?.trim())
       .reverse();
+    console.log(`[generateAutomaticNarrative] Recent narrative beats (any writer): ${recentBeats.length}${recentBeats.length > 0 ? ` | newest=${recentBeats[recentBeats.length - 1]?.local_time || 'n/a'}` : ''}`);
     const recentBeatsBlock = recentBeats.length > 0
-      ? `\nRECENT NARRATIVE BEATS — WHAT ${narrativeName} HAS MOST RECENTLY LIVED (oldest first, newest last):
-${recentBeats.map((b, i) => `BEAT ${i + 1} (${b.local_time || ''}${b.location_name ? ` at ${b.location_name}` : ''}): ${b.narrative_text.trim()}`).join('\n')}
+      ? `\nRECENT NARRATIVE BEATS — WHAT ${narrativeName} HAS MOST RECENTLY LIVED (oldest first, newest last, from any writer):
+${recentBeats.map((b, i) => `BEAT ${i + 1} (${b.local_time || ''}${b.location_name ? ` at ${b.location_name}` : ''}): ${b.text.trim()}`).join('\n')}
 
 HOW TO USE THEM:
 - These are what actually happened to ${narrativeName}. They outrank any older message, text, or promise when deciding how they currently feel and what they were doing a moment ago.
@@ -1089,6 +1129,7 @@ PRESENT ACTIVITY — REQUIRED FOR THIS NARRATIVE:
 This is a snapshot of a person's day in progress, not a mood piece.
 - ${narrativeName} must be doing something specific and physical that a camera could see: handling an object, moving through the space, cooking, eating, cleaning, washing, dressing, working on a task, reading, exercising, talking with someone who is there, arriving, or getting ready to leave. Name the thing and where it is happening.
 - FORBIDDEN unless the state above says they are asleep or genuinely ill: sitting or lying still doing nothing, staring into space or out of a window, and atmosphere-only writing such as "the quiet wraps around", "the silence remains unbroken", "the stillness settles", "lost in thought", "letting time pass", "simply existing", "their own internal rhythm", or "the weight of the evening". Atmosphere may accompany the action; it can never replace it.
+- Do not open on the room's atmosphere. The first sentence states what ${narrativeName} is doing, with the object or surface in their hands; atmosphere may follow after that.
 - Do not make them idle because it is late, because it is quiet, or because they are at home. An awake person at midnight is still doing something.
 - Do not introduce a new drama, dilemma, argument, realization, conversation or location change. Keep it ordinary, alive and specific.
 
@@ -1146,22 +1187,62 @@ If no actions occur, return empty action_effects array.`;
       },
     });
 
-    // One internal retry. A transient model or transport error must never become the
-    // user's outcome, so the same existing call is repeated once. The state-based line
-    // below stays the last resort, so this path always ends with a narrative.
+    // Text coming back is not the same as a narrative coming back. A vague location
+    // statement, an atmospheric filler beat, or an idle observation is a generation
+    // failure, so unsuitable output is rejected and this same existing call is repeated
+    // internally. A model or transport error is likewise never allowed to become the
+    // reader's outcome. Nothing generic is ever substituted for a real narrative.
+    const _unsuitableNarrative = (text) => {
+      const t = (text || '').trim();
+      if (t.length < 90) return 'too_short';
+      const filler = [
+        /staring (?:into space|out (?:of )?the window|blankly)/i,
+        /\b(?:does|doing) (?:very )?little\b|\bnothing (?:much|in particular|of note)\b/i,
+        /\bsimply existing\b|\bown internal rhythm\b|\blet(?:ting)? time pass\b|\btime (?:slips|passes) by\b/i,
+        /\bthe (?:quiet|silence|stillness) (?:wraps|remains|settles|stretches|hangs)\b/i,
+        /\blost in (?:thought|their own thoughts)\b|\bdeep in thought\b/i,
+        /\bthe weight of the (?:evening|day|hour|night)\b/i,
+      ];
+      const hit = filler.find((rx) => rx.test(t));
+      return hit ? `filler:${hit.source.slice(0, 32)}` : null;
+    };
+
     let narrativeRes = null;
-    for (let _attempt = 1; _attempt <= 2; _attempt++) {
+    for (let _attempt = 1; _attempt <= 3; _attempt++) {
       try {
         const _res = await _invokeNarrative();
-        if (_res?.narrative_text?.trim()) { narrativeRes = _res; break; }
-        console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} returned no text`);
+        const _text = _res?.narrative_text?.trim();
+        if (!_text) {
+          console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} returned no text`);
+          continue;
+        }
+        const _rejection = _unsuitableNarrative(_text);
+        if (_rejection) {
+          console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} rejected (${_rejection})`);
+          continue;
+        }
+        narrativeRes = _res;
+        break;
       } catch (_llmErr) {
         console.warn(`[generateAutomaticNarrative] Narrative model attempt ${_attempt} failed: ${_llmErr.message}`);
       }
     }
 
-    let narrativeText = narrativeRes?.narrative_text?.trim() ||
-      `${narrativeName} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
+    if (!narrativeRes?.narrative_text?.trim()) {
+      // Nothing suitable was produced. Nothing is invented, saved, or shown: no generic
+      // line, no narrative record, no memory, no needs change. The caller retries this
+      // same call, so a person is never handed filler as if it were their character's life.
+      console.warn(`[generateAutomaticNarrative] ✖ No suitable narrative for ${narrativeName} after 3 attempts — nothing saved`);
+      return Response.json({
+        success: false,
+        reason: 'no_suitable_narrative',
+        attempts: 3,
+        characterId,
+        trigger,
+      });
+    }
+
+    let narrativeText = narrativeRes.narrative_text.trim();
     // Whitespace normalization + work-status wording correction.
     // The prompt instructs current-state wording ("is at work") but the LLM
     // sometimes still generates transition wording ("has gone to work").

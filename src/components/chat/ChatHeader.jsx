@@ -74,17 +74,17 @@ export default function ChatHeader({
     };
   };
 
-  // A Right Now selection always ends with a narrative in the conversation. If the
-  // invocation fails, the same existing call is retried; if it still returns nothing,
-  // the reader gets the character's verified present state — never a technical message.
-  const buildStateFallback = (state) => {
-    const name = character?.name || 'They';
-    const place = state?.location_name;
-    const activity = state?.current_activity;
-    if (activity && place) return `${name} is at ${place}, ${activity}.`;
-    if (activity) return `${name} is ${activity}.`;
-    if (place) return `${name} is at ${place} right now, in the middle of their day.`;
-    return `${name} is somewhere in the middle of their day right now.`;
+  // A Right Now selection always ends with a genuine narrative in the conversation. A
+  // failed or unsuitable generation is retried through the same existing call — the
+  // function re-runs it and rejects generic output itself. Nothing generic is ever
+  // substituted for a real narrative, no technical message is ever shown, and a loading
+  // placeholder is never left behind as the final result.
+  const RIGHT_NOW_ATTEMPTS = 3;
+
+  const removePlaceholder = async (placeholder) => {
+    if (!placeholder?.id) return;
+    await base44.entities.Message.delete(placeholder.id).catch(() => {});
+    if (setMessages) setMessages(prev => prev.filter(m => m.id !== placeholder.id));
   };
 
   const handleRightNow = async () => {
@@ -109,12 +109,13 @@ export default function ChatHeader({
       console.error('[RightNow] Placeholder could not be created:', placeholderErr.message);
     }
 
-    // 2. Generate the narrative. Two attempts, then the verified state line.
+    // 2. Generate the narrative. Unsuitable output is rejected inside the function and
+    // this is retried; only a real narrative replaces the placeholder.
     let narrativeText = null;
     let authoritativeState = null;
     try {
       authoritativeState = await buildAuthoritativeState();
-      for (let attempt = 1; attempt <= 2 && !narrativeText; attempt++) {
+      for (let attempt = 1; attempt <= RIGHT_NOW_ATTEMPTS && !narrativeText; attempt++) {
         try {
           const res = await base44.functions.invoke('generateAutomaticNarrative', {
             characterId,
@@ -128,7 +129,12 @@ export default function ChatHeader({
           console.warn('[RightNow] Attempt', attempt, 'failed:', attemptErr.message);
         }
       }
-      if (!narrativeText) narrativeText = buildStateFallback(authoritativeState);
+      if (!narrativeText) {
+        // Nothing genuine was produced. The placeholder is removed rather than left as an
+        // endless loading line, and no invented text is spoken in the character's voice.
+        await removePlaceholder(placeholderMsg);
+        return;
+      }
 
       if (placeholderMsg?.id) {
         await base44.entities.Message.update(placeholderMsg.id, { content: narrativeText });
@@ -148,11 +154,7 @@ export default function ChatHeader({
       }
     } catch (err) {
       console.error('[RightNow] Generation failed:', err.message);
-      const fallback = buildStateFallback(authoritativeState);
-      if (placeholderMsg?.id) {
-        await base44.entities.Message.update(placeholderMsg.id, { content: fallback }).catch(() => {});
-        setMessages(prev => prev.map(m => m.id === placeholderMsg.id ? { ...m, content: fallback } : m));
-      }
+      await removePlaceholder(placeholderMsg);
     } finally {
       setIsGeneratingRightNow(false);
     }
