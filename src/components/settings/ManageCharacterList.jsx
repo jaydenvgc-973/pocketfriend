@@ -63,8 +63,10 @@ export default function ManageCharacterList({ characters: propCharacters, curren
   
   const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
 
-  // The record still exists unless its deletion actually completed.
-  const isLiveRecord = (c) => c.status !== 'deleted' && c.status !== 'merged';
+  // The record still exists unless it was merged away. A Test Character is never hidden
+  // by a status value: while its record exists it stays listed here.
+  const isLiveRecord = (c) =>
+    c.status !== 'merged' && (c.status !== 'deleted' || c.is_test_character === true);
 
   // A Test Character keeps its own type section: test eligibility never reclassifies it,
   // and the toggle is never what decides which type section it belongs to. It stays listed

@@ -104,6 +104,9 @@ export function getCharactersForSettingsList(allCharacters, currentUserId, curre
   };
   
   const userCharacters = scoped.filter(c => 
+    // A Test Character is always listed while its record exists. Test eligibility never
+    // decides list visibility, and a roster exclusion set on the character never hides it.
+    c.is_test_character === true ||
     c._resolvedType === 'active_created_character' || 
     (c._resolvedType === 'npc_fictitious' && !c.exclude_from_roster) || 
     (c._resolvedType === 'npc_family_member' && !c.exclude_from_roster)
