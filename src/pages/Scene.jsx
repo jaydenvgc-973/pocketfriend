@@ -57,7 +57,7 @@ import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
-import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName } from "@/lib/residentialUnits";
+import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
 import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName, getResidentialZoneName } from "@/lib/locationWorkspaces";
 import { getSceneUnitScope, getWorkspaceSceneScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
 
@@ -1373,7 +1373,8 @@ export default function Scene() {
   // Location-level closing only blocks when the SELECTED environment is also unavailable.
   // An accessible residential environment remains reachable while business operations are closed.
   // Watching a character-only scene is not entering the place: public hours never block it.
-  const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false) && !observeMode;
+  // A dorm room or apartment is where a student lives — the school's hours never close it.
+  const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false) && !isStudentHousingSpace(location, activeUnitId) && !observeMode;
 
   const renderNpc = (npc) => {
     // The effective selection is the authority: a caregiver the supervision system has on

@@ -64,8 +64,10 @@ Deno.serve(async (req) => {
       || user.role === 'admin';
     if (!canSee) return Response.json({ error: 'Forbidden' }, { status: 403 });
 
-    if (!['medical', 'jail_prison'].includes(location.category)) {
-      return Response.json({ error: 'This location has no patient rooms or cells.' }, { status: 400 });
+    // A school can house students in dorm rooms or apartments, from the same
+    // residential_units assignments every other multi-unit property uses.
+    if (!['medical', 'jail_prison', 'school'].includes(location.category)) {
+      return Response.json({ error: 'This location has no patient rooms, cells, or student housing.' }, { status: 400 });
     }
 
     const units = location.residential_units || [];
@@ -99,7 +101,10 @@ Deno.serve(async (req) => {
 
     // A room or cell belongs to someone who is actually a patient or inmate here —
     // or whose established home is this facility.
-    const eligible = livesHere(character, location) || (location.category === 'medical'
+    // Student housing is a residential assignment: any of the caller's own characters can
+    // be given an existing dorm room or apartment. Enrolment never places a student here.
+    // A patient room or cell still belongs to someone who is actually a patient or inmate.
+    const eligible = location.category === 'school' || livesHere(character, location) || (location.category === 'medical'
       ? isPatientHere(character, location)
       : isConfinedHere(character, location));
     if (!eligible) {

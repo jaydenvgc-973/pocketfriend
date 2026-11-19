@@ -20,6 +20,7 @@ const NOUNS = {
   hotel: { unit: 'room', units: 'rooms', facility: 'hotel' },
   medical: { unit: 'patient room', units: 'patient rooms', facility: 'hospital' },
   jail_prison: { unit: 'cell', units: 'cells', facility: 'facility' },
+  school: { unit: 'dorm room', units: 'dorm rooms', facility: 'school' },
 };
 
 /**

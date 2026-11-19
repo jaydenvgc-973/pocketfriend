@@ -88,6 +88,9 @@ export default function FacilityUnitsSection({ location, characters = [], curren
     if (!c?.id || c.owner_email !== currentUserEmail) return false;
     if (assignedAnywhere.has(c.id)) return false;
     if (c.current_home_location_id === location.id) return true;
+    // Student housing: any of the caller's own characters can be given an existing dorm
+    // room or apartment in the school. Living there never follows from enrolment.
+    if (location.category === 'school') return true;
     if (location.category === 'medical') {
       return c.resolved_presence_status === 'hospitalized'
         && (!c.resolved_current_location_id || c.resolved_current_location_id === location.id);

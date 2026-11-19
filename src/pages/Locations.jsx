@@ -1326,7 +1326,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           legal status, and house arrest is never given a cell. */}
       {(() => {
         const isHomeBuilding = form.category === 'home' && form.subtype.includes('building');
-        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison'].includes(form.category)) return null;
+        // A school can house students in dorm rooms or apartments, using the same units.
+        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison', 'school'].includes(form.category)) return null;
 
         // A patient room and a prison cell are temporary: once the stay ends the occupant is
         // no longer assigned, so the space is free for someone else. Apartments, hotel rooms
@@ -1362,6 +1363,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           labels = { sectionLabel: "Cells", unitSingular: "cell", occupantNoun: "inmate", contextNoun: "facility", addPlaceholder: "e.g. B2, Cellblock C...", emptyHint: "Incarcerated characters at this facility can be assigned to a cell." };
         } else if (form.category === 'hotel') {
           labels = { sectionLabel: "Rooms / Units", unitSingular: "room", contextNoun: "hotel", addPlaceholder: "e.g. Room 101, Unit 4B...", emptyHint: "Add residents to the hotel first, then create rooms to organize them." };
+        } else if (form.category === 'school') {
+          // Student housing is a residential assignment only: any of the user's characters
+          // can be given a dorm room or apartment. Enrolment never places a student here.
+          assignableIds = [...new Set([...allAssignableCharacters.map(c => c.id), ...alreadyAssigned])];
+          labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Create a dorm room or apartment, then assign students to it." };
         }
 
         return (

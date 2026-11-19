@@ -31,7 +31,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import ResidentPresenceList from "@/components/travel/ResidentPresenceList";
-import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds, getUnitZoneName } from "@/lib/residentialUnits";
+import { getAssignableUnits, getResidentialUnits, getActiveUnitOccupantIds, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
 import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName } from "@/lib/locationWorkspaces";
 
 
@@ -526,7 +526,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // explicitly non-business-hours) environment is not blocked by the property's
     // business hours. Same rule the environment-selection modal uses.
     const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, isOpen);
-    if (isOpen === false && !selectedEnvAccessible) {
+    // A chosen dorm room or apartment is where a student lives — never closed by school hours.
+    if (isOpen === false && !selectedEnvAccessible && !isStudentHousingSpace(selectedLocation, selectedUnitId)) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
         character: { id: "closed", name: selectedLocation.name, avatar_url: null },
@@ -573,7 +574,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (!selectedLocation || selectedCharacterIds.length < 1) return;
     const isOpen = isLocationActiveNow(selectedLocation);
     const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, isOpen);
-    if (isOpen === false && !selectedEnvAccessible) {
+    if (isOpen === false && !selectedEnvAccessible && !isStudentHousingSpace(selectedLocation, selectedUnitId)) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
         character: { id: "closed", name: selectedLocation.name, avatar_url: null },
@@ -631,7 +632,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (!location) return;
 
     const isOpen = isLocationActiveNow(location);
-    if (isOpen === false) {
+    if (isOpen === false && !isStudentHousingSpace(location, selectedUnitId)) {
       const hoursStr = formatOperatingHours(location);
       setUnavailablePopup([{
         character: { id: "closed", name: location.name, avatar_url: null },
@@ -899,7 +900,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   // For mixed-use locations: an accessible selected environment bypasses business closing.
                   const selectedEnvAccessible = !!selectedEnvironment && isEnvironmentAccessibleNow(selectedEnvironment, false);
-                  if (isClosed && !selectedEnvAccessible) {
+                  if (isClosed && !selectedEnvAccessible && !isStudentHousingSpace(selectedLocation, selectedUnitId)) {
                     // Check if explicitly configured mixed-use — if so, allow re-selection of environment
                     const envs = getLocationEnvironments(selectedLocation);
                     if (envs.length > 0) {

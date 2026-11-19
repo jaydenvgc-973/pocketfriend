@@ -576,7 +576,7 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           A hospital, clinic, prison or jail keeps its internal spaces in the same
           residential_units assignments Places maintains. Each room or cell can be
           entered directly; the zone dropdown inside it stays untouched. */}
-      {(cat === 'medical' || cat === 'jail_prison') && (
+      {(cat === 'medical' || cat === 'jail_prison' || cat === 'school') && (
         <FacilityUnitsSection location={location} characters={characters} currentUserEmail={currentUserEmail} onChanged={onResidentsChanged} />
       )}
 

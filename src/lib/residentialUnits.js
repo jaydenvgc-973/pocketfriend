@@ -70,6 +70,16 @@ const UNIT_KINDS = {
     emptyHint: "Add guests to the hotel first, then create rooms to organize them.",
     contextNoun: "hotel",
   },
+  school: {
+    label: "Room",
+    plural: "Dorm Rooms / Apartments",
+    heading: "Dorm Room / Apartment",
+    none: "Whole school",
+    unassigned: "No dorm room assigned",
+    placeholder: "e.g. Dorm A1, Apartment 101...",
+    emptyHint: "Create a dorm room or apartment, then assign students to it.",
+    contextNoun: "school",
+  },
 };
 
 /** How this property's internal spaces are named. Unknown categories fall back to apartments. */
@@ -80,15 +90,25 @@ export function getUnitKind(location) {
 
 /**
  * Which facilities carry internal unit assignments.
- * Residential buildings, hospitals/clinics, and prisons/jails. Everything else is unchanged.
+ * Residential buildings, hospitals/clinics, prisons/jails, and schools with student housing.
+ * Everything else is unchanged, and a school only has housing when its own record defines it.
  */
 export function supportsUnitAssignments(location) {
-  return ["home", "medical", "jail_prison"].includes(location?.category);
+  return ["home", "medical", "jail_prison", "school"].includes(location?.category);
 }
 
 /** The units of a location that can actually be assigned and visited, or [] when it has none. */
 export function getAssignableUnits(location) {
   return supportsUnitAssignments(location) ? getResidentialUnits(location) : [];
+}
+
+/**
+ * A dorm room or apartment at a school is where a student LIVES, not a business: the
+ * school's operating hours never close it — the same principle an accessible residential
+ * environment already uses. Every other space keeps its existing hours behavior.
+ */
+export function isStudentHousingSpace(location, unitId) {
+  return location?.category === "school" && !!getUnitById(location, unitId);
 }
 
 /**
@@ -185,6 +205,13 @@ export function isCharacterInFacilitySpace(location, character) {
   if (category === "home" || category === "hotel") {
     if (character.current_home_location_id && character.current_home_location_id !== location.id) return false;
     return isCharacterHome(character);
+  }
+
+  // A student lives in their dorm room or apartment while they are at the school. Anywhere
+  // else — class in another building, a trip — their recorded location says so.
+  if (category === "school") {
+    if (character.resolved_current_location_id) return character.resolved_current_location_id === location.id;
+    return character.current_home_location_id === location.id && isCharacterHome(character);
   }
 
   if (character.resolved_current_location_id) return character.resolved_current_location_id === location.id;
