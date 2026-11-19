@@ -57,6 +57,8 @@ export default function WhosHereDropdown({
   const candNpcResidents = candidateNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
   const candRealVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
   const candNpcVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
+  // The facility's own population is offered as people, never as staff.
+  const candInmates = candidateNpcs.filter((n) => n.sceneRole === 'inmate');
 
   const renderNpcWrapper = (npc) => {
     if (renderNpc) return renderNpc(npc);
@@ -193,11 +195,12 @@ export default function WhosHereDropdown({
                   {candNpcResidents.map(renderNpcWrapper)}
                 </>
               )}
-              {(candRealVisitors.length > 0 || candNpcVisitors.length > 0) && (
+              {(candRealVisitors.length > 0 || candNpcVisitors.length > 0 || candInmates.length > 0) && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                     <p className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-wider">Available People</p>
                   </div>
+                  {candInmates.map(renderNpcWrapper)}
                   {candRealVisitors.map(renderNpcWrapper)}
                   {candNpcVisitors.map(renderNpcWrapper)}
                 </>

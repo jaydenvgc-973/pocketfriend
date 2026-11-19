@@ -41,6 +41,9 @@ function isListedInmate(location, characterId) {
 export function isIncarceratedCharacter(person, location = null) {
   if (!person) return false;
   if (person.is_jailed === true) return true;
+  // A background person of this facility has no character record and no jail flag of its
+  // own: their role at this place is what they are. An inmate is an inmate.
+  if (person.isNpc === true && /inmate|prisoner|detainee/i.test(String(person.role || ''))) return true;
   const status = person.resolved_presence_status;
   if (status === 'incarcerated' || status === 'confined' || status === 'house_arrest') return true;
   if (location && isListedInmate(location, person.id)) return true;
@@ -87,6 +90,9 @@ function facilityJobTitle(person, location) {
   if (!person) return '';
   const fromLocation = location?.worker_job_titles?.[person.id];
   if (fromLocation) return String(fromLocation).toLowerCase().trim();
+  // A background person of this place holds no job anywhere else: the role they are here
+  // IS the role they hold here (a facility nurse is the nurse, not a civilian visitor).
+  if (person.isNpc === true && person.role) return String(person.role).toLowerCase().trim();
   if (!employedAtFacility(person, location)) return '';
   const fromRole = person.role && person.role !== 'Visitor' && person.role !== 'Here now' ? person.role : null;
   if (fromRole) return String(fromRole).toLowerCase().trim();

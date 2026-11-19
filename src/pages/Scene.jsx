@@ -50,7 +50,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
-import { isSelectableParticipantAtZone } from "@/lib/jailSceneRules";
+import { isSelectableParticipantAtZone, isIncarceratedCharacter } from "@/lib/jailSceneRules";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
@@ -422,13 +422,24 @@ export default function Scene() {
     if (isHomeLocation) { hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i); }
     if (!isRestrictedEnv) { const onShiftIdsLocal = workerCharacters.map((w) => w.id); const tempSceneStaff = getTemporarySceneStaff(location, onShiftIdsLocal); tempSceneStaff.forEach((tmpNpc) => { if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc); }); }
     if (!isRestrictedEnv) { Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_")).forEach((key) => { if (isNPCOnShift(location, key)) { const npcName = key.replace(/^npc_/, "").replace(/_/g, " "); const jobTitle = location.worker_job_titles[key]; if (!npcs.find((x) => x.id === key)) npcs.push({ id: key, name: npcName, role: jobTitle || "Staff", isNpc: true, npcType: "staff", avatar_url: null }); } }); }
-    if (!isRestrictedEnv) { const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC; venueDefaults.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null }); }); }
+    if (!isRestrictedEnv) {
+      // A confined character always has the facility's own population to interact with.
+      // Only when another established inmate is already here do they have each other.
+      const establishedInmatesHere = getPresenceAtLocation(location, unifiedPresenceEntities)
+        .filter((e) => isIncarceratedCharacter(characters.find((c) => c.id === e.id) || e, location))
+        .length;
+      const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
+      venueDefaults.forEach((n) => {
+        if (n.npcType === 'inmate' && establishedInmatesHere >= 2) return;
+        if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
+      });
+    }
     if (!isRestrictedEnv) { npcsTravelingHere.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); }
     if (!isRestrictedEnv) { vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ? 'Visiting' : n.character_type === 'family_npc' ? 'Family' : 'NPC', isNpc: true, npcType: 'customer', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); }); }
     hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); });
     extraNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' }); });
     return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
-  })().map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
+  })().map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : n.npcType === 'inmate' ? 'inmate' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
 
   // A caregiver the existing supervision system currently has on duty in THIS household is
   // an ACTIVE participant from the first render: physically present, automatically

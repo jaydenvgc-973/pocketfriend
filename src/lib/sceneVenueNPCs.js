@@ -80,6 +80,10 @@ export const VENUE_NPCS = {
   jail_prison: [
     { id: "npc_corrections_officer", name: "Corrections Officer", role: "Corrections Officer", npcType: "staff" },
     { id: "npc_court_officer", name: "Court Officer", role: "Court Officer", npcType: "staff" },
+    // The population of the facility itself. An inmate is a person of this place, not a
+    // member of staff — offered under Available People so a confined character always has
+    // someone to interact with when no established inmate is present.
+    { id: "npc_inmate", name: "Inmate", role: "Inmate", npcType: "inmate" },
   ],
   religion: [
     { id: "npc_usher", name: "Usher", role: "Usher", npcType: "staff" },
@@ -126,7 +130,8 @@ export const REQUIRED_STAFF_ROLES = {
   shelter:     [{ id: "tmp_intake",       name: "Shelter Intake Worker","role": "Shelter Intake Worker", npcType: "staff", isTemporary: true }],
   government:  [{ id: "tmp_gov_clerk",    name: "Government Clerk",    role: "Government Clerk",    npcType: "staff", isTemporary: true },
                 { id: "tmp_sec_officer",  name: "Security Officer",    role: "Security Officer",    npcType: "staff", isTemporary: true }],
-  jail_prison: [{ id: "tmp_co",           name: "Corrections Officer", role: "Corrections Officer", npcType: "staff", isTemporary: true }],
+  jail_prison: [{ id: "tmp_co",           name: "Corrections Officer", role: "Corrections Officer", npcType: "staff", isTemporary: true },
+                { id: "tmp_nurse",        name: "Nurse",               role: "Nurse",               npcType: "staff", isTemporary: true }],
   school:      [{ id: "tmp_secretary",    name: "School Secretary",    role: "School Secretary",    npcType: "staff", isTemporary: true }],
   education:   [{ id: "tmp_instructor",   name: "Instructor",          role: "Instructor",          npcType: "staff", isTemporary: true }],
   workplace:   [{ id: "tmp_receptionist", name: "Receptionist",        role: "Receptionist",        npcType: "staff", isTemporary: true }],

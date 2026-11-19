@@ -202,7 +202,7 @@ export function buildSceneCircumstances({ location, participants = [], backgroun
     ? `
 
 === PRISON / JAIL — VISITORS ARE VISITORS ===
-- Only a person described above as CONFINED is incarcerated here. Anyone else inside this facility is visiting, working, or dropping something off — never an inmate.
+- Only a person described as CONFINED or as an inmate of this facility is incarcerated here. Anyone else inside this facility is visiting, working, or dropping something off — never an inmate.
 - A visitor came for a reason of their own: to see a specific person inside, to meet a member of staff, to drop something off, or to handle business with the facility. What they say and do follows that reason — a conversation in the visiting area is a visit, not time served.
 - A visitor is free to leave whenever they choose. They are never locked in, never escorted against their will, never processed or booked, never strip-searched, never counted in a head count, never told when they may go, and never described as trapped, confined, held, or unable to leave.
 - Signing in, showing ID, or a search at the entrance is a condition of entry, not captivity: they walk back out the same way they came in.
@@ -215,8 +215,16 @@ export function buildSceneCircumstances({ location, participants = [], backgroun
     ? `\n- The other people here hold the roles this place actually gives them: ${background.map((b) => `${b.name} (${String(b.role).toLowerCase()})`).join(', ')}. They speak and behave from that role — a bartender works the bar, a teacher teaches the room, a receptionist handles check-in — and they are never confused with, or stood in for by, the established people above.`
     : '';
 
+  // The facility's own population: an inmate is serving time here, not calling in.
+  const confinedBackground = isJailOrPrison(location)
+    ? background.filter((b) => /inmate|prisoner|detainee/i.test(String(b.role || '')))
+    : [];
+  const confinedBackgroundLine = confinedBackground.length > 0
+    ? `\n- ${confinedBackground.map((b) => b.name).join(', ')} ${confinedBackground.length === 1 ? 'is an INMATE' : 'are INMATES'} of this facility: serving time here, living by its rules, with no freedom to walk out. They are never a visitor and never staff.`
+    : '';
+
   return `=== WHO IS HERE, AND WHY (ALREADY TRUE — NEVER REDISCOVERED) ===
-${lines.join('\n')}${backgroundLine}
+${lines.join('\n')}${backgroundLine}${confinedBackgroundLine}
 
 HOW THIS SHAPES WHAT THEY SAY:
 - These facts are their lived reality, not news. Nobody announces their job, school or schedule in every line — it simply shows in what they notice, do, and care about.
