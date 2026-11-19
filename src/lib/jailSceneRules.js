@@ -50,6 +50,20 @@ export function isIncarceratedCharacter(person, location = null) {
   return false;
 }
 
+/**
+ * Informal areas of a facility: housing and recreation, where inmates are not in a full
+ * dress uniform. A plain tank top with institutional trousers — or bare-chested in the
+ * yard, day room or their own cell — is correct there. Formal areas (visiting, court,
+ * intake, medical, control, work details) keep the full uniform.
+ */
+export function isJailInformalZone(zoneName) {
+  const zone = String(zoneName || '').toLowerCase();
+  return /(general population|day room|dayroom|cell|cellblock|cell block|tier|housing|dorm|yard|recreation|rec yard|gym|cafeteria|mess|chow|shower)/.test(zone);
+}
+
+/** What an inmate actually wears in an informal area of the facility. */
+export const INMATE_INFORMAL_ATTIRE = 'facility-issued clothing — a plain tank top with institutional trousers, or bare-chested; never a full dress uniform, no lettering, no logos, no prints';
+
 /** Entrance and Exterior are the outside of the facility — the prison population is not there. */
 export function isJailEntranceOrExteriorZone(zoneName) {
   const zone = String(zoneName || '').toLowerCase();
@@ -155,7 +169,7 @@ export function resolveFacilityAttire(person, location) {
  * Facility-wide attire and population rules, plus the required attire for each
  * named person in the frame. Empty string at any non-facility location.
  */
-export function buildJailAttireBlock(participants, location, { shower = false } = {}) {
+export function buildJailAttireBlock(participants, location, { shower = false, zoneName = null } = {}) {
   if (!isJailOrPrison(location)) return '';
 
   // A shower is the one place the facility uniform is not worn. Everyone under the water
@@ -172,19 +186,35 @@ FACILITY ATTIRE — SHOWER (prison / jail):
 - Do not reproduce the exact face of any real person from a reference photo; faces come only from the supplied character references.`;
   }
 
+  // Housing, the yard, the day room and the cafeteria are informal: inmates there are in a
+  // plain tank top and institutional trousers, or bare-chested — not a full dress uniform.
+  const informal = isJailInformalZone(zoneName);
+
   const peopleLines = [];
   for (const person of participants || []) {
     if (!person || !person.name) continue;
     const attire = resolveFacilityAttire(person, location);
+    if (attire?.role === 'inmate') {
+      peopleLines.push(`  • ${person.name}: an inmate of this facility, ${informal ? INMATE_INFORMAL_ATTIRE : attire.description}.`);
+      continue;
+    }
     if (!attire?.description) continue;
     peopleLines.push(`  • ${person.name}: ${attire.description}.`);
   }
 
+  const inmateRule = informal
+    ? `- Incarcerated people wear facility-issued clothing only — never personal clothes, never clothing from their own closet. In this informal area that is a plain tank top with institutional trousers, or bare-chested; a full dress uniform is NOT required here and must not be worn by everyone.`
+    : `- Incarcerated people wear ONLY the facility-issued prison uniform in this area. Never regular clothes, never a personal outfit, never clothing from their own closet.`;
+
+  const backgroundInmateRule = informal
+    ? `- Background inmates follow the same rule: in this informal area they are a mix — some in plain tank tops, some bare-chested, some in a uniform shirt, all in institutional trousers. Never an identical full uniform on everyone.`
+    : '';
+
   return `
 
 FACILITY ATTIRE — MANDATORY (prison / jail):
-- Incarcerated people wear ONLY the facility-issued prison uniform. Never regular clothes, never a personal outfit, never clothing from their own closet.
-- Correctional officers and guards wear a uniform — the facility's assigned one, or a police-style correctional uniform. Never regular clothes.
+${inmateRule}
+${backgroundInmateRule ? `${backgroundInmateRule}\n` : ''}- Correctional officers and guards wear a uniform — the facility's assigned one, or a police-style correctional uniform. Never regular clothes.
 - Nurses and medical staff wear a nurse uniform. Doctors wear a doctor uniform. Never regular clothes.
 - Social workers and civilian staff may wear regular clothes.
 - Anyone else present is a visitor or civilian and keeps ordinary clothing.

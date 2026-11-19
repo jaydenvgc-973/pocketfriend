@@ -152,7 +152,7 @@ export function useSceneImageGenerator() {
     // These are prepended to ALL Scene image prompts (initial, refresh, action).
     // Prison / jail: the facility's clothing and population rules belong in every image
     // of this place. Empty string at any other location.
-    const jailAttireBlock = buildJailAttireBlock(finalParticipants, location, { shower: showerState });
+    const jailAttireBlock = buildJailAttireBlock(finalParticipants, location, { shower: showerState, zoneName: currentZoneForAction?.zone_name || activeZone || null });
 
     const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}${jailAttireBlock}`;
 
