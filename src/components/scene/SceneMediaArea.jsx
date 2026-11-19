@@ -129,13 +129,16 @@ export default function SceneMediaArea({
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.97 }}
                 transition={{ duration: 0.12 }}
-                className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[140px] z-[200]"
+                className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-y-auto overscroll-contain min-w-[140px] z-[200]"
+                // Eight rows visible at once; the list scrolls inside this bound and never
+                // reaches down over the conversation and the controls below it.
+                style={{ maxHeight: "min(288px, calc(40dvh - 56px))" }}
               >
                 {locationZones.map((zone) => (
                   <button
                     key={zone.zone_name}
                     onClick={() => { onZoneChange?.(zone.zone_name); setShowZonePicker(false); }}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${
+                    className={`w-full flex items-center gap-2 px-3 h-9 flex-shrink-0 text-xs text-left hover:bg-secondary transition-colors ${
                       activeZone === zone.zone_name ? "text-primary font-medium" : "text-foreground"
                     }`}
                   >

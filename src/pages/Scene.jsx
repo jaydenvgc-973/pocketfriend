@@ -798,8 +798,35 @@ export default function Scene() {
   const performRecipientAction = async (action, target) => {
     if (!action || !target?.id) return;
     const zoneName = action.zone_move ? (action.suggested_zone_name || null) : null;
-    if (zoneName && zoneName !== activeZone) handleZoneChange(zoneName);
     const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
+
+    // A watched scene: the interaction belongs to the people in it. The chosen person is
+    // the one it happens to, someone else here carries it out, and nobody in the room was
+    // told to do anything by anyone outside it. The observer is never in the picture.
+    if (observeMode) {
+      if (zoneName && zoneName !== activeZone) setActiveZone(zoneName);
+      const counterpart = observeActors.find((c) => c.id !== target.id) || null;
+      if (actionImageFn) {
+        generateSceneImage({
+          location, locationZones, activeZone: zoneName || activeZone, sceneParticipants, userParticipant,
+          isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
+          strictCastOnly: true, ambientPopulation: sceneAmbientPopulation,
+          actionFocusIds: [counterpart?.id, target.id].filter(Boolean),
+          actionOverridePrompt: actionImageFn(location?.name || location?.category, [counterpart?.name, target.name].filter(Boolean).join(" and ")),
+        });
+      }
+      if (observeCast.length >= 2) {
+        runObserveBeat({
+          direction: `[${action.emoji} ${action.label} — ${counterpart ? `${counterpart.name} with ${target.name}` : target.name}]`,
+          actorName: counterpart?.name || null,
+        });
+      } else {
+        setMessages((prev) => [...prev, { id: `obs_recipient_${Date.now()}`, sender: "narrative", content: `${action.emoji} ${action.label} — ${target.name} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+      }
+      return;
+    }
+
+    if (zoneName && zoneName !== activeZone) handleZoneChange(zoneName);
     if (actionImageFn) {
       const who = [displayName, target.name].filter(Boolean).join(" and ");
       generateSceneImage({
@@ -1449,9 +1476,9 @@ export default function Scene() {
           {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
-              && (observeMode ? observeCast.length === 0 : recipientTargets.length === 0);
+              && recipientTargets.length === 0;
             const isDisabled = action.disabled || actionCooldown || needsCharacter; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
