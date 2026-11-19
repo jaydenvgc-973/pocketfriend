@@ -16,6 +16,7 @@
  * Used by both Scenes dialogue pathways (user-present and observed).
  */
 import { isCharacterAtWork, isCharacterOnShift, isCharacterAtSchool, isLocationActiveNow } from '@/lib/workScheduleUtils';
+import { isJailOrPrison, isIncarceratedCharacter } from '@/lib/jailSceneRules';
 
 const nameOf = (p) => p?.name || p?.display_name || null;
 
@@ -154,6 +155,12 @@ export function describePersonHere({ person, location, onShiftAtLocationIds = nu
       : 'They are on campus outside scheduled class hours, so studying, socializing or free time here is legitimate — and they still know they are a student here, not someone attending class right now.'}`);
   } else if (residentHere) {
     text.push(`${name} LIVES HERE.`);
+  } else if (isJailOrPrison(location) && !isIncarceratedCharacter(person, location)) {
+    // At a prison or jail, being inside the building is not a sentence. A visitor came
+    // on purpose and walks back out on their own terms.
+    const elsewhere = elsewhereFacts(person, location, locationsById);
+    if (elsewhere.length > 0) text.push(...elsewhere);
+    text.push(`${name} is VISITING this facility — not incarcerated, not held, not confined. They came for a reason of their own: to see a specific person inside, to meet a member of staff, to drop something off, or to handle business with the facility. They know they can leave whenever they choose, and nothing here is keeping them.`);
   } else {
     const elsewhere = elsewhereFacts(person, location, locationsById);
     if (elsewhere.length > 0) text.push(...elsewhere);
@@ -188,7 +195,21 @@ export function buildSceneCircumstances({ location, participants = [], backgroun
   }
 
   const background = (backgroundPeople || []).filter((b) => b?.name && b?.role);
-  if (lines.length === 0 && background.length === 0) return '';
+
+  // A prison or jail is not a sentence for everyone inside it. This applies whether or
+  // not any established character is here: the user may be the one visiting.
+  const jailVisitorRule = isJailOrPrison(location)
+    ? `
+
+=== PRISON / JAIL — VISITORS ARE VISITORS ===
+- Only a person described above as CONFINED is incarcerated here. Anyone else inside this facility is visiting, working, or dropping something off — never an inmate.
+- A visitor came for a reason of their own: to see a specific person inside, to meet a member of staff, to drop something off, or to handle business with the facility. What they say and do follows that reason — a conversation in the visiting area is a visit, not time served.
+- A visitor is free to leave whenever they choose. They are never locked in, never escorted against their will, never processed or booked, never strip-searched, never counted in a head count, never told when they may go, and never described as trapped, confined, held, or unable to leave.
+- Signing in, showing ID, or a search at the entrance is a condition of entry, not captivity: they walk back out the same way they came in.
+- Visiting hours ending a visit never makes the visitor a prisoner.`
+    : '';
+
+  if (lines.length === 0 && background.length === 0 && !jailVisitorRule) return '';
 
   const backgroundLine = background.length > 0
     ? `\n- The other people here hold the roles this place actually gives them: ${background.map((b) => `${b.name} (${String(b.role).toLowerCase()})`).join(', ')}. They speak and behave from that role — a bartender works the bar, a teacher teaches the room, a receptionist handles check-in — and they are never confused with, or stood in for by, the established people above.`
@@ -205,5 +226,5 @@ HOW THIS SHAPES WHAT THEY SAY:
 - Nobody's reason for being here changes because this scene opened. Nobody just arrived, just got here, decided to stop by, or came to check the place out: they were already doing what they are doing.
 - What already happened to them stays true. A test already taken has been taken; a shift already finished is over; an event stated as past is past and is never treated as still to come.
 - Only someone described above as a visitor speaks like a visitor. A person who works, studies or lives here never speaks like an uninformed guest in their own workplace, school or home.
-===`;
+===${jailVisitorRule}`;
 }

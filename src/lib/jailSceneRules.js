@@ -26,9 +26,15 @@ export function isJailOrPrison(location) {
   return location.category === 'jail_prison' || location.is_confinement_facility === true;
 }
 
-function inLocationArray(arr, characterId) {
-  if (!Array.isArray(arr) || !characterId) return false;
-  return arr.some((item) => (typeof item === 'string' ? item === characterId : item?.character_id === characterId));
+/** A person listed on this facility's inmate roster and not released. */
+function isListedInmate(location, characterId) {
+  if (!Array.isArray(location?.inmates) || !characterId) return false;
+  const entry = location.inmates.find((item) => (typeof item === 'string' ? item === characterId : item?.character_id === characterId));
+  if (!entry) return false;
+  if (typeof entry === 'string') return true;
+  // A released person stays on the roster as a record of their stay, but they are no
+  // longer incarcerated: they may visit this facility like anyone else.
+  return entry.confinement_status !== 'released';
 }
 
 /** Is this person currently incarcerated / confined (anywhere)? */
@@ -37,7 +43,7 @@ export function isIncarceratedCharacter(person, location = null) {
   if (person.is_jailed === true) return true;
   const status = person.resolved_presence_status;
   if (status === 'incarcerated' || status === 'confined' || status === 'house_arrest') return true;
-  if (location && inLocationArray(location.inmates, person.id)) return true;
+  if (location && isListedInmate(location, person.id)) return true;
   return false;
 }
 
@@ -58,10 +64,30 @@ export function isSelectableParticipantAtZone(person, location, zoneName) {
   return !isIncarceratedCharacter(person, location);
 }
 
+/**
+ * A job belongs to ONE place. Only someone actually employed by this facility holds a
+ * staff role here — a nurse, officer or doctor who works somewhere else and is inside
+ * this building is a visitor, and keeps their own clothes and their own reason for being here.
+ */
+function employedAtFacility(person, location) {
+  if (!person?.id || !location) return false;
+  // The facility's own per-person records: a job title or a shift defined HERE.
+  if (location.worker_job_titles?.[person.id]) return true;
+  if (location.worker_shifts?.[person.id]) return true;
+  // Their OWN employment record must point at this facility. The location's worker
+  // roster array alone never makes someone staff — it can list people whose actual job
+  // is elsewhere, and those people are visitors here.
+  if (person.occupation_location_id === location.id) return true;
+  if (person.current_work_location_id === location.id) return true;
+  if ((person.additional_occupation_locations || []).some((a) => a?.location_id === location.id)) return true;
+  return false;
+}
+
 function facilityJobTitle(person, location) {
   if (!person) return '';
   const fromLocation = location?.worker_job_titles?.[person.id];
   if (fromLocation) return String(fromLocation).toLowerCase().trim();
+  if (!employedAtFacility(person, location)) return '';
   const fromRole = person.role && person.role !== 'Visitor' && person.role !== 'Here now' ? person.role : null;
   if (fromRole) return String(fromRole).toLowerCase().trim();
   if (person.work_details?.job_title) return String(person.work_details.job_title).toLowerCase().trim();
@@ -142,6 +168,7 @@ FACILITY ATTIRE — MANDATORY (prison / jail):
 - Nurses and medical staff wear a nurse uniform. Doctors wear a doctor uniform. Never regular clothes.
 - Social workers and civilian staff may wear regular clothes.
 - Anyone else present is a visitor or civilian and keeps ordinary clothing.
+- A visitor is NEVER depicted as an inmate: no prison uniform, no cell, no restraint, no escort, no inmate posture. They stand as someone who came to visit and can walk out on their own.
 ${peopleLines.length > 0 ? `${peopleLines.join('\n')}\n` : ''}- NO TEXT, LETTERING, NUMBERS, OR LOGOS on any clothing, uniform, patch, badge, or sign anywhere in the frame.
 - The prisoner population is visibly diverse: Black, Middle Eastern, Asian, Latino, and white people are all present.
 - Do not reproduce the exact face of any real person from a reference photo; faces come only from the supplied character references.`;
