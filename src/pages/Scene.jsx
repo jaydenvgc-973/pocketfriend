@@ -858,7 +858,11 @@ export default function Scene() {
     if (speaker?.id && spoken) {
       priorLine = { id: `voiced_${Date.now()}`, sender: "character", senderName: speaker.name, characterId: speaker.id, avatarUrl: speaker.avatar_url, content: spoken, timestamp: new Date().toISOString() };
       setMessages((prev) => [...prev, priorLine]);
-      recordVoicedLineMemory({ speaker, listeners: characterCast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
+      // A background person of the facility has no record to remember with — only an
+      // established character keeps the memory of their own words.
+      if (speaker.isNpc !== true && !String(speaker.id).startsWith("npc_")) {
+        recordVoicedLineMemory({ speaker, listeners: characterCast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
+      }
     }
 
     const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
@@ -872,7 +876,7 @@ export default function Scene() {
         // speaker the observer chose keeps their own name.
         unitScope: sceneUnitScope,
         // Speak As: the identified character (their own record ID) is the speaker.
-        spokenBy: speaker?.id ? { id: speaker.id, name: speaker.name, content: spoken } : null,
+        spokenBy: speaker?.id ? { id: speaker.id, name: speaker.name, content: spoken, role: speaker.isNpc === true ? speaker.role : null } : null,
         ambient: ambientHere,
         npcSpeakers: backgroundCast,
         watchNote: watchContext
