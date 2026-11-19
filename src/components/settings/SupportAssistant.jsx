@@ -1712,8 +1712,7 @@ Respond with clear architectural reasoning. Trace the failure chain. Name exact 
             onKeyDown={handleKeyDown}
             placeholder="Describe a problem or attach a screenshot…"
             rows={2}
-            disabled={isProcessing || isRepairing}
-            className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
+            className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-sky-400"
           />
           <button onClick={handleSubmit} disabled={(!input.trim() && !attachedImage) || isProcessing || isRepairing}
             className="h-10 w-10 rounded-xl bg-sky-600 flex items-center justify-center flex-shrink-0 hover:bg-sky-500 transition-colors disabled:opacity-40">

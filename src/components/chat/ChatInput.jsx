@@ -135,9 +135,11 @@ export default function ChatInput({
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
-          placeholder={isInfant ? "Newborns can't hold a conversation yet" : disabled ? "Loading conversation…" : "Say something..."}
+          placeholder={isInfant ? "Newborns can't hold a conversation yet" : "Say something..."}
           rows={1}
-          disabled={disabled || isInfant}
+          // The box stays editable while a reply or the conversation is still in flight,
+          // so the user can keep typing. Only the send itself waits (handleSend/Enter).
+          disabled={isInfant}
           className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground disabled:opacity-50"
           style={{ minHeight: "40px" }}
         />
