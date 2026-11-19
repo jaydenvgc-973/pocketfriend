@@ -30,6 +30,7 @@ export default function ApartmentManager({
   emptyHint = "Add residents to the building first, then create apartments to organize them.",
   maxUnits = 0,
   nameById = {},
+  zoneOptions = null,
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -63,6 +64,7 @@ export default function ApartmentManager({
       unit_id: generateUnitId(),
       unit_name: name,
       occupant_character_ids: [],
+      zone_name: "",
     };
     onChange([...units, newUnit]);
     setNewUnitName("");
@@ -84,6 +86,12 @@ export default function ApartmentManager({
     onChange(units.map(u => u.unit_id === unitId ? { ...u, unit_name: name } : u));
     setEditingUnitId(null);
     setEditNameValue("");
+  };
+
+  // A dorm room and an apartment are different residential spaces with their own reference
+  // image: the zone is chosen per space from the property's own zones, never inferred.
+  const handleSetUnitZone = (unitId, zoneName) => {
+    onChange(units.map(u => u.unit_id === unitId ? { ...u, zone_name: zoneName } : u));
   };
 
   const handleAssignResident = (unitId, charId) => {
@@ -192,6 +200,24 @@ export default function ApartmentManager({
                     </>
                   )}
                 </div>
+
+                {/* The zone this space is shown as — a dormitory zone for a dorm room,
+                    an apartment zone for an apartment. Never assumed from the name. */}
+                {zoneOptions && zoneOptions.length > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-muted-foreground flex-shrink-0">Zone</span>
+                    <select
+                      value={unit.zone_name || ""}
+                      onChange={e => handleSetUnitZone(unit.unit_id, e.target.value)}
+                      className="flex-1 h-6 px-1.5 rounded-lg bg-secondary border border-border text-[10px] text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                    >
+                      <option value="">Default zone</option>
+                      {zoneOptions.map(name => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 {/* Occupants */}
                 {occupants.length > 0 && (

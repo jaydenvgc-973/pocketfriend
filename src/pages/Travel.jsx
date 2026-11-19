@@ -76,7 +76,7 @@ export default function Travel() {
    */
   const getSelectedSpaceZoneName = (loc) => {
     if (!selectedUnitId) return null;
-    return getWorkplaceZoneName(loc, getWorkplaceById(loc, selectedUnitId)) || getUnitZoneName(loc);
+    return getWorkplaceZoneName(loc, getWorkplaceById(loc, selectedUnitId)) || getUnitZoneName(loc, selectedUnitId);
   };
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);

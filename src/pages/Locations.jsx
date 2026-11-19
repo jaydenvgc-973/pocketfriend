@@ -39,7 +39,7 @@ import { getEditableCharactersForModule } from "@/lib/characterEditableListResol
 import { useStableLocationReferences } from "@/hooks/useStableLocationReferences";
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 import { usePageContext } from "@/hooks/usePageContext";
-import { getActiveUnitOccupantIds, sortUnits } from "@/lib/residentialUnits";
+import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
 import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
@@ -1364,10 +1364,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         } else if (form.category === 'hotel') {
           labels = { sectionLabel: "Rooms / Units", unitSingular: "room", contextNoun: "hotel", addPlaceholder: "e.g. Room 101, Unit 4B...", emptyHint: "Add residents to the hotel first, then create rooms to organize them." };
         } else if (form.category === 'school') {
-          // Student housing is a residential assignment only: any of the user's characters
-          // can be given a dorm room or apartment. Enrolment never places a student here.
-          assignableIds = [...new Set([...allAssignableCharacters.map(c => c.id), ...alreadyAssigned])];
-          labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Create a dorm room or apartment, then assign students to it." };
+          // Only a residential student at THIS school, or a character whose established home
+          // is this school, can be given a dorm room or apartment. Attending classes without
+          // campus residency never qualifies anyone, and no one else from the account appears.
+          const schoolRecord = editingLocation || form;
+          assignableIds = [...new Set([
+            ...allAssignableCharacters.filter(c => isEligibleSchoolHousingResident(c, schoolRecord)).map(c => c.id),
+            ...alreadyAssigned,
+          ])];
+          labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Residential students of this school and characters whose home is this school can be assigned to a dorm room or apartment." };
         }
 
         return (
@@ -1377,6 +1382,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             allCharacters={allCharacters}
             nameById={characterNameById}
             maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
+            zoneOptions={form.category === 'school' ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
             onChange={(units) => update("residential_units", units)}
             {...labels}
           />

@@ -1,4 +1,5 @@
 import { isCharacterHome } from "@/lib/travelAvailability";
+import { isExplicitCampusResident } from "@/lib/campusResidencyResolver";
 
 /**
  * UNIT ASSIGNMENTS (apartments, patient rooms, prison cells)
@@ -112,6 +113,24 @@ export function isStudentHousingSpace(location, unitId) {
 }
 
 /**
+ * WHO MAY LIVE IN A SCHOOL'S STUDENT HOUSING.
+ *
+ * Only two things make a character an eligible residential occupant of a SPECIFIC school:
+ *   1. an active enrollment at that school with campus residency explicitly on
+ *      (the existing campusResidencyResolver rule), or
+ *   2. that school already set as the character's established home.
+ *
+ * Being enrolled without campus residency, attending classes, being one of the user's
+ * characters, or having no apartment elsewhere never qualifies anyone. This is the same
+ * location-specific residency test a residence uses — the school is simply the property.
+ */
+export function isEligibleSchoolHousingResident(character, location) {
+  if (!character?.id || !location || location.category !== "school") return false;
+  if (character.current_home_location_id === location.id) return true;
+  return isExplicitCampusResident(character, location.id, location);
+}
+
+/**
  * WHETHER A SPACE ASSIGNMENT IS STILL ACTIVE.
  *
  * An apartment in a residence is a standing arrangement and always stands.
@@ -173,13 +192,17 @@ export function getActiveUnitOccupantIds(location, unit, characters = []) {
  * never a per-room zone. Returns null when the facility has no such zone (and for every
  * other kind of property, which keeps its current behavior).
  */
-export function getUnitZoneName(location) {
+export function getUnitZoneName(location, unitId = null) {
   const zones = (location?.zones || []).map((z) => z?.zone_name).filter(Boolean);
   if (zones.length === 0) return null;
   if (location.category === 'medical') return zones.find((z) => /patient room/i.test(z)) || null;
   if (location.category === 'jail_prison') {
     return zones.find((z) => /^cell$/i.test(z)) || zones.find((z) => /\bcell\b/i.test(z)) || null;
   }
+  // A dorm room and an apartment are different residential spaces with their own reference
+  // image. The zone is the one the user chose for that specific space — never inferred
+  // from its name. No choice means the property's own default zone applies, unchanged.
+  if (location.category === 'school') return getUnitById(location, unitId)?.zone_name || null;
   return null;
 }
 

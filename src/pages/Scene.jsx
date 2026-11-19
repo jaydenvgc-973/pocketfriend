@@ -317,7 +317,7 @@ export default function Scene() {
     // A room or cell identifies the space; the zone identifies the kind of space. Moving
     // between a hospital's patient rooms (or a jail's cells) keeps that facility's own
     // Patient Room / Cell zone — its reference images and dropdown are unchanged.
-    const unitZone = unitId ? getUnitZoneName(location) : null;
+    const unitZone = unitId ? getUnitZoneName(location, unitId) : null;
     if (unitZone) setActiveZone(unitZone);
     if (observeMode) {
       // Choosing the whole facility releases the unit cast back to the default selection.

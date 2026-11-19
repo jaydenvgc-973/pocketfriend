@@ -35,6 +35,19 @@ const isPatientHere = (character, location) => {
 // This is residency, never a structural edit of the facility.
 const livesHere = (character, location) => character.current_home_location_id === location.id;
 
+// Student housing is for residents of THAT school only: an active enrollment at this school
+// with campus residency explicitly on (the canonical campus residency rule), or the school
+// already set as the character's home. Attending classes never qualifies anyone.
+const NON_RESIDENTIAL_SCHOOL_TYPES = ['daycare_preschool', 'elementary_school', 'high_school', 'private_school', 'language_school', 'music_school', 'online_school'];
+const isResidentialStudentHere = (character, location) => {
+  if (location.school_type && NON_RESIDENTIAL_SCHOOL_TYPES.includes(location.school_type)) return false;
+  return (character.education_enrollments || []).some((e) => (
+    (e.location_id === location.id || e.in_person_location_id === location.id)
+    && e.status !== 'dropped' && e.status !== 'graduated'
+    && e.lives_on_campus === true
+  ));
+};
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -101,14 +114,18 @@ Deno.serve(async (req) => {
 
     // A room or cell belongs to someone who is actually a patient or inmate here —
     // or whose established home is this facility.
-    // Student housing is a residential assignment: any of the caller's own characters can
-    // be given an existing dorm room or apartment. Enrolment never places a student here.
-    // A patient room or cell still belongs to someone who is actually a patient or inmate.
-    const eligible = location.category === 'school' || livesHere(character, location) || (location.category === 'medical'
-      ? isPatientHere(character, location)
-      : isConfinedHere(character, location));
+    // A school's dorm room or apartment belongs only to a residential student of THAT
+    // school, or a character whose home is that school. Enrolment alone never qualifies.
+    const eligible = location.category === 'school'
+      ? (livesHere(character, location) || isResidentialStudentHere(character, location))
+      : (livesHere(character, location) || (location.category === 'medical'
+        ? isPatientHere(character, location)
+        : isConfinedHere(character, location)));
     if (!eligible) {
-      return Response.json({ error: `${character.name || 'That character'} is not currently a patient or inmate at ${location.name}.` }, { status: 400 });
+      const refusal = location.category === 'school'
+        ? `${character.name || 'That character'} is not a residential student at ${location.name}.`
+        : `${character.name || 'That character'} is not currently a patient or inmate at ${location.name}.`;
+      return Response.json({ error: refusal }, { status: 400 });
     }
 
     // One room or cell per person at this facility: assigning moves the assignment,

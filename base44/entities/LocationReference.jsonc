@@ -690,6 +690,10 @@
             },
             "default": [],
             "description": "Canonical character IDs assigned as occupants of this apartment. These characters form a household within the building."
+          },
+          "zone_name": {
+            "type": "string",
+            "description": "The existing location zone this space is shown as \u2014 chosen by the user per space (a dormitory zone for a dorm room, an apartment zone for an apartment). Never inferred from the unit name. When empty, the property's default zone applies."
           }
         },
         "required": [
