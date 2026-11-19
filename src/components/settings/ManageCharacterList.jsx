@@ -5,12 +5,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Trash2, MoreVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
+import ConfirmDeleteDialog from '@/components/common/ConfirmDeleteDialog';
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 
 export default function ManageCharacterList({ characters: propCharacters, currentUser: propUser, userSettings: propSettings }) {
   const queryClient = useQueryClient();
   const [expandedMenu, setExpandedMenu] = useState(null);
+  // The character waiting on a confirmed deletion. Nothing is removed until the user confirms.
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   const { data: fetchedUser } = useQuery({
     queryKey: ['user'],
@@ -40,12 +43,16 @@ export default function ManageCharacterList({ characters: propCharacters, curren
   });
   const characters = propCharacters || fetchedCharacters;
 
+  // A confirmed deletion removes the character's RECORD. A Test Character is never
+  // soft-deleted, archived, or merely hidden: its record is hard-deleted, so it is gone
+  // from every section of this list and from the rest of Pocketfriend.
   const deleteMutation = useMutation({
-    mutationFn: async (id) => {
-      return base44.entities.Character.delete(id);
-    },
+    mutationFn: async (character) => base44.entities.Character.delete(character.id),
     onSuccess: () => {
+      setPendingDelete(null);
       queryClient.invalidateQueries({ queryKey: ['all-characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
     },
   });
 
@@ -56,21 +63,27 @@ export default function ManageCharacterList({ characters: propCharacters, curren
   
   const alpha = (a, b) => (a.name || '').localeCompare(b.name || '');
 
-  const activeChars = characters.filter(c =>
-    c.character_type === 'active_created_character' && c.status === 'active'
-  ).sort(alpha);
+  // The record still exists unless its deletion actually completed.
+  const isLiveRecord = (c) => c.status !== 'deleted' && c.status !== 'merged';
 
-  const npcFictitious = characters.filter(c =>
-    c.character_type === 'npc_fictitious' && c.status === 'active'
-  ).sort(alpha);
+  // A Test Character keeps its own type section: test eligibility never reclassifies it,
+  // and the toggle is never what decides which type section it belongs to. It stays listed
+  // for as long as its record exists.
+  const inTypeSection = (c, type) =>
+    c.character_type === type && isLiveRecord(c) && (c.status === 'active' || c.is_test_character === true);
 
-  const npcFamily = characters.filter(c =>
-    c.character_type === 'npc_family_member' && c.status === 'active'
-  ).sort(alpha);
+  const activeChars = characters.filter(c => inTypeSection(c, 'active_created_character')).sort(alpha);
 
+  const npcFictitious = characters.filter(c => inTypeSection(c, 'npc_fictitious')).sort(alpha);
+
+  const npcFamily = characters.filter(c => inTypeSection(c, 'npc_family_member')).sort(alpha);
+
+  // Test Characters also appear here — including legacy ones with no type — alongside
+  // untyped records. Moved Away keeps its own section, so no one is listed twice there.
   const untyped = characters.filter(c =>
-    (c.is_test_character || !['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type)) &&
-    c.status === 'active'
+    isLiveRecord(c) &&
+    c.status !== 'moved_away' &&
+    (c.is_test_character === true || !['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type))
   ).sort(alpha);
 
   const movedAway = characters.filter(c =>
@@ -146,10 +159,9 @@ export default function ManageCharacterList({ characters: propCharacters, curren
                             <div className="absolute right-0 top-8 bg-card border border-border rounded-lg shadow-lg z-10">
                               <button
                                 onClick={() => {
-                                  if (window.confirm(`Delete ${itemData.name}?`)) {
-                                    deleteMutation.mutate(itemId);
-                                    setExpandedMenu(null);
-                                  }
+                                  // Confirmation comes first — canceling leaves the record untouched.
+                                  setExpandedMenu(null);
+                                  setPendingDelete(itemData);
                                 }}
                                 className="w-full text-left px-3 py-2 text-xs text-destructive hover:bg-destructive/10 rounded-lg flex items-center gap-2"
                               >
@@ -166,6 +178,17 @@ export default function ManageCharacterList({ characters: propCharacters, curren
             </div>
           </div>
       ))}
+
+      <ConfirmDeleteDialog
+        open={!!pendingDelete}
+        title={`Delete ${pendingDelete?.name || 'this character'}?`}
+        message={pendingDelete?.is_test_character === true
+          ? "This permanently removes this Test Character's record. It will no longer appear in any list in Pocketfriend."
+          : "This permanently deletes this character. This cannot be undone."}
+        busy={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate(pendingDelete)}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

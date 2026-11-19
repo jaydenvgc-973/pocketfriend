@@ -118,6 +118,17 @@ export default function Settings() {
   // Use resolver for proper ordering and filtering
   const characters = getCharactersForSettingsList(allCharacters, user?.id, user?.email, user);
 
+  // Manage Characters also receives untyped records — including test characters created
+  // before the toggle existed. A missing or unrecognized type never hides an existing
+  // character from its "Untyped / Test Characters" section.
+  const manageCharacters = [
+    ...characters,
+    ...allCharacters.filter((c) =>
+      !['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular', 'npc_world_service'].includes(c.character_type) &&
+      !characters.some((known) => known.id === c.id)
+    ),
+  ];
+
   const isAdmin = user?.email === ADMIN_EMAIL;
 
   const handleDeleteAccount = async () => {
@@ -715,7 +726,7 @@ export default function Settings() {
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
           <div className="mb-4 bg-card border border-border rounded-2xl p-4">
-            <SectionIsolate name="ManageCharacterList"><ManageCharacterList characters={characters} currentUser={user} /></SectionIsolate>
+            <SectionIsolate name="ManageCharacterList"><ManageCharacterList characters={manageCharacters} currentUser={user} /></SectionIsolate>
           </div>
           <Link to="/finance" className="mb-6 block">
             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-green-500/30 hover:border-green-500/60 transition-colors text-left">

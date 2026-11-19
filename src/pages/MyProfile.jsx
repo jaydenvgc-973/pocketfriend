@@ -47,15 +47,20 @@ export default function MyProfile() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", user?.email],
     queryFn: () => user?.email
-      ? base44.entities.Character.filter({ owner_email: user.email, status: "active" }, "-created_date", 100)
+      ? base44.entities.Character.filter({ owner_email: user.email }, "-created_date", 200)
       : [],
     enabled: !!user?.email,
   });
 
+  // A character is listed here for as long as its record exists. Test status never hides
+  // anyone: a Test Character — including one created before the toggle existed — stays
+  // listed, and a legacy record with no status is still an existing character.
+  const visibleCharacters = characters.filter((c) => c.status === "active" || !c.status || c.is_test_character === true);
+
   // ORDER ONLY: apply canonical ManageCharacterList hierarchy (active_created → npc_fictitious
   // → npc_family → untyped/test → moved_away), alphabetical within each group.
   // Roster composition unchanged — only display order.
-  const sortedCharacters = sortCharactersByManageListHierarchy(characters);
+  const sortedCharacters = sortCharactersByManageListHierarchy(visibleCharacters);
 
   const { data: ownedLocations = [] } = useQuery({
     queryKey: ["userOwnedLocations", user?.id],
@@ -479,7 +484,7 @@ export default function MyProfile() {
           {/* RIGHT: Characters — horizontal avatar row */}
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
             <div className="p-4 pb-2">
-              <ProfileSectionHeader icon={Users} title="Characters" subtitle={`${characters.length}`} />
+              <ProfileSectionHeader icon={Users} title="Characters" subtitle={`${visibleCharacters.length}`} />
             </div>
             <div className="px-4 pb-4">
               <div className="flex gap-2 overflow-x-auto scrollbar-hide -mx-1 px-1 pb-1">
@@ -518,9 +523,9 @@ export default function MyProfile() {
         )}
 
         {/* Full character relationship manager — collapsible */}
-        {showCharacterManager && characters.length > 0 && (
+        {showCharacterManager && visibleCharacters.length > 0 && (
           <section className="bg-card border border-border rounded-2xl p-5">
-            <ProfileSectionHeader icon={Users} title="Characters in Your World" subtitle={`${characters.length} active · Assign your relationship`} />
+            <ProfileSectionHeader icon={Users} title="Characters in Your World" subtitle={`${visibleCharacters.length} active · Assign your relationship`} />
             <div className="space-y-1">
               {sortedCharacters.map(char => {
                 const currentRelative = relativeRelationships[char.id];
