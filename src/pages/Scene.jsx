@@ -50,7 +50,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
-import { isSelectableParticipantAtZone, isIncarceratedCharacter } from "@/lib/jailSceneRules";
+import { isSelectableParticipantAtZone, isIncarceratedCharacter, isJailOrPrison } from "@/lib/jailSceneRules";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
@@ -131,6 +131,8 @@ export default function Scene() {
   const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
   const [directedAction, setDirectedAction] = useState(null);
+  // A recipient action (shakedown, search, warning, escort) involves ONE chosen person.
+  const [recipientAction, setRecipientAction] = useState(null);
   // In a watched scene an activity belongs to a person IN the scene. When more than one
   // eligible character is here, the observer says who before anything happens.
   const [actorAction, setActorAction] = useState(null);
@@ -428,7 +430,9 @@ export default function Scene() {
       const establishedInmatesHere = getPresenceAtLocation(location, unifiedPresenceEntities)
         .filter((e) => isIncarceratedCharacter(characters.find((c) => c.id === e.id) || e, location))
         .length;
-      const venueDefaults = VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
+      // A confinement facility is a prison/jail whatever its category says: it keeps the
+      // facility's own people (officers, court officer, inmate) instead of a venue's.
+      const venueDefaults = VENUE_NPCS[isJailOrPrison(location) ? "jail_prison" : location?.category] || DEFAULT_VENUE_NPC;
       venueDefaults.forEach((n) => {
         if (n.npcType === 'inmate' && establishedInmatesHere >= 2) return;
         if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
@@ -768,6 +772,50 @@ export default function Scene() {
       .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
   }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id, observeMode, observeCastIdList.join(",")]);
 
+  // ── RECIPIENT ACTIONS (prison / jail interactions) ──
+  // A shakedown, a search, a warning, an escort involves ONE person who is actually
+  // here. The facility's temporary Inmate counts — they are a person of this place, so a
+  // confined character always has someone for the interaction.
+  const recipientTargets = useMemo(() => {
+    const seen = new Set();
+    return sceneParticipants
+      .filter((p) => {
+        if (!p || !p.id || p.isUser) return false;
+        if (p.id === currentUser?.id) return false;
+        if (String(p.id).startsWith("npc_owner_")) return false;
+        if (p.life_status === "deceased" || p.status === "deceased") return false;
+        if (isInfantCharacter(p)) return false;
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      })
+      .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+  }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id]);
+
+  // The chosen person is the one it happens to. The action updates the top image to show
+  // it, moves the scene when the action is an escort, and the chosen person answers
+  // through the existing dialogue pipeline.
+  const performRecipientAction = async (action, target) => {
+    if (!action || !target?.id) return;
+    const zoneName = action.zone_move ? (action.suggested_zone_name || null) : null;
+    if (zoneName && zoneName !== activeZone) handleZoneChange(zoneName);
+    const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
+    if (actionImageFn) {
+      const who = [displayName, target.name].filter(Boolean).join(" and ");
+      generateSceneImage({
+        location, locationZones, activeZone: zoneName || activeZone, sceneParticipants, userParticipant,
+        isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
+        actionFocusIds: [target.id, ...(userParticipant?.id ? [userParticipant.id] : [])],
+        actionOverridePrompt: actionImageFn(location?.name || location?.category, who),
+      });
+    }
+    await sendMessage(`[${action.emoji} ${action.label} — ${target.name}]`, true, null, null, null, null, null, false, {
+      id: target.id,
+      name: target.name,
+      instruction: `${displayName} carries out "${action.label}" involving ${target.name}. ${target.name} reacts directly to what ${displayName} does.`,
+    });
+  };
+
   // In a character-only scene the invitation comes FROM the character who is there,
   // never from the absent user.
   const characterInviter = observeMode
@@ -835,7 +883,9 @@ export default function Scene() {
       setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "No one is here to watch yet — send a character here, or pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
       return;
     }
-    if (characterCast.length + backgroundCast.length < 2 && ambientHere.length === 0) {
+    // Speaking AS a character is never gated on someone else being here: a person alone
+    // still says their own words. Only a beat that needs another person to answer it is.
+    if (characterCast.length + backgroundCast.length < 2 && ambientHere.length === 0 && !voiceAs) {
       setMessages((prev) => [...prev, { id: `obs_hint_${Date.now()}`, sender: "narrative", content: "Pick someone from Who's Here — no one else is in this part of the place right now.", timestamp: new Date().toISOString() }]);
       return;
     }
@@ -866,6 +916,12 @@ export default function Scene() {
     }
 
     const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
+    // A character who is alone still speaks for themselves: the line is recorded as
+    // theirs, and no exchange is invented around it.
+    if (responders.length === 0) {
+      setIsObservingTurn(false);
+      return;
+    }
     try {
       const lines = await generateObserveBeat({
         participants: characterCast, responders, location, activeZone,
@@ -1056,7 +1112,10 @@ export default function Scene() {
 
   const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, location, messages, generateFocusedImage, setMessages }); };
 
-  const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, timestamp: new Date().toISOString() }]); };
+  // A narrative is something that has already happened, dialogue included. It is recorded
+  // as canon so character replies treat it as a recent lived experience, never as words
+  // just spoken to them.
+  const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, is_canon_event: true, timestamp: new Date().toISOString() }]); };
 
   const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null) => {
     if (!text.trim() || !location) return; setInputText("");
@@ -1138,7 +1197,7 @@ export default function Scene() {
       const unitBoundary = buildUnitBoundaryBlock(sceneUnitScope);
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n${messages.some((m) => m.is_canon_event) ? `\nA line marked "already happened" is an event these people have lived through, its dialogue included. They experienced it; nobody answers it, replies to it, or treats it as something said to them now.\n` : ''}\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -1388,11 +1447,11 @@ export default function Scene() {
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
           {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
-            // An activity that acts on a chosen character needs someone selected first.
+            // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
-              && !(observeMode ? observeCast.length > 0 : broughtCharacters.length > 0);
+              && (observeMode ? observeCast.length === 0 : recipientTargets.length === 0);
             const isDisabled = action.disabled || actionCooldown || needsCharacter; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "Select a character first" : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
@@ -1454,6 +1513,14 @@ export default function Scene() {
         hint={actorAction?.mode === "directed" ? "The person who starts it. Only people who are here can be chosen." : "Only people who are here can do it — you are not in the scene."}
       />
       <SceneTargetPicker action={directedAction} targets={directedTargets.filter((t) => t.id !== directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
+      <SceneTargetPicker
+        action={recipientAction}
+        targets={recipientTargets}
+        onSelect={(person) => { const pending = recipientAction; setRecipientAction(null); performRecipientAction(pending, person); }}
+        onClose={() => setRecipientAction(null)}
+        heading={recipientAction ? `${recipientAction.emoji} ${recipientAction.label} — who is involved?` : null}
+        hint="Only people who are here can be chosen."
+      />
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />

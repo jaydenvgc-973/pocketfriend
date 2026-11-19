@@ -91,6 +91,8 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
       </div>
 
       <div className="flex items-end gap-2 px-3 py-2">
+        {/* The box stays editable while a response is pending: the next line can be
+            started before the previous beat finishes. Only sending waits for it. */}
         <input
           type="text"
           value={text}
@@ -98,7 +100,6 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
           placeholder={placeholder}
           className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
-          disabled={isGenerating}
         />
         <Button
           size="icon"

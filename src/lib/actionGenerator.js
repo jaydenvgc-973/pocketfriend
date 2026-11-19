@@ -357,11 +357,13 @@ const JAIL_ACTIONS = classifyAll([
   { id: "jail_head_count", label: "Head Count", emoji: "🧮", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
   { id: "jail_line_up", label: "Line Up for Count", emoji: "🧍", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
   { id: "jail_meal_tray", label: "Get Meal Tray", emoji: "🥣", cost: 0, type: "functional", suggested_zone: "Cafeteria", zone_hints: ["cafeteria", "mess hall"] },
+  { id: "jail_eat", label: "Eat", emoji: "🍴", cost: 0, type: "functional", suggested_zone: "Cafeteria", zone_hints: ["cafeteria", "mess hall"] },
+  { id: "jail_phone_call", label: "Phone Call", emoji: "📞", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["phone", "general population", "day room", "cellblock"] },
   { id: "jail_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", suggested_zone: "Shower Area", zone_hints: ["shower"] },
   { id: "jail_exercise", label: "Exercise", emoji: "💪", cost: 0, type: "functional", suggested_zone: "Exercise Yard", zone_hints: ["yard"] },
   { id: "jail_change_clothing", label: "Prison Clothing", emoji: "👕", cost: 0, type: "functional", suggested_zone: "Laundry", zone_hints: ["laundry", "property", "clothing"] },
   { id: "jail_read_write", label: "Read / Write", emoji: "📖", cost: 0, type: "functional", suggested_zone: "Cell", zone_hints: ["cell", "library"] },
-  { id: "jail_talk_prisoners", label: "Talk with Prisoners", emoji: "💬", cost: 0, type: "social", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
+  { id: "jail_talk_prisoners", label: "Talk with Prisoners", emoji: "💬", cost: 0, type: "social", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"], requires_selected_character: true },
 
   // ── INTERACTIONS — a chosen character is required ──
   { id: "jail_shakedown", label: "Shakedown", emoji: "🔦", cost: 0, type: "functional", requires_selected_character: true },
@@ -691,7 +693,10 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
       }
     : location;
 
-  let actions = resolveActionLibrary(venue);
+  // A confinement facility is a prison/jail whatever its category says: its activities
+  // are the facility's own.
+  const isConfinementVenue = venue.category === 'jail_prison' || venue.is_confinement_facility === true;
+  let actions = isConfinementVenue ? JAIL_ACTIONS : resolveActionLibrary(venue);
 
   // Venue food additions — additive only. Existing actions and prices are untouched.
   // Bars offer food only when the user enabled food service on that location.
