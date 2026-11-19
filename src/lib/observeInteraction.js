@@ -20,16 +20,18 @@ import { buildSceneCircumstances } from '@/lib/sceneCircumstances';
 import { isInfantCharacter, childSpeechLimit } from '@/lib/characterAgeStage';
 import { scopeCanonicalContext, buildUnitBoundaryBlock } from '@/lib/sceneUnitScope';
 
-// NARRATIVE — what has already happened. The characters LIVED it; nobody said it to them.
+// NARRATIVE — one event that has already happened. It may contain dialogue spoken during
+// it; the whole event, dialogue included, is what these people just lived through.
 const ESTABLISHED_NARRATIVE = (narrative) => `
-=== WHAT HAS ALREADY HAPPENED (AN EXPERIENCE, NOT DIALOGUE) ===
+=== WHAT HAS ALREADY HAPPENED (AN EXPERIENCE, NOT A MESSAGE) ===
 ${narrative}
 
-This is not a message, a statement, an instruction, or something anyone told them. It is what these people have just lived through: an event of their own recent past, the way a person remembers something that happened to them.
-- Everyone present experienced it themselves. It is their own memory of the last few minutes, not news delivered by another person.
-- There is nobody to answer, thank, argue with, agree with, or reply to. No one in this scene said this to them, and no one is waiting on a response to it.
+This is one event these people have just lived through, written as it happened. It may contain dialogue — words someone said during it — and those words are part of that same event, spoken in the past, to whoever was there at the time.
+- The whole thing, dialogue included, is already over. It is their own recent experience, the way a person remembers something that has just taken place, not news delivered to them now.
+- The dialogue in it was said during that event, to the people who were there. It is not addressed to anyone in this room now, and it is not a message, a statement, or an instruction from someone outside the scene.
+- There is nobody to answer, thank, argue with, agree with, or reply to. No one is waiting on a response to it, and nobody asks who said it or what it meant.
 - Nobody performs it again, announces it, asks whether it should happen, or hears about it for the first time.
-- Any words in quotation marks attributed to a character were ALREADY SPOKEN in the past. Never repeat those words as new dialogue, and never have anyone say them again as if for the first time.
+- Never repeat that dialogue as new speech, and never have anyone say those words again as if for the first time.
 - Do not contradict, undo, soften, or summarise these events.
 - Write only the next moment that follows from this reality, including what it has left behind in them.
 ===`;
@@ -238,8 +240,8 @@ ${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
 ${direction && actorName ? WHO_TAKES_THE_ACTION(actorName) : ''}
 
 WRITE THE NEXT MOMENT:
-${narrative ? `- These people have ALREADY lived the events above. Continue from the situation those events left behind: what is said and done now is the consequence of them.
-- The events are their own recent experience, never words addressed to them: nobody answers them, replies to them, or treats them as something another person just said.
+${narrative ? `- These people have ALREADY lived the events above, its dialogue included. Continue from the situation those events left behind: what is said and done now is the consequence of them.
+- The events are their own recent experience, never words just spoken to them: nobody answers that dialogue, replies to it, or treats it as something another person said to them now.
 - Never reenact, re-announce, or question them. Anything quoted above was already said and must not be spoken again.` : ''}
 ${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.${actorName ? `\n- ${actorName} is the one doing it, as their own ordinary action. Everyone else reacts to ${actorName}.` : ''}` : ''}
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.${spokenBy?.name ? `\n- The line just spoken belongs to ${spokenBy.name}. The others answer ${spokenBy.name} as the person who said it.` : ''}
