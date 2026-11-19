@@ -15,6 +15,7 @@ import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolv
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
+import { buildShowerStateRule } from "@/lib/sceneActionConfig";
 
 /**
  * useSceneImageGenerator
@@ -70,6 +71,9 @@ export function useSceneImageGenerator() {
       // place is genuinely public. They are never named participants and never replace
       // an established person.
       ambientPopulation = [],
+      // The action being depicted is a shower: everyone under the water is unclothed,
+      // and no uniform or clothing is drawn onto them.
+      showerState = false,
     } = opts;
 
     if (!location || isGeneratingImage) return;
@@ -148,7 +152,7 @@ export function useSceneImageGenerator() {
     // These are prepended to ALL Scene image prompts (initial, refresh, action).
     // Prison / jail: the facility's clothing and population rules belong in every image
     // of this place. Empty string at any other location.
-    const jailAttireBlock = buildJailAttireBlock(finalParticipants, location);
+    const jailAttireBlock = buildJailAttireBlock(finalParticipants, location, { shower: showerState });
 
     const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}${jailAttireBlock}`;
 
@@ -210,6 +214,8 @@ export function useSceneImageGenerator() {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
       finalPrompt += buildSleepDescriptor(finalParticipants);
+      // A shower is never rendered with anyone dressed in it.
+      if (showerState) finalPrompt += buildShowerStateRule();
       finalPrompt += sealedBundles;
       try {
         const result = await base44.integrations.Core.GenerateImage({

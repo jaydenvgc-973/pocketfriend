@@ -155,8 +155,22 @@ export function resolveFacilityAttire(person, location) {
  * Facility-wide attire and population rules, plus the required attire for each
  * named person in the frame. Empty string at any non-facility location.
  */
-export function buildJailAttireBlock(participants, location) {
+export function buildJailAttireBlock(participants, location, { shower = false } = {}) {
   if (!isJailOrPrison(location)) return '';
+
+  // A shower is the one place the facility uniform is not worn. Everyone under the water
+  // is unclothed, so no uniform is ever drawn onto them, and a guard stays outside the
+  // shower row rather than standing in a stall.
+  if (shower) {
+    return `
+
+FACILITY ATTIRE — SHOWER (prison / jail):
+- Everyone in the shower is unclothed: NO uniform, NO clothing, NO towel. The facility uniform does not appear on anyone under the water.
+- A correctional officer or staff member stays outside the shower row, in uniform, and is never placed inside a shower stall.
+- Visitors keep ordinary clothing and are never in the shower.
+- NO TEXT, LETTERING, NUMBERS, OR LOGOS anywhere in the frame.
+- Do not reproduce the exact face of any real person from a reference photo; faces come only from the supplied character references.`;
+  }
 
   const peopleLines = [];
   for (const person of participants || []) {
