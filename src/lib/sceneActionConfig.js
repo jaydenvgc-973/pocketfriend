@@ -78,6 +78,39 @@ export const ACTION_IMAGE_PROMPTS = {
   home_make_bed:   (loc, who) => who.includes("empty")
     ? `Neatly made bed in a sunlit bedroom, folded duvet and arranged pillows, no people, photorealistic.`
     : `${who} making the bed in the bedroom — smoothing the duvet, tucking sheets, fluffing a pillow, morning light, photorealistic. No other people.`,
+
+  // ── PRISON / JAIL — ZONE MOVES ──
+  // Each move shows the room it moved to, so the top image follows the zone.
+  jail_move_general_population: (loc, who) => `Interior of a prison general population day room — bolted steel tables and fixed benches, inmates in plain facility uniforms playing cards and talking in small groups, a wall-mounted television, painted concrete walls, a correctional officer watching from the edge of the room, photorealistic.`,
+  jail_move_yard:      (loc, who) => `Fenced prison exercise yard with chain-link fencing and razor wire overhead, concrete basketball court, inmates in plain facility uniforms walking laps and standing in groups, correctional officers posted at the perimeter, daylight, photorealistic.`,
+  jail_move_cafeteria: (loc, who) => `Prison cafeteria — long stainless-steel tables bolted to the floor, inmates in plain facility uniforms seated with compartmented meal trays, serving line along the back wall, correctional officers standing along the walls, photorealistic.`,
+  jail_move_cell:      (loc, who) => `Prison cell interior — steel bunk with a thin mattress, steel toilet and sink, narrow barred window, concrete walls, an inmate in a plain facility uniform sitting on the bunk, photorealistic.`,
+  jail_move_holding:   (loc, who) => `Prison holding area — a row of concrete benches in a bare caged room, an inmate in a plain facility uniform waiting, steel door with a small reinforced window, correctional officer at the door, photorealistic.`,
+  jail_move_medical:   (loc, who) => `Prison medical unit — examination table, locked medical cabinets, a nurse in a plain nurse uniform attending to an inmate in a facility uniform, clean clinical lighting, photorealistic.`,
+  jail_move_visiting:  (loc, who) => `Prison visiting area — rows of fixed tables and stools under fluorescent light, an inmate in a facility uniform seated across from a civilian visitor, a correctional officer supervising nearby, photorealistic.`,
+  jail_move_shower:    (loc, who) => `Prison shower area — tiled communal shower stalls with shower heads along the wall, steam and a wet concrete floor, plain institutional fittings, no people, photorealistic.`,
+  jail_move_laundry:   (loc, who) => `Prison laundry room — rows of industrial washing machines, carts of folded plain institutional uniforms, an inmate in a facility uniform working at a folding table, photorealistic.`,
+  jail_move_library:   (loc, who) => `Prison library and education room — metal shelves of worn books, plain tables and chairs, an inmate in a facility uniform reading, a teacher's desk at the front, photorealistic.`,
+  jail_move_chapel:    (loc, who) => `Prison chapel — simple rows of chairs, a plain wooden lectern, soft light through high narrow windows, an inmate in a facility uniform seated alone, photorealistic.`,
+  jail_move_work_area: (loc, who) => `Prison work area — industrial workbenches, tools and materials laid out, an inmate in a facility uniform working under the supervision of a correctional officer in uniform, photorealistic.`,
+  jail_move_kitchen:   (loc, who) => `Prison kitchen — stainless steel counters, large pots on an industrial stove, inmates in plain facility uniforms and aprons working the line, staff supervising, photorealistic.`,
+  jail_move_control:   (loc, who) => `Prison guard control room — a bank of monitors showing cellblock camera feeds, a control console, a correctional officer in uniform seated at the desk, photorealistic.`,
+
+  // ── PRISON / JAIL — ACTIVITIES THAT CHANGE THE TOP IMAGE ──
+  jail_head_count:     (loc, who) => `Correctional officers in uniform moving through a prison cellblock conducting a head count, inmates in plain facility uniforms standing beside their bunks, a clipboard in hand, institutional lighting, photorealistic.`,
+  jail_line_up:        (loc, who) => `Inmates in plain facility uniforms standing in a straight line along a cellblock wall during count, hands visible, correctional officers in uniform walking the line, photorealistic.`,
+  jail_meal_tray:      (loc, who) => `${who.includes("empty") ? "A compartmented meal tray" : `${who} carrying a compartmented meal tray`} along the serving line in a prison cafeteria, food on the tray, stainless steel counter, plain facility uniform, photorealistic.`,
+  jail_shower:         (loc, who) => `${who.includes("empty") ? "An empty prison shower stall with water running" : `${who} under a wall-mounted shower in the prison shower area, water running, steam, a towel around the waist, bare shoulders visible, tasteful and non-explicit`}, tiled institutional walls, photorealistic.`,
+  jail_exercise:       (loc, who) => `Inmates in plain facility uniforms doing push-ups and pull-ups in a prison exercise yard, chain-link fence behind them, physical effort, daylight, photorealistic.`,
+  jail_change_clothing:(loc, who) => `An inmate in a plain facility uniform receiving a stack of folded institutional uniforms across a counter at the prison clothing exchange, no lettering on the fabric, photorealistic.`,
+  jail_read_write:     (loc, who) => `An inmate in a plain facility uniform sitting on a prison bunk writing on paper with a pencil, a worn paperback beside them, dim cell lighting, photorealistic.`,
+  jail_talk_prisoners: (loc, who) => `A group of inmates in plain facility uniforms talking quietly together at a bolted table in a prison day room, a visibly diverse group, plain institutional setting, photorealistic.`,
+
+  // ── PRISON / JAIL — ESCORTS (a chosen character and a zone change) ──
+  jail_escort_prisoner:(loc, who) => `A correctional officer in uniform escorting an inmate in a plain facility uniform through a prison corridor toward the cellblock, restrained hands, steel doors along the wall, photorealistic.`,
+  jail_bring_holding:  (loc, who) => `A correctional officer in uniform leading an inmate in a plain facility uniform into a prison holding area with concrete benches and a steel door, photorealistic.`,
+  jail_take_medical:   (loc, who) => `A correctional officer in uniform escorting an inmate in a plain facility uniform into a prison medical unit, a nurse in a plain nurse uniform waiting by the examination table, photorealistic.`,
+  jail_take_visiting:  (loc, who) => `A correctional officer in uniform escorting an inmate in a plain facility uniform into a prison visiting area with fixed tables, a visitor waiting at one of them, photorealistic.`,
 };
 
 // ── HOUSEHOLD ACTIVITIES ──

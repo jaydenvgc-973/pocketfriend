@@ -38,13 +38,23 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Standard attire used when a prison or jail has no matching uniform configured.
+// A confined person is never left in their own clothes, and staff are never left in
+// regular clothing.
+const DEFAULT_INMATE_UNIFORM = 'facility-issued prison uniform — plain institutional jumpsuit or matching scrub-style shirt and trousers in a muted neutral color, worn and plain, no lettering, no logos, no prints';
+const DEFAULT_CORRECTIONAL_UNIFORM = 'police-style correctional officer uniform — dark navy duty shirt and trousers with a duty belt, plain without lettering';
+const DEFAULT_NURSE_UNIFORM = 'nurse uniform — plain clinical scrubs in a solid muted color, professional, no lettering';
+const DEFAULT_DOCTOR_UNIFORM = 'doctor uniform — white physician coat over a plain clinical shirt, professional, no lettering';
+
 // ── INLINE UNIFORM TEXT RESOLVER ──────────────────────────────────────────────
 // Minimal uniform check for the backend's image-generation outfit context.
 // Evaluates the Location's uniforms against the character's actual status/
 // employment at that Location. Returns uniform text or null.
 function resolveUniformText(character: any, location: any): string | null {
+  // A facility with no uniforms configured still dresses the people inside it: the
+  // confinement defaults at the end of this resolver apply. Every uniform lookup below
+  // is a no-op on an empty object, so nothing else changes here.
   const uniforms = location.uniforms || {};
-  if (Object.keys(uniforms).length === 0) return null;
 
   const charId = character.id;
   const presence = character.resolved_presence_status || character.location_status || '';
@@ -176,6 +186,36 @@ function resolveUniformText(character: any, location: any): string | null {
       for (const u of Object.values(uniforms) as any[]) {
         if (u?.applicability === 'location_wide') return uText(u);
       }
+    }
+  }
+
+  // 7. CONFINEMENT FACILITY DEFAULTS — a prison or jail always dresses the people inside
+  // it correctly. When the facility has no matching uniform configured, the person's
+  // role supplies the standard attire, so a confined person is never left in their own
+  // clothes and staff are never left in regular clothing. Social workers and other
+  // civilian staff keep regular clothes.
+  if (isConfinement) {
+    const isInmateRole = character.is_jailed === true
+      || presence === 'incarcerated' || presence === 'confined'
+      || inArr(location.inmates);
+    if (isInmateRole) return DEFAULT_INMATE_UNIFORM;
+
+    const isStaffHere = location.worker_character_ids?.includes(charId)
+      || character.occupation_location_id === location.id
+      || (Array.isArray(character.additional_occupation_locations)
+        && character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id));
+
+    const title = String(
+      location.worker_job_titles?.[charId]
+      || (character.occupation_location_id === location.id ? character.work_details?.job_title : null)
+      || (isStaffHere ? character.occupation : '')
+      || ''
+    ).toLowerCase().trim();
+
+    if (isStaffHere && title) {
+      if (/(doctor|physician|surgeon|psychiatrist)/.test(title)) return DEFAULT_DOCTOR_UNIFORM;
+      if (/(nurse|nursing|medic|medical|clinician|paramedic)/.test(title)) return DEFAULT_NURSE_UNIFORM;
+      if (/(correction|guard|officer|sergeant|lieutenant|captain|warden|deputy)/.test(title)) return DEFAULT_CORRECTIONAL_UNIFORM;
     }
   }
 

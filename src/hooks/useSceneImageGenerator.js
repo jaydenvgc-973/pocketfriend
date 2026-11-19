@@ -14,6 +14,7 @@ import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityC
 import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
+import { buildJailAttireBlock } from "@/lib/jailSceneRules";
 
 /**
  * useSceneImageGenerator
@@ -145,7 +146,11 @@ export function useSceneImageGenerator() {
 
     // ── IDENTITY PREFIX — declaration + prohibition + name key ──
     // These are prepended to ALL Scene image prompts (initial, refresh, action).
-    const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}`;
+    // Prison / jail: the facility's clothing and population rules belong in every image
+    // of this place. Empty string at any other location.
+    const jailAttireBlock = buildJailAttireBlock(finalParticipants, location);
+
+    const identityPrefix = `${FICTIONAL_CHARACTER_DECLARATION}${CAUCASIAN_DEFAULT_PROHIBITION}${nameRefKey}${jailAttireBlock}`;
 
     // ── BACKGROUND POPULATION ──
     // A public venue is populated when characters are in it. The named people stay the

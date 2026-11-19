@@ -79,18 +79,23 @@ export function getSceneInteractions(location, activeZone, character, options = 
     };
 
     // Zone hint: if the action declares a preferred zone and it exists on the location, attach it
-    if (action.suggested_zone) {
-      if (realZones.includes(action.suggested_zone)) {
-        result.suggested_zone_name = action.suggested_zone;
-      }
+    if (action.suggested_zone && realZones.includes(action.suggested_zone)) {
+      result.suggested_zone_name = action.suggested_zone;
       // If zone doesn't exist, action is still available — just not zone-locked
     } else if (Array.isArray(action.zone_hints) && action.zone_hints.length > 0) {
-      // Several homes name the same kind of room differently. Match the hint keywords
+      // Several locations name the same kind of room differently. Match the hint keywords
       // against the REAL zones on this location; no match means no zone lock at all.
       const match = realZones.find(zone =>
         action.zone_hints.some(hint => String(zone).toLowerCase().includes(hint))
       );
       if (match) result.suggested_zone_name = match;
+    }
+
+    // A move activity that has no matching zone here cannot move anyone: it is reported
+    // as unavailable instead of narrating a move that never happened.
+    if (action.zone_move === true && !result.suggested_zone_name) {
+      result.disabled = true;
+      result.disabledReason = 'This zone is not set up at this location';
     }
 
     // Staff check: if action requires staff but none are on shift, flag it (still visible)

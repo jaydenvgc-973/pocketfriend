@@ -60,7 +60,7 @@ const ZONE_PRESETS = {
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
-  jail_prison: ["Cellblock", "Intake", "Visiting Area", "Exercise Yard", "Cafeteria", "Medical", "Administrative", "Holding Area"],
+  jail_prison: ["Entrance", "Exterior", "Cell", "General Population / Day Room", "Exercise Yard", "Cafeteria", "Medical", "Visiting Area", "Holding Area", "Intake / Booking", "Shower Area", "Laundry", "Library / Education Room", "Chapel", "Work Area", "Kitchen", "Guard / Control Room"],
   transportation: ["Main Lobby", "Ticket Booth", "Waiting Area", "Platform", "Concourse", "Boarding Gate", "Transit Shelter", "Information Desk", "Baggage Claim", "Security Checkpoint"],
 };
 

@@ -50,6 +50,7 @@ import { detectWorldPhoneIntent } from "@/lib/worldPhoneIntentDetector";
 import { buildWatchContextLabel } from "@/lib/videoEmbedSanitizer";
 import { isVickServicioCharacter } from "@/lib/vickDiagnosticIntentCheck";
 import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver";
+import { isSelectableParticipantAtZone } from "@/lib/jailSceneRules";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
@@ -530,6 +531,12 @@ export default function Scene() {
   const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
   const sceneCharacters = allSceneChars;
   const firstImage = location?.zones?.find((z) => z.image_urls?.length > 0)?.image_urls?.[0] || location?.image_urls?.[0] || null;
+
+  // PRISON / JAIL ENTRANCE AND EXTERIOR: the incarcerated population is not offered as
+  // selectable participants there — they are inside the facility, not at the gate.
+  const selectableNpcCandidates = allPossibleNpcs
+    .filter((n) => !sceneParticipants.some((p) => p.id === n.id))
+    .filter((n) => isSelectableParticipantAtZone(characters.find((c) => c.id === n.id) || n, location, activeZone || locationZones[0]?.zone_name));
 
   // ── IMAGE GENERATION HOOK ──
   // Identity authority chain:
@@ -1300,7 +1307,7 @@ export default function Scene() {
             <UsersIcon className="w-3.5 h-3.5" />{sharedResidenceParticipants.length}
           </button>
         )}
-        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={allPossibleNpcs.filter((n) => !sceneParticipants.some((p) => p.id === n.id))} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
+        <div ref={npcDropdownRef}><WhosHereDropdown presentParticipants={sceneParticipants} candidateNpcs={selectableNpcCandidates} selectedNpcs={selectedNpcs} onToggleNpc={toggleNpc} showDropdown={showNpcDropdown} onToggleDropdown={setShowNpcDropdown} onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }} renderNpc={renderNpc} residentialUnits={location?.residential_units || []} locationCategory={location?.category} /></div>
         <button onClick={() => setShowPhotoModal(true)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors" title="Scene photo"><Camera className="w-4 h-4" /></button>
         <button onClick={() => setWatchVideoActive((v) => !v)} className={`p-2 rounded-xl transition-colors ${watchVideoActive ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`} title="Watch Video"><Tv className="w-4 h-4" /></button>
       </div>
@@ -1365,8 +1372,12 @@ export default function Scene() {
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name; const isDisabled = action.disabled || actionCooldown; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+          {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+            // An activity that acts on a chosen character needs someone selected first.
+            const needsCharacter = action.requires_selected_character === true
+              && !(observeMode ? observeCast.length > 0 : broughtCharacters.length > 0);
+            const isDisabled = action.disabled || actionCooldown || needsCharacter; return (
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "Select a character first" : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}

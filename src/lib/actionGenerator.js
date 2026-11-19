@@ -333,11 +333,62 @@ const GOVERNMENT_ACTIONS = classifyAll([
 ]);
 
 // ── JAIL / PRISON ─────────────────────────────────────────────────────────────
+// Prison and jail activities.
+//   zone_move: true                     → the activity moves everyone to that zone (zone + top image update)
+//   requires_selected_character: true   → the activity needs a chosen character before it can run
 const JAIL_ACTIONS = classifyAll([
-  { id: "jail_visitation", label: "Visit inmate", emoji: "👤", cost: 0, type: "social", suggested_zone: "Visitation", requires_staff: true },
-  { id: "jail_paperwork", label: "File paperwork", emoji: "📝", cost: 0, type: "functional", suggested_zone: "Records", requires_staff: true },
-  { id: "jail_wait", label: "Wait to be processed", emoji: "⏳", cost: 0, type: "observational" },
-  { id: "jail_talk", label: "Talk to guard", emoji: "💬", cost: 0, type: "social", requires_staff: true },
+  // ── ZONE MOVES — zone and top image change with the move ──
+  { id: "jail_move_general_population", label: "Go to Day Room", emoji: "🚶", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"], zone_move: true },
+  { id: "jail_move_yard", label: "Go to Yard", emoji: "🌤️", cost: 0, type: "functional", suggested_zone: "Exercise Yard", zone_hints: ["yard"], zone_move: true },
+  { id: "jail_move_cafeteria", label: "Go to Cafeteria", emoji: "🍽️", cost: 0, type: "functional", suggested_zone: "Cafeteria", zone_hints: ["cafeteria", "mess hall"], zone_move: true },
+  { id: "jail_move_cell", label: "Go to Cell", emoji: "🚪", cost: 0, type: "functional", suggested_zone: "Cell", zone_hints: ["cell"], zone_move: true },
+  { id: "jail_move_holding", label: "Go to Holding", emoji: "⛓️", cost: 0, type: "functional", suggested_zone: "Holding Area", zone_hints: ["holding"], zone_move: true },
+  { id: "jail_move_medical", label: "Go to Medical", emoji: "🩺", cost: 0, type: "functional", suggested_zone: "Medical", zone_hints: ["medical", "infirmary"], zone_move: true },
+  { id: "jail_move_visiting", label: "Go to Visiting", emoji: "👥", cost: 0, type: "functional", suggested_zone: "Visiting Area", zone_hints: ["visiting", "visitation"], zone_move: true },
+  { id: "jail_move_shower", label: "Go to Showers", emoji: "🚿", cost: 0, type: "functional", suggested_zone: "Shower Area", zone_hints: ["shower"], zone_move: true },
+  { id: "jail_move_laundry", label: "Go to Laundry", emoji: "🧺", cost: 0, type: "functional", suggested_zone: "Laundry", zone_hints: ["laundry"], zone_move: true },
+  { id: "jail_move_library", label: "Go to Library", emoji: "📚", cost: 0, type: "functional", suggested_zone: "Library / Education Room", zone_hints: ["library", "education", "classroom"], zone_move: true },
+  { id: "jail_move_chapel", label: "Go to Chapel", emoji: "🕯️", cost: 0, type: "functional", suggested_zone: "Chapel", zone_hints: ["chapel"], zone_move: true },
+  { id: "jail_move_work_area", label: "Go to Work Area", emoji: "🔧", cost: 0, type: "functional", suggested_zone: "Work Area", zone_hints: ["work area", "shop"], zone_move: true },
+  { id: "jail_move_kitchen", label: "Go to Kitchen", emoji: "🍳", cost: 0, type: "functional", suggested_zone: "Kitchen", zone_hints: ["kitchen"], zone_move: true },
+  { id: "jail_move_control", label: "Go to Control Room", emoji: "🖥️", cost: 0, type: "functional", suggested_zone: "Guard / Control Room", zone_hints: ["control", "guard room"], zone_move: true },
+
+  // ── ACTIVITIES THAT CHANGE THE TOP IMAGE ──
+  { id: "jail_head_count", label: "Head Count", emoji: "🧮", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
+  { id: "jail_line_up", label: "Line Up for Count", emoji: "🧍", cost: 0, type: "functional", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
+  { id: "jail_meal_tray", label: "Get Meal Tray", emoji: "🥣", cost: 0, type: "functional", suggested_zone: "Cafeteria", zone_hints: ["cafeteria", "mess hall"] },
+  { id: "jail_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", suggested_zone: "Shower Area", zone_hints: ["shower"] },
+  { id: "jail_exercise", label: "Exercise", emoji: "💪", cost: 0, type: "functional", suggested_zone: "Exercise Yard", zone_hints: ["yard"] },
+  { id: "jail_change_clothing", label: "Prison Clothing", emoji: "👕", cost: 0, type: "functional", suggested_zone: "Laundry", zone_hints: ["laundry", "property", "clothing"] },
+  { id: "jail_read_write", label: "Read / Write", emoji: "📖", cost: 0, type: "functional", suggested_zone: "Cell", zone_hints: ["cell", "library"] },
+  { id: "jail_talk_prisoners", label: "Talk with Prisoners", emoji: "💬", cost: 0, type: "social", suggested_zone: "General Population / Day Room", zone_hints: ["general population", "day room", "cellblock"] },
+
+  // ── INTERACTIONS — a chosen character is required ──
+  { id: "jail_shakedown", label: "Shakedown", emoji: "🔦", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_search_prisoner", label: "Search Prisoner", emoji: "🧤", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_search_cell", label: "Search Cell", emoji: "🔎", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_inspect_belongings", label: "Inspect Belongings", emoji: "🎒", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_find_contraband", label: "Find Contraband", emoji: "📦", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_confiscate", label: "Confiscate Item", emoji: "🚫", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_issue_warning", label: "Issue Warning", emoji: "⚠️", cost: 0, type: "social", requires_selected_character: true },
+  { id: "jail_respond_incident", label: "Respond to Incident", emoji: "🚨", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_break_up_fight", label: "Break Up Fight", emoji: "✋", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_meet_visitor", label: "Meet Visitor / Lawyer", emoji: "👥", cost: 0, type: "social", suggested_zone: "Visiting Area", zone_hints: ["visiting", "visitation"], requires_selected_character: true },
+  { id: "jail_social_worker", label: "Speak with Social Worker", emoji: "🗣️", cost: 0, type: "social", requires_selected_character: true },
+  { id: "jail_request_medical", label: "Request Medical", emoji: "🩺", cost: 0, type: "functional", requires_selected_character: true },
+  { id: "jail_receive_medical", label: "Receive Medical Care", emoji: "💉", cost: 0, type: "functional", suggested_zone: "Medical", zone_hints: ["medical", "infirmary"], requires_selected_character: true },
+
+  // ── ESCORTS — a chosen character AND a zone change ──
+  { id: "jail_escort_prisoner", label: "Escort Prisoner", emoji: "🚶‍♂️", cost: 0, type: "functional", suggested_zone: "Cell", zone_hints: ["cell"], zone_move: true, requires_selected_character: true },
+  { id: "jail_bring_holding", label: "Bring to Holding", emoji: "⛓️", cost: 0, type: "functional", suggested_zone: "Holding Area", zone_hints: ["holding"], zone_move: true, requires_selected_character: true },
+  { id: "jail_take_medical", label: "Take to Medical", emoji: "🩺", cost: 0, type: "functional", suggested_zone: "Medical", zone_hints: ["medical", "infirmary"], zone_move: true, requires_selected_character: true },
+  { id: "jail_take_visiting", label: "Take to Visiting", emoji: "👥", cost: 0, type: "functional", suggested_zone: "Visiting Area", zone_hints: ["visiting", "visitation"], zone_move: true, requires_selected_character: true },
+
+  // ── VISITOR / ADMINISTRATION ACTIVITIES ──
+  { id: "jail_visitation", label: "Visit inmate", emoji: "👤", cost: 0, type: "social", suggested_zone: "Visiting Area", zone_hints: ["visiting", "visitation"], requires_staff: true },
+  { id: "jail_paperwork", label: "File paperwork", emoji: "📝", cost: 0, type: "functional", suggested_zone: "Intake / Booking", zone_hints: ["records", "intake", "booking"], requires_staff: true },
+  { id: "jail_wait", label: "Wait to be processed", emoji: "⏳", cost: 0, type: "observational", suggested_zone: "Holding Area", zone_hints: ["holding", "intake", "booking"] },
+  { id: "jail_talk", label: "Talk to guard", emoji: "💬", cost: 0, type: "social", suggested_zone: "Guard / Control Room", zone_hints: ["control", "guard room"], requires_staff: true },
 ]);
 
 // ── SALON / SPA / BARBERSHOP ──────────────────────────────────────────────────
