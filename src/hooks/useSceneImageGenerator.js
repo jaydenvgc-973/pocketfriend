@@ -16,6 +16,7 @@ import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
 import { buildShowerStateRule } from "@/lib/sceneActionConfig";
+import { isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 
 /**
  * useSceneImageGenerator
@@ -161,7 +162,11 @@ export function useSceneImageGenerator() {
     // only identifiable subjects; ordinary staff and patrons may be visible behind them.
     // Private residences and restricted zones never get this.
     const ambientList = (Array.isArray(ambientPopulation) ? ambientPopulation : []).filter((p) => p && (p.name || p.role));
-    const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv;
+    // A private living space of the property — a dorm room, studio apartment or other
+    // student residence — is never populated with strangers merely because the school
+    // around it has ambient students. The shared school zones are unaffected.
+    const privateLivingSpace = isPrivateResidentialZone(location, activeZone);
+    const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace;
     // ⛔ Background people are NEVER named in the prompt. A name makes them a named subject
     // competing for the supplied reference images — that is how a random student, teacher,
     // or bartender could end up rendered in place of the actual character. They are
@@ -194,7 +199,7 @@ export function useSceneImageGenerator() {
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
-      const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
+      const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace && location.location_type === "global";
 
       if (!isGlobal && allowBackgroundExtras) {
         finalPrompt += ` ${namedSubjectsRule(finalParticipants)}${ambientRule}`;
@@ -229,7 +234,7 @@ export function useSceneImageGenerator() {
 
     const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
     const activeZoneName = currentZoneForAction?.zone_name || "this area";
-    const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && location.location_type === "global";
+    const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace && location.location_type === "global";
     const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
     const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
 

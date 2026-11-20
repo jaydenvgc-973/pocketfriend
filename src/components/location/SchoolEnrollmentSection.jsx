@@ -5,6 +5,7 @@ import { Plus, GraduationCap, DollarSign, Award, Trash2, Home, Pencil, Check, X 
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
+import { isEligibleSchoolHousingResident } from '@/lib/residentialUnits';
 
 /**
  * SchoolEnrollmentSection — PENCIL/EDIT DROPDOWN ONLY
@@ -45,6 +46,9 @@ function getResidencyMode(location) {
 }
 
 export default function SchoolEnrollmentSection({ location, onUpdate }) {
+  // The same residency test the housing section uses: enrollment with campus residency,
+  // or the school already being the character's home. Read only.
+
   const queryClient = useQueryClient();
   const [showAddStudent, setShowAddStudent] = useState(false);
   const [selectedCharIds, setSelectedCharIds] = useState(new Set());
@@ -570,7 +574,11 @@ export default function SchoolEnrollmentSection({ location, onUpdate }) {
               const char = characters.find(c => c.id === student.character_id);
               // Campus residency truth: read from saved enrollment record, not from residents array
               // (residents array is a secondary sync; the enrollment record is the source of truth)
-              const isOnCampus = student.lives_on_campus === true;
+              // An established campus residence is never displayed as Non-residential just
+              // because an older enrollment row has not captured the flag: the character's own
+              // active enrollment and established home are read here. Nothing is rewritten.
+              const isOnCampus = student.lives_on_campus === true
+                || (!!char && isEligibleSchoolHousingResident(char, location));
               const isEditing = editingStudentId === student.character_id;
               return (
                 <div key={idx} className="bg-card border border-border rounded-xl p-3 space-y-2">

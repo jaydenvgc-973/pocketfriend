@@ -54,7 +54,7 @@ import { isSelectableParticipantAtZone, isIncarceratedCharacter, isJailOrPrison 
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
-import { buildBackgroundPopulation } from "@/lib/sceneBackgroundPopulation";
+import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
@@ -729,6 +729,10 @@ export default function Scene() {
       npcs: allPossibleNpcs,
       isHomeLocation,
       isRestrictedEnv,
+      // A dorm room, studio apartment or other private living space of the property gets
+      // no ambient population merely because it sits inside a school. The shared school
+      // zones keep theirs.
+      isPrivateSpace: isPrivateResidentialZone(location, activeZone || locationZones[0]?.zone_name),
       activeZone: activeZone || locationZones[0]?.zone_name,
     });
   }, [observeMode, allPossibleNpcs.filter((n) => n.isNpc === true).map((n) => n.id).join(','), isHomeLocation, isRestrictedEnv, activeZone]);
