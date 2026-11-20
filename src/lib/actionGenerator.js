@@ -17,6 +17,9 @@
  *   requires_staff  — true when action needs an on-shift staff member
  */
 
+import { isPrivateResidentialZone } from './sceneBackgroundPopulation.js';
+import { HOUSEHOLD_ACTION_IDS } from './sceneActionConfig.js';
+
 // ── ACTION CLASSIFICATION HELPER ─────────────────────────────────────────────
 // Adds explicit action_class and is_paid to every action definition.
 // This is the AUTHORITATIVE classification — no inference allowed downstream.
@@ -704,6 +707,18 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   if (actions === BAR_CLUB_ACTIONS && offersFoodService(venue)) venueExtras.push(...BAR_FOOD_ACTIONS);
   venueExtras.push(...buildVenueDishActions(venue));
   if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
+
+  // A school's private student living spaces — a dorm room, a studio apartment, an
+  // apartment unit — ARE living spaces. Inside one, the household activities a home
+  // already has (make the bed, shower, brush teeth, clean up, wash dishes) are added
+  // alongside the school's own activities, so being at home on campus never removes
+  // Attend class or the rest. Shared school zones are untouched, and this adds no new
+  // activity: the catalog entries below are the existing HOME actions.
+  if (!isConfinementVenue && venue.category === 'school' && isPrivateResidentialZone(venue, activeZone)) {
+    const householdActions = HOME_ACTIONS.filter((a) => HOUSEHOLD_ACTION_IDS.includes(a.id));
+    const alreadyPresent = new Set(actions.map((a) => a.id));
+    actions = [...actions, ...householdActions.filter((a) => !alreadyPresent.has(a.id))];
+  }
 
   // Caffeine filter: only restrict within 2 hours of character's scheduled sleep.
   // The old arbitrary 1:00 PM Eastern cutoff has been removed — it was incorrect.
