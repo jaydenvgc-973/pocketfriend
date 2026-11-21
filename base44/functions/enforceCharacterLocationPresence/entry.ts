@@ -44,11 +44,15 @@ const _clampNeed = (v) => Math.max(0, Math.min(100, v));
 
 // ── HELPERS (aligned with src/lib/locationResolutionEngine.js) ────────────────
 
-function isOnShiftNow(shift, etTime) {
+function isOnShiftNow(shift, etTime, fallbackDays = null) {
   if (!shift?.start || !shift?.end) return false;
-  if (shift.days && shift.days.length > 0) {
-    if (!shift.days.includes(etTime.getDay())) return false;
-  }
+  // Day authority: the shift's own days first, then the character's established
+  // work days. A shift that carries no days at all is not day-scoped, so the
+  // employer's operating hours (checked by the caller) decide access.
+  const days = (Array.isArray(shift.days) && shift.days.length > 0)
+    ? shift.days
+    : (Array.isArray(fallbackDays) && fallbackDays.length > 0 ? fallbackDays : null);
+  if (days && !days.includes(etTime.getDay())) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
   const [sh, sm] = shift.start.split(':').map(Number);
   const [eh, em] = shift.end.split(':').map(Number);
@@ -56,6 +60,55 @@ function isOnShiftNow(shift, etTime) {
   const endMin = eh * 60 + em;
   if (endMin < startMin) return now >= startMin || now < endMin;
   return now >= startMin && now < endMin;
+}
+
+// ── EMPLOYER WORKSPACE INSIDE A PROPERTY ────────────────────────────────────
+// A business can operate inside a larger property (Agency (NJ) inside Gateway
+// House). The employer is the property's workplaces[] entry that already claims
+// this character — the same link buildEmploymentIdentityBlock reads. The
+// property is only the building it operates inside; the property's availability
+// never overrides that business's own closing time.
+function resolveEmployerWorkplace(character, loc) {
+  const workplaces = Array.isArray(loc?.workplaces) ? loc.workplaces : [];
+  if (workplaces.length === 0) return null;
+  return workplaces.find((w) => (w?.worker_character_ids || []).includes(character.id)) || null;
+}
+
+// A business that configured its own operating hours governs access to itself.
+// A day with no configured hours is a closed day for that business. A business
+// with no configured hours at all is not gated here (existing behavior).
+function isWorkplaceOpenNow(workplace, etTime) {
+  const hours = Array.isArray(workplace?.operating_hours) ? workplace.operating_hours : [];
+  if (hours.length === 0) return true;
+  const dow = etTime.getDay();
+  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
+  const forDay = hours.filter((h) => h.day_of_week === dow);
+  if (forDay.length === 0) return false;
+  return forDay.some((h) => {
+    const [sh, sm] = String(h.open_time || '').split(':').map(Number);
+    const [eh, em] = String(h.close_time || '').split(':').map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return false;
+    const s = sh * 60 + sm;
+    const e = eh * 60 + em;
+    return e < s ? (nowMin >= s || nowMin < e) : (nowMin >= s && nowMin < e);
+  });
+}
+
+// ── USER PLACEMENT PRECEDENCE ───────────────────────────────────────────────
+// A completed user placement (teleport, travel, confirmed commitment) is newer
+// authority than a schedule recompute. This recompute reports committed reality;
+// it must never manufacture a work state over a placement the user already made.
+const USER_PLACEMENT_REASONS = [
+  'user_teleport',
+  'user_teleport_rabbit_hole',
+  'user_travel',
+  'user_confirmed_commitment',
+  'scheduled_user_confirmed_relocation',
+];
+function userPlacementAfter(character, atMs) {
+  if (!USER_PLACEMENT_REASONS.includes(character.resolved_source_reason)) return false;
+  const ts = character.resolved_last_updated_at ? new Date(character.resolved_last_updated_at).getTime() : NaN;
+  return Number.isFinite(ts) && Number.isFinite(atMs) && ts >= atMs;
 }
 
 function isCharacterOnWorkSchedule(character, etTime) {
@@ -860,6 +913,12 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
     }
     const workLoc = locationMap[workLocId];
+    // A business inside this property governs its own access. Employment there
+    // never authorizes a work presence after that business has closed.
+    const _requestedEmployerWorkplace = resolveEmployerWorkplace(character, workLoc);
+    if (_requestedEmployerWorkplace && !isWorkplaceOpenNow(_requestedEmployerWorkplace, etTime)) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'employer_workspace_closed' };
+    }
     const wasSleeping = currentStatus === 'sleeping' || currentStatus === 'napping';
     const canonicalFields = {
       resolved_current_location_id: workLocId,
@@ -1449,6 +1508,47 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
   // must NOT resolve at_work from the raw schedule when Vacation Mode is ON.
   // The underlying employment record remains intact; only enforcement is
   // skipped. The character falls through to sleep/visit/home resolution.
+  // User placement precedence: a shift that started before the user's own
+  // placement does not re-claim the character. The obligation pathway
+  // (enforceCharacterWorkSchedule) remains the explicit authority that may
+  // move a character to work; this recompute does not.
+  // Earliest shift start today for this character's primary employment —
+  // the character's own work_start_time and the property's worker_shifts entry
+  // are both existing schedule sources. Used only to decide whether a completed
+  // user placement is newer than the shift it would otherwise be re-claimed by.
+  const _shiftStartTodayMs = (() => {
+    const starts = [];
+    if (character.work_start_time) starts.push(character.work_start_time);
+    const _primaryLoc = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
+    const _locShiftStart = _primaryLoc?.worker_shifts?.[character.id]?.start;
+    if (_locShiftStart) starts.push(_locShiftStart);
+    const minutes = starts
+      .map((t) => {
+        const [h, m] = String(t).split(':').map(Number);
+        return Number.isNaN(h) ? null : h * 60 + (m || 0);
+      })
+      .filter((n) => n != null)
+      .sort((a, b) => a - b)[0];
+    if (minutes == null) return null;
+    const d = new Date(etTime);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime() + minutes * 60000;
+  })();
+  const _userPlacementOverridesSchedule =
+    _shiftStartTodayMs != null && userPlacementAfter(character, _shiftStartTodayMs);
+  // Preserve the completed user placement exactly as committed (location, state
+  // and its own source reason) so repeated recomputes — opening Chat, Right Now,
+  // sending a message — cannot relabel it and then re-claim the character later.
+  if (_userPlacementOverridesSchedule && character.resolved_current_location_id) {
+    const _placedLoc = locationMap[character.resolved_current_location_id];
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: _placedLoc?.name || character.resolved_current_location_name || null,
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: character.resolved_source_reason,
+    };
+  }
   if (!hasValidCallout && character.vacation_mode !== true) {
     // Stale-location correction: for an explicitly configured rabbit-hole primary,
     // do NOT fall back to current_work_location_id — that field may be stale from
@@ -1494,9 +1594,16 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
       if (job.type === 'linked') {
         const workLocation = locationMap[job.locId];
         if (!workLocation) continue;
+        // A business inside this property governs its own access. A closed
+        // business is never resolved as this character's workplace, and its
+        // parent property's availability does not override its closing time.
+        const _employerWorkplace = resolveEmployerWorkplace(character, workLocation);
+        if (_employerWorkplace && !isWorkplaceOpenNow(_employerWorkplace, etTime)) {
+          continue;
+        }
         const locationShift = workLocation.worker_shifts?.[character.id];
         if (locationShift) {
-          if (isOnShiftNow(locationShift, etTime)) {
+          if (isOnShiftNow(locationShift, etTime, character.work_days)) {
             return { resolved_current_location_id: job.locId, resolved_current_location_name: workLocation.name || 'Work', resolved_location_type: 'work', resolved_presence_status: 'at_work', resolved_source_reason: 'work_schedule' };
           }
           continue;

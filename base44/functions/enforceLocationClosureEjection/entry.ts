@@ -144,6 +144,37 @@ function isResidentialSpaceFor(char, loc) {
   return false;
 }
 
+// A business inside an open property can still be closed. Its own configured
+// hours govern access to it; a day with no configured hours is a closed day for
+// that business. A business with no configured hours at all is not gated here.
+function isWorkplaceOpenNow(workplace) {
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hours = Array.isArray(workplace?.operating_hours) ? workplace.operating_hours : [];
+  if (hours.length === 0) return true;
+  const dow = nowET.getDay();
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const forDay = hours.filter(h => h.day_of_week === dow);
+  if (forDay.length === 0) return false;
+  return forDay.some(h => {
+    const [sh, sm] = String(h.open_time || '').split(':').map(Number);
+    const [eh, em] = String(h.close_time || '').split(':').map(Number);
+    if ([sh, sm, eh, em].some(n => Number.isNaN(n))) return false;
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    return endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin);
+  });
+}
+
+// The business inside this property that already claims this character as its
+// employee. Presence at the property is never the same as presence in that
+// business, so this link alone never removes anyone — only an at_work presence
+// at that business does.
+function resolveEmployerWorkplace(char, loc) {
+  const workplaces = Array.isArray(loc?.workplaces) ? loc.workplaces : [];
+  if (workplaces.length === 0) return null;
+  return workplaces.find(w => (w?.worker_character_ids || []).includes(char.id)) || null;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -174,11 +205,23 @@ Deno.serve(async (req) => {
       const currentLoc = locationMap[char.resolved_current_location_id];
       if (!currentLoc) continue;
 
-      // Skip if location is open
-      if (isLocationOpen(currentLoc)) continue;
+      // A business inside an open property can still be closed. Only a character
+      // actually committed as working there is affected — a resident of the
+      // property, or anyone occupying another permitted space, is not.
+      const employerWorkplace = char.resolved_presence_status === 'at_work'
+        ? resolveEmployerWorkplace(char, currentLoc)
+        : null;
+      const closedWorkspace = employerWorkplace && !isWorkplaceOpenNow(employerWorkplace)
+        ? employerWorkplace
+        : null;
 
-      // A closed business inside a property never closes that property's homes.
-      if (isResidentialSpaceFor(char, currentLoc)) continue;
+      if (!closedWorkspace) {
+        // Skip if location is open
+        if (isLocationOpen(currentLoc)) continue;
+
+        // A closed business inside a property never closes that property's homes.
+        if (isResidentialSpaceFor(char, currentLoc)) continue;
+      }
 
       // Location is closed — character must be ejected
       console.log(`[ejection] ${char.name} (${char.character_type}) at closed location: ${currentLoc.name}`);
