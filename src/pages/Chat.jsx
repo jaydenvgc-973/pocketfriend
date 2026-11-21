@@ -489,7 +489,16 @@ export default function Chat({ chatTypeOverride } = {}) {
       //   "Send me a pic of the room"           → Inanimate scene, no character injection
       //
       // The resolver uses intent-aware patterns, not just name scanning.
-      const allCachedCharsForSubjects = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+      let allCachedCharsForSubjects = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+      // The cached list holds the account roster, but it is empty when Chat is opened
+      // directly (deep link, refresh) — and a named subject missing from the roster made
+      // the resolver fall back to the sender. Read the authoritative records once instead.
+      const _rosterForSubjectResolution = async () => {
+        if (allCachedCharsForSubjects.length > 0) return allCachedCharsForSubjects;
+        const fresh = await base44.entities.Character.filter({ owner_email: currentUser.email }).catch(() => []);
+        if (fresh?.length) allCachedCharsForSubjects = fresh;
+        return allCachedCharsForSubjects;
+      };
 
       let resolvedCharacterId = characterId; // default: sender is subject
       let resolvedAdditionalCharacterIds = [];
@@ -509,6 +518,7 @@ export default function Chat({ chatTypeOverride } = {}) {
         // regeneration path uses — no duplicate identity storage, no parallel system.
         // The conversation is passed in: "a picture of him" means what the conversation says.
         const _subjectConvo = messagesRef.current?.length ? messagesRef.current : messages;
+        allCachedCharsForSubjects = await _rosterForSubjectResolution();
         subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser, _subjectConvo);
         // Log all resolution steps for diagnostics
         (subjectResult.log || []).forEach(entry => console.log(entry));
@@ -1874,6 +1884,19 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           : [];
       }
 
+      // An explicit request must render the person the conversation is about — even when the
+      // prompt named them only as "him" or "the baby". Name them so the existing subject
+      // resolver binds their identity instead of defaulting to the sender.
+      if (explicitImageRequest && imagePrompts.length > 0) {
+        let _convoRoster = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+        if (_convoRoster.length === 0) _convoRoster = await base44.entities.Character.filter({ owner_email: currentUser.email }).catch(() => []);
+        const _convoPerson = resolveConversationalPerson(messages, _convoRoster, characterId)[0] || null;
+        if (_convoPerson && _convoPerson.id !== characterId) {
+          const _namedRe = new RegExp(`\\b${_convoPerson.name.split(/\s+/)[0]}\\b`, 'i');
+          imagePrompts = imagePrompts.map(p => _namedRe.test(p) ? p : `${_convoPerson.name}, ${p.replace(/^\[(CHARACTER|JOINT|USER)\]\s*/i, '')}`);
+        }
+      }
+
       if (responseObj.scheduled_events?.length > 0 && convoId) {
         for (const ev of responseObj.scheduled_events) {
           if (!ev.trigger_time || !ev.description) continue;
@@ -1942,26 +1965,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     if (isMountedRef.current) setIsTyping(false);
 
     // --- STRICT MESSAGE SEPARATION ---
-    // Resolve subject type for image generation (used across all image messages)
-    const msgLower = text.toLowerCase();
-    const worldNameLower = userSettings?.fictional_world_name?.toLowerCase() || '';
-    const worldNameInPrompt = worldNameLower && msgLower.includes(worldNameLower);
-
-    const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
-    const isUserRequest = !isJointRequest && (
-      worldNameInPrompt || // CRITICAL: user's world name in prompt = user avatar reference
-      /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
-      /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
-      /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
-    );
-    const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-
-    if (worldNameInPrompt) {
-      console.log(`[SUBJECT-TYPE] World name "${worldNameLower}" detected in prompt → subjectType=user`);
-    }
-
-
-
     const createTextMessage = async (textContent, { sourceMessageId = null, lockId = null } = {}) => {
       if (!textContent?.trim()) return null;
       const navigatedAway = !isMountedRef.current;

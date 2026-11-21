@@ -1120,7 +1120,10 @@ Deno.serve(async (req) => {
       console.log(`[generateImageAsync]   ⛔ HARD SUBJECT LOCK ACTIVE — sender refs, appearance lock, avatar, and identity will NOT be injected`);
     }
 
-    const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+    let msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+    // Same fallback the character fetch below already uses: a failed or throttled service-role
+    // read must not be reported as a missing message and abort the whole generation.
+    if (!msgList?.length && user) msgList = await base44.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
     const message = msgList?.[0];
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
@@ -2428,7 +2431,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         filtered: failureReason === 'content_policy',
         error: failureError,
         attempts: attemptCount,
-      }, { status: 500 });
+      }, { status: 200 });
     }
 
     // ── SUCCESS ───────────────────────────────────────────────────────────────
@@ -2440,7 +2443,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
     // character image. Conversation context (father/dad themes) can cause the model to
     // substitute a different person even when the image prompt has no relationship terms.
     // If the image substitutes a different person, FAIL — do not post to chat.
-    const _canValidate = _subjectAuthName && charRecord && genRes?.url && subjectType !== 'joint' && !hasMultipleCharSubjects && !effectiveUserSubject;
+    const _canValidate = _subjectAuthName && charRecord && genRes?.url && subjectType !== 'joint' && !hasMultipleCharSubjects && !effectiveUserSubject && _promptHasRelRisk;
     if (_canValidate) {
       const _sd = [charRecord.age_range, charRecord.gender, (charRecord.ethnicities||[]).join('/'), charRecord.appearance_lock?.skin_tone, charRecord.appearance_lock?.hairstyle].filter(Boolean).join(', ');
       try {
@@ -2454,7 +2457,7 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         if (!_ok) {
           console.error(`[generateImageAsync] ⛔ SUBJECT MISMATCH — image does not depict "${_subjectAuthName}". Failing (not posted).`);
           await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]', generation_context: { ...baseGenerationContext, failure_reason: 'subject_mismatch', failure_error: `Image did not depict "${_subjectAuthName}". ${_rsn}`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: failedAttempts, attempt_count: attemptCount } }).catch(()=>{});
-          return Response.json({ success: false, reason: 'subject_mismatch', filtered: false, error: `Image did not depict the prompt subject "${_subjectAuthName}".`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: attemptCount }, { status: 500 });
+          return Response.json({ success: false, reason: 'subject_mismatch', filtered: false, error: `Image did not depict the prompt subject "${_subjectAuthName}".`, subject_validation: { depicts_subject: false, reason: _rsn }, attempts: attemptCount }, { status: 200 });
         }
       } catch (_vE) { console.warn(`[generateImageAsync] Subject validation error (non-blocking): ${_vE?.message}`); }
     }
