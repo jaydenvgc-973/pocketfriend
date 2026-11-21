@@ -543,8 +543,40 @@ Deno.serve(async (req) => {
     let reachOutContext = '';
     let messageIntent = 'general check-in';
 
-    const presenceLabel = char.resolved_current_location_name
-      ? `${char.resolved_current_location_name}${char.resolved_presence_status ? ` (${String(char.resolved_presence_status).replace(/_/g, ' ')})` : ''}`
+    // ── AUTHORITATIVE LOCATION — the same state the geotag shows ──────────────
+    // The canonical context above reconnects to the sole canonical writer for the
+    // prompt body. This line must not read the raw resolved_* fields on its own,
+    // because they can lag a schedule change. Ask the same authority for this exact
+    // moment, then take the place name exactly as the geotag does: the place record's
+    // own name first, then the resolved name. No home/work/school fallback.
+    let livePresence = char;
+    try {
+      const authRes = await sr.functions.invoke('enforceCharacterLocationPresence', {
+        character_id: char.id,
+        owner_email: char.owner_email,
+      });
+      const committed = (authRes?.data || authRes)?.committed_result;
+      if (committed) {
+        livePresence = {
+          ...char,
+          resolved_current_location_id: committed.resolved_current_location_id ?? char.resolved_current_location_id,
+          resolved_current_location_name: committed.resolved_current_location_name ?? char.resolved_current_location_name,
+          resolved_location_type: committed.resolved_location_type ?? char.resolved_location_type,
+          resolved_presence_status: committed.resolved_presence_status ?? char.resolved_presence_status,
+        };
+      }
+    } catch (_) { /* unreachable authority — the record in hand is its last committed state */ }
+
+    let livePlaceRecord = null;
+    if (livePresence.resolved_current_location_id) {
+      const placeList = await sr.entities.LocationReference
+        .filter({ id: livePresence.resolved_current_location_id }, null, 1)
+        .catch(() => []);
+      livePlaceRecord = placeList?.[0] || null;
+    }
+    const liveLocationName = livePlaceRecord?.name || livePresence.resolved_current_location_name || null;
+    const presenceLabel = liveLocationName
+      ? `${liveLocationName}${livePresence.resolved_presence_status ? ` (${String(livePresence.resolved_presence_status).replace(/_/g, ' ')})` : ''}`
       : null;
 
     if (manualRequest) {

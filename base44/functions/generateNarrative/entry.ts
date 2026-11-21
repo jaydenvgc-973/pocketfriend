@@ -698,7 +698,24 @@ Deno.serve(async (req) => {
     const temporal = buildTemporalBlock(char, lastMsgTimestamp, sunriseTime, sunsetTime);
     const { isAsleep, timeStr, timeOfDayDesc, hourET } = temporal;
 
-    // ── Step 4: Resolve current location (from canonical character record) ────
+    // ── Step 4: Reconnect to the canonical location authority ─────────────────
+    // The stored resolved_* fields can lag a schedule change. Ask the same authority
+    // the Homepage card, the Chat geotag and Travel read for this exact moment, then
+    // resolve from its committed result. No home/work/school fallback is used.
+    try {
+      const authRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+        character_id: char.id,
+        owner_email: char.owner_email || null,
+      });
+      const committed = (authRes?.data || authRes)?.committed_result;
+      if (committed) {
+        if (committed.resolved_current_location_id !== undefined) char.resolved_current_location_id = committed.resolved_current_location_id || null;
+        if (committed.resolved_current_location_name !== undefined) char.resolved_current_location_name = committed.resolved_current_location_name || null;
+        if (committed.resolved_location_type !== undefined) char.resolved_location_type = committed.resolved_location_type || null;
+        if (committed.resolved_presence_status !== undefined) char.resolved_presence_status = committed.resolved_presence_status || null;
+      }
+    } catch (_) { /* authority unreachable — the record in hand is its last committed state */ }
+
     const resolvedLocationName = char.resolved_current_location_name || null;
     const resolvedPresenceStatus = char.resolved_presence_status || null;
     const resolvedLocationType = char.resolved_location_type || null;

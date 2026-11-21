@@ -563,10 +563,30 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   const locationAffinityNote = buildLocationAffinityContext(character);
 
   // ── AUTHORITATIVE LOCATION — where this message is actually written from ──
-  // The committed resolved_* fields are the truth about where the character is now.
-  // A home fallback would place them at home while they are at work, at school, or
-  // out, which is how a message ends up describing the wrong surroundings. Location
-  // is a constraint on what can physically happen, not a thing to announce.
+  // Reconnect to the sole canonical writer before writing anything: it is the same
+  // authority the Homepage card, the Chat geotag and Travel read, and calling it with
+  // no requested transition returns the state it resolves for this exact moment. The
+  // raw resolved_* fields are not used on their own — they can lag a schedule change,
+  // which is how a message ends up describing the place the character already left.
+  // Location is a constraint on what can physically happen, not a thing to announce.
+  try {
+    const authRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+      character_id: character.id,
+      owner_email: character.owner_email || user?.email || null,
+    });
+    const committed = (authRes?.data || authRes)?.committed_result;
+    if (committed) {
+      character = {
+        ...character,
+        resolved_current_location_id: committed.resolved_current_location_id ?? character.resolved_current_location_id,
+        resolved_current_location_name: committed.resolved_current_location_name ?? character.resolved_current_location_name,
+        resolved_location_type: committed.resolved_location_type ?? character.resolved_location_type,
+        resolved_presence_status: committed.resolved_presence_status ?? character.resolved_presence_status,
+        resolved_source_reason: committed.resolved_source_reason ?? character.resolved_source_reason,
+      };
+    }
+  } catch (_) { /* the authority is unreachable — the record in hand is what it last committed */ }
+
   const currentLocationId = character.resolved_current_location_id || null;
   let currentLocationRecord = null;
   if (currentLocationId) {
@@ -575,7 +595,8 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
       .catch(() => []);
     currentLocationRecord = locList?.[0] || null;
   }
-  const currentLocationName = character.resolved_current_location_name || currentLocationRecord?.name || null;
+  // Same precedence the geotag uses: the place record's own name, then the resolved name.
+  const currentLocationName = currentLocationRecord?.name || character.resolved_current_location_name || null;
   const occupiedUnit = currentLocationRecord
     ? (currentLocationRecord.residential_units || []).find(u => (u.occupant_character_ids || []).includes(character.id))
     : null;
@@ -586,7 +607,8 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
     ? `\n\nLOCATION AUTHORITY — WHERE YOU PHYSICALLY ARE RIGHT NOW:
 You are at ${currentLocationName}${occupiedUnit?.unit_name ? `, in ${occupiedUnit.unit_name}` : ''}${currentPresenceLabel ? ` (${currentPresenceLabel})` : ''}.
 Anything you say you are doing right now must be possible in that place as it actually is. Another place may come up only as a memory, a reference, a plan, or something that already happened, never as where you are doing this now. A previous narrative or a home routine is not evidence of being somewhere else. Do NOT announce or name your location unless it is natural to the message.`
-    : '';
+    : `\n\nLOCATION AUTHORITY — NO PLACE IS ESTABLISHED RIGHT NOW:
+The authoritative location system establishes no physical place for you at this moment. Do NOT say or imply you are at home, at work, at school, or in any specific setting, and do not describe surroundings that belong to a named place. Keep what you say general. Do NOT invent, name, or imply a location to fill the gap.`;
 
   const needExamples = getNeedExamples(character);
   const householdActivityExamples = await getHouseholdActivityExamples(base44, character);

@@ -7,8 +7,7 @@ import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExa
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
-import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
-import { getLocations } from "@/lib/locationSessionCache";
+import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import { getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
 
 const COOLDOWN_SECONDS = 30;
@@ -206,32 +205,32 @@ ALLOWED — remote-only framing:
       const romanticLevel = character.romantic_level ?? 0;
       const attractionLevel = character.attraction_level ?? 0;
       const emotionalState = character.emotional_state || "calm";
-      // ── AUTHORITATIVE LOCATION — resolved for THIS generation ────────────────
-      // The stored resolved_* fields are a fallback only. The live resolver the Home
-      // and Travel pages already read is the authority, so a narrative written after a
-      // move cannot describe the place the character has left. A property that keeps
-      // residential units also contributes the unit this character actually lives in,
-      // so a dorm room is never described as the campus around it.
+      // ── AUTHORITATIVE LOCATION — the exact snapshot the Chat geotag displays ──
+      // The geotag reads buildCharacterInScene(character, locationMap): the shared
+      // resolver over the character record and every LocationReference. This generation
+      // reads that same snapshot, for this moment: the character record is fetched fresh
+      // (never the possibly-stale prop) and the locations are fetched fresh (never a
+      // session cache). No stored name, city, or home fallback is used — if the
+      // authoritative reference establishes no place, the narrative is told that instead
+      // of being handed a place the character may not be in.
+      let liveCharacter = character;
       let narrativeLocationMap = {};
       try {
-        const narrativeLocations = await getLocations(async () => {
-          const r = await base44.functions.invoke('fetchAllLocationsForUser', {});
-          return r?.data?.locations || [];
-        });
-        (narrativeLocations || []).forEach(l => { if (l?.id) narrativeLocationMap[l.id] = l; });
-      } catch {
-        narrativeLocationMap = {};
-      }
-      const authoritativeLocation = resolveCharacterLocation(character, narrativeLocationMap);
-      const locationRecord = narrativeLocationMap[authoritativeLocation.resolved_current_location_id] || null;
-      const occupiedUnit = locationRecord ? getUnitForCharacter(locationRecord, character.id) : null;
+        const [freshCharRes, freshLocRes] = await Promise.all([
+          base44.entities.Character.get(character.id).catch(() => null),
+          base44.functions.invoke('fetchAllLocationsForUser', {}).catch(() => null),
+        ]);
+        if (freshCharRes) liveCharacter = freshCharRes;
+        ((freshLocRes?.data?.locations) || []).forEach(l => { if (l?.id) narrativeLocationMap[l.id] = l; });
+      } catch { /* keep the record already in hand */ }
+      const inScene = buildCharacterInScene(liveCharacter, narrativeLocationMap) || liveCharacter;
+      const locationRecord = narrativeLocationMap[inScene.resolved_current_location_id] || null;
+      const occupiedUnit = locationRecord ? getUnitForCharacter(locationRecord, liveCharacter.id) : null;
       const locationUnitLabel = occupiedUnit ? getUnitLabel(occupiedUnit.unit_name, locationRecord) : null;
-      const location = authoritativeLocation.resolved_current_location_name
-        || character.resolved_current_location_name
-        || character.city
-        || "their current location";
-      const presenceLabel = authoritativeLocation.resolved_presence_status
-        ? String(authoritativeLocation.resolved_presence_status).replace(/_/g, ' ')
+      // Same precedence the geotag uses: the place record's own name, then the resolved name.
+      const location = locationRecord?.name || inScene.resolved_current_location_name || null;
+      const presenceLabel = inScene.resolved_presence_status
+        ? String(inScene.resolved_presence_status).replace(/_/g, ' ')
         : null;
 
       // ── TIME OF DAY — the existing temporal engine, not a new clock ──────────
@@ -702,7 +701,16 @@ ${buildStyleMotifContext()}
       // Location is an environmental constraint on what can physically happen, not an
       // instruction to announce where they are. Another place may be remembered,
       // referenced, planned, or reported — never used as where they are doing this now.
-      const locationAuthorityBlock = `
+      const locationAuthorityBlock = !location ? `
+════════════════════════════════════
+LOCATION AUTHORITY — NO PLACE IS ESTABLISHED RIGHT NOW
+════════════════════════════════════
+The authoritative location system establishes no physical place for ${narrativeName} at this moment.
+• Do NOT place them at home, at work, at school, in a venue, or in any specific setting, and do not describe surroundings that belong to a named place.
+• Keep the moment general — inner experience, what they are doing, or who they are with — without asserting a location.
+• Do NOT invent, name, or imply a location to fill the gap.
+════════════════════════════════════
+` : `
 ════════════════════════════════════
 LOCATION AUTHORITY — WHERE ${narrativeName.toUpperCase()} PHYSICALLY IS RIGHT NOW
 ════════════════════════════════════
@@ -721,7 +729,7 @@ You are writing a SHORT third-person narrative scene (2-4 sentences) for ${narra
 CHARACTER: ${narrativeName}
 Personality: ${character.personality_summary || "unknown"}
 Emotional state: ${emotionalState}
-Location: ${location}${locationUnitLabel ? ` — ${locationUnitLabel}` : ''}${presenceLabel ? ` (${presenceLabel})` : ''}
+Location: ${location || "not established by the authoritative location system"}${locationUnitLabel ? ` — ${locationUnitLabel}` : ''}${presenceLabel ? ` (${presenceLabel})` : ''}
 Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 ${temporalBlock}

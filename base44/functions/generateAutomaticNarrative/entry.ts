@@ -127,6 +127,32 @@ Deno.serve(async (req) => {
       console.log(`[generateAutomaticNarrative] Authoritative snapshot applied: ${character.resolved_current_location_name} | presence=${character.resolved_presence_status} | source=${authoritativeState.source || 'resolver'}`);
     }
 
+    // ── AUTHORITATIVE SNAPSHOT FROM THE EXISTING CANONICAL WRITER ────────────
+    // A scheduled run has no caller holding the live snapshot, so it must obtain it
+    // from the same authority the Homepage card, the Chat geotag and Travel read.
+    // Calling that authority with no requested transition returns the state it
+    // resolves for this exact moment; the raw resolved_* fields can lag a schedule
+    // change, which is how a narrative ends up describing the place already left.
+    if (!authoritativeState) {
+      try {
+        const authRes = await base44.asServiceRole.functions.invoke('enforceCharacterLocationPresence', {
+          character_id: character.id,
+          owner_email: ownerEmail,
+        });
+        const committed = (authRes?.data || authRes)?.committed_result;
+        if (committed) {
+          if (committed.resolved_current_location_id !== undefined) character.resolved_current_location_id = committed.resolved_current_location_id || null;
+          if (committed.resolved_current_location_name !== undefined) character.resolved_current_location_name = committed.resolved_current_location_name || null;
+          if (committed.resolved_location_type !== undefined) character.resolved_location_type = committed.resolved_location_type || null;
+          if (committed.resolved_presence_status !== undefined) character.resolved_presence_status = committed.resolved_presence_status || null;
+          if (committed.resolved_source_reason !== undefined) character.resolved_source_reason = committed.resolved_source_reason || null;
+          console.log(`[generateAutomaticNarrative] Canonical location authority applied: ${character.resolved_current_location_name} | presence=${character.resolved_presence_status}`);
+        }
+      } catch (authErr) {
+        console.warn(`[generateAutomaticNarrative] location authority reconnect failed (non-blocking): ${authErr.message}`);
+      }
+    }
+
     // ── RESOLVE LOCATION — authoritative state is the single source of truth ──
     // A null resolved_current_location_id does NOT mean "location unknown." The
     // character may be in a valid rabbit-hole or other destination that has no
