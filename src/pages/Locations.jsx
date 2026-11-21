@@ -31,6 +31,8 @@ import EnvironmentManager from "@/components/location/EnvironmentManager";
 import ApartmentManager from "@/components/location/ApartmentManager";
 import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
+import OnSiteResidenceModal from "@/components/location/OnSiteResidenceModal";
+import { getOnSiteResidence, hasOnSiteResidence } from "@/lib/onsiteResidence";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
 import { describeCharacterResidence } from "@/lib/residenceDisplay";
 import { getVenuePositions } from "@/lib/venuePositions";
@@ -697,6 +699,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [residentSearch, setResidentSearch] = useState("");
+  // The On-Site Residence configuration modal — business properties only.
+  const [showOnSiteResidence, setShowOnSiteResidence] = useState(false);
+  const onSiteResidence = getOnSiteResidence(form);
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
 
@@ -1073,6 +1078,25 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           ))}
         </div>
       </div>
+
+      {/* ── ON-SITE RESIDENCE (business properties) ── */}
+      {form.category === 'business' && (
+        <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-3 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">On-Site Residence</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {onSiteResidence
+                  ? `${onSiteResidence.name} · ${(onSiteResidence.zone_names || []).length} room${(onSiteResidence.zone_names || []).length === 1 ? "" : "s"} · ${(form.resident_character_ids || []).length} resident${(form.resident_character_ids || []).length === 1 ? "" : "s"}`
+                  : "A living space inside this business. The business keeps its category, hours and staff."}
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setShowOnSiteResidence(true)} className="rounded-xl flex-shrink-0">
+              {onSiteResidence ? "Configure" : "Add residence"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* ── RESIDENTS ── */}
       {(form.category === 'home' || form.category === 'hotel' || form.category === 'shelter' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && (
@@ -1771,6 +1795,27 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         <LocationHoursEditor hours={form.operating_hours} onChange={(hours) => update("operating_hours", hours)} />
       </div>
 
+      {showOnSiteResidence && (
+        <OnSiteResidenceModal
+          locationName={form.name}
+          zones={form.zones}
+          environments={form.environments}
+          residentIds={form.resident_character_ids || []}
+          characters={allAssignableCharacters}
+          onAddZone={(zoneName) => update("zones", [...form.zones, { zone_name: zoneName, image_urls: [] }])}
+          onUpdateZoneImages={(zoneName, urls) => update("zones", form.zones.map(z => z.zone_name === zoneName ? { ...z, image_urls: urls } : z))}
+          onSave={({ environment, residentIds }) => {
+            // The residence is a residential environment on this business. Business zones,
+            // hours and staff are untouched; residents are the existing residency list.
+            const rest = (form.environments || []).filter(e => e.type !== 'residential');
+            update("environments", environment ? [...rest, environment] : rest);
+            update("resident_character_ids", residentIds);
+            setShowOnSiteResidence(false);
+          }}
+          onClose={() => setShowOnSiteResidence(false)}
+        />
+      )}
+
       {editingLocation && onDuplicate && (
         <Button variant="outline" onClick={onDuplicate} className="w-full rounded-xl gap-2 border-dashed">📋 Duplicate This Location</Button>
       )}
@@ -2019,7 +2064,9 @@ export default function Locations() {
     // ── HOME ASSIGNMENT: write current_home_location_id back to each resident Character ──
     // This is the authoritative source — if a character is listed as a resident here,
     // their Character record must reflect this location as their home.
-    if (formData.category === 'home' || formData.category === 'generic') {
+    // A business that contains an On-Site Residence houses its residents the same way a
+    // home does. Employment is untouched: workers and residents stay independent lists.
+    if (formData.category === 'home' || formData.category === 'generic' || (formData.category === 'business' && hasOnSiteResidence(formData))) {
       const residentIds = formData.resident_character_ids || [];
       for (const charId of residentIds) {
         if (!charId || charId === currentUser?.id) continue; // skip user player slot

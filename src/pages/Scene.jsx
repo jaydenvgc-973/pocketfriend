@@ -32,6 +32,7 @@ import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory, recordNarrativeMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
+import { isOnSiteResidenceZone } from "@/lib/onsiteResidence";
 import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
@@ -243,12 +244,20 @@ export default function Scene() {
   // here has returned. A visiting adult never ends it, and it is never a random NPC.
   const isAssignedCaregiverHere = (c) => isCaregiverOnDuty(c, location?.id);
   const isHomeLocation = location?.category === "home";
+  // An On-Site Residence inside a business property is a living space, not a workplace.
+  // Its own zones behave residentially; the business's zones keep their operational behavior.
+  const inOnSiteResidence = isOnSiteResidenceZone(location, activeZone || locationZones[0]?.zone_name);
+  const isResidentialSpace = isHomeLocation || inOnSiteResidence;
+  // A resident of this property is at home inside the residence; anyone else here is visiting.
+  const residencePresenceStatus = (char) => (
+    isHomeLocation || (inOnSiteResidence && char?.current_home_location_id === location?.id) ? 'home' : 'visiting'
+  );
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   // Gateway House — the administrator-shared residence where characters from
   // different accounts may live. Only this property accepts move-ins while shared.
   const isGatewayHouse = location?.canonical_location_key === 'gateway_house';
   const isVGCTowers = location?.name === 'VGC Towers';
-  const homeResidents = isHomeLocation ? characters.filter((c) => c.current_home_location_id === location.id) : [];
+  const homeResidents = isResidentialSpace ? characters.filter((c) => c.current_home_location_id === location.id) : [];
   const homeResidentsPresent = homeResidents.filter((c) => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter((c) => !isCharacterHome(c, locationMap));
 
@@ -341,8 +350,8 @@ export default function Scene() {
     }
     return null;
   };
-  const familyMemberNpcsAway = isHomeLocation ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return locId && locId !== location.id; }) : [];
-  const familyMemberNpcsPresent = isHomeLocation ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return !locId || locId === location.id; }) : [];
+  const familyMemberNpcsAway = isResidentialSpace ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return locId && locId !== location.id; }) : [];
+  const familyMemberNpcsPresent = isResidentialSpace ? (location.resident_family_members || []).filter((fm) => { if (!fm.name) return false; const locId = getFamilyNpcLocationId(fm); return !locId || locId === location.id; }) : [];
   const familyNpcSceneObjects = familyMemberNpcsPresent.map((fm) => {
     let photoUrl = null;
     for (const char of homeResidents) { const match = char.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name?.trim().toLowerCase()); if (match?.photo_url) { photoUrl = match.photo_url; break; } }
@@ -410,18 +419,18 @@ export default function Scene() {
 
   const allPossibleNpcs = (() => {
     const npcs = [];
-    if (isHomeLocation) {
+    if (isResidentialSpace) {
       vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.character_type === 'family_npc' ? 'Family' : 'Resident', isNpc: true, npcType: 'resident', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); });
       homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: isAssignedCaregiverHere(c) ? 'Caregiver' : 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state, unit_name: locationUnits.length > 0 ? getUnitLabel(getUnitForCharacter(location, c.id)?.unit_name, location) || null : null }); });
       (location.resident_family_members || []).forEach((fm) => { if (!fm.name) return; const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); if (alreadyAdded) return; const sourceChar = fm.source_character_id ? characters.find((c) => c.id === fm.source_character_id) : homeResidents.find((c) => c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())); const familyMemberRecord = sourceChar?.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); npcs.push({ id: `npc_${fm.name.replace(/\s+/g, "_")}`, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, npcType: "resident", avatar_url: familyMemberRecord?.photo_url || null }); });
     }
-    if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
+    if (!isResidentialSpace && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
     workerCharacters.forEach((w) => { if (npcs.find((x) => x.id === w.id)) return; if (characterIds.includes(w.id)) return; const jobTitle = location.worker_job_titles?.[w.id] || w.work_details?.job_title || "Employee"; npcs.push({ id: w.id, name: w.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: w.avatar_url || null, personality_summary: w.personality_summary, archetype: w.archetype, emotional_state: w.emotional_state, resolved_presence_status: w.resolved_presence_status }); });
     const locationWorkerIds = location?.worker_character_ids || [];
     const canonicalLocByIdWorkerLoop = {};
     unifiedPresenceEntities.forEach((e) => { if (e.id) canonicalLocByIdWorkerLoop[e.id] = e.resolved_current_location_id; });
     locationWorkerIds.forEach((wid) => { if (workerCharacters.find((w) => w.id === wid)) return; if (characterIds.includes(wid)) return; const workerChar = characters.find((c) => c.id === wid); if (!workerChar) return; const canonicalLocId = canonicalLocByIdWorkerLoop[wid] || workerChar.resolved_current_location_id; if (canonicalLocId !== locationId) return; const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee"; npcs.push({ id: workerChar.id, name: workerChar.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: workerChar.avatar_url, personality_summary: workerChar.personality_summary, archetype: workerChar.archetype, emotional_state: workerChar.emotional_state }); });
-    if (isHomeLocation) { hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i); }
+    if (isResidentialSpace) { hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i); }
     if (!isRestrictedEnv) { const onShiftIdsLocal = workerCharacters.map((w) => w.id); const tempSceneStaff = getTemporarySceneStaff(location, onShiftIdsLocal); tempSceneStaff.forEach((tmpNpc) => { if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc); }); }
     if (!isRestrictedEnv) { Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_")).forEach((key) => { if (isNPCOnShift(location, key)) { const npcName = key.replace(/^npc_/, "").replace(/_/g, " "); const jobTitle = location.worker_job_titles[key]; if (!npcs.find((x) => x.id === key)) npcs.push({ id: key, name: npcName, role: jobTitle || "Staff", isNpc: true, npcType: "staff", avatar_url: null }); } }); }
     if (!isRestrictedEnv) {
@@ -503,7 +512,7 @@ export default function Scene() {
       const char = characters.find((c) => c.id === entity.id); const full = char || {};
       participants.push({ ...full, id: entity.id, name: full.name || entity.display_name, display_name: entity.display_name, avatar_url: full.avatar_url || entity.avatar_url, image_avatar_url: full.image_avatar_url, reference_image_urls: full.reference_image_urls || [], appearance_lock: full.appearance_lock, ethnicities: full.ethnicities, gender: full.gender, personality_summary: full.personality_summary || entity.personality_summary, emotional_state: full.emotional_state || entity.emotional_state, archetype: full.archetype, age: full.age, age_range: full.age_range, resolved_presence_status: entity.resolved_presence_status, is_home_resident: entity.is_home_resident, isNpc: false, sceneRole: resolveSceneRole({ id: entity.id, resolved_presence_status: entity.resolved_presence_status }, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) });
     }
-    if (isHomeLocation) { for (const fn of familyNpcSceneObjects) { if (!fn || !fn.id || seenIds.has(fn.id)) continue; seenIds.add(fn.id); participants.push({ ...fn, sceneRole: 'home resident', isNpc: true }); } }
+    if (isResidentialSpace) { for (const fn of familyNpcSceneObjects) { if (!fn || !fn.id || seenIds.has(fn.id)) continue; seenIds.add(fn.id); participants.push({ ...fn, sceneRole: 'home resident', isNpc: true }); } }
     for (const n of npcsTravelingHere) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: 'visitor', isNpc: true }); }
     for (const n of selectedNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
     for (const n of extraNpcs) { if (!n || !n.id || seenIds.has(n.id)) continue; seenIds.add(n.id); participants.push({ ...n, sceneRole: n.sceneRole || 'visitor' }); }
@@ -630,7 +639,6 @@ export default function Scene() {
 
   useEffect(() => {
     if (!location || broughtCharacters.length === 0) return;
-    const _isHomeCat = location.category === 'home';
     broughtCharacters.forEach((char) => {
       // Opening the Scenes page is not an arrival. A character whose authoritative
       // location is already this place keeps their established circumstances.
@@ -639,7 +647,7 @@ export default function Scene() {
         character_id: char.id, owner_email: currentUser?.email,
         requested_presence_status: observeMode
           ? (char.current_home_location_id === location.id ? 'home' : 'visiting')
-          : (_isHomeCat ? 'home' : 'visiting'),
+          : residencePresenceStatus(char),
         requested_location_id: location.id, requested_location_name: location.name,
         requested_source_reason: observeMode ? 'user_sent_ahead' : 'user_travel',
         requested_authority: observeMode ? 'ObserveArrival' : 'SceneArrival'
@@ -1022,12 +1030,11 @@ export default function Scene() {
 
   const handleLeaveCharactersBehind = async () => {
     setShowLeaveModal(false);
-    const _isHomeCat = location.category === 'home';
     await Promise.all([
       ...broughtCharacters.map((char) =>
         base44.functions.invoke('enforceCharacterLocationPresence', {
           character_id: char.id, owner_email: currentUser?.email,
-          requested_presence_status: _isHomeCat ? 'home' : 'visiting',
+          requested_presence_status: residencePresenceStatus(char),
           requested_location_id: location.id, requested_location_name: location.name,
           requested_source_reason: 'user_stay_decision', requested_authority: 'SceneExit',
           requested_stay_lock: true, presence_stay_lock_reason: 'user_scene_stay',

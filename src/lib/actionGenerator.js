@@ -19,6 +19,7 @@
 
 import { isPrivateResidentialZone } from './sceneBackgroundPopulation.js';
 import { HOUSEHOLD_ACTION_IDS } from './sceneActionConfig.js';
+import { isOnSiteResidenceZone } from './onsiteResidence.js';
 
 // ── ACTION CLASSIFICATION HELPER ─────────────────────────────────────────────
 // Adds explicit action_class and is_paid to every action definition.
@@ -699,14 +700,25 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   // A confinement facility is a prison/jail whatever its category says: its activities
   // are the facility's own.
   const isConfinementVenue = venue.category === 'jail_prison' || venue.is_confinement_facility === true;
-  let actions = isConfinementVenue ? JAIL_ACTIONS : resolveActionLibrary(venue);
+
+  // An On-Site Residence inside a business property is a living space. Inside its own
+  // zones the established home activities are the strip — exactly what any other home
+  // shows — and the business's own activities stay in the business's zones. A zone the
+  // user never assigned to the residence is untouched.
+  const inOnSiteResidence = !isConfinementVenue && isOnSiteResidenceZone(location, activeZone);
+  let actions = isConfinementVenue
+    ? JAIL_ACTIONS
+    : inOnSiteResidence ? HOME_ACTIONS : resolveActionLibrary(venue);
 
   // Venue food additions — additive only. Existing actions and prices are untouched.
   // Bars offer food only when the user enabled food service on that location.
+  // A residence is not the venue, so it never inherits the business's menu.
   const venueExtras = [];
-  if (actions === BAR_CLUB_ACTIONS && offersFoodService(venue)) venueExtras.push(...BAR_FOOD_ACTIONS);
-  venueExtras.push(...buildVenueDishActions(venue));
-  if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
+  if (!inOnSiteResidence) {
+    if (actions === BAR_CLUB_ACTIONS && offersFoodService(venue)) venueExtras.push(...BAR_FOOD_ACTIONS);
+    venueExtras.push(...buildVenueDishActions(venue));
+    if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
+  }
 
   // A school's private student living spaces — a dorm room, a studio apartment, an
   // apartment unit — ARE living spaces. Inside one, the household activities a home
