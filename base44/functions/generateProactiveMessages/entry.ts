@@ -561,6 +561,33 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   const userAddressName = worldName || null;
 
   const locationAffinityNote = buildLocationAffinityContext(character);
+
+  // ── AUTHORITATIVE LOCATION — where this message is actually written from ──
+  // The committed resolved_* fields are the truth about where the character is now.
+  // A home fallback would place them at home while they are at work, at school, or
+  // out, which is how a message ends up describing the wrong surroundings. Location
+  // is a constraint on what can physically happen, not a thing to announce.
+  const currentLocationId = character.resolved_current_location_id || null;
+  let currentLocationRecord = null;
+  if (currentLocationId) {
+    const locList = await base44.asServiceRole.entities.LocationReference
+      .filter({ id: currentLocationId }, null, 1)
+      .catch(() => []);
+    currentLocationRecord = locList?.[0] || null;
+  }
+  const currentLocationName = character.resolved_current_location_name || currentLocationRecord?.name || null;
+  const occupiedUnit = currentLocationRecord
+    ? (currentLocationRecord.residential_units || []).find(u => (u.occupant_character_ids || []).includes(character.id))
+    : null;
+  const currentPresenceLabel = character.resolved_presence_status
+    ? String(character.resolved_presence_status).replace(/_/g, ' ')
+    : null;
+  const locationAuthorityBlock = currentLocationName
+    ? `\n\nLOCATION AUTHORITY — WHERE YOU PHYSICALLY ARE RIGHT NOW:
+You are at ${currentLocationName}${occupiedUnit?.unit_name ? `, in ${occupiedUnit.unit_name}` : ''}${currentPresenceLabel ? ` (${currentPresenceLabel})` : ''}.
+Anything you say you are doing right now must be possible in that place as it actually is. Another place may come up only as a memory, a reference, a plan, or something that already happened, never as where you are doing this now. A previous narrative or a home routine is not evidence of being somewhere else. Do NOT announce or name your location unless it is natural to the message.`
+    : '';
+
   const needExamples = getNeedExamples(character);
   const householdActivityExamples = await getHouseholdActivityExamples(base44, character);
 
@@ -578,7 +605,7 @@ ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
-Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}${householdActivityExamples}
+Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}${householdActivityExamples}${locationAuthorityBlock}
 ${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
 
 ${emotionalBalanceDirective}

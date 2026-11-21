@@ -7,6 +7,9 @@ import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExa
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
+import { getLocations } from "@/lib/locationSessionCache";
+import { getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
 
 const COOLDOWN_SECONDS = 30;
 
@@ -203,7 +206,33 @@ ALLOWED — remote-only framing:
       const romanticLevel = character.romantic_level ?? 0;
       const attractionLevel = character.attraction_level ?? 0;
       const emotionalState = character.emotional_state || "calm";
-      const location = character.resolved_current_location_name || character.city || "home";
+      // ── AUTHORITATIVE LOCATION — resolved for THIS generation ────────────────
+      // The stored resolved_* fields are a fallback only. The live resolver the Home
+      // and Travel pages already read is the authority, so a narrative written after a
+      // move cannot describe the place the character has left. A property that keeps
+      // residential units also contributes the unit this character actually lives in,
+      // so a dorm room is never described as the campus around it.
+      let narrativeLocationMap = {};
+      try {
+        const narrativeLocations = await getLocations(async () => {
+          const r = await base44.functions.invoke('fetchAllLocationsForUser', {});
+          return r?.data?.locations || [];
+        });
+        (narrativeLocations || []).forEach(l => { if (l?.id) narrativeLocationMap[l.id] = l; });
+      } catch {
+        narrativeLocationMap = {};
+      }
+      const authoritativeLocation = resolveCharacterLocation(character, narrativeLocationMap);
+      const locationRecord = narrativeLocationMap[authoritativeLocation.resolved_current_location_id] || null;
+      const occupiedUnit = locationRecord ? getUnitForCharacter(locationRecord, character.id) : null;
+      const locationUnitLabel = occupiedUnit ? getUnitLabel(occupiedUnit.unit_name, locationRecord) : null;
+      const location = authoritativeLocation.resolved_current_location_name
+        || character.resolved_current_location_name
+        || character.city
+        || "their current location";
+      const presenceLabel = authoritativeLocation.resolved_presence_status
+        ? String(authoritativeLocation.resolved_presence_status).replace(/_/g, ' ')
+        : null;
 
       // ── TIME OF DAY — the existing temporal engine, not a new clock ──────────
       // Insert Drama and Insert Serenity must honour the real daypart exactly as
@@ -669,6 +698,22 @@ ${buildStyleMotifContext()}
         MENTORSHIP: "See ABSOLUTE HARD BLOCK above. No exceptions whatsoever.",
       };
 
+      // ── LOCATION AUTHORITY ───────────────────────────────────────────────────
+      // Location is an environmental constraint on what can physically happen, not an
+      // instruction to announce where they are. Another place may be remembered,
+      // referenced, planned, or reported — never used as where they are doing this now.
+      const locationAuthorityBlock = `
+════════════════════════════════════
+LOCATION AUTHORITY — WHERE ${narrativeName.toUpperCase()} PHYSICALLY IS RIGHT NOW
+════════════════════════════════════
+${narrativeName} is physically at ${location}${locationUnitLabel ? `, in ${locationUnitLabel}` : ''}${presenceLabel ? ` (${presenceLabel})` : ''}.
+• Every physical action, object, surface, sound, smell, and person in this narrative must be possible in that place, as that place actually is.
+• Another place may appear only as a memory, a reference, a plan, something already finished, or something happening elsewhere — never as where ${narrativeName} is doing this now.
+• A previous narrative, an earlier beat, a home routine, or the character's own address is NOT evidence of being somewhere else now.
+• Do NOT announce, name, or restate the location unless the moment makes it natural. It is quiet context, not a status report.
+════════════════════════════════════
+`;
+
       const prompt = `${hardBoundary}${confinementBlock}
 
 You are writing a SHORT third-person narrative scene (2-4 sentences) for ${narrativeName}.
@@ -676,11 +721,11 @@ You are writing a SHORT third-person narrative scene (2-4 sentences) for ${narra
 CHARACTER: ${narrativeName}
 Personality: ${character.personality_summary || "unknown"}
 Emotional state: ${emotionalState}
-Location: ${location}
+Location: ${location}${locationUnitLabel ? ` — ${locationUnitLabel}` : ''}${presenceLabel ? ` (${presenceLabel})` : ''}
 Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 ${temporalBlock}
-${userPresenceBlock}
+${userPresenceBlock}${locationAuthorityBlock}
 ${currentMomentBlock}
 ${narrativeContinuityBlock}
 ${progressionBlock}${dramaBlock}${serenityBlock}${motifBlock}
