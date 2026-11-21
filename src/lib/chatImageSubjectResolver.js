@@ -70,13 +70,20 @@ const INANIMATE_SUBJECT_PATTERNS = [
  * Patterns that signal the prompt is requesting a NAMED person.
  * Used to distinguish "no roster match for named request" from "no named request at all".
  */
+// CASE-SENSITIVE ON PURPOSE: [A-Z][a-z] is the test for an actual capitalised name.
+// Under the /i flag it matched ANY following word, so "photo of him sleeping" counted
+// as a named-person request, found no roster match, and silently blocked the image —
+// the character said it was sending a picture and no picture ever existed.
 const NAMED_PERSON_REQUEST_PATTERNS = [
-  /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\s+(of|showing)\s+[A-Z][a-z]/i,
-  /\b(pic|photo|picture|image)\s+of\s+[A-Z][a-z]/i,
-  /\bwhat (does|did)\s+[A-Z][a-z].{0,30}\s+(look|looked) like\b/i,
-  /\b(show|send|give)\s+.{0,10}(pic|photo|picture)\s+(of|showing)\s+[A-Z][a-z]/i,
-  // "send me a picture of them/her/him" — references a named person indirectly
-  /\b(pic|photo|picture|image)\s+of\s+(him|her|them|this person|that person)\b/i,
+  /\b([Ss]end|[Ss]how|[Gg]ive|[Ss]hare|[Pp]ost).{0,20}(pic|photo|picture|image|selfie|shot)\s+(of|showing)\s+[A-Z][a-z]/,
+  /\b(pic|photo|picture|image)\s+of\s+[A-Z][a-z]/,
+  /\bwhat (does|did)\s+[A-Z][a-z].{0,30}\s+(look|looked) like\b/,
+  /\b([Ss]how|[Ss]end|[Gg]ive)\s+.{0,10}(pic|photo|picture)\s+(of|showing)\s+[A-Z][a-z]/,
+  // A pronoun ("him", "her", "them") can never identify a roster person, so it is NOT
+  // a named-person request. Treating it as one blocked every photo described as
+  // "photo of him/her" with no roster match — the image was silently dropped while the
+  // character's text still said it was sending one. The prompt still describes the
+  // subject, so the existing sender/described-scene path handles it.
 ];
 
 /**
@@ -256,6 +263,15 @@ function hasVisualPresenceSignal(prompt, name) {
     new RegExp(`\\b${escaped}\\s+(sits|stands|sitting|standing|lying|leaning)\\b`, 'i'),
     // Spatial co-presence prepositions — name is physically present in the scene
     new RegExp(`\\b(next to|beside|behind|in front of|across from|near)\\s+${escaped}\\b`, 'i'),
+    // Explicit photo-of-name phrasing IS a visual-presence signal: "photo of Leo",
+    // "picture of Leo sleeping", "shot of Leo". Without this, a prompt naming a person
+    // on the roster only by first name ("Leo") failed the gate and was then blocked as
+    // an unresolved named request — no image at all.
+    new RegExp(`\\b(pic|photo|picture|image|shot|selfie)\\s+of\\s+${escaped}\\b`, 'i'),
+    new RegExp(`\\bshowing\\s+${escaped}\\b`, 'i'),
+    // The person is the one doing/experiencing the described action in the frame.
+    new RegExp(`\\b${escaped}\\s+(sleeping|asleep|awake|crying|smiling|laughing|playing|eating|drinking|reading|working|studying|holding|hugging|kissing|dancing|cooking|showering|dressing|walking|running|waiting|talking|looking)\\b`, 'i'),
+    new RegExp(`\\b${escaped}'s\\b`, 'i'),
   ];
   return patterns.some(p => p.test(prompt));
 }
@@ -361,9 +377,14 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
   for (const c of sortedRoster) {
     if (matchedIds.has(c.id)) continue;
     const firstName = c.name.split(/\s+/)[0].toLowerCase();
-    if (firstName.length < 4) continue;
-    if (!promptLower.includes(firstName)) continue;
-    if (!promptWithoutResolvedNames.includes(firstName)) {
+    // WORD-BOUNDARY match instead of substring, so a short name is safe: "leo" matches
+    // "photo of Leo" but never "Leonardo" or "people". The old 4-character minimum
+    // existed only because the check was a substring scan — it skipped every 3-letter
+    // first name (Leo), leaving the person unresolved and the image silently blocked.
+    const firstNameRegex = new RegExp(`\\b${firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    if (firstName.length < 3) continue;
+    if (!firstNameRegex.test(promptLower)) continue;
+    if (!firstNameRegex.test(promptWithoutResolvedNames)) {
       log.push(`[SubjectResolver] First-name match "${firstName}" SKIPPED — token only appears inside an already-resolved full name, not an independent reference`);
       continue;
     }
