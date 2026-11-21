@@ -1508,7 +1508,7 @@ Respond to ${worldName} naturally as you normally would.`;
       const isPhotogenic = !!character.is_photogenic;
 
       const userTextLower = text.toLowerCase();
-      const explicitImageRequest = /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\b|\b(pic|photo|picture|selfie|image)\b.{0,10}(of you|of me|please|now|quick|real quick)\b/i.test(text);
+      const explicitImageRequest = /\b(send|show|give|share|post|take|snap)\b.{0,25}\b(pic|pics|photo|photos|picture|pictures|image|images|selfie|selfies|shot)\b|\b(pic|pics|photo|photos|picture|pictures|selfie|selfies|image|images)\b.{0,15}\b(of you|of me|of him|of her|of them|please|now|quick|real quick)\b|\bwhat (does|do)\b.{0,40}\blook like\b|\b(let me see|show me|can i see|i want to see|i wanna see)\s+(him|her|them)\b|\b(any|got any|more)\s+(pic|pics|photo|photos|picture|pictures)\b|\bsend (it|one|another)\b/i.test(text);
       const quantityMatch = text.match(/\b(\d+)\s+(pic|photo|picture|image|selfie|shot)s?\b/i);
       const requestedQuantity = quantityMatch ? parseInt(quantityMatch[1]) : (explicitImageRequest ? 1 : 0);
       let ficRels = [];
