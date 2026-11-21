@@ -776,6 +776,32 @@
             },
             "default": [],
             "description": "Characters employed by this business. Each one is also listed in the property's worker_character_ids \u2014 the same employment records, schedules and shifts remain the single authority."
+          },
+          "operating_hours": {
+            "type": "array",
+            "default": [],
+            "description": "This business's own opening hours, in the same shape as the property's operating_hours. They belong to this business alone: a day left without hours is a closed day for this business, and closing it never closes the property or its other businesses or residences. When empty, the business follows the property's existing operating_hours.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day_of_week": {
+                  "type": "integer"
+                },
+                "open_time": {
+                  "type": "string"
+                },
+                "close_time": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "open_time",
+                "close_time"
+              ]
+            }
           }
         },
         "required": [

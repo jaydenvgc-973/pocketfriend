@@ -118,13 +118,29 @@ function hasValidActiveTravel(char) {
 }
 
 function shouldProtectFromHomeReturn(char, locationMap) {
-  // MANDATORY GUARD: protect all active obligations before forcing home
-  // isWorkScheduleActive now checks worker_shifts per location before falling back to character schedule
-  if (isWorkScheduleActive(char, locationMap)) return true;
-  if (isSchoolScheduleActive(char)) return true;
+  // A closed space must actually empty out. A work or school obligation does NOT keep a
+  // character inside a closed operational space — the obligation is when they are expected
+  // somewhere, not permission to stay after closing.
+  //
+  // Only states that physically cannot be moved are protected: sleep, medical care,
+  // travel already in progress, and an approved overnight stay.
   if (hasValidActiveTravel(char)) return true;
   if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
   if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
+  return false;
+}
+
+// A residential space is never a "closed operational space": a business inside the
+// property closing does not close anyone's home. The property's own hours govern its
+// shared areas, but a resident is never ejected from where they live.
+function isResidentialSpaceFor(char, loc) {
+  if (!loc) return false;
+  if (['home', 'hotel', 'shelter'].includes(loc.category)) return true;
+  if (char.current_home_location_id && char.current_home_location_id === loc.id) return true;
+  if (char.temporary_housing_location_id && char.temporary_housing_location_id === loc.id) return true;
+  if ((loc.resident_character_ids || []).includes(char.id)) return true;
+  if ((loc.residents || []).some(r => r.character_id === char.id)) return true;
+  if ((loc.residential_units || []).some(u => (u.occupant_character_ids || []).includes(char.id))) return true;
   return false;
 }
 
@@ -161,6 +177,9 @@ Deno.serve(async (req) => {
       // Skip if location is open
       if (isLocationOpen(currentLoc)) continue;
 
+      // A closed business inside a property never closes that property's homes.
+      if (isResidentialSpaceFor(char, currentLoc)) continue;
+
       // Location is closed — character must be ejected
       console.log(`[ejection] ${char.name} (${char.character_type}) at closed location: ${currentLoc.name}`);
 
@@ -175,8 +194,10 @@ Deno.serve(async (req) => {
           console.log(`[ejection] ${char.name} protected by active obligation — skipping home return`);
           continue;
         }
-        // active_created: return home
+        // active_created: return home — unless home IS the closed space, in which case
+        // the existing "safe away" fallback applies instead of leaving them there.
         newLocationId = char.current_home_location_id || char.home_location_id || char.residence_id || char.assigned_residence;
+        if (newLocationId === currentLoc.id) newLocationId = null;
         if (newLocationId && locationMap[newLocationId]) {
           newLocationName = locationMap[newLocationId].name;
           newStatus = 'home';

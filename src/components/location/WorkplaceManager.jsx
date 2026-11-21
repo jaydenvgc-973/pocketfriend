@@ -4,6 +4,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
 import PositionInput from "@/components/location/PositionInput";
 import WorkplaceZoneImages from "@/components/location/WorkplaceZoneImages";
+import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -261,6 +262,18 @@ export default function WorkplaceManager({
                     )}
                   </div>
 
+                  <div className="rounded-lg bg-secondary/30 border border-border p-2.5">
+                    <LocationHoursEditor
+                      hours={workplace.operating_hours || []}
+                      onChange={(nextHours) => updateWorkplace(workplace.workplace_id, { operating_hours: nextHours })}
+                      label={`${workplace.name?.trim() || "This workplace"} hours`}
+                    />
+                    <p className="text-[10px] text-muted-foreground/70 mt-1.5">
+                      These hours belong to this business, not to the property. A day left
+                      without hours is a closed day for this business.
+                    </p>
+                  </div>
+
                   <WorkplaceZoneImages
                     workplace={workplace}
                     locationZones={zones}
@@ -428,8 +441,9 @@ export default function WorkplaceManager({
                       </button>
                     )}
                     <p className="text-[10px] text-muted-foreground/70">
-                      Tap an employee to set their shift, pay and position for this business. Business
-                      hours follow this property's Mixed-Use Environments — residential access is unaffected.
+                      Tap an employee to set their shift, pay and position for this business. A shift is
+                      when someone is expected to work; this business's hours decide when it is open.
+                      Closing this business never closes the rest of the property.
                     </p>
                   </div>
                 </div>

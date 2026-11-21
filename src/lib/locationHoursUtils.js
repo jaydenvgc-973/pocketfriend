@@ -54,6 +54,30 @@ export function isLocationOpen(location, currentTime = new Date()) {
 }
 
 /**
+ * The hours that govern one specific space of a property.
+ *
+ * A workplace keeps its own hours when it has them; when it has none it follows the
+ * property's existing hours. Nothing here writes anything — it only decides which
+ * already-configured hours apply to the space a character is actually in.
+ */
+export function getSpaceOperatingHours(location, workplace) {
+  if (Array.isArray(workplace?.operating_hours) && workplace.operating_hours.length > 0) {
+    return workplace.operating_hours;
+  }
+  return Array.isArray(location?.operating_hours) ? location.operating_hours : [];
+}
+
+/**
+ * Is this specific space open right now?
+ * Returns null when no hours are configured anywhere (existing "always open" meaning).
+ */
+export function isSpaceOpen(location, workplace, currentTime = new Date()) {
+  const hours = getSpaceOperatingHours(location, workplace);
+  if (hours.length === 0) return null;
+  return isLocationOpen({ operating_hours: hours }, currentTime);
+}
+
+/**
  * Get a character's destination when a location they're at closes.
  * Priority: work location → school location → home
  * @param {object} character - The character object
