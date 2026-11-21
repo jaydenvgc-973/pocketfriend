@@ -2,14 +2,10 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router-dom";
-import { AnimatePresence } from "framer-motion";
 import ChatHeader from "@/components/chat/ChatHeader";
 import { useInstantImageAction } from "@/hooks/useInstantImageAction";
-import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
-import TypingIndicator from "@/components/chat/TypingIndicator";
 import MediaGallery from "@/components/chat/MediaGallery";
-import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
@@ -17,7 +13,6 @@ import { getCharacterLivePresence, buildLiveLocationContext, resolveCharacterLoc
 import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 
-import SendMoneyModal from "@/components/chat/SendMoneyModal";
 import FinancialActionsPanel from "@/components/chat/FinancialActionsPanel";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
@@ -95,12 +90,11 @@ import VickCharacterSpeechToggle, { useVickCharacterSpeechMode } from "@/compone
 import { VICK_CHARACTER_BOUNDARY_PROMPT, enforceVickCharacterBoundary } from "@/lib/vickCharacterBoundary";
 import { handleFallbackResponse } from "@/lib/chatFallbackIntegration";
 import { shouldInvalidateForWorldPhone, invalidateCanonicalCache } from "@/lib/worldPhoneCacheInvalidation";
-import { resolveImageSubjects } from "@/lib/chatImageSubjectResolver";
+import { resolveImageSubjects, resolveConversationalPerson } from "@/lib/chatImageSubjectResolver";
 import { resolveAuthenticatedUser } from "@/lib/resolveAuthenticatedUser";
 import { buildWorldPhoneRetrievalContext } from "@/lib/worldPhoneRetrievalContext";
 import { enforceSubjectNamesInPrompt } from "@/lib/subjectNameEnforcer";
 import { buildPreviousCharacterTexts, isExactDuplicateResponse, buildAntiRepeatPromptSuffix } from "@/lib/duplicateResponseGuard";
-
 
 export default function Chat({ chatTypeOverride } = {}) {
   const { characterId } = useParams();
@@ -513,7 +507,9 @@ export default function Chat({ chatTypeOverride } = {}) {
         // producing images that don't preserve the user's identity. This activates the SAME
         // authoritative User entity + UserSettings resolution the "Doesn't look like them"
         // regeneration path uses — no duplicate identity storage, no parallel system.
-        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser);
+        // The conversation is passed in: "a picture of him" means what the conversation says.
+        const _subjectConvo = messagesRef.current?.length ? messagesRef.current : messages;
+        subjectResult = resolveImageSubjects(finalImageGenPrompt, allCachedCharsForSubjects, characterId, resolvedCurrentUser, _subjectConvo);
         // Log all resolution steps for diagnostics
         (subjectResult.log || []).forEach(entry => console.log(entry));
 
@@ -1688,7 +1684,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       const parseAndExtract = (rawResponse) => {
         const rObj = parseCharacterResponse(rawResponse);
         let mType = rObj.message_type || "text_only";
-        if (isPhotogenic && explicitImageRequest && mType === "text_only") {
+        // An explicit photo request is fulfilled by a photo — never by text describing one.
+        if (explicitImageRequest && allowImageThisTurn && mType === "text_only") {
           mType = "text_then_image";
         }
         const hText = ["text_only", "text_then_image", "image_then_text"].includes(mType);
@@ -1867,15 +1864,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         return;
       }
 
-      if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
-        imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
+      if (hasImage && (responseObj.image_generation_prompts?.length || 0) === 0 && explicitImageRequest) {
+        const _fallbackChars = queryClient.getQueryData(["characters", currentUser?.email]) || [];
+        const _fbSubject = resolveConversationalPerson(messages, _fallbackChars, characterId)[0] || null;
+        imagePrompts = [_fbSubject ? `[CHARACTER] ${_fbSubject.name}, candid photo, natural light, looking toward the camera` : `[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
       } else {
         imagePrompts = hasImage
           ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
           : [];
       }
-
-
 
       if (responseObj.scheduled_events?.length > 0 && convoId) {
         for (const ev of responseObj.scheduled_events) {

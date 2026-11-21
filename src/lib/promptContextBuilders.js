@@ -343,6 +343,8 @@ ${isPhotogenic && explicitImageRequest
   ? `PHOTOGENIC TRAIT — EXPLICIT REQUEST: The user has asked for a photo. You LOVE being photographed and you ALWAYS say yes immediately — no hesitation, no excuses, no deflecting. You are always ready. Pick image_only or text_then_image (your choice), but you MUST include an image. Never refuse or delay.`
   : isPhotogenic
   ? `PHOTOGENIC TRAIT: You love sharing photos of yourself and your life spontaneously. Sending images feels natural and easy for you — text_then_image or image_only are your go-to formats. You're always camera-ready.`
+  : explicitImageRequest
+  ? `EXPLICIT PHOTO REQUEST — MANDATORY: The person you're talking to has directly asked you for a photo. You MUST include an image this turn — choose image_only or text_then_image — and you MUST fill "image_generation_prompt" (or "image_generation_prompts"). Text alone does NOT fulfill a photo request. NEVER write that you took, got, or are sending a picture unless this same response includes that image prompt.`
   : `IMPORTANT: text_only is the DEFAULT. Only send an image if it truly fits the moment.`}
 ${imageCountInstruction}
 
@@ -352,6 +354,12 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
+
+SUBJECT NAMING — MANDATORY (the image system does not see this conversation):
+- If the photo is of someone other than you and other than the person you're talking to, write that person's ACTUAL NAME from the conversation into the prompt — e.g. "[CHARACTER] Leo Parker asleep in the crib, camera from the doorway. Medium. Night lighting. bedroom zone.".
+- NEVER leave "him", "her", "them", "the baby", "my son", "my friend", "he", or "she" as the subject of a prompt. "Send me a picture of him/her/them" refers to whoever this conversation is about — use their name.
+- If the photo is of an object, a room, or a place, describe only that object/room/place and do NOT put yourself in the prompt. "A picture of it / that / those / that room" is a thing, not you.
+- A photo of several people names each of them.
 
 WORD PROHIBITION — NEVER USE IN ANY IMAGE PROMPT:
 - NEVER write the word "shirtless" — use "no shirt" or "no top" instead.

@@ -87,6 +87,24 @@ const NAMED_PERSON_REQUEST_PATTERNS = [
 ];
 
 /**
+ * A photo request whose subject is named only by a person pronoun — "a picture of him",
+ * "let me see her", "show me what they're doing". The prompt alone cannot say who that
+ * is; the conversation establishes it.
+ */
+const PERSON_REFERENCE_REQUEST = /\bof\s+(him|her|them)\b|\b(showing|depicting)\s+(him|her|them)\b|\b(let me see|can i see|i want to see|i wanna see|show me)\s+(him|her|them)\b/i;
+
+/**
+ * A mention of someone the character is only THINKING about is not a picture of them.
+ */
+const TOPIC_ONLY_MENTION = /\b(thinking|thought|think|memories?|remembers?|remember|reminded|dreaming|dreamt|misses?|missing|worried about|worrying about)\b[^.]{0,25}\b(him|her|them)\b/i;
+
+/**
+ * A photo request whose subject is a thing or a place — "a picture of it", "show me that
+ * room", "can I see those shoes". No character belongs in that picture.
+ */
+const OBJECT_REFERENCE_REQUEST = /\b(pic|photo|picture|image|shot|snapshot)\s+of\s+(it|that|this|those|these)\b|\b(send|show|give|share)\s+(me\s+)?(a\s+)?(pic|photo|picture|image|shot)\s+of\s+(it|that|this|those|these)\b|\b(let me see|can i see|i want to see|i wanna see|show me)\s+(that|the)\s+(room|place|shoes|outfit|car|view|thing|apartment|house|kitchen|bedroom|desk)\b/i;
+
+/**
  * Determine whether the image prompt is requesting a room/object/inanimate scene.
  */
 function isInanimateSubjectPrompt(prompt) {
@@ -272,8 +290,88 @@ function hasVisualPresenceSignal(prompt, name) {
     // The person is the one doing/experiencing the described action in the frame.
     new RegExp(`\\b${escaped}\\s+(sleeping|asleep|awake|crying|smiling|laughing|playing|eating|drinking|reading|working|studying|holding|hugging|kissing|dancing|cooking|showering|dressing|walking|running|waiting|talking|looking)\\b`, 'i'),
     new RegExp(`\\b${escaped}'s\\b`, 'i'),
+    // The prompt's own subject header: "[CHARACTER] Leo Parker asleep in the crib" — the
+    // full name directly after the subject tag is the person the picture is of.
+    new RegExp(`^\\s*(\\[[a-z]+\\]\\s*)?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'),
   ];
   return patterns.some(p => p.test(prompt));
+}
+
+/**
+ * CAREGIVERS ARE NOT IMAGE SUBJECTS: A caregiver (is_sitter, babysitter occupation,
+ * or "babysitter" in name) exists for contextual childcare coverage — not imagery.
+ */
+function _isCaregiverCharacter(c) {
+  return c.is_sitter === true ||
+    (c.occupation || '').toLowerCase().includes('babysitter') ||
+    (c.occupation || '').toLowerCase().includes('caregiver') ||
+    (c.name || '').toLowerCase().includes('babysitter');
+}
+
+/**
+ * The roster an image subject may be resolved from: real, active, non-caregiver
+ * characters. The sender is excluded here — the sender is handled by the caller.
+ */
+function buildActiveRoster(allChars, senderCharacterId) {
+  return (allChars || []).filter(c =>
+    c?.name &&
+    c.id !== senderCharacterId &&
+    c.status !== 'deleted' &&
+    c.status !== 'soft_deleted' &&
+    c.status !== 'merged' &&
+    !_isCaregiverCharacter(c)
+  );
+}
+
+/**
+ * CONVERSATIONAL SUBJECT — who the conversation is currently about.
+ *
+ * A photo request can name its subject only by reference ("send me a picture of him").
+ * Those words carry no identity on their own; the conversation is what establishes who
+ * "him" is. This reads the existing conversation messages and returns the person the
+ * conversation is about, newest mention first, preferring what the user themselves
+ * named over what the character mentioned in passing.
+ *
+ * It reads the conversation — it does not store, summarise, or duplicate it.
+ */
+export function resolveConversationalPerson(conversationMessages, allChars, senderCharacterId = null) {
+  if (!Array.isArray(conversationMessages) || conversationMessages.length === 0) return [];
+  const candidates = (allChars || []).filter(c =>
+    c?.name &&
+    c.status !== 'deleted' &&
+    c.status !== 'soft_deleted' &&
+    c.status !== 'merged' &&
+    !_isCaregiverCharacter(c)
+  );
+  if (candidates.length === 0) return [];
+  const sorted = [...candidates].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+
+  const mentionedIn = (text) => {
+    const lower = (text || '').toLowerCase();
+    if (!lower) return [];
+    const found = [];
+    for (const c of sorted) {
+      const full = c.name.toLowerCase();
+      const first = full.split(/\s+/)[0];
+      const escaped = first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const hit = lower.includes(full) || (first.length >= 3 && new RegExp(`\\b${escaped}\\b`).test(lower));
+      if (hit && !found.some(f => f.id === c.id)) found.push(c);
+    }
+    return found;
+  };
+
+  // What the user named is the topic. Only then what the character said.
+  const userMessages = [...conversationMessages].reverse().filter(m => m?.sender_type === 'user');
+  for (const m of userMessages) {
+    const found = mentionedIn(m.content);
+    if (found.length > 0) return found;
+  }
+  const characterMessages = [...conversationMessages].reverse().filter(m => m?.sender_type === 'character');
+  for (const m of characterMessages) {
+    const found = mentionedIn(m.content);
+    if (found.length > 0) return found;
+  }
+  return [];
 }
 
 /**
@@ -298,27 +396,8 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
 
   const promptLower = prompt.toLowerCase();
 
-  // Filter to active characters only, excluding sender.
-  // CAREGIVERS ARE NOT IMAGE SUBJECTS: A caregiver (is_sitter, babysitter
-  // occupation, or "babysitter" in name) exists for contextual childcare
-  // coverage — not imagery. The caregiver has no avatar and is not intended
-  // to participate in generated images. Naming, mentioning, or resolving
-  // the caregiver contextually does not make the caregiver an image subject.
-  // Only an actual person-character may be resolved as a visual subject.
-  const _isCaregiver = (c) =>
-    c.is_sitter === true ||
-    (c.occupation || '').toLowerCase().includes('babysitter') ||
-    (c.occupation || '').toLowerCase().includes('caregiver') ||
-    (c.name || '').toLowerCase().includes('babysitter');
-
-  const activeRoster = allChars.filter(c =>
-    c.name &&
-    c.id !== senderCharacterId &&
-    c.status !== 'deleted' &&
-    c.status !== 'soft_deleted' &&
-    c.status !== 'merged' &&
-    !_isCaregiver(c)
-  );
+  // Active roster, sender excluded. Caregivers are never image subjects.
+  const activeRoster = buildActiveRoster(allChars, senderCharacterId);
 
   // Sort by name length descending — prefer more specific/longer matches first
   const sortedRoster = [...activeRoster].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
@@ -431,7 +510,7 @@ function resolveSubjectCharactersFromPrompt(prompt, allChars, senderCharacterId,
  */
 import { getCrossAccountSubjects } from "@/lib/crossAccountSubjectRegistry";
 
-export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, resolvedUser = null) {
+export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, resolvedUser = null, conversationMessages = []) {
   const log = [];
 
   // ── KNOWN CROSS-ACCOUNT CHARACTERS ────────────────────────────────────────
@@ -556,6 +635,71 @@ export function resolveImageSubjects(imagePrompt, allChars, senderCharacterId, r
   // Step 3: Determine if the sender is also a visual subject
   const senderIsSubject = doesPromptIncludeSender(imagePrompt);
   log.push(`[SubjectResolver] Sender present in image: ${senderIsSubject}`);
+
+  // Step 3b: CONVERSATIONAL REFERENCE — the prompt's subject may be named only by
+  // reference. "A picture of him", "let me see her", "show me what they're doing" carry
+  // no identity of their own; the conversation establishes who they mean. "A picture of
+  // it / that room / those shoes" is a thing, and no person belongs in that picture.
+  // Resolved here, before any sender default, so a pronoun never silently becomes the
+  // sender when the conversation is about someone else.
+  if (subjects.length === 0 && !senderIsSubject) {
+    if (OBJECT_REFERENCE_REQUEST.test(imagePrompt)) {
+      log.push(`[SubjectResolver] Object/place reference — no character subject injected`);
+      return {
+        resolutionState: 'inanimate',
+        primarySubjectId: null,
+        additionalCharacterIds: [],
+        includeSender: false,
+        isInanimateScene: true,
+        blockReason: null,
+        ambiguousNames: [],
+        userIsVisualSubject,
+        userWorldName,
+        log,
+      };
+    }
+    if (PERSON_REFERENCE_REQUEST.test(imagePrompt) && !TOPIC_ONLY_MENTION.test(imagePrompt)) {
+      const conversational = resolveConversationalPerson(conversationMessages, allChars, senderCharacterId);
+      // "him" / "her" also carries gender: prefer the person the conversation named whose
+      // established gender matches the pronoun, when one does.
+      const pronoun = (imagePrompt.match(/\b(him|her|them)\b/i) || [])[1]?.toLowerCase();
+      const gendered = pronoun === 'him' ? 'male' : pronoun === 'her' ? 'female' : null;
+      const genderedMatches = gendered ? conversational.filter(p => (p.gender || '').toLowerCase() === gendered) : [];
+      const resolvedPeople = genderedMatches.length > 0 ? genderedMatches : conversational;
+      if (resolvedPeople.length > 0) {
+        const [primaryPerson, ...otherPeople] = resolvedPeople;
+        if (primaryPerson.id === senderCharacterId) {
+          log.push(`[SubjectResolver] Pronoun reference resolved to the sender ("${primaryPerson.name}") from the conversation`);
+          return {
+            resolutionState: 'sender_self',
+            primarySubjectId: senderCharacterId,
+            additionalCharacterIds: [],
+            includeSender: true,
+            isInanimateScene: false,
+            blockReason: null,
+            ambiguousNames: [],
+            userIsVisualSubject,
+            userWorldName,
+            log,
+          };
+        }
+        log.push(`[SubjectResolver] Pronoun reference resolved from the conversation → "${primaryPerson.name}" (id=${primaryPerson.id})`);
+        return {
+          resolutionState: 'resolved',
+          primarySubjectId: primaryPerson.id,
+          additionalCharacterIds: otherPeople.slice(0, 3).map(c => c.id),
+          includeSender: false,
+          isInanimateScene: false,
+          blockReason: null,
+          ambiguousNames: [],
+          userIsVisualSubject,
+          userWorldName,
+          log,
+        };
+      }
+      log.push(`[SubjectResolver] Pronoun reference found no established person in the conversation — described-scene fallback applies`);
+    }
+  }
 
   // Step 4: Handle ambiguous names — BLOCK generation, never silently default
   // EXCEPTION: if user was detected as a visual subject (by world name match), do NOT block —
