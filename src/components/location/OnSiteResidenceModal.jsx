@@ -30,6 +30,7 @@ export default function OnSiteResidenceModal({
   environments = [],
   residentIds = [],
   residentNames = {},
+  lockedZoneNames = [],
   characters = [],
   onAddZone,
   onUpdateZoneImages,
@@ -53,6 +54,11 @@ export default function OnSiteResidenceModal({
 
   const zoneRecord = (zoneName) =>
     zones.find((z) => String(z.zone_name).toLowerCase() === String(zoneName).toLowerCase());
+
+  // Rooms the facility itself owns keep their own pictures — this account can live in them,
+  // never repaint them.
+  const isLockedRoom = (zoneName) =>
+    lockedZoneNames.some((name) => String(name).toLowerCase() === String(zoneName).toLowerCase());
 
   const toggleZone = (zoneName) =>
     setZoneNames((prev) =>
@@ -228,18 +234,25 @@ export default function OnSiteResidenceModal({
                         {images.map((url, i) => (
                           <div key={url + i} className="relative group">
                             <img src={url} alt={`${zoneName} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
-                            <button
-                              type="button"
-                              onClick={() => onUpdateZoneImages?.(zoneName, images.filter((_, idx) => idx !== i))}
-                              className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              <X className="w-3 h-3 text-white" />
-                            </button>
+                            {!isLockedRoom(zoneName) && (
+                              <button
+                                type="button"
+                                onClick={() => onUpdateZoneImages?.(zoneName, images.filter((_, idx) => idx !== i))}
+                                className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="w-3 h-3 text-white" />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
                     )}
-                    {images.length < MAX_IMAGES && (
+                    {isLockedRoom(zoneName) && (
+                      <p className="text-[11px] text-muted-foreground">
+                        This room belongs to the facility — its pictures are fixed.
+                      </p>
+                    )}
+                    {images.length < MAX_IMAGES && !isLockedRoom(zoneName) && (
                       <div className="space-y-2">
                         <label className="block cursor-pointer">
                           <input

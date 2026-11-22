@@ -20,6 +20,7 @@ export default function OnSiteResidenceSection({
   editingLocationId,
   characters = [],
   residentNames = {},
+  lockedZoneNames = [],
   onPersist,
 }) {
   const [open, setOpen] = useState(false);
@@ -61,6 +62,7 @@ export default function OnSiteResidenceSection({
           environments={form.environments}
           residentIds={form.resident_character_ids || []}
           residentNames={residentNames}
+          lockedZoneNames={lockedZoneNames}
           characters={characters}
           onAddZone={(zoneName) => setForm((p) => ({
             ...p,

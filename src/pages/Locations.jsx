@@ -33,6 +33,7 @@ import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
 import OnSiteResidenceSection from "@/components/location/OnSiteResidenceSection";
 import { hasOnSiteResidence } from "@/lib/onsiteResidence";
+import { isRecoveryYard, isLockedRecoveryYardZone, lockedRecoveryYardZoneNames, withLockedRecoveryYardZones } from "@/lib/recoveryYardZones";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
 import { describeCharacterResidence } from "@/lib/residenceDisplay";
 import { getVenuePositions } from "@/lib/venuePositions";
@@ -1042,6 +1043,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           </label>
           <p className="text-xs text-muted-foreground mt-0.5">Each uploaded set of images must be assigned to a specific room or zone.</p>
         </div>
+        {isRecoveryYard(editingLocation) && currentUser?.role !== 'admin' && (
+          <p className="text-[11px] text-muted-foreground rounded-xl border border-border bg-secondary/30 px-3 py-2">
+            The facility's own zones are managed by Vick Servicio and can't be changed here. Zones you add yourself save normally.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           {presets.map(name => {
             const already = existingZoneNames.includes(name.toLowerCase());
@@ -1076,7 +1082,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               onUpdateImages={(urls) => updateZoneImages(i, urls)} 
               onTogglePrimaryCategory={(value) => updateZonePrimaryCategory(i, value)}
               onDelete={() => removeZone(i)} 
-              readOnly={false}
+              readOnly={isLockedRecoveryYardZone(editingLocation, zone.zone_name, currentUser?.role === 'admin')}
               locationName={form.name}
               category={form.category}
               subtype={form.subtype}
@@ -1096,6 +1102,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           editingLocationId={editingLocation?.id}
           characters={allAssignableCharacters}
           residentNames={residentNameById}
+          lockedZoneNames={lockedRecoveryYardZoneNames(editingLocation, currentUser?.role === 'admin')}
           onPersist={handleSave}
         />
       )}
@@ -1984,7 +1991,17 @@ export default function Locations() {
         };
       }
     });
-    const saveData = { ...formData, worker_shifts: guaranteedShifts };
+    const saveData = {
+      ...formData,
+      // The Recovery Yard's own zones belong to the facility: a save writes them back
+      // exactly as stored, and saves the zones this account added alongside them.
+      zones: withLockedRecoveryYardZones(
+        locations.find(l => l.id === editingLocationId),
+        formData.zones,
+        isAdmin
+      ),
+      worker_shifts: guaranteedShifts,
+    };
     // ────────────────────────────────────────────────────────────────────────
 
     if (editingLocationId) {
