@@ -31,8 +31,8 @@ import EnvironmentManager from "@/components/location/EnvironmentManager";
 import ApartmentManager from "@/components/location/ApartmentManager";
 import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
-import OnSiteResidenceModal from "@/components/location/OnSiteResidenceModal";
-import { getOnSiteResidence, hasOnSiteResidence } from "@/lib/onsiteResidence";
+import OnSiteResidenceSection from "@/components/location/OnSiteResidenceSection";
+import { hasOnSiteResidence } from "@/lib/onsiteResidence";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
 import { describeCharacterResidence } from "@/lib/residenceDisplay";
 import { getVenuePositions } from "@/lib/venuePositions";
@@ -699,9 +699,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [residentSearch, setResidentSearch] = useState("");
-  // The On-Site Residence configuration modal — business properties only.
-  const [showOnSiteResidence, setShowOnSiteResidence] = useState(false);
-  const onSiteResidence = getOnSiteResidence(form);
+  // Names for every saved resident, including people whose record this account does not
+  // load directly (shared residency) — a saved resident is never shown as missing.
+  const residentNameById = React.useMemo(() => {
+    const map = {};
+    (sharedOccupancy?.residents || []).forEach(r => { if (r?.id && r?.name) map[r.id] = r.name; });
+    allAssignableCharacters.forEach(c => { if (c?.id && c?.name) map[c.id] = c.name; });
+    return map;
+  }, [sharedOccupancy, allAssignableCharacters]);
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
 
@@ -832,12 +837,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     if (zi?.url && w.name?.trim()) workplaceNameByImageUrl[zi.url] = w.name.trim();
   }));
 
-  const handleSave = () => {
+  // `overrides` lets a section save the values it just produced (the On-Site Residence
+  // modal) through this same location save, instead of relying on a later click.
+  const handleSave = (overrides = {}) => {
     if (!canSave) return;
-    const effectiveType = (form.location_type === "character_specific" && !form.character_id) ? "global" : form.location_type;
-    const charObj = (effectiveType === "character_specific") ? characters.find(c => c.id === form.character_id) : null;
-    const ownerChar = !form.owner_is_npc && form.owner_character_id
-      ? (form.owner_character_id === currentUser?.id ? { name: worldName } : characters.find(c => c.id === form.owner_character_id))
+    const source = { ...form, ...overrides };
+    const effectiveType = (source.location_type === "character_specific" && !source.character_id) ? "global" : source.location_type;
+    const charObj = (effectiveType === "character_specific") ? characters.find(c => c.id === source.character_id) : null;
+    const ownerChar = !source.owner_is_npc && source.owner_character_id
+      ? (source.owner_character_id === currentUser?.id ? { name: worldName } : characters.find(c => c.id === source.owner_character_id))
       : null;
     // ── LOCATION TYPE WRITE RULE (NON-NEGOTIABLE) ──────────────────────────
     // Sharing and Location Type are independent dimensions. A share/unshare
@@ -849,26 +857,26 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     // then "global".
     const isNewLocation = !editingLocation;
     const originalType = editingLocation?.location_type ?? null;
-    const typeExplicitlyChanged = !isNewLocation && form.location_type !== originalType;
+    const typeExplicitlyChanged = !isNewLocation && source.location_type !== originalType;
     const shouldWriteLocationType = isNewLocation || typeExplicitlyChanged;
     // Strip location_type from the form spread; re-add it ONLY when authorized above.
-    const { location_type: _strippedType, ...formRest } = form;
+    const { location_type: _strippedType, ...formRest } = source;
     onSave({
       ...formRest,
       ...(shouldWriteLocationType ? { location_type: effectiveType } : {}),
-      venue_types: form.venue_types || [],
+      venue_types: source.venue_types || [],
       // Each business keeps its own name, type, zones and employees. Its employee list is
       // always a subset of the property's workers — employment stays a single record.
-      workplaces: (form.workplaces || [])
+      workplaces: (source.workplaces || [])
         .filter(w => w.name?.trim())
         .map(w => ({
           ...w,
           name: w.name.trim(),
-          worker_character_ids: (w.worker_character_ids || []).filter(id => (form.worker_character_ids || []).includes(id)),
+          worker_character_ids: (w.worker_character_ids || []).filter(id => (source.worker_character_ids || []).includes(id)),
         })),
-      keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
+      keywords: (source.keywords || "").split(",").map(k => k.trim()).filter(Boolean),
       character_name: charObj?.name || "",
-      owner_character_name: ownerChar?.name || form.owner_character_name || "",
+      owner_character_name: ownerChar?.name || source.owner_character_name || "",
     });
   };
 
@@ -1081,21 +1089,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       {/* ── ON-SITE RESIDENCE (business properties) ── */}
       {form.category === 'business' && (
-        <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/5 p-3 space-y-2">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">On-Site Residence</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {onSiteResidence
-                  ? `${onSiteResidence.name} · ${(onSiteResidence.zone_names || []).length} room${(onSiteResidence.zone_names || []).length === 1 ? "" : "s"} · ${(form.resident_character_ids || []).length} resident${(form.resident_character_ids || []).length === 1 ? "" : "s"}`
-                  : "A living space inside this business. The business keeps its category, hours and staff."}
-              </p>
-            </div>
-            <Button size="sm" variant="outline" onClick={() => setShowOnSiteResidence(true)} className="rounded-xl flex-shrink-0">
-              {onSiteResidence ? "Configure" : "Add residence"}
-            </Button>
-          </div>
-        </div>
+        <OnSiteResidenceSection
+          form={form}
+          setForm={setForm}
+          locationName={form.name}
+          editingLocationId={editingLocation?.id}
+          characters={allAssignableCharacters}
+          residentNames={residentNameById}
+          onPersist={handleSave}
+        />
       )}
 
       {/* ── RESIDENTS ── */}
@@ -1794,27 +1796,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       <div className="space-y-3">
         <LocationHoursEditor hours={form.operating_hours} onChange={(hours) => update("operating_hours", hours)} />
       </div>
-
-      {showOnSiteResidence && (
-        <OnSiteResidenceModal
-          locationName={form.name}
-          zones={form.zones}
-          environments={form.environments}
-          residentIds={form.resident_character_ids || []}
-          characters={allAssignableCharacters}
-          onAddZone={(zoneName) => update("zones", [...form.zones, { zone_name: zoneName, image_urls: [] }])}
-          onUpdateZoneImages={(zoneName, urls) => update("zones", form.zones.map(z => z.zone_name === zoneName ? { ...z, image_urls: urls } : z))}
-          onSave={({ environment, residentIds }) => {
-            // The residence is a residential environment on this business. Business zones,
-            // hours and staff are untouched; residents are the existing residency list.
-            const rest = (form.environments || []).filter(e => e.type !== 'residential');
-            update("environments", environment ? [...rest, environment] : rest);
-            update("resident_character_ids", residentIds);
-            setShowOnSiteResidence(false);
-          }}
-          onClose={() => setShowOnSiteResidence(false)}
-        />
-      )}
 
       {editingLocation && onDuplicate && (
         <Button variant="outline" onClick={onDuplicate} className="w-full rounded-xl gap-2 border-dashed">📋 Duplicate This Location</Button>

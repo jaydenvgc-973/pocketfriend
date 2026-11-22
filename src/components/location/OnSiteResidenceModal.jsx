@@ -25,9 +25,11 @@ const MAX_IMAGES = 5;
  */
 export default function OnSiteResidenceModal({
   locationName,
+  existingLocation = false,
   zones = [],
   environments = [],
   residentIds = [],
+  residentNames = {},
   characters = [],
   onAddZone,
   onUpdateZoneImages,
@@ -103,7 +105,15 @@ export default function OnSiteResidenceModal({
   };
 
   const query = search.trim().toLowerCase();
-  const residentCharacters = characters.filter((c) => residents.includes(c.id));
+  // Every saved resident is shown — including someone whose record this account does not
+  // load directly (a shared residence). A saved assignment is never displayed as missing.
+  const residentCharacters = residents.map(
+    (id) =>
+      characters.find((c) => c.id === id) || {
+        id,
+        name: residentNames?.[id] || "Resident",
+      }
+  );
   const assignable = characters
     .filter((c) => !residents.includes(c.id))
     .filter((c) => !query || (c.name || c.display_name || "").toLowerCase().includes(query))
@@ -328,7 +338,9 @@ export default function OnSiteResidenceModal({
           </div>
 
           <p className="text-[10px] text-muted-foreground">
-            Applied to this location — press Save Changes to keep it.
+            {existingLocation
+              ? "Saved on this property — the business's own settings are untouched."
+              : "Applied to this new location — kept when you add the location."}
           </p>
         </div>
 
