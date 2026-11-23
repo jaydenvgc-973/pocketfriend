@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import GovernmentModalShell from "./GovernmentModalShell";
 import GovernmentCharacterPicker from "./GovernmentCharacterPicker";
 import { CITY_HALL_PURPOSES, COURT_CASE_TYPES, getCourtRolesForCaseType } from "@/lib/governmentVenues";
-import { isIncarceratedCharacter } from "@/lib/jailSceneRules";
+import { roleAcceptsCharacter } from "@/lib/courtParticipation";
 import {
   resolveGovernmentCrossAccountCharacters,
   isOwnAccountCharacter,
@@ -114,7 +114,7 @@ export default function GovernmentVenueSetupModal({
 
   /** The two groups a role may draw from, after that role's own eligibility rules. */
   const poolFor = (role) => {
-    const keep = (c) => !role?.excludeIncarcerated || !isIncarceratedCharacter(c);
+    const keep = (c) => roleAcceptsCharacter(role, c);
     return {
       own: ownCharacters.filter(keep),
       cross: role?.ownAccountOnly ? [] : crossPool.filter(keep),
@@ -318,6 +318,9 @@ export default function GovernmentVenueSetupModal({
             })}
             <p className="text-[10px] text-muted-foreground leading-relaxed">
               Witnesses and jurors are never required. A case still proceeds without them, and no one is made a witness or juror just because they are in the building.
+            </p>
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              A character in custody may still be the defendant or a witness, and takes part remotely without their sentence or custody changing. A hospitalized character may still be the defendant and appears remotely; while hospitalized they cannot hold another courtroom role. A work shift or a class never excludes anyone — court takes precedence while the proceeding runs and their own schedule resumes afterwards.
             </p>
           </div>
         </>

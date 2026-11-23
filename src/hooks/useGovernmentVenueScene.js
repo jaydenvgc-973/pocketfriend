@@ -12,7 +12,7 @@ import {
   cityHallOfficiantNpc,
 } from "@/lib/governmentVenues";
 import { placeEventAttendees, releaseEventAttendees, attendanceRefusalLabel } from "@/lib/governmentAttendance";
-import { isIncarceratedCharacter } from "@/lib/jailSceneRules";
+import { courtParticipationMode, isRemoteRefusal, actualLocationName } from "@/lib/courtParticipation";
 
 /**
  * useGovernmentVenueScene — the City Hall / Courthouse layer of the Scenes page.
@@ -91,7 +91,7 @@ export default function useGovernmentVenueScene({
   }]);
 
   const governmentContextBlock = courtCase
-    ? buildCourtCaseContext(courtCase, { userPresent: !observeMode, userName: displayName })
+    ? buildCourtCaseContext(courtCase, { userPresent: !observeMode, userName: displayName, venueName: location?.name })
     : cityHallPlan
       ? buildCityHallContext(cityHallPlan, { userPresent: !observeMode, userName: displayName })
       : "";
@@ -111,42 +111,60 @@ export default function useGovernmentVenueScene({
 
     if (config.venue === "courthouse") {
       const selected = courtAttendanceIds(config);
-      const { attendingIds, refused } = await placeEventAttendees({
-        location, characterIds: selected, ownerEmail: currentUser?.email, characters,
+      // Who can actually be brought into the room. A hospitalized or incarcerated person
+      // stays exactly where they are — their treatment, custody and sentence are never
+      // altered by the court — and takes part remotely in the role they were given.
+      const remote = new Map();
+      const toPlace = selected.filter((id) => {
+        const c = characters.find((x) => x.id === id);
+        if (courtParticipationMode(c) === "physical") return true;
+        remote.set(id, { location_name: actualLocationName(c) });
+        return false;
       });
-      const resolved = resolveCourtParticipants(config, characters, { attendingIds });
-      // A witness who is in custody cannot be relocated into the room. They testify
-      // remotely instead: their custody, facility and sentence are untouched, and their
-      // authoritative physical location does not change.
-      const refusedIds = new Set(refused.map((r) => r.id));
-      const remoteWitnessIds = (config.roles?.witnesses || [])
-        .filter((id) => refusedIds.has(id))
-        .filter((id) => isIncarceratedCharacter(characters.find((c) => c.id === id)));
-      const unavailableRefusals = refused.filter((r) => !remoteWitnessIds.includes(r.id));
+      const { attendingIds, refused } = await placeEventAttendees({
+        location, characterIds: toPlace, ownerEmail: currentUser?.email, characters,
+      });
+      // If the presence authority keeps someone where they are, that is custody or care,
+      // not absence: they keep their role and appear remotely instead of being dropped.
+      const unavailableRefusals = [];
+      refused.forEach((r) => {
+        if (isRemoteRefusal(r.reason)) remote.set(r.id, { location_name: actualLocationName(characters.find((c) => c.id === r.id)) });
+        else unavailableRefusals.push(r);
+      });
+      const resolved = resolveCourtParticipants(config, characters, { attendingIds, remoteById: remote });
+      const remoteParticipants = resolved.assignments
+        .filter((a) => a.remote)
+        .map((a) => ({
+          id: a.characterId,
+          name: a.name,
+          roleLabel: a.roleLabel,
+          locationName: a.remote_location_name,
+          avatar_url: characters.find((c) => c.id === a.characterId)?.avatar_url || null,
+        }));
       const nextCase = {
         ...config,
         case_id: `${location.id}_${Date.now()}`,
         assignments: resolved.assignments,
         temp_npcs: resolved.tempNpcs,
         attendance_ids: resolved.attendanceIds,
-        remote_witness_names: remoteWitnessIds.map((id) => nameOf(id)).filter(Boolean),
         refused_attendance: unavailableRefusals.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
       };
-      attendanceRef.current = nextCase.attendance_ids;
+      // Only the people actually placed at the venue hold this event's presence lock.
+      attendanceRef.current = attendingIds;
       placedForRef.current = `${location.id}:${nextCase.case_id}`;
       setCourtCase(nextCase);
       setCityHallPlan(null);
       persist({ courtCase: nextCase });
       const roleLine = resolved.assignments.map((a) => `${a.roleLabel}: ${a.name}`).join(" · ");
       addNarrative(`${courtCaseTypeLabel(config.case_type)} at ${location.name}. ${config.description}${roleLine ? ` — ${roleLine}` : ""}.`);
-      if (nextCase.remote_witness_names.length > 0) {
-        const who = nextCase.remote_witness_names;
-        addNarrative(`${who.join(" and ")} ${who.length === 1 ? "is" : "are"} in custody and testifying remotely. Custody and sentence are unchanged.`);
+      if (remoteParticipants.length > 0) {
+        const who = remoteParticipants.map((p) => `${p.name} (${p.roleLabel}, from ${p.locationName})`);
+        addNarrative(`${who.join(" and ")} ${who.length === 1 ? "is" : "are"} taking part remotely. Their location, treatment and custody are unchanged.`);
       }
       const missing = refusedLine(unavailableRefusals);
       if (missing) addNarrative(missing);
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-      return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs };
+      return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs, remoteParticipants };
     }
 
     const names = (ids = []) => ids.map((id) => nameOf(id)).filter(Boolean);

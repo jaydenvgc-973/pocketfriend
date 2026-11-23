@@ -12,6 +12,8 @@
  *   sentence  → applyJudicialSentence (criminal_record + existing incarceration fields/facility inmates)
  */
 
+import { actualLocationName } from "./courtParticipation";
+
 const normalize = (v) => String(v || '').toLowerCase().replace(/[\s\-&]+/g, '_').replace(/_+/g, '_');
 
 /**
@@ -73,17 +75,20 @@ export function courtCaseTypeLabel(id) {
 // user leaves them unassigned.
 // ownAccountOnly: the role carries legal consequences, so only a character this account
 // owns may hold it. excludeIncarcerated: current custody disqualifies the role (jury
-// service), regardless of a past record. Witnesses keep no such exclusion — a person in
-// custody may testify remotely without being released.
+// service), regardless of a past record. excludeHospitalized: an active hospitalization
+// disqualifies every role except defendant — a defendant may still appear remotely.
+// Witnesses keep no custody exclusion: a person in custody may testify remotely without
+// being released. Work and school never exclude anyone: a shift or a class is not an
+// availability restriction.
 const COURT_ROLES = [
-  { key: 'judge', label: 'Judge', necessary: true, multiple: false },
+  { key: 'judge', label: 'Judge', necessary: true, multiple: false, excludeHospitalized: true },
   { key: 'defendant', label: 'Defendant', necessary: true, multiple: false, ownAccountOnly: true },
-  { key: 'plaintiff', label: 'Plaintiff / Complainant', necessary: false, multiple: false, ownAccountOnly: true, caseTypes: ['civil', 'family', 'municipal', 'other'] },
-  { key: 'prosecutor', label: 'Prosecuting Attorney', necessary: false, multiple: false, caseTypes: ['criminal', 'municipal', 'sentencing'] },
-  { key: 'defense_attorney', label: 'Defense Attorney', necessary: false, multiple: false, caseTypes: ['criminal', 'civil', 'family', 'municipal', 'sentencing', 'other'] },
-  { key: 'plaintiff_attorney', label: "Plaintiff's Attorney", necessary: false, multiple: false, caseTypes: ['civil', 'family'] },
-  { key: 'witnesses', label: 'Witnesses', necessary: false, multiple: true, optional: true },
-  { key: 'jurors', label: 'Jurors', necessary: false, multiple: true, optional: true, excludeIncarcerated: true },
+  { key: 'plaintiff', label: 'Plaintiff / Complainant', necessary: false, multiple: false, ownAccountOnly: true, excludeHospitalized: true, caseTypes: ['civil', 'family', 'municipal', 'other'] },
+  { key: 'prosecutor', label: 'Prosecuting Attorney', necessary: false, multiple: false, excludeHospitalized: true, caseTypes: ['criminal', 'municipal', 'sentencing'] },
+  { key: 'defense_attorney', label: 'Defense Attorney', necessary: false, multiple: false, excludeHospitalized: true, caseTypes: ['criminal', 'civil', 'family', 'municipal', 'sentencing', 'other'] },
+  { key: 'plaintiff_attorney', label: "Plaintiff's Attorney", necessary: false, multiple: false, excludeHospitalized: true, caseTypes: ['civil', 'family'] },
+  { key: 'witnesses', label: 'Witnesses', necessary: false, multiple: true, optional: true, excludeHospitalized: true },
+  { key: 'jurors', label: 'Jurors', necessary: false, multiple: true, optional: true, excludeIncarcerated: true, excludeHospitalized: true },
 ];
 
 export function getCourtRolesForCaseType(caseType) {
@@ -146,15 +151,30 @@ export function cityHallOfficiantNpc(plan) {
  * not legitimately attend is not shown in the room, and a necessary role left without an
  * attendee is held by the court's own temporary person.
  */
-export function resolveCourtParticipants(courtCase, characters = [], { attendingIds = null } = {}) {
+export function resolveCourtParticipants(courtCase, characters = [], { attendingIds = null, remoteById = null } = {}) {
   const byId = new Map(characters.map((c) => [c.id, c]));
   const allowed = attendingIds ? new Set(attendingIds) : null;
-  const canAttend = (id) => !!id && (!allowed || allowed.has(id));
+  // A remote participant holds their own role without being in the room: custody and
+  // hospital are physical facts, not a reason to lose the role they were given.
+  const remote = remoteById instanceof Map ? remoteById : new Map(Object.entries(remoteById || {}));
+  const canAttend = (id) => !!id && (!allowed || allowed.has(id) || remote.has(id));
   const roles = courtCase?.roles || {};
   const caseType = courtCase?.case_type || 'other';
   const necessary = necessaryRolesFor(caseType);
   const assignments = [];
   const tempNpcs = [];
+
+  const assignmentFor = (def, character) => {
+    const info = remote.get(character.id);
+    return {
+      roleKey: def.key,
+      roleLabel: def.label,
+      characterId: character.id,
+      name: character.name,
+      remote: !!info,
+      remote_location_name: info ? (info.location_name || actualLocationName(character)) : null,
+    };
+  };
 
   for (const def of COURT_ROLES) {
     const value = roles[def.key];
@@ -162,12 +182,12 @@ export function resolveCourtParticipants(courtCase, characters = [], { attending
       const ids = Array.isArray(value) ? value.filter(Boolean) : [];
       ids.forEach((id) => {
         const c = byId.get(id);
-        if (c && canAttend(id)) assignments.push({ roleKey: def.key, roleLabel: def.label, characterId: id, name: c.name });
+        if (c && canAttend(id)) assignments.push(assignmentFor(def, c));
       });
       continue;
     }
     if (value && byId.get(value) && canAttend(value)) {
-      assignments.push({ roleKey: def.key, roleLabel: def.label, characterId: value, name: byId.get(value).name });
+      assignments.push(assignmentFor(def, byId.get(value)));
       continue;
     }
     // A necessary role nobody is attending for is held by a temporary person of the court.
@@ -190,24 +210,44 @@ export function resolveCourtParticipants(courtCase, characters = [], { attending
 }
 
 /** The courtroom as the narrative must see it: who holds which role, and what is being tried. */
-export function buildCourtCaseContext(courtCase, { userPresent = true, userName = null } = {}) {
+export function buildCourtCaseContext(courtCase, { userPresent = true, userName = null, venueName = null } = {}) {
   if (!courtCase) return '';
+  const venue = venueName || courtCase.location_name || 'the courthouse';
   const lines = [];
   lines.push('════════════════════════════════════');
   lines.push('COURT PROCEEDING — ESTABLISHED CASE (AUTHORITATIVE)');
   lines.push('════════════════════════════════════');
   lines.push(`Case type: ${courtCaseTypeLabel(courtCase.case_type)}`);
   if (courtCase.description) lines.push(`The case is about: ${courtCase.description}`);
-  if (courtCase.assignments?.length) {
+  const assignments = courtCase.assignments || [];
+  const remoteAssignments = assignments.filter((a) => a.remote);
+  const inRoom = assignments.filter((a) => !a.remote);
+  if (assignments.length) {
     lines.push('Courtroom roles — these are fixed for this proceeding and must not change:');
-    courtCase.assignments.forEach((a) => {
-      lines.push(`• ${a.roleLabel}: ${a.name}${a.temporary ? ' (a person of this court, not a member of the household)' : ''}`);
+    assignments.forEach((a) => {
+      const temp = a.temporary ? ' (a person of this court, not a member of the household)' : '';
+      lines.push(a.remote
+        ? `• ${a.roleLabel}: ${a.name}${temp} — taking part REMOTELY from ${a.remote_location_name || 'their own location'}. Not in the courtroom.`
+        : `• ${a.roleLabel}: ${a.name}${temp}`);
     });
-    lines.push('Everyone listed above is physically in the courtroom right now, in the role shown. Attendance is settled — it never has to be established again in this scene.');
+    lines.push('Each person knows their own role and why they are here: a defendant knows they are the defendant, a witness knows they were called to testify, a juror knows they sit on the jury, a judge knows they are presiding, an attorney knows which party they represent.');
+    lines.push('Attendance is settled — it never has to be established again in this scene.');
   }
-  if (courtCase.remote_witness_names?.length) {
-    lines.push(`Testifying remotely from custody: ${courtCase.remote_witness_names.join(', ')}. They are in custody, not in the room, and they are never released by testifying.`);
+  if (inRoom.length) {
+    lines.push('');
+    lines.push('WHERE THEY ARE RIGHT NOW (authoritative):');
+    lines.push(`• ${inRoom.map((a) => a.name).join(', ')} ${inRoom.length === 1 ? 'is' : 'are'} physically at ${venue}, in the courtroom. They are NOT at work, at school, at home, in a hospital room or in a cell while this proceeding is running.`);
+    lines.push('• Their employment, enrollment, household, treatment and any custody remain exactly as they were. Attending court never deletes, rewrites, suspends or restarts a shift or a class: a person who came from a shift may return to that same shift afterwards.');
   }
+  if (remoteAssignments.length) {
+    lines.push('');
+    lines.push('REMOTE PARTICIPATION (authoritative):');
+    remoteAssignments.forEach((a) => {
+      lines.push(`• ${a.name} (${a.roleLabel}) is at ${a.remote_location_name || 'their own location'} and takes part by remote link. They are never described as standing in the courtroom, and their treatment, custody and sentence are unchanged by taking part.`);
+    });
+    lines.push('• A remote participant hears and is heard in the room, but is never in a picture of the room and is never placed in two places at once.');
+  }
+  lines.push('');
   lines.push(`• ${userPresent ? `${userName || 'The user'} is present in the courtroom, attending this proceeding.` : `${userName || 'The user'} is NOT in the courtroom — this is being watched, not attended. Never place them in the room.`}`);
   lines.push('');
   lines.push('PRESENCE IS NOT SPEAKING:');
@@ -219,6 +259,7 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
   lines.push('• Speak about the actual case described above. Never substitute a different trial, charge, or dispute.');
   lines.push('• This is one continuing proceeding. Every continuation builds on what has already happened in this room — it never restarts the case, never repeats its opening, and never drifts into a different case.');
   lines.push('• Testimony comes only from what a person actually knows: their own memories and lived experience. Someone who did not witness an event does not gain firsthand knowledge by being called as a witness. Accounts may be incomplete, mistaken or in conflict, and are shown that way.');
+  lines.push('• The case description is the court\'s framing of the matter, not personal knowledge. Nobody acquires private facts from it: the judge and attorneys understand the procedure, not another person\'s secrets, and jurors weigh only what is presented in the room.');
   lines.push('• Starting or attending a case decides nothing. Only the explicitly selected Sentencing action produces a sentence, and only after the user confirms it.');
   lines.push('• An acquittal, dismissal, adjournment, civil ruling or settlement is a valid outcome and never becomes a conviction.');
   lines.push('• Sentencing, contempt and custody are consequences of the case, not of anyone being present in the building.');

@@ -119,6 +119,9 @@ export default function Scene() {
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
+  // Court participants taking part by remote link (in custody or hospitalized): in the
+  // proceeding, never in the room.
+  const [remoteParticipants, setRemoteParticipants] = useState([]);
   const [showNpcDropdown, setShowNpcDropdown] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [activeZone, setActiveZone] = useState(initialZoneName);
@@ -692,8 +695,11 @@ export default function Scene() {
       list.push(background ? { ...p, isNpc: true } : p);
     };
     [...broughtCharacters, ...sceneParticipants].forEach(push);
+    // A court participant taking part by remote link is in the proceeding without being
+    // in the room: they can speak and be spoken to, and never appear in a picture of it.
+    remoteParticipants.forEach((p) => push({ ...p, isNpc: false, isRemoteParticipant: true }));
     return list;
-  }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id, (selectedNpcIds || []).join(',')]);
+  }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id, (selectedNpcIds || []).join(','), remoteParticipants.map((p) => p.id).join(',')]);
 
   // The characters who were sent are the ones in the moment by default. When nothing
   // was sent, the people already at this place are the moment. Everyone else here is
@@ -1089,7 +1095,7 @@ export default function Scene() {
     if (observeMode) {
       const byId = new Map(sceneParticipants.map((p) => [p.id, p]));
       return observeCast
-        .filter((c) => c?.id && c.isNpc !== true && !String(c.id).startsWith("npc_"))
+        .filter((c) => c?.id && c.isNpc !== true && c.isRemoteParticipant !== true && !String(c.id).startsWith("npc_"))
         .map((c) => {
           const resolved = byId.get(c.id);
           if (resolved) return resolved;
@@ -1310,8 +1316,12 @@ export default function Scene() {
     // The temporary people of the court and City Hall leave when the event ends.
     onEventConcluded: () => {
       const isTempEventNpc = (id) => String(id).startsWith("npc_court_") || id === "npc_cityhall_officiant";
-      setExtraNpcs((prev) => prev.filter((n) => !isTempEventNpc(n.id)));
-      setSelectedNpcIds((prev) => (prev || []).filter((id) => !isTempEventNpc(id)));
+      const remoteIds = remoteParticipants.map((p) => p.id);
+      const drop = (id) => isTempEventNpc(id) || remoteIds.includes(id);
+      setExtraNpcs((prev) => prev.filter((n) => !drop(n.id) && n.npcType !== "remote_participant"));
+      setSelectedNpcIds((prev) => (prev || []).filter((id) => !drop(id)));
+      setObserveCastIds((prev) => (prev ? prev.filter((id) => !remoteIds.includes(id)) : prev));
+      setRemoteParticipants([]);
     },
   });
 
@@ -1326,6 +1336,16 @@ export default function Scene() {
     const temps = prepared.tempNpcs || [];
     if (temps.length > 0) {
       setExtraNpcs((prev) => [...prev.filter((n) => !String(n.id).startsWith("npc_court_") && n.id !== "npc_cityhall_officiant"), ...temps]);
+    }
+    // Participants taking part remotely stay where they actually are. They join the
+    // proceeding as remote voices — never as people in the room, never in its picture.
+    const remote = prepared.remoteParticipants || [];
+    setRemoteParticipants(remote);
+    if (remote.length > 0) {
+      setExtraNpcs((prev) => [
+        ...prev.filter((n) => n.npcType !== "remote_participant"),
+        ...remote.map((p) => ({ id: p.id, name: p.name, role: `${p.roleLabel} — appearing remotely`, isNpc: false, npcType: "remote_participant", avatar_url: p.avatar_url })),
+      ]);
     }
     const cast = [...temps.map((n) => n.id), ...(prepared.attendanceIds || [])];
     if (cast.length > 0) setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...cast])]);
