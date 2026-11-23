@@ -1645,6 +1645,7 @@ export default function Scene() {
           venueType={governmentVenueType}
           location={location}
           characters={characters}
+          currentUser={currentUser}
           onClose={() => setShowVenueSetup(false)}
           onBegin={handleBeginGovernmentVisit}
         />
@@ -1652,6 +1653,7 @@ export default function Scene() {
       <MarriageConfirmationModal
         open={!!marriageModal}
         characters={characters}
+        currentUser={currentUser}
         initialSpouseIds={marriageModal?.spouseIds || []}
         initialWitnessIds={marriageModal?.witnessIds || []}
         locationName={marriageModal?.locationName || location?.name}
@@ -1674,6 +1676,7 @@ export default function Scene() {
         mode={judicialModal?.mode || "sentencing"}
         characters={characters}
         facilities={(locationsData || []).filter((l) => l.category === "jail_prison" || l.is_confinement_facility === true)}
+        ownerEmail={currentUser?.email}
         initialDefendantId={judicialModal?.defendantId || ""}
         initialOffense={judicialModal?.offense || ""}
         courtName={location?.name}

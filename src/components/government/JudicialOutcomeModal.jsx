@@ -51,6 +51,7 @@ export default function JudicialOutcomeModal({
   mode = "sentencing",
   characters = [],
   facilities = [],
+  ownerEmail = null,
   initialDefendantId = "",
   initialOffense = "",
   courtName = null,
@@ -83,13 +84,19 @@ export default function JudicialOutcomeModal({
     setSaving(false);
   }, [open, mode, initialDefendantId, initialOffense]);
 
+  // A sentence changes criminal history and custody, so only a character this account
+  // owns may be sentenced here. The same ownership is verified again by
+  // applyJudicialSentence before anything is written.
   const eligible = useMemo(
-    () => (characters || []).filter((c) =>
-      c?.id && !c.isNpc && !String(c.id).startsWith("npc_")
-      && !["deleted", "soft_deleted", "merged", "deceased"].includes(c.status)
-      && c.life_status !== "deceased"
-    ),
-    [characters]
+    () => (characters || [])
+      .filter((c) =>
+        c?.id && !c.isNpc && !String(c.id).startsWith("npc_")
+        && !["deleted", "soft_deleted", "merged", "deceased"].includes(c.status)
+        && c.life_status !== "deceased"
+        && (!ownerEmail || !c.owner_email || c.owner_email.toLowerCase() === ownerEmail.toLowerCase())
+      )
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [characters, ownerEmail]
   );
 
   const outcomes = isContempt ? CONTEMPT_OUTCOMES : SENTENCING_OUTCOMES;

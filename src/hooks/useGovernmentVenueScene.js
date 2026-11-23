@@ -12,6 +12,7 @@ import {
   cityHallOfficiantNpc,
 } from "@/lib/governmentVenues";
 import { placeEventAttendees, releaseEventAttendees, attendanceRefusalLabel } from "@/lib/governmentAttendance";
+import { isIncarceratedCharacter } from "@/lib/jailSceneRules";
 
 /**
  * useGovernmentVenueScene — the City Hall / Courthouse layer of the Scenes page.
@@ -83,7 +84,7 @@ export default function useGovernmentVenueScene({
     if (placedForRef.current === eventKey) return;
     placedForRef.current = eventKey;
     attendanceRef.current = ids;
-    placeEventAttendees({ location, characterIds: ids, ownerEmail: currentUser?.email })
+    placeEventAttendees({ location, characterIds: ids, ownerEmail: currentUser?.email, characters })
       .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
       .catch(() => {});
   }, [storageKey, location?.id]);
@@ -124,16 +125,25 @@ export default function useGovernmentVenueScene({
     if (config.venue === "courthouse") {
       const selected = courtAttendanceIds(config);
       const { attendingIds, refused } = await placeEventAttendees({
-        location, characterIds: selected, ownerEmail: currentUser?.email,
+        location, characterIds: selected, ownerEmail: currentUser?.email, characters,
       });
       const resolved = resolveCourtParticipants(config, characters, { attendingIds });
+      // A witness who is in custody cannot be relocated into the room. They testify
+      // remotely instead: their custody, facility and sentence are untouched, and their
+      // authoritative physical location does not change.
+      const refusedIds = new Set(refused.map((r) => r.id));
+      const remoteWitnessIds = (config.roles?.witnesses || [])
+        .filter((id) => refusedIds.has(id))
+        .filter((id) => isIncarceratedCharacter(characters.find((c) => c.id === id)));
+      const unavailableRefusals = refused.filter((r) => !remoteWitnessIds.includes(r.id));
       const nextCase = {
         ...config,
         case_id: `${location.id}_${Date.now()}`,
         assignments: resolved.assignments,
         temp_npcs: resolved.tempNpcs,
         attendance_ids: resolved.attendanceIds,
-        refused_attendance: refused.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
+        remote_witness_names: remoteWitnessIds.map((id) => nameOf(id)).filter(Boolean),
+        refused_attendance: unavailableRefusals.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
       };
       attendanceRef.current = nextCase.attendance_ids;
       placedForRef.current = `${location.id}:${nextCase.case_id}`;
@@ -142,7 +152,11 @@ export default function useGovernmentVenueScene({
       persist({ courtCase: nextCase });
       const roleLine = resolved.assignments.map((a) => `${a.roleLabel}: ${a.name}`).join(" · ");
       addNarrative(`${courtCaseTypeLabel(config.case_type)} at ${location.name}. ${config.description}${roleLine ? ` — ${roleLine}` : ""}.`);
-      const missing = refusedLine(refused);
+      if (nextCase.remote_witness_names.length > 0) {
+        const who = nextCase.remote_witness_names;
+        addNarrative(`${who.join(" and ")} ${who.length === 1 ? "is" : "are"} in custody and testifying remotely. Custody and sentence are unchanged.`);
+      }
+      const missing = refusedLine(unavailableRefusals);
       if (missing) addNarrative(missing);
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
       return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs };
@@ -160,7 +174,7 @@ export default function useGovernmentVenueScene({
     };
     const selected = cityHallAttendanceIds(plan);
     const { attendingIds, refused } = await placeEventAttendees({
-      location, characterIds: selected, ownerEmail: currentUser?.email,
+      location, characterIds: selected, ownerEmail: currentUser?.email, characters,
     });
     const officiant = cityHallOfficiantNpc(plan);
     const attendingSet = new Set(attendingIds);
@@ -199,7 +213,7 @@ export default function useGovernmentVenueScene({
     placedForRef.current = null;
     onEventConcluded?.();
     if (ids.length === 0 || !currentUser?.email) return;
-    await releaseEventAttendees({ characterIds: ids, ownerEmail: currentUser.email });
+    await releaseEventAttendees({ characterIds: ids, ownerEmail: currentUser.email, characters });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
   };
 

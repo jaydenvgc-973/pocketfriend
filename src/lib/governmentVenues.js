@@ -67,15 +67,19 @@ export function courtCaseTypeLabel(id) {
 // Each role states when it applies. Witnesses and jurors are always optional and never
 // required to conduct a case; the necessary roles are filled by temporary NPCs when the
 // user leaves them unassigned.
+// ownAccountOnly: the role carries legal consequences, so only a character this account
+// owns may hold it. excludeIncarcerated: current custody disqualifies the role (jury
+// service), regardless of a past record. Witnesses keep no such exclusion — a person in
+// custody may testify remotely without being released.
 const COURT_ROLES = [
   { key: 'judge', label: 'Judge', necessary: true, multiple: false },
-  { key: 'defendant', label: 'Defendant', necessary: true, multiple: false },
-  { key: 'plaintiff', label: 'Plaintiff / Complainant', necessary: false, multiple: false, caseTypes: ['civil', 'family', 'municipal', 'other'] },
+  { key: 'defendant', label: 'Defendant', necessary: true, multiple: false, ownAccountOnly: true },
+  { key: 'plaintiff', label: 'Plaintiff / Complainant', necessary: false, multiple: false, ownAccountOnly: true, caseTypes: ['civil', 'family', 'municipal', 'other'] },
   { key: 'prosecutor', label: 'Prosecuting Attorney', necessary: false, multiple: false, caseTypes: ['criminal', 'municipal', 'sentencing'] },
   { key: 'defense_attorney', label: 'Defense Attorney', necessary: false, multiple: false, caseTypes: ['criminal', 'civil', 'family', 'municipal', 'sentencing', 'other'] },
   { key: 'plaintiff_attorney', label: "Plaintiff's Attorney", necessary: false, multiple: false, caseTypes: ['civil', 'family'] },
   { key: 'witnesses', label: 'Witnesses', necessary: false, multiple: true, optional: true },
-  { key: 'jurors', label: 'Jurors', necessary: false, multiple: true, optional: true },
+  { key: 'jurors', label: 'Jurors', necessary: false, multiple: true, optional: true, excludeIncarcerated: true },
 ];
 
 export function getCourtRolesForCaseType(caseType) {
@@ -196,6 +200,9 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
       lines.push(`• ${a.roleLabel}: ${a.name}${a.temporary ? ' (a person of this court, not a member of the household)' : ''}`);
     });
     lines.push('Everyone listed above is physically in the courtroom right now, in the role shown. Attendance is settled — it never has to be established again in this scene.');
+  }
+  if (courtCase.remote_witness_names?.length) {
+    lines.push(`Testifying remotely from custody: ${courtCase.remote_witness_names.join(', ')}. They are in custody, not in the room, and they are never released by testifying.`);
   }
   lines.push(`• ${userPresent ? `${userName || 'The user'} is present in the courtroom, attending this proceeding.` : `${userName || 'The user'} is NOT in the courtroom — this is being watched, not attended. Never place them in the room.`}`);
   lines.push('');

@@ -3,6 +3,11 @@ import { base44 } from "@/api/base44Client";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GovernmentModalShell from "./GovernmentModalShell";
+import GovernmentCharacterPicker from "./GovernmentCharacterPicker";
+import {
+  resolveGovernmentCrossAccountCharacters,
+  isOwnAccountCharacter,
+} from "@/lib/governmentCrossAccountCharacters";
 
 /**
  * MarriageConfirmationModal — the one place a marriage becomes official.
@@ -12,6 +17,10 @@ import GovernmentModalShell from "./GovernmentModalShell";
  * There is no separate marriage record and no household change: moving in together
  * stays with the existing move-in flow.
  *
+ * The participant fields use GovernmentCharacterPicker, so the same organization as the
+ * City Hall setup applies: the account's own characters first (alphabetical), then the
+ * cross-account characters the user already knows (alphabetical, clearly marked).
+ *
  * Used after a ceremony that actually took place (Scenes), or after a Story Event
  * that establishes a completed marriage. Nothing here is applied until the user
  * confirms, and cancelling changes no record.
@@ -19,6 +28,7 @@ import GovernmentModalShell from "./GovernmentModalShell";
 export default function MarriageConfirmationModal({
   open,
   characters = [],
+  currentUser = null,
   initialSpouseIds = [],
   initialWitnessIds = [],
   locationName = null,
@@ -26,9 +36,11 @@ export default function MarriageConfirmationModal({
   onClose,
   onConfirmed,
 }) {
+  const myEmail = currentUser?.email || null;
   const [spouseA, setSpouseA] = useState("");
   const [spouseB, setSpouseB] = useState("");
   const [witnessIds, setWitnessIds] = useState([]);
+  const [crossAccount, setCrossAccount] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -50,8 +62,48 @@ export default function MarriageConfirmationModal({
     [characters]
   );
 
-  const nameOf = (id) => eligible.find((c) => c.id === id)?.name || null;
+  const ownCharacters = useMemo(
+    () => eligible.filter((c) => isOwnAccountCharacter(c, myEmail)),
+    [eligible, myEmail]
+  );
+  const otherOwnedCharacters = useMemo(
+    () => eligible.filter((c) => !isOwnAccountCharacter(c, myEmail)),
+    [eligible, myEmail]
+  );
+  const eligibleKey = eligible.map((c) => c.id).sort().join(",");
+
+  useEffect(() => {
+    if (!open || !myEmail) { setCrossAccount([]); return; }
+    let cancelled = false;
+    setCrossAccount([]);
+    resolveGovernmentCrossAccountCharacters({ ownCharacters: eligible, userEmail: myEmail })
+      .then((list) => { if (!cancelled) setCrossAccount(list); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, myEmail, eligibleKey]);
+
+  const crossPool = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    [...crossAccount, ...otherOwnedCharacters].forEach((c) => {
+      if (!c?.id || seen.has(c.id)) return;
+      seen.add(c.id);
+      list.push(c.is_cross_account ? c : { ...c, is_cross_account: true, account_email: c.owner_email });
+    });
+    return list.sort((a, b) =>
+      (a.owner_email || "").localeCompare(b.owner_email || "") ||
+      (a.name || "").localeCompare(b.name || "")
+    );
+  }, [crossAccount, otherOwnedCharacters]);
+
+  const everyone = [...ownCharacters, ...crossPool];
+  const nameOf = (id) => everyone.find((c) => c.id === id)?.name || null;
   const ready = spouseA && spouseB && spouseA !== spouseB;
+
+  const spousePool = (excludeId) => ({
+    own: ownCharacters.filter((c) => c.id !== excludeId),
+    cross: crossPool.filter((c) => c.id !== excludeId),
+  });
 
   const toggleWitness = (id) => {
     if (id === spouseA || id === spouseB) return;
@@ -96,51 +148,45 @@ export default function MarriageConfirmationModal({
         </div>
       }
     >
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">First person getting married</label>
-        <select
-          value={spouseA}
-          onChange={(e) => setSpouseA(e.target.value)}
-          className="w-full h-9 rounded-xl bg-secondary border border-border px-3 text-sm text-foreground"
-        >
-          <option value="">Select a character…</option>
-          {eligible.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <GovernmentCharacterPicker
+          characters={spousePool(spouseB).own}
+          crossAccountCharacters={spousePool(spouseB).cross}
+          selectedIds={spouseA ? [spouseA] : []}
+          onToggle={(id) => setSpouseA(id)}
+          clearLabel="Select a character…"
+          onClear={() => setSpouseA("")}
+          maxHeightClass="max-h-40"
+        />
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Second person getting married</label>
-        <select
-          value={spouseB}
-          onChange={(e) => setSpouseB(e.target.value)}
-          className="w-full h-9 rounded-xl bg-secondary border border-border px-3 text-sm text-foreground"
-        >
-          <option value="">Select a character…</option>
-          {eligible.filter((c) => c.id !== spouseA).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+        <GovernmentCharacterPicker
+          characters={spousePool(spouseA).own}
+          crossAccountCharacters={spousePool(spouseA).cross}
+          selectedIds={spouseB ? [spouseB] : []}
+          onToggle={(id) => setSpouseB(id)}
+          clearLabel="Select a character…"
+          onClear={() => setSpouseB("")}
+          maxHeightClass="max-h-40"
+        />
         {spouseA && spouseB && spouseA === spouseB && (
           <p className="text-[11px] text-destructive">Choose two different people.</p>
         )}
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Witnesses (optional)</label>
-        <div className="max-h-40 overflow-y-auto rounded-xl border border-border divide-y divide-border">
-          {eligible.filter((c) => c.id !== spouseA && c.id !== spouseB).length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">No one else available to witness.</p>
-          ) : eligible.filter((c) => c.id !== spouseA && c.id !== spouseB).map((c) => (
-            <button
-              key={c.id}
-              onClick={() => toggleWitness(c.id)}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${witnessIds.includes(c.id) ? "bg-primary/10" : "hover:bg-secondary"}`}
-            >
-              <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] ${witnessIds.includes(c.id) ? "bg-primary border-primary text-primary-foreground" : "border-border"}`}>
-                {witnessIds.includes(c.id) ? "✓" : ""}
-              </span>
-              <span className="text-xs text-foreground">{c.name}</span>
-            </button>
-          ))}
-        </div>
+        <GovernmentCharacterPicker
+          characters={ownCharacters.filter((c) => c.id !== spouseA && c.id !== spouseB)}
+          crossAccountCharacters={crossPool.filter((c) => c.id !== spouseA && c.id !== spouseB)}
+          selectedIds={witnessIds}
+          onToggle={toggleWitness}
+          multiple
+          maxHeightClass="max-h-40"
+        />
         <p className="text-[10px] text-muted-foreground">A witness may attend and remember the ceremony. None is required.</p>
       </div>
 

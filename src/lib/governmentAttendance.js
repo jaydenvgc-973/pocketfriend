@@ -56,16 +56,24 @@ export function attendanceRefusalLabel(reason, name) {
 /**
  * Establish physical attendance at the venue for the selected characters, through the
  * existing presence authority. Returns who is actually attending and who could not be.
+ *
+ * Each character is placed under the account that actually owns them: the presence
+ * authority is scoped by owner, so a known cross-account participant (a juror or a
+ * witness) is never placed by writing another account's record with this account's
+ * scope. Their ownership is untouched either way — the authority itself decides whether
+ * that character can legitimately reach this venue.
  */
-export async function placeEventAttendees({ location, characterIds = [], ownerEmail }) {
+export async function placeEventAttendees({ location, characterIds = [], ownerEmail, characters = [] }) {
   const ids = [...new Set((characterIds || []).filter(Boolean))];
   if (!location?.id || ids.length === 0) return { attendingIds: [], refused: [] };
+
+  const ownerById = new Map((characters || []).filter((c) => c?.id).map((c) => [c.id, c.owner_email || ownerEmail]));
 
   const results = await Promise.all(ids.map(async (id) => {
     try {
       const res = await base44.functions.invoke("enforceCharacterLocationPresence", {
         character_id: id,
-        owner_email: ownerEmail,
+        owner_email: ownerById.get(id) || ownerEmail,
         requested_presence_status: "visiting",
         requested_location_id: location.id,
         requested_location_name: location.name,
@@ -100,32 +108,41 @@ export async function placeEventAttendees({ location, characterIds = [], ownerEm
  * The lock release is followed by the existing recompute, so each character returns to
  * their own established schedule rather than being sent somewhere arbitrary.
  */
-export async function releaseEventAttendees({ characterIds = [], ownerEmail }) {
+export async function releaseEventAttendees({ characterIds = [], ownerEmail, characters = [] }) {
   const ids = [...new Set((characterIds || []).filter(Boolean))];
   if (ids.length === 0) return;
 
+  const ownerById = new Map((characters || []).filter((c) => c?.id).map((c) => [c.id, c.owner_email || ownerEmail]));
+  const ownIds = ids.filter((id) => (ownerById.get(id) || ownerEmail) === ownerEmail);
+
   let held = [];
   try {
-    const records = await base44.entities.Character.filter({ id: { $in: ids } }, "-created_date", ids.length);
+    const records = await base44.entities.Character.filter({ id: { $in: ownIds } }, "-created_date", ownIds.length);
     held = (records || [])
       .filter((c) => c.presence_stay_lock === true && c.presence_stay_lock_reason === ATTENDANCE_REASON)
       .map((c) => c.id);
   } catch {
     return;
   }
+  // A cross-account participant's lock is confirmed on the record this account already
+  // holds, then released under that character's own account — never under this one.
+  const crossHeld = ids.filter((id) => !ownIds.includes(id) && (characters || []).some(
+    (c) => c?.id === id && c.presence_stay_lock === true && c.presence_stay_lock_reason === ATTENDANCE_REASON
+  ));
 
-  await Promise.all(held.map(async (id) => {
+  await Promise.all([...held, ...crossHeld].map(async (id) => {
+    const owner = ownerById.get(id) || ownerEmail;
     try {
       await base44.functions.invoke("enforceCharacterLocationPresence", {
         character_id: id,
-        owner_email: ownerEmail,
+        owner_email: owner,
         requested_lock_release: true,
       });
       // No transition requested — the authority recomputes from this character's own
       // schedule, needs and home. This is the existing return-to-normal resolution.
       await base44.functions.invoke("enforceCharacterLocationPresence", {
         character_id: id,
-        owner_email: ownerEmail,
+        owner_email: owner,
       });
     } catch {
       // The bounded lock expiry releases anyone the release could not reach.
