@@ -61,6 +61,11 @@ import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
 import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName, getResidentialZoneName } from "@/lib/locationWorkspaces";
 import { getSceneUnitScope, getWorkspaceSceneScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
+import GovernmentVenueSetupModal from "@/components/government/GovernmentVenueSetupModal";
+import MarriageConfirmationModal from "@/components/government/MarriageConfirmationModal";
+import JudicialOutcomeModal from "@/components/government/JudicialOutcomeModal";
+import { isGovernmentActionId } from "@/lib/governmentVenues";
+import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -175,6 +180,8 @@ export default function Scene() {
   const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
+
+
 
   // ── SHARED RESIDENCE ──
   // A deliberately shared residential property supports the same cross-account
@@ -1235,7 +1242,7 @@ export default function Scene() {
       const unitBoundary = buildUnitBoundaryBlock(sceneUnitScope);
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n${messages.some((m) => m.is_canon_event) ? `\nA line marked "already happened" is an event these people have lived through, its dialogue included. They experienced it; nobody answers it, replies to it, or treats it as something said to them now.\n` : ''}\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}${governmentContextBlock ? `\n${governmentContextBlock}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n${messages.some((m) => m.is_canon_event) ? `\nA line marked "already happened" is an event these people have lived through, its dialogue included. They experienced it; nobody answers it, replies to it, or treats it as something said to them now.\n` : ''}\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -1258,6 +1265,47 @@ export default function Scene() {
       }
       if (responseList.length === 0) { const hasAnyone = dialogueEligible.length > 0; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: hasAnyone ? `The atmosphere at ${location.name} hums quietly. No one responds right away.` : `You take in the surroundings at ${location.name}. Use the "Who's here" button to start talking to someone.`, timestamp: new Date().toISOString() }]); }
     } catch { setIsTyping(false); }
+  };
+
+  // ── GOVERNMENT VISIT: SETUP → SCENE ─────────────────────────────────────────
+  const {
+    governmentVenueType,
+    showVenueSetup,
+    setShowVenueSetup,
+    courtCase,
+    marriageModal,
+    setMarriageModal,
+    judicialModal,
+    setJudicialModal,
+    governmentContextBlock,
+    beginVisit: beginGovernmentVisit,
+    handleGovernmentAction,
+    handleJudicialResolved,
+    addGovernmentNarrative,
+    courtTempNpcs,
+  } = useGovernmentVenueScene({
+    location,
+    locationId,
+    characters,
+    observeMode,
+    observeCast,
+    displayName,
+    currentUser,
+    queryClient,
+    setMessages,
+    sendMessage,
+    runObserveBeat,
+  });
+
+  // Unassigned courtroom roles are filled by the court's own temporary people, who join
+  // the scene for this case and keep their role throughout it.
+  const handleBeginGovernmentVisit = (config) => {
+    beginGovernmentVisit(config);
+    if (config.venue !== "courthouse") return;
+    const temps = courtTempNpcs(config);
+    if (temps.length === 0) return;
+    setExtraNpcs((prev) => [...prev.filter((n) => !String(n.id).startsWith("npc_court_")), ...temps]);
+    setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...temps.map((n) => n.id)])]);
   };
 
   useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
@@ -1490,7 +1538,7 @@ export default function Scene() {
             const needsCharacter = action.requires_selected_character === true
               && recipientTargets.length === 0;
             const isDisabled = action.disabled || actionCooldown || needsCharacter; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
@@ -1565,6 +1613,47 @@ export default function Scene() {
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
       <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(message) => { const price = pendingPurchase?.price; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `✓ Purchased for $${price} — ${message}.`, timestamp: new Date().toISOString() }]); setPendingPurchase(null); }} />
       <ChangeClothesModal isOpen={showChangeClothesModal} onClose={() => setShowChangeClothesModal(false)} settings={settings} isUserSettingsLoading={isUserSettingsLoading} presentCharacters={changeClothesEligibleCharacters} location={location} currentUser={currentUser} userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null} userName={displayName} onOutfitChanged={(targetType) => { if (targetType === 'user') queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] }); else queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] }); setOutfitVersion((v) => v + 1); setHasUserRequestedImage(true); setSceneImage(null); }} />
+      {governmentVenueType && (
+        <GovernmentVenueSetupModal
+          open={showVenueSetup}
+          venueType={governmentVenueType}
+          location={location}
+          characters={characters}
+          onClose={() => setShowVenueSetup(false)}
+          onBegin={handleBeginGovernmentVisit}
+        />
+      )}
+      <MarriageConfirmationModal
+        open={!!marriageModal}
+        characters={characters}
+        initialSpouseIds={marriageModal?.spouseIds || []}
+        initialWitnessIds={marriageModal?.witnessIds || []}
+        locationName={marriageModal?.locationName || location?.name}
+        ceremonyType="civil"
+        onClose={() => setMarriageModal(null)}
+        onConfirmed={(data) => {
+          const names = (data?.spouses || []).map((s) => s.name).filter(Boolean);
+          if (names.length === 2) {
+            addGovernmentNarrative(`A marriage ceremony is held at ${location?.name}. ${names[0]} and ${names[1]} are married.`);
+            addGovernmentNarrative(`${names[0]} and ${names[1]} are now married.`);
+          }
+          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+          setMarriageModal(null);
+        }}
+      />
+      <JudicialOutcomeModal
+        open={!!judicialModal}
+        mode={judicialModal?.mode || "sentencing"}
+        characters={characters}
+        facilities={(locationsData || []).filter((l) => l.category === "jail_prison" || l.is_confinement_facility === true)}
+        initialDefendantId={judicialModal?.defendantId || ""}
+        initialOffense={judicialModal?.offense || ""}
+        courtName={location?.name}
+        caseType={courtCase?.case_type || "criminal"}
+        onClose={() => setJudicialModal(null)}
+        onResolved={handleJudicialResolved}
+        onNarrativeOnly={(payload) => addGovernmentNarrative(payload.text)}
+      />
       {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
     </div>
   );

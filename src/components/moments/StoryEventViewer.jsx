@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import StoryEventEditor from './StoryEventEditor';
 import PublicImpactModal from './PublicImpactModal';
 import GenerationProgressModal from './GenerationProgressModal';
+import StoryEventOutcomePrompt from './StoryEventOutcomePrompt';
 
 const REGEN_REASONS = [
   { id: 'flawed', label: 'Image is flawed', icon: '⚠️' },
@@ -832,6 +833,9 @@ export default function StoryEventViewer({ eventId }) {
                   </div>
                 </div>
               )}
+
+              {/* Official outcome — offered only when the story actually completed one */}
+              <StoryEventOutcomePrompt event={event} />
 
               {/* Images — always render all 3 moment slots for complete events */}
               <div>

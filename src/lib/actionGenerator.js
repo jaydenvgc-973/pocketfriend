@@ -336,6 +336,54 @@ const GOVERNMENT_ACTIONS = classifyAll([
   { id: "gov_ask", label: "Ask for information", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
 ]);
 
+// ── CITY HALL ─────────────────────────────────────────────────────────────────
+// Municipal activities. Marriage is one activity among them, never the reason
+// everyone is here: a general visit, a license appointment and a hearing are
+// complete visits on their own. Choosing Get Married opens the marriage
+// participant selection; the ceremony itself is played out in the scene and the
+// established marriage pipeline records it when it actually happens.
+const CITY_HALL_ACTIONS = classifyAll([
+  { id: "gov_marry", label: "Get Married", emoji: "💍", cost: 0, type: "functional" },
+  { id: "gov_marriage_license", label: "Marriage License", emoji: "📄", cost: 0, type: "functional", suggested_zone: "Reception" },
+  { id: "gov_civic_hearing", label: "Attend Civic Hearing", emoji: "🏛️", cost: 0, type: "observational", suggested_zone: "Meeting Room" },
+  { id: "gov_municipal_hearing", label: "Municipal Hearing", emoji: "⚖️", cost: 0, type: "functional", suggested_zone: "Meeting Room" },
+  { id: "gov_administrative", label: "Administrative Dispute", emoji: "🗂️", cost: 0, type: "functional", suggested_zone: "Office" },
+  { id: "gov_documents", label: "File documents", emoji: "📋", cost: 0, type: "functional", suggested_zone: "Reception", requires_staff: true },
+  { id: "gov_payment", label: "Pay a fine", emoji: "💳", cost: 0, type: "functional", requires_staff: true },
+  { id: "gov_official", label: "Speak with official", emoji: "📞", cost: 0, type: "social", requires_staff: true },
+  { id: "gov_wait", label: "Wait in line", emoji: "⏳", cost: 0, type: "observational" },
+  { id: "gov_forms", label: "Fill out forms", emoji: "📝", cost: 0, type: "functional" },
+  { id: "gov_ask", label: "Ask for information", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+]);
+
+// ── COURTHOUSE ────────────────────────────────────────────────────────────────
+// Judicial proceedings. Every activity is contextually available rather than a
+// required sequence: a hearing can be watched, a ruling delivered, or the court
+// adjourned without a verdict. Only Sentencing and Contempt open a consequence
+// flow, and both require the user to confirm who is affected.
+const COURTHOUSE_ACTIONS = classifyAll([
+  { id: "court_attend", label: "Attend Hearing", emoji: "🪑", cost: 0, type: "observational" },
+  { id: "court_open", label: "Open Court", emoji: "🔔", cost: 0, type: "functional" },
+  { id: "court_opening", label: "Opening Statement", emoji: "🗣️", cost: 0, type: "functional" },
+  { id: "court_testimony", label: "Present Testimony", emoji: "🙋", cost: 0, type: "functional" },
+  { id: "court_call_witness", label: "Call Witness", emoji: "📣", cost: 0, type: "functional" },
+  { id: "court_question_witness", label: "Question Witness", emoji: "❓", cost: 0, type: "social" },
+  { id: "court_present_evidence", label: "Present Evidence", emoji: "📎", cost: 0, type: "functional" },
+  { id: "court_cross_examine", label: "Cross-Examine", emoji: "🔍", cost: 0, type: "social" },
+  { id: "court_objection", label: "Raise Objection", emoji: "✋", cost: 0, type: "social" },
+  { id: "court_deliberate", label: "Deliberate", emoji: "🤝", cost: 0, type: "functional" },
+  { id: "court_verdict", label: "Deliver Verdict", emoji: "📜", cost: 0, type: "functional" },
+  { id: "court_ruling", label: "Issue Ruling", emoji: "⚖️", cost: 0, type: "functional" },
+  { id: "court_civil_dispute", label: "Hear Civil Dispute", emoji: "🏛️", cost: 0, type: "functional" },
+  { id: "court_plea", label: "Enter a Plea", emoji: "📝", cost: 0, type: "functional" },
+  { id: "court_bail", label: "Bail Hearing", emoji: "🔓", cost: 0, type: "functional" },
+  { id: "court_dismiss", label: "Dismiss Charges", emoji: "🗑️", cost: 0, type: "functional" },
+  { id: "gov_sentence", label: "Sentencing", emoji: "🧑‍⚖️", cost: 0, type: "functional" },
+  { id: "gov_contempt", label: "Hold in Contempt", emoji: "⚠️", cost: 0, type: "functional" },
+  { id: "court_adjourn", label: "Adjourn Court", emoji: "🚪", cost: 0, type: "functional" },
+  { id: "gov_marry", label: "Civil Marriage", emoji: "💍", cost: 0, type: "functional" },
+]);
+
 // ── JAIL / PRISON ─────────────────────────────────────────────────────────────
 // Prison and jail activities.
 //   zone_move: true                     → the activity moves everyone to that zone (zone + top image update)
@@ -466,6 +514,9 @@ const ACTION_LIBRARY_BY_CATEGORY = {
 // ── SUBTYPE → ACTION LIBRARY (overrides category, checked first) ──────────────
 // Keys: lowercase, spaces/hyphens normalized to underscores
 const ACTION_LIBRARY_BY_SUBTYPE = {
+  // Government venues with official proceedings
+  city_hall:      CITY_HALL_ACTIONS,
+  courthouse:     COURTHOUSE_ACTIONS,
   // Free food / soup kitchen — food is provided at no charge
   free_food_soup_kitchen: SOUP_KITCHEN_ACTIONS,
   soup_kitchen:     SOUP_KITCHEN_ACTIONS,
@@ -565,6 +616,10 @@ const NAME_HINTS = [
   ['spa', SALON_ACTIONS],
   ['boutique', CLOTHING_STORE_ACTIONS],
   ['thrift', CLOTHING_STORE_ACTIONS],
+  // Government venues whose subtype was never set
+  ['courthouse', COURTHOUSE_ACTIONS],
+  ['court house', COURTHOUSE_ACTIONS],
+  ['city hall', CITY_HALL_ACTIONS],
 ];
 
 /**
