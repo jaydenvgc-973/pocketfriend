@@ -99,6 +99,15 @@ ${appearanceSummary ? `Appearance: ${appearanceSummary}` : ''}
 MUST match face/identity exactly — same person every time, no drift`;
   }).join('\n');
 
+  // Characters sharing the same established avatar are intended to look identical.
+  // Shared appearance never implies a family or biological relationship.
+  const avatarKeys = validChars
+    .map(c => String(c.avatar_url || c.image_avatar_url || '').trim())
+    .filter(Boolean);
+  const sharedAvatarNote = avatarKeys.some((k, i) => avatarKeys.indexOf(k) !== i)
+    ? `\n• Characters sharing the same established avatar look identical by design — matching facial structure is correct, but do NOT infer or imply a family relationship from it`
+    : '';
+
   return `
 
 ════════════════════════════════════════════════════════════
@@ -113,6 +122,9 @@ CRITICAL RULES:
 • Identities must remain visually distinct
 • No "similar-looking variations" — must be exact match
 • Identity drift is NOT allowed
+• Do NOT swap, duplicate or reuse one face across different people
+• Do NOT replace a distinctive hairstyle with a generic alternative
+• Anyone familiar with these characters must be able to tell who is who without captions${sharedAvatarNote}
 ════════════════════════════════════════════════════════════`;
 }
 

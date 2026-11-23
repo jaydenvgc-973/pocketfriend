@@ -489,6 +489,12 @@ Deno.serve(async (req) => {
           lines.push(``);
           lines.push(`APPEARANCE LOCK (for "${nameDisplay}" ONLY — immutable):`);
           alParts.forEach(a => lines.push(`  • ${a}`));
+          const _hairFidelity = /cornrows?/i.test(al.hairStyle || '') ? 'HAIRSTYLE: cornrows — braids built close to the scalp in visible rows/patterns. ⛔ NOT box braids, NOT locs.'
+            : /box\s*braids?|knotless/i.test(al.hairStyle || '') ? 'HAIRSTYLE: box braids — individual braids from separately sectioned hair, square/box-shaped parts. ⛔ NOT cornrows, NOT locs.'
+            : /dreadlocks?|dreads?|\blocs?\b/i.test(al.hairStyle || '') ? 'HAIRSTYLE: locs/dreadlocks — individual locked sections of hair. ⛔ NOT braids, NOT cornrows, NOT box braids.'
+            : '';
+          if (_hairFidelity) lines.push(`  • ${_hairFidelity}`);
+          lines.push(`  • FACE IDENTITY: the reference photos establish who "${nameDisplay}" is — preserve facial structure, eyes, nose, lips, jawline, cheeks, complexion and distinctive features. ⛔ Do NOT genericize, idealize or substitute a generic face.`);
           lines.push(`  ⛔ These appearance traits belong EXCLUSIVELY to "${nameDisplay}".`);
           lines.push(`  ⛔ Do NOT apply these height/body/skin/hair values to any other subject in this scene.`);
         }

@@ -11,6 +11,15 @@
  *   - Hard fail only if required data is truly missing after all checks.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import {
+  buildAppearanceLockText,
+  buildHairstyleFidelityText,
+  FACE_IDENTITY_TEXT,
+  MULTI_IDENTITY_TEXT,
+  RESEMBLANCE_TEXT,
+  detectsResemblanceLanguage,
+  buildSharedAppearanceBlock,
+} from './identityDirectives.ts';
 
 // PARTICIPANT NAME REFERENCE KEY — inlined (Deno sandbox; duplicated in regenerateImageWithReason).
 // user_id = user.id (platform entity ID, not email). Users included only via runtime visual-subject evidence.
@@ -372,88 +381,7 @@ function getTimeLighting(hour = new Date().getHours()) {
   return { period: 'NIGHT', desc: 'dark interior, artificial light only, NO daylight, warm or cool lamp glow' };
 }
 
-// buildAppearanceLockText — reads structured charRecord fields directly; charDesc is secondary.
-function buildAppearanceLockText(rec, n) {
-  const name = n || rec?.name || 'this character';
-  if (!rec) return 'render from refs — do not redesign';
-
-  const lock = rec.appearance_lock || {};
-
-  // ── ETHNICITY / RACE — always at top, explicit, prevents Caucasian default ──
-  const ethnicities = (rec.ethnicities || []).filter(Boolean);
-  const ethnicityFallback = rec.ethnicity || rec.race || null;
-  const allEthnicities = ethnicities.length > 0
-    ? ethnicities
-    : (ethnicityFallback ? [ethnicityFallback] : []);
-
-  // ── STRUCTURED APPEARANCE FIELDS ── read directly, no regex ────────────────
-  const skinTone = lock.skin_tone || null;
-  const hairstyle = lock.hairstyle || null;
-  const hairType = lock.hair_type || null;
-  const hairColor = lock.hair_color || null;
-  const facialHair = lock.facial_hair || null;
-  // body_type and overall_aesthetic are both valid field names depending on schema version
-  const bodyType = lock.body_type || lock.overall_aesthetic || null;
-  const distinguishing = lock.distinguishing_features || null;
-  const isBald = lock.bald === true || /\b(bald|shaved head|no hair)\b/i.test(hairType || hairstyle || '');
-  const htDisplay = hairstyle || hairType || null;
-
-  const hasAnyData = allEthnicities.length > 0 || skinTone || htDisplay || hairColor || facialHair || bodyType || isBald;
-  if (!hasAnyData) {
-    console.log(`[CanonicalAppearance] ${name}: no structured lock data — render from refs only`);
-    return 'render from refs — do not redesign';
-  }
-
-  console.log(`[CanonicalAppearance] ${name}: ethnicities=[${allEthnicities.join(',')}] skin=${skinTone||'n/a'} hair=${htDisplay||'n/a'} bald=${isBald} facial=${facialHair||'n/a'} body=${bodyType||'n/a'}`);
-
-  const r = [`\n🔒 CANONICAL APPEARANCE LOCK — "${name}" — ABSOLUTE IDENTITY AUTHORITY\nThese traits come directly from the character's structured data. OVERRIDE any conflicting prompt styling.\n`];
-
-  // ETHNICITY FIRST — this is the primary defense against Caucasian defaulting
-  if (allEthnicities.length > 0) {
-    r.push(`ETHNICITY / RACE: ${allEthnicities.join(', ')} — render EXACTLY this ethnicity. ⛔ DO NOT default to Caucasian/white/European. ⛔ DO NOT soften, lighten, or alter ethnic features toward any other baseline.`);
-  }
-  if (skinTone) {
-    // Add explicit anti-whitewashing guard when skin tone contains "light" or "caramel"
-    // because the model can misread "light caramel" as "light-skinned/fair" and ignore ethnicity.
-    const skinLower = skinTone.toLowerCase();
-    const hasAmbiguousLight = /\b(light|caramel|honey|tan|medium)\b/.test(skinLower);
-    const hasBlackOrAfricanAmerican = allEthnicities.some(e => /\b(black|african american|afro)\b/i.test(e));
-    if (hasAmbiguousLight && hasBlackOrAfricanAmerican) {
-      r.push(`SKIN TONE: ${skinTone} — this is a warm brown melanated skin tone consistent with Black / African American heritage. ⛔ DO NOT render as pale, fair, or Caucasian-light. ⛔ DO NOT interpret "light" as white or European. Render warm melanated brown, rich caramel — clearly a person of color.`);
-    } else {
-      r.push(`SKIN TONE: ${skinTone} — do not lighten, soften, or alter in any direction.`);
-    }
-  }
-
-  // HAIR
-  if (isBald) {
-    r.push(`HAIR: BALD — zero hair on top. ⛔ NO curls, locs, braids, fade, hairline, or any hair.`);
-  } else if (htDisplay) {
-    r.push(`HAIR: ${htDisplay}`);
-    if (/dreadlocks?|locs?/i.test(htDisplay)) r.push(`⛔ REJECT: fade, short, bald, generic curls — DREADLOCKS ONLY`);
-    else if (/long hair/i.test(htDisplay)) r.push(`⛔ REJECT: short, buzz, fade, cropped — LONG HAIR ONLY`);
-    else if (/short|buzz|fade/i.test(htDisplay)) r.push(`⛔ REJECT: long, flowing — SHORT/FADE ONLY`);
-    else if (/braids?|cornrows/i.test(htDisplay)) r.push(`⛔ REJECT: loose/straight/fade — BRAIDS ONLY`);
-    else if (/afro/i.test(htDisplay)) r.push(`⛔ REJECT: straight, slicked, fade — AFRO ONLY`);
-  }
-  if (hairColor) r.push(`HAIR COLOR: ${hairColor} — do not alter.`);
-
-  // FACIAL HAIR
-  if (facialHair) {
-    r.push(`FACIAL HAIR: ${facialHair}`);
-    if (/clean-?shaven|no facial hair/i.test(facialHair)) r.push(`⛔ REJECT beard/stubble — CLEAN-SHAVEN ONLY`);
-    else r.push(`⛔ REJECT clean-shaven — ${facialHair} MUST EXIST`);
-  }
-
-  // BODY TYPE
-  if (bodyType) r.push(`BODY TYPE: ${bodyType} — do not slim, bulk, age-down, or beautify beyond what is described.`);
-
-  // DISTINGUISHING FEATURES
-  if (distinguishing) r.push(`DISTINGUISHING FEATURES: ${distinguishing} — must be visible and accurate.`);
-
-  r.push(`\nCANONICAL > REFS > PROMPT. Prompt controls pose/scene ONLY — NOT ethnicity/hair/face/skin/body.\n⛔ REJECT any prompt trait conflicting with the above.\n🚫 GENERATION INVALID if ethnicity, skin tone, hair, facial hair, or body type differs from canonical.`);
-  return r.join('\n');
-}
+// buildAppearanceLockText + hairstyle/face identity directives live in ./identityDirectives.ts
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 // charRecord is the full Character DB record — passed so buildAppearanceLockText
@@ -2073,6 +2001,13 @@ All reference images (if any) are environment/location refs only — do NOT trea
     // Relationship-term risk detection — triggers post-generation subject validation
     const _promptHasRelRisk = /\b(father|dad|daddy|father.?figure|parent|mother|mom|mommy|parent.?figure|son|daughter|brother|sister|husband|wife|spouse)\b/i.test(sanitizedPrompt || prompt || '');
 
+    // ── IDENTITY RESEMBLANCE ──────────────────────────────────────────────────
+    // Shared established avatars mean identical appearance is intended. Resemblance
+    // wording in the scene is a visual instruction, never a relationship fact.
+    const _identityRecords = [charRecord, ...additionalCharRecords.map(a => a.record)].filter(Boolean);
+    const _sharedAppearanceBlock = buildSharedAppearanceBlock(_identityRecords);
+    const _resemblanceBlock = detectsResemblanceLanguage(sanitizedPrompt || prompt) ? RESEMBLANCE_TEXT : '';
+
     let finalPrompt;
 
     if (hasMultipleCharSubjects) {
@@ -2122,7 +2057,11 @@ All reference images (if any) are environment/location refs only — do NOT trea
           lines.push(`APPEARANCE LOCK (for "${name}" ONLY — immutable):`);
           if (ethnicities.length > 0) lines.push(`  • Ethnicity: ${ethnicities.join(', ')} — render EXACTLY. ⛔ No Caucasian default.`);
           if (skinTone) lines.push(`  • Skin tone: ${skinTone} — do not alter.`);
-          if (hairstyle) lines.push(`  • Hair: ${hairstyle}`);
+          if (hairstyle) {
+            lines.push(`  • Hair: ${hairstyle}`);
+            const _fid = buildHairstyleFidelityText(hairstyle);
+            if (_fid) _fid.split('\n').forEach(l => lines.push(`  ${l}`));
+          }
           if (facialHair) lines.push(`  • Facial hair: ${facialHair}`);
           if (bodyType) lines.push(`  • Body type: ${bodyType}`);
         }
@@ -2140,6 +2079,9 @@ All reference images (if any) are environment/location refs only — do NOT trea
         lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
         lines.push(`  ⛔ "${name}"'s outfit MUST NOT be rendered on any other subject.`);
         lines.push(`  ⛔ "${name}"'s appearance MUST NOT be applied to any other subject.`);
+
+        lines.push(``);
+        lines.push(`FACE IDENTITY (for "${name}" ONLY): ${FACE_IDENTITY_TEXT.split('\n').join(' ')}`);
 
         return lines.join('\n');
       }
@@ -2209,6 +2151,9 @@ This scene contains ${totalSubjects} distinct subjects. Each has a sealed bundle
 ⛔ NEVER replace any named subject with a generic person.
 ✅ Each subject must be rendered using ONLY their own sealed bundle.
 
+${MULTI_IDENTITY_TEXT}
+${_sharedAppearanceBlock ? `\n${_sharedAppearanceBlock}` : ''}
+
 ════════════════════════════════════════════════════════════
 UNIFIED COMPOSITION RULE
 ════════════════════════════════════════════════════════════
@@ -2239,6 +2184,10 @@ ONE COHESIVE SCENE. All ${totalSubjects} subjects are naturally integrated — s
         existingObjectCue: resolvedExistingObjectCue || null,
         userGender: _resolvedUserBundle?.gender || null,
       });
+    }
+
+    if (_resemblanceBlock && finalPrompt) {
+      finalPrompt = `${finalPrompt}\n\n${_resemblanceBlock}`;
     }
 
     // ── CUSTODY INDICATOR — prepend if incarcerated character is at Story Event venue ──

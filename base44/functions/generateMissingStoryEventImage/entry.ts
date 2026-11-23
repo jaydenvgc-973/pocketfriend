@@ -152,6 +152,8 @@ function buildCharacterIdentityLockBlock(entries) {
       : `  Documented appearance: (none recorded — the attached reference image is the sole authority for this person)`);
     lines.push(`  Reference images attached: ${e.ref_count > 0 ? `${e.ref_count} (${e.ref_range})` : `NONE — this is a data gap, render only from documented appearance`}`);
     lines.push(`  - Face, facial features, complexion, hairstyle, hair texture and individual appearance MUST match this person's reference imagery exactly.`);
+    lines.push(`  - HAIRSTYLE IS NAMED, NOT APPROXIMATED: cornrows are braids close to the scalp in visible rows/patterns; box braids are individual braids from separately sectioned hair with square/box parts; locs are individual locked sections, not braids. ⛔ NEVER substitute one for another — preserve the established length, thickness, volume, parting and texture.`);
+    lines.push(`  - FACE IDENTITY: preserve this person's facial structure, eyes, nose, lips, jawline, cheeks, complexion and distinctive features. ⛔ Do NOT genericize, idealize or average the face. Age-appropriate historical changes are allowed, but the underlying facial identity must remain the same person.`);
     lines.push(developmentalAgeDirective(e));
     lines.push(`  - AGE IS NOT A ROLE. Never infer appearance from a family or social role (grandmother, grandfather, mother, father, elder). A grandmother is not automatically grey-haired, heavyset or dressed in a stereotypical way.`);
     lines.push(`  - Where a written detail and the reference image disagree, the REFERENCE IMAGE wins for identity.`);

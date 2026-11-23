@@ -101,6 +101,39 @@ CONTEXT RULES:
 }
 
 /**
+ * HAIRSTYLE FIDELITY
+ * Cornrows, box braids and locs share visual characteristics but are three
+ * different hairstyles. They are never interchangeable.
+ */
+export function resolveHairstyleFamily(value) {
+  const v = String(value || '').toLowerCase();
+  if (!v) return null;
+  if (/\bcornrows?\b|\bcanerows?\b/.test(v)) return 'cornrows';
+  if (/\bbox\s*braids?\b|\bknotless\b|\bindividual braids?\b|\bpoetic justice\b/.test(v)) return 'box_braids';
+  if (/\bdreadlocks?\b|\bdreads?\b|\blocs?\b|\bsisterlocs?\b/.test(v)) return 'locs';
+  return null;
+}
+
+const HAIRSTYLE_DEFINITIONS = {
+  cornrows: 'cornrows — braids built close to the scalp, following visible rows or deliberate patterns along the head',
+  box_braids: 'box braids — individual braids growing from separately sectioned portions of hair, usually with square or box-shaped parts; these are NOT scalp-attached cornrows',
+  locs: 'locs (dreadlocks) — individual sections of hair formed into locked structures; locs are NOT braids and must not be rendered as cornrows or box braids',
+};
+
+export function buildHairstyleFidelityText(hairstyleValue) {
+  const family = resolveHairstyleFamily(hairstyleValue);
+  if (!family) return '';
+  const others = Object.keys(HAIRSTYLE_DEFINITIONS)
+    .filter(k => k !== family)
+    .map(k => ({ cornrows: 'cornrows', box_braids: 'box braids', locs: 'locs' }[k]))
+    .join(' or ');
+  return `✓ HAIRSTYLE FIDELITY — ${HAIRSTYLE_DEFINITIONS[family]}. Preserve its established length, thickness, volume, parting, direction and texture. ⛔ NEVER substitute ${others} — different hairstyles, not variations. These distinctions apply regardless of gender, ethnicity, age or overall appearance.`;
+}
+
+/** The avatar/reference photographs define WHO this person is — not a loose suggestion. */
+export const FACE_IDENTITY_TEXT = `✓ FACE IDENTITY — the reference/avatar photographs establish WHO this person is: facial structure and proportions, eye shape/size/spacing, nose, mouth and lips, jawline, chin, cheeks, complexion, distinctive features and established facial hair. ⛔ Do NOT genericize, idealize, average, beautify or replace the face. ✅ Expression, angle, pose and lighting may vary; the person must stay recognizable. Historical depiction may add age-appropriate changes, but the underlying facial identity must remain the same person.`;
+
+/**
  * Build the appearance lock block from character data
  * STRICT: Must include exact fields from appearance_lock
  * 
@@ -159,8 +192,11 @@ CRITICAL RULES:
 ✓ Must match these characteristics EXACTLY
 ✓ Do NOT infer appearance from name, personality, or narrative
 ✓ Do NOT substitute or approximate these features
-✓ Do NOT let avatar image override these locked fields
+✓ The avatar/reference photographs define FACIAL identity; these locked descriptors define hair, skin tone and facial hair — never contradict either
 ✓ Identity is SEPARATE from clothing — clothing comes from outfit data only
+
+${buildHairstyleFidelityText(requiredFields.hairstyle || requiredFields.hair_type)}
+${FACE_IDENTITY_TEXT}
 
 This is the character's immutable visual identity. Every image must match.
 ════════════════════════════════════════════════════════════════════════════════` : '';
