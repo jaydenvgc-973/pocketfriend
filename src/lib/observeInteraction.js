@@ -71,7 +71,7 @@ function backgroundCast(list) {
 
 // `spokenBy` is the character the observer spoke as, resolved from the existing Speak As
 // selection: { id, name, content }. The words are that character's own, not the observer's.
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, unitScope = null, spokenBy = null }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, unitScope = null, spokenBy = null, venueContext = null }) {
   const cast = realCast(participants);
   const selectedBackground = backgroundCast(npcSpeakers);
   if ((cast.length < 1 && selectedBackground.length < 1) || !location) return [];
@@ -226,6 +226,7 @@ ${speechLimitRuleText ? `\nAGE SPEECH RULES (mandatory):\n${speechLimitRuleText}
 ${placeBlock}
 ${unitBlock}
 ${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}
+${venueContext ? `\n${venueContext}\n` : ''}
 ${backgroundRule}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.${unitScope ? ` These records were written for the whole ${unitScope.facilityNoun}: anyone named in them as living, staying or being kept elsewhere in it is not in this ${unitScope.unitNoun} right now. Everything in them that actually happened still happened — a visit someone made to this ${unitScope.unitNoun}, a conversation, time spent together — and is remembered and spoken about normally.` : ''}\n${canonicalSection}\n===` : ''}

@@ -7,15 +7,24 @@ import {
   buildCityHallContext,
   cityHallPurposeLabel,
   courtCaseTypeLabel,
+  courtAttendanceIds,
+  cityHallAttendanceIds,
+  cityHallOfficiantNpc,
 } from "@/lib/governmentVenues";
+import { placeEventAttendees, releaseEventAttendees, attendanceRefusalLabel } from "@/lib/governmentAttendance";
 
 /**
  * useGovernmentVenueScene — the City Hall / Courthouse layer of the Scenes page.
  *
- * It establishes what a government visit is (setup), keeps the case or purpose in
- * front of the narrative, and opens the confirmation flows for the two official
- * consequences. It owns no records itself: marriage goes through commitMarriage,
- * a sentence through applyJudicialSentence.
+ * It establishes what a government visit is (setup), brings the selected participants
+ * physically to the venue through the existing presence authority, keeps the case or
+ * purpose in front of the narrative, and opens the confirmation flows for the two
+ * official consequences. It owns no records of its own: marriage goes through
+ * commitMarriage, a sentence through applyJudicialSentence, and attendance through
+ * enforceCharacterLocationPresence.
+ *
+ * The setup is the preparation stage: by the time the scene is shown, the app already
+ * knows who is participating, what role each holds, and who is actually in the room.
  */
 export default function useGovernmentVenueScene({
   location,
@@ -29,6 +38,7 @@ export default function useGovernmentVenueScene({
   setMessages,
   sendMessage,
   runObserveBeat,
+  onEventConcluded,
 }) {
   const [showVenueSetup, setShowVenueSetup] = useState(false);
   const [cityHallPlan, setCityHallPlan] = useState(null);
@@ -37,22 +47,46 @@ export default function useGovernmentVenueScene({
   const [judicialModal, setJudicialModal] = useState(null);
   const promptedRef = useRef(null);
   const marriedRef = useRef(new Set());
+  // The participants whose attendance this session established. Kept in a ref so the
+  // release runs from wherever the event ends — including leaving the page.
+  const attendanceRef = useRef([]);
+  const placedForRef = useRef(null);
 
   const governmentVenueType = getGovernmentVenueType(location);
   const storageKey = locationId ? `gov_scene_${locationId}` : null;
 
-  // Returning to an already active proceeding restores its established context rather
-  // than starting a different case or re-opening the setup.
+  const persist = (payload) => {
+    try { if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify(payload)); } catch { /* session only */ }
+  };
+
+  const nameOf = (id) => characters.find((c) => c.id === id)?.name || null;
+
+  // Returning to an already active proceeding restores its established context and puts
+  // its participants back in the room, rather than starting a different case.
   useEffect(() => {
-    if (!storageKey) return;
+    if (!storageKey || !location?.id) return;
+    let saved = null;
     try {
       const raw = sessionStorage.getItem(storageKey);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (saved?.courtCase) { setCourtCase(saved.courtCase); promptedRef.current = locationId; }
-      else if (saved?.cityHallPlan) { setCityHallPlan(saved.cityHallPlan); promptedRef.current = locationId; }
+      if (raw) saved = JSON.parse(raw);
     } catch { /* no stored context */ }
-  }, [storageKey]);
+    if (!saved) return;
+    const restored = saved.courtCase || saved.cityHallPlan || null;
+    if (!restored) return;
+    if (saved.courtCase) setCourtCase(saved.courtCase);
+    else setCityHallPlan(saved.cityHallPlan);
+    promptedRef.current = locationId;
+
+    const ids = restored.attendance_ids || [];
+    if (ids.length === 0) return;
+    const eventKey = `${location.id}:${restored.case_id || 'plan'}`;
+    if (placedForRef.current === eventKey) return;
+    placedForRef.current = eventKey;
+    attendanceRef.current = ids;
+    placeEventAttendees({ location, characterIds: ids, ownerEmail: currentUser?.email })
+      .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
+      .catch(() => {});
+  }, [storageKey, location?.id]);
 
   // A new visit asks what it is for — once, before the scene begins.
   useEffect(() => {
@@ -75,49 +109,120 @@ export default function useGovernmentVenueScene({
       ? buildCityHallContext(cityHallPlan, { userPresent: !observeMode, userName: displayName })
       : "";
 
-  const beginVisit = (config) => {
-    if (!location) return;
+  const refusedLine = (refused = []) => refused
+    .map((r) => attendanceRefusalLabel(r.reason, nameOf(r.id)))
+    .join(" ");
+
+  /**
+   * The setup is the preparation stage. Attendance is established here, through the
+   * existing presence authority, so the scene opens with the participant roster already
+   * in place — nobody has to be re-selected once it loads.
+   */
+  const beginVisit = async (config) => {
+    if (!location) return null;
+
     if (config.venue === "courthouse") {
-      const resolved = resolveCourtParticipants(config, characters);
-      const nextCase = { ...config, case_id: `${location.id}_${Date.now()}`, assignments: resolved.assignments, temp_npcs: resolved.tempNpcs };
+      const selected = courtAttendanceIds(config);
+      const { attendingIds, refused } = await placeEventAttendees({
+        location, characterIds: selected, ownerEmail: currentUser?.email,
+      });
+      const resolved = resolveCourtParticipants(config, characters, { attendingIds });
+      const nextCase = {
+        ...config,
+        case_id: `${location.id}_${Date.now()}`,
+        assignments: resolved.assignments,
+        temp_npcs: resolved.tempNpcs,
+        attendance_ids: resolved.attendanceIds,
+        refused_attendance: refused.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
+      };
+      attendanceRef.current = nextCase.attendance_ids;
+      placedForRef.current = `${location.id}:${nextCase.case_id}`;
       setCourtCase(nextCase);
       setCityHallPlan(null);
-      try { if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify({ courtCase: nextCase })); } catch { /* session only */ }
+      persist({ courtCase: nextCase });
       const roleLine = resolved.assignments.map((a) => `${a.roleLabel}: ${a.name}`).join(" · ");
       addNarrative(`${courtCaseTypeLabel(config.case_type)} at ${location.name}. ${config.description}${roleLine ? ` — ${roleLine}` : ""}.`);
-      return;
+      const missing = refusedLine(refused);
+      if (missing) addNarrative(missing);
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs };
     }
-    const names = (ids = []) => ids.map((id) => characters.find((c) => c.id === id)?.name).filter(Boolean);
+
+    const names = (ids = []) => ids.map((id) => nameOf(id)).filter(Boolean);
     const plan = {
       ...config,
       marriage: config.marriage ? {
         ...config.marriage,
-        spouse_a_name: characters.find((c) => c.id === config.marriage.spouse_a_id)?.name || null,
-        spouse_b_name: characters.find((c) => c.id === config.marriage.spouse_b_id)?.name || null,
+        spouse_a_name: nameOf(config.marriage.spouse_a_id),
+        spouse_b_name: nameOf(config.marriage.spouse_b_id),
         witness_names: names(config.marriage.witness_ids),
       } : null,
     };
-    setCityHallPlan(plan);
+    const selected = cityHallAttendanceIds(plan);
+    const { attendingIds, refused } = await placeEventAttendees({
+      location, characterIds: selected, ownerEmail: currentUser?.email,
+    });
+    const officiant = cityHallOfficiantNpc(plan);
+    const attendingSet = new Set(attendingIds);
+    const nextPlan = {
+      ...plan,
+      // Only witnesses who are actually in the room are witnesses of this ceremony.
+      marriage: plan.marriage ? {
+        ...plan.marriage,
+        witness_ids: (plan.marriage.witness_ids || []).filter((id) => attendingSet.has(id)),
+        witness_names: names((plan.marriage.witness_ids || []).filter((id) => attendingSet.has(id))),
+      } : null,
+      attendance_ids: attendingIds,
+      officiant_npc: officiant,
+      refused_attendance: refused.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
+    };
+    attendanceRef.current = attendingIds;
+    placedForRef.current = `${location.id}:plan`;
+    setCityHallPlan(nextPlan);
     setCourtCase(null);
-    try { if (storageKey) sessionStorage.setItem(storageKey, JSON.stringify({ cityHallPlan: plan })); } catch { /* session only */ }
+    persist({ cityHallPlan: nextPlan });
     addNarrative(`City Hall — ${cityHallPurposeLabel(plan.purpose)}${plan.marriage?.spouse_a_name ? `: ${plan.marriage.spouse_a_name} and ${plan.marriage.spouse_b_name}` : ""}.`);
+    const missing = refusedLine(refused);
+    if (missing) addNarrative(missing);
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    return { attendanceIds: attendingIds, tempNpcs: officiant ? [officiant] : [] };
   };
 
-  /** The temporary people of the court for roles the user left unassigned. */
-  const courtTempNpcs = (config) => resolveCourtParticipants(config, characters).tempNpcs;
+  /**
+   * The event is over: the participants' temporary event assignment ends. Their own
+   * schedule, needs and home decide what happens next — nothing is anchored here and
+   * nothing about the case, the ceremony or its records is undone.
+   */
+  const releaseAttendance = async () => {
+    const ids = attendanceRef.current || [];
+    attendanceRef.current = [];
+    placedForRef.current = null;
+    onEventConcluded?.();
+    if (ids.length === 0 || !currentUser?.email) return;
+    await releaseEventAttendees({ characterIds: ids, ownerEmail: currentUser.email });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+  };
 
   // The ceremony is an event that actually takes place in the scene. Only then is the
   // marriage recorded, through the same pipeline every other marriage uses.
   const performMarriageCeremony = async (plan) => {
-    const aName = characters.find((c) => c.id === plan.spouse_a_id)?.name;
-    const bName = characters.find((c) => c.id === plan.spouse_b_id)?.name;
+    const aName = nameOf(plan.spouse_a_id);
+    const bName = nameOf(plan.spouse_b_id);
     if (!aName || !bName) return;
     const pairKey = [plan.spouse_a_id, plan.spouse_b_id].sort().join(":");
     if (marriedRef.current.has(pairKey)) {
       addNarrative(`${aName} and ${bName} are already married.`);
       return;
     }
-    const witnessNames = (plan.witness_ids || []).map((id) => characters.find((c) => c.id === id)?.name).filter(Boolean);
+    // A ceremony needs both people in the room. Attendance was settled at setup; if the
+    // presence authority could not bring one of them, the ceremony does not pretend.
+    const attending = new Set(cityHallPlan?.attendance_ids || []);
+    if (attending.size > 0 && (!attending.has(plan.spouse_a_id) || !attending.has(plan.spouse_b_id))) {
+      const absent = !attending.has(plan.spouse_a_id) ? aName : bName;
+      addNarrative(`The ceremony cannot go ahead — ${absent} is not at City Hall.`);
+      return;
+    }
+    const witnessNames = (plan.witness_ids || []).map((id) => nameOf(id)).filter(Boolean);
     const ceremony = `A marriage ceremony is held at ${location.name}. ${aName} and ${bName} are married${witnessNames.length > 0 ? `, with ${witnessNames.join(" and ")} as witnesses` : ", with no witnesses present"}.`;
     if (observeMode) {
       if (observeCast.length >= 2) await runObserveBeat({ direction: ceremony });
@@ -137,6 +242,8 @@ export default function useGovernmentVenueScene({
       if (res?.data?.error) throw new Error(res.data.error);
       addNarrative(`${aName} and ${bName} are now married.`);
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      addNarrative("The ceremony is over — everyone is free to return to their day.");
+      await releaseAttendance();
     } catch (err) {
       marriedRef.current.delete(pairKey);
       addNarrative(`The ceremony took place, but the marriage could not be recorded: ${err?.message || "unknown error"}.`);
@@ -166,8 +273,12 @@ export default function useGovernmentVenueScene({
     addNarrative(data.incarceration
       ? `${data.character_name} is sentenced to ${data.incarceration.sentence_label} at ${data.incarceration.facility_name}.`
       : `${data.character_name}'s sentence has been recorded in their criminal history.`);
+    addNarrative("The proceeding is concluded — everyone not held in custody is free to go.");
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+    // Sentencing and custody were already applied by the existing judicial system; the
+    // event attendance itself ends here.
+    releaseAttendance();
   };
 
   return {
@@ -182,10 +293,10 @@ export default function useGovernmentVenueScene({
     setJudicialModal,
     governmentContextBlock,
     beginVisit,
+    releaseAttendance,
     performMarriageCeremony,
     handleGovernmentAction,
     handleJudicialResolved,
     addGovernmentNarrative: addNarrative,
-    courtTempNpcs,
   };
 }

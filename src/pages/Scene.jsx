@@ -981,6 +981,9 @@ export default function Scene() {
         spokenBy: speaker?.id ? { id: speaker.id, name: speaker.name, content: spoken, role: speaker.isNpc === true ? speaker.role : null } : null,
         ambient: ambientHere,
         npcSpeakers: backgroundCast,
+        // A watched court proceeding or ceremony keeps the same established roles and
+        // attendance the setup fixed before the scene began.
+        venueContext: governmentContextBlock || null,
         watchNote: watchContext
           ? (buildWatchContextLabel(watchContext) || watchContext.linkAnalysisContext || (watchContext.title ? `They are watching "${watchContext.title}" together.` : "They are watching a video together."))
           : null,
@@ -1031,6 +1034,9 @@ export default function Scene() {
       ),
       writeSceneExitMemories(_exitMemoryArgs('left_together'))
     ]);
+    // A government proceeding or ceremony ends with the scene: the participants are
+    // released to their own schedules instead of staying anchored to the venue.
+    releaseGovernmentAttendance?.();
     if (isSharedResidence) setUserAway().catch(() => {});
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
@@ -1051,6 +1057,7 @@ export default function Scene() {
       ),
       writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))
     ]);
+    releaseGovernmentAttendance?.();
     if (isSharedResidence) setUserAway().catch(() => {});
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
@@ -1279,10 +1286,10 @@ export default function Scene() {
     setJudicialModal,
     governmentContextBlock,
     beginVisit: beginGovernmentVisit,
+    releaseAttendance: releaseGovernmentAttendance,
     handleGovernmentAction,
     handleJudicialResolved,
     addGovernmentNarrative,
-    courtTempNpcs,
   } = useGovernmentVenueScene({
     location,
     locationId,
@@ -1295,18 +1302,37 @@ export default function Scene() {
     setMessages,
     sendMessage,
     runObserveBeat,
+    // The temporary people of the court and City Hall leave when the event ends.
+    onEventConcluded: () => {
+      const isTempEventNpc = (id) => String(id).startsWith("npc_court_") || id === "npc_cityhall_officiant";
+      setExtraNpcs((prev) => prev.filter((n) => !isTempEventNpc(n.id)));
+      setSelectedNpcIds((prev) => (prev || []).filter((id) => !isTempEventNpc(id)));
+    },
   });
 
-  // Unassigned courtroom roles are filled by the court's own temporary people, who join
-  // the scene for this case and keep their role throughout it.
-  const handleBeginGovernmentVisit = (config) => {
-    beginGovernmentVisit(config);
-    if (config.venue !== "courthouse") return;
-    const temps = courtTempNpcs(config);
-    if (temps.length === 0) return;
-    setExtraNpcs((prev) => [...prev.filter((n) => !String(n.id).startsWith("npc_court_")), ...temps]);
-    setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...temps.map((n) => n.id)])]);
+  // The setup modal is the preparation stage for the event. Every selected participant is
+  // brought to the venue through the existing presence authority before the proceeding
+  // begins, and the roles nobody was assigned are filled by the court's own people.
+  // Everyone attending joins the scene's cast — being in the cast makes a person able to
+  // speak; it never makes them speak.
+  const handleBeginGovernmentVisit = async (config) => {
+    const prepared = await beginGovernmentVisit(config);
+    if (!prepared) return;
+    const temps = prepared.tempNpcs || [];
+    if (temps.length > 0) {
+      setExtraNpcs((prev) => [...prev.filter((n) => !String(n.id).startsWith("npc_court_") && n.id !== "npc_cityhall_officiant"), ...temps]);
+    }
+    const cast = [...temps.map((n) => n.id), ...(prepared.attendanceIds || [])];
+    if (cast.length > 0) setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...cast])]);
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] });
   };
+
+  // Leaving the Scenes page ends the event: participants are released to their own
+  // schedules. The case or ceremony records themselves are untouched.
+  const releaseAttendanceRef = useRef(null);
+  releaseAttendanceRef.current = releaseGovernmentAttendance;
+  useEffect(() => () => { releaseAttendanceRef.current?.(); }, []);
 
   useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
@@ -1638,6 +1664,8 @@ export default function Scene() {
             addGovernmentNarrative(`${names[0]} and ${names[1]} are now married.`);
           }
           queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+          // The ceremony is over — the event attendance ends with it.
+          releaseGovernmentAttendance?.();
           setMarriageModal(null);
         }}
       />

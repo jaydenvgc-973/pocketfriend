@@ -1130,7 +1130,10 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     // authority does not apply. Home/work/school paths use different presence
     // statuses and are not caught by this visit/relocation branch.
     const _isUserConfirmedRelocation = (requested.requested_source_reason || '').startsWith('scheduled_user_confirmed') ||
-      (requested.requested_authority || '').startsWith('processScheduledRelocations');
+      (requested.requested_authority || '').startsWith('processScheduledRelocations') ||
+      // Attendance at a government event the user set up is an explicit, user-directed
+      // placement of specific people — not restricted autonomous travel.
+      requested.requested_authority === 'GovernmentVenueAttendance';
     if (!_isUserConfirmedRelocation && destLoc.location_type === 'destination') {
       const _vacModeOn = character.vacation_mode === true;
       const _vacIds = Array.isArray(character.vacation_location_ids) ? character.vacation_location_ids : [];
@@ -1172,6 +1175,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
       canonicalFields.presence_stay_lock_authority = requested.presence_stay_lock_authority || 'SceneExit';
       canonicalFields.presence_stay_lock_release_condition = requested.presence_stay_lock_release_condition || 'scene_end';
       canonicalFields.presence_stay_lock_created_by = requested.presence_stay_lock_created_by || 'user';
+      // A caller may bound its own lock (an event that ends on its own). The existing
+      // stay-lock validator releases an expired lock through its normal expiration path.
+      canonicalFields.presence_stay_lock_expires_at = requested.presence_stay_lock_expires_at || null;
     } else if (requested.clear_stay_lock) {
       canonicalFields.presence_stay_lock = false;
       canonicalFields.presence_stay_lock_reason = null;

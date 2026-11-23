@@ -230,6 +230,10 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     'user_travel',
     'scheduled_user_confirmed_relocation',
     'user_confirmed_commitment',
+    // Attendance at a government event the user established through the venue setup.
+    // The presence authority already committed this visit; the schedule layers below
+    // must not re-resolve the participant away from the proceeding they are attending.
+    'government_event_attendance',
   ];
   // Sleep, medical and confinement states keep their own authority — a resting,
   // hospitalized, incarcerated or confined character is never relocated by this guard.
