@@ -56,6 +56,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   }, [conversationId]);
   const [selectedImage, setSelectedImage] = useState(null);
   const [regenTarget, setRegenTarget] = useState(null); // { id, url } of image to regenerate
+  // Corrected participant context per image, applied immediately after a Y Regenerate
+  // correction so the next regeneration starts from the corrected cast.
+  const [regenCtxOverrides, setRegenCtxOverrides] = useState({});
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [generationTab, setGenerationTab] = useState("character"); // "character" | "user"
 
@@ -451,6 +454,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         userName: intendedSubjects?.userName || null,
       });
       if (res?.data?.success && res?.data?.image_url) {
+        // Keep the corrected participant context for this image so the next regeneration
+        // pre-selects the same people instead of the stale original cast.
+        if (res?.data?.participants_context) {
+          setRegenCtxOverrides(prev => ({
+            ...prev,
+            [regenTarget.id]: { ...(prev[regenTarget.id] || {}), ...res.data.participants_context },
+          }));
+        }
         // Hydrate gallery immediately so updated image shows without reload
         setRegenTarget(null);
       }
@@ -1492,8 +1503,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         onClose={() => setRegenTarget(null)}
         onSelect={handleRegenSelect}
         isRegenerating={isRegenerating}
-        originalPrompt={regenTarget ? (messages.find(m => m.id === regenTarget.id)?.generation_context?.prompt || null) : null}
-        generationContext={regenTarget ? (messages.find(m => m.id === regenTarget.id)?.generation_context || null) : null}
+        originalPrompt={regenTarget ? (({ ...(messages.find(m => m.id === regenTarget.id)?.generation_context || {}), ...(regenCtxOverrides[regenTarget.id] || {}) }).prompt || null) : null}
+        generationContext={regenTarget ? ({ ...(messages.find(m => m.id === regenTarget.id)?.generation_context || {}), ...(regenCtxOverrides[regenTarget.id] || {}) }) : null}
       />
     </>
   );

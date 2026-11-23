@@ -856,8 +856,12 @@ Deno.serve(async (req) => {
     // so it is the authoritative identity fallback when the context was corrupted.
     //
     // NEW: also check generation_context.subjects[0] (structured format from generateImageAsync)
-    const firstStructuredSubjectId = ctx.subjects?.length > 0
-      ? (ctx.subjects.find(s => s.role === 'primary')?.subject_id || ctx.subjects[0]?.subject_id)
+    // '__user__' is never a Character ID — only character entries may supply this fallback.
+    const _ctxCharacterSubjects = (ctx.subjects || []).filter(
+      s => s.subject_type !== 'user' && s.subject_id && s.subject_id !== '__user__'
+    );
+    const firstStructuredSubjectId = _ctxCharacterSubjects.length > 0
+      ? (_ctxCharacterSubjects.find(s => s.role === 'primary')?.subject_id || _ctxCharacterSubjects[0]?.subject_id)
       : null;
 
     const originalCharId    = firstStructuredSubjectId || ctx.character_id || message.character_id || null;
@@ -994,7 +998,10 @@ Deno.serve(async (req) => {
     //   4. Message entity fallback (originalCharId)
     //
     // This gate fires when intendedSubjectIds was explicitly provided by the picker.
-    const hasManualPickerCorrection = Array.isArray(intendedSubjectIds) && intendedSubjectIds.length > 0;
+    // A picker selection of characters, or an explicit "the user was in it" flag, is a
+    // participant correction and must be recorded as this image's established cast.
+    const hasManualPickerCorrection = (Array.isArray(intendedSubjectIds) && intendedSubjectIds.length > 0)
+      || includeUserSubject === true;
 
     if (hasManualPickerCorrection) {
       console.log(`[regenerateImageWithReason] ⚠️ MANUAL PARTICIPANT CORRECTION GATE ACTIVE`);
@@ -1162,8 +1169,13 @@ Deno.serve(async (req) => {
     //   - original image was a user/joint subject (from stored context)
     //   - user explicitly selected '__user__' in the repair picker (userSelectedAsSubject)
     //   - caller explicitly passed includeUserSubject=true (legacy param)
+    // A user participant recorded in the stored subject bundle is also authoritative —
+    // a previously established user subject must never be dropped by a later regeneration.
+    const ctxHasUserSubject = Array.isArray(ctx.subjects)
+      && ctx.subjects.some(s => s.subject_type === 'user' || s.subject_id === '__user__');
     const needsUserRefs = ctx.subject_type === 'user' || ctx.subject_type === 'joint'
       || userSelectedAsSubject
+      || ctxHasUserSubject
       || (reason === 'no_avatar' && includeUserSubject);
     if (needsUserRefs) {
       // ── BACKEND USER IDENTITY RESOLUTION (same contract as resolveUserIdentityForImageGen) ──
@@ -1693,6 +1705,13 @@ Deno.serve(async (req) => {
 
     let finalPrompt;
 
+    // ── PARTICIPANT CONTEXT PERSISTENCE ───────────────────────────────────────
+    // When the user identifies participants through the picker, that set is authoritative
+    // for THIS image from now on. It is written into generation_context below, so every
+    // later regeneration of the same image reads the corrected IDs instead of the
+    // original (wrong) bundle. Corrections therefore accumulate instead of being lost.
+    let participantsPatch = null;
+
     if (isMultiSubjectRegen) {
       // ── MULTI-SUBJECT PATH: build sealed per-subject bundles ────────────────
       // PICKER AUTHORITY: when intendedCharacterIds is non-empty (manual correction active),
@@ -1887,6 +1906,41 @@ Deno.serve(async (req) => {
 
       console.log(`[regenerateImageWithReason] Multi-subject bundles: ${subjectBundles.length} | refs: env=${ENV_SLOTS} subjects=${bundleRefs.length}`);
 
+      // Picker-identified participants are persisted as this image's established cast.
+      // Each entry carries the authoritative character ID (or '__user__'), the resolved
+      // display name, and the exact reference images used — so the next regeneration
+      // resolves the same people without asking the user again.
+      if (hasManualPickerCorrection && subjectBundles.length > 0) {
+        const _charBundles = subjectBundles.filter(b => b.subjectRole === 'character');
+        const _userBundle = subjectBundles.find(b => b.subjectRole === 'user') || null;
+        const _persistedSubjects = subjectBundles.map((b, i) => ({
+          subject_type: b.subjectRole,
+          subject_id: b.id,
+          subject_name: b.displayName || null,
+          role: b.subjectRole === 'user' ? 'user' : (i === 0 || b.id === _charBundles[0]?.id ? 'primary' : 'companion'),
+          reference_image_count: (b._refs || []).length,
+          reference_images: (b._refs || []).slice(0, 4),
+          subject_fingerprint: `${b.id}:${(b._refs || []).length}`,
+        }));
+        const _isMulti = _persistedSubjects.length >= 2;
+        participantsPatch = {
+          subjects: _persistedSubjects,
+          subject_count: _persistedSubjects.length,
+          image_type: _isMulti ? 'multi' : (_userBundle ? 'user' : 'character'),
+          subject_type: _isMulti ? 'multi' : (_userBundle ? 'user' : 'character'),
+          character_id: _charBundles[0]?.id || null,
+          character_reference_images: (_charBundles[0]?._refs || []).slice(0, 4),
+          user_reference_images: _userBundle?._refs || ctx.user_reference_images || [],
+          // Declared legacy field — keeps the corrected cast readable by older readers.
+          selectedPeople: _persistedSubjects.map(s => ({
+            role: s.role,
+            id: s.subject_id,
+            displayName: s.subject_name,
+          })),
+        };
+        console.log(`[regenerateImageWithReason] ✅ PARTICIPANT CONTEXT PERSISTED: ${_persistedSubjects.map(s => `${s.subject_type}:${s.subject_name || s.subject_id}`).join(' | ')}`);
+      }
+
       finalPrompt = buildMultiSubjectRegenPrompt({
         scenePrompt,
         locationName: resolvedLocationName,
@@ -1953,6 +2007,54 @@ Deno.serve(async (req) => {
         includeUser: needsUserRefsForRegen && USER_SLOTS > 0,
         reason,
       });
+    }
+
+    // Single-subject correction: persist the identified participant(s) so the corrected
+    // identity survives every later regeneration of this same image.
+    if (!participantsPatch && hasManualPickerCorrection) {
+      const _persistedSubjects = [];
+      if (effectiveCharId) {
+        _persistedSubjects.push({
+          subject_type: 'character',
+          subject_id: effectiveCharId,
+          subject_name: charName || null,
+          role: 'primary',
+          reference_image_count: charRefs.length,
+          reference_images: charRefs.slice(0, 4),
+          subject_fingerprint: `${effectiveCharId}:${charRefs.length}`,
+        });
+      }
+      if (needsUserRefsForRegen && USER_SLOTS > 0) {
+        _persistedSubjects.push({
+          subject_type: 'user',
+          subject_id: '__user__',
+          subject_name: _regenResolvedUserBundle?.worldName || callerUserName || null,
+          role: 'user',
+          reference_image_count: userRefs.slice(0, USER_SLOTS).length,
+          reference_images: userRefs.slice(0, USER_SLOTS),
+          subject_fingerprint: `__user__:${userRefs.slice(0, USER_SLOTS).length}`,
+        });
+      }
+      if (_persistedSubjects.length > 0) {
+        const _isMulti = _persistedSubjects.length >= 2;
+        const _charSubject = _persistedSubjects.find(s => s.subject_type === 'character') || null;
+        const _userSubject = _persistedSubjects.find(s => s.subject_type === 'user') || null;
+        participantsPatch = {
+          subjects: _persistedSubjects,
+          subject_count: _persistedSubjects.length,
+          image_type: _isMulti ? 'multi' : (_userSubject ? 'user' : 'character'),
+          subject_type: _isMulti ? 'multi' : (_userSubject ? 'user' : 'character'),
+          character_id: _charSubject?.subject_id || null,
+          character_reference_images: _charSubject?.reference_images || [],
+          user_reference_images: _userSubject?.reference_images || [],
+          selectedPeople: _persistedSubjects.map(s => ({
+            role: s.role,
+            id: s.subject_id,
+            displayName: s.subject_name,
+          })),
+        };
+        console.log(`[regenerateImageWithReason] ✅ PARTICIPANT CONTEXT PERSISTED (single): ${_persistedSubjects.map(s => `${s.subject_type}:${s.subject_name || s.subject_id}`).join(' | ')}`);
+      }
     }
 
     // ── 7. CAMERA ENFORCEMENT — INLINED HELPERS ───────────────────────────────
@@ -2141,6 +2243,9 @@ Deno.serve(async (req) => {
     const updatedContext = {
       ...(ctx || {}),
       ...locationContextPatch,
+      // Picker-identified participants become this image's established cast, so the
+      // correction is carried forward by every subsequent regeneration.
+      ...(participantsPatch || {}),
       camera_variables: acceptedCameraVars,
     };
 
@@ -2173,6 +2278,9 @@ Deno.serve(async (req) => {
       location_id:   updatedContext.location_id   || null,
       location_name: updatedContext.location_name || null,
       zone_name:     updatedContext.zone_name     || null,
+      // Corrected participant context — the client applies this immediately so the
+      // next regeneration pre-selects the same people without waiting for a refresh.
+      participants_context: participantsPatch || null,
       // Identity proof fields
       selected_subject_roles: selectedSubjectRoles,
       user_selected_as_subject: userSelectedAsSubject,

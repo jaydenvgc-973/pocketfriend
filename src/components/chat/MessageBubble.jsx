@@ -323,14 +323,22 @@ export default function MessageBubble({ message, character, showName = false, on
           setImgLoadError(false);
           setImgRetryKey(0);
           onImageLoaded?.(message.id, returnedUrl);
-          // wrong_location: immediately update local genCtx override so the location tag
-          // reflects the corrected location without waiting for subscription push.
+          // Immediately apply what this regeneration established — the corrected location
+          // and the corrected participant set — so the next Y Regenerate starts from them
+          // instead of the stale original context.
+          const patch = {};
           if (reason === 'wrong_location' && (res?.data?.location_name || res?.data?.location_id)) {
+            patch.location_id   = res.data.location_id   || null;
+            patch.location_name = res.data.location_name || null;
+            patch.zone_name     = res.data.zone_name     || null;
+          }
+          if (res?.data?.participants_context) {
+            Object.assign(patch, res.data.participants_context);
+          }
+          if (Object.keys(patch).length > 0) {
             setLocalGenCtxOverride(prev => ({
               ...(prev || message.generation_context || {}),
-              location_id:   res.data.location_id   || null,
-              location_name: res.data.location_name || null,
-              zone_name:     res.data.zone_name     || null,
+              ...patch,
             }));
           }
         }
@@ -661,8 +669,8 @@ export default function MessageBubble({ message, character, showName = false, on
               onSelect={handleRegenSelect}
               isRegenerating={isRegenerating}
               error={regenError}
-              originalPrompt={message.generation_context?.prompt || null}
-              generationContext={message.generation_context || null}
+              originalPrompt={genCtx?.prompt || genCtx?.scene_prompt || null}
+              generationContext={genCtx || null}
               isCorruptedContext={isCorruptedMultiContext}
             />
             {!isEditingNarrative && message.content && typeof message.content === 'string' && message.content.trim() && message.content !== '[IMAGE_FAILED]' && (
