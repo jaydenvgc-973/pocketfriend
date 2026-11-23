@@ -310,13 +310,26 @@ export default function Scene() {
   const presentHereIds = useMemo(() => {
     if (!location?.id) return [];
     if (activeUnit) return unitPresentOccupantIds;
-    return getPresenceAtLocation(location, unifiedPresenceEntities)
+    const present = getPresenceAtLocation(location, unifiedPresenceEntities)
       .filter((e) => e?.id
         && !isUserPresenceEntity(e, currentUser?.id)
         && !String(e.id).startsWith("npc_")
-        && !characterIds.includes(e.id))
-      .map((e) => e.id);
-  }, [location?.id, activeUnitId, unitPresentOccupantIds.join(','), unifiedPresenceEntities, currentUser?.id]);
+        && !characterIds.includes(e.id));
+    // ONE WORKPLACE: the chosen space is this establishment, not the property around it.
+    // The people in it are its own people whose existing shift has them working here now.
+    // A resident of an apartment in the same building is elsewhere, not in this room —
+    // they stay available through Who's Here and join only when actually selected.
+    if (activeWorkspace) {
+      return present
+        .filter((e) => {
+          if (!workspaceEmployeeIds.has(e.id)) return false;
+          const c = characters.find((x) => x.id === e.id) || e;
+          return isEmployedAtLocation(c, location) && isCharacterAtWork(c, location) && !isCharacterAsleep(c);
+        })
+        .map((e) => e.id);
+    }
+    return present.map((e) => e.id);
+  }, [location?.id, activeUnitId, activeWorkspace?.workplace_id, unitPresentOccupantIds.join(','), unifiedPresenceEntities, currentUser?.id, characters.length]);
 
   // Presence decides who is AVAILABLE and initially selected; the selection itself decides
   // who actually participates. Entering a location or one of its units preselects the
@@ -743,11 +756,17 @@ export default function Scene() {
     [broughtCharacters.map((c) => c.id).join(',')]
   );
   const observeDefaultIds = useMemo(() => {
+    // The cast of a watched scene is exactly who is in the chosen space. A workplace is
+    // its own space — its people on shift, never the building's residents. When the whole
+    // property or venue is the scene, everyone genuinely present is the cast: the count
+    // comes from actual presence, never from a fixed number.
     const base = observeSentIds.length > 0
       ? observeSentIds
-      : unitPresentOccupantIds.length > 0
-        ? unitPresentOccupantIds
-        : observeCandidates.filter((c) => !c.isNpc).slice(0, 4).map((c) => c.id);
+      : activeWorkspace
+        ? presentHereIds
+        : activeUnit
+          ? unitPresentOccupantIds
+          : observeCandidates.filter((c) => !c.isNpc).map((c) => c.id);
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
     // The household's assigned caregiver is part of a watched residence: the children they
     // actually supervise are never in the moment alone, and the caregiver is never replaced
@@ -760,7 +779,7 @@ export default function Scene() {
       })
       .map((c) => c.id);
     return [...new Set([...base, ...chosenBackground, ...supervision])];
-  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), unitPresentOccupantIds.join(',')]);
+  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), unitPresentOccupantIds.join(','), presentHereIds.join(','), activeWorkspace?.workplace_id]);
   const observeCastIdList = observeCastIds || observeDefaultIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
   const toggleObserveCast = (id) => setObserveCastIds((prev) => {
