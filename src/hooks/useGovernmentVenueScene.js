@@ -66,32 +66,14 @@ export default function useGovernmentVenueScene({
 
   const nameOf = (id) => characters.find((c) => c.id === id)?.name || null;
 
-  // Returning to an already active proceeding restores its established context and puts
-  // its participants back in the room, rather than starting a different case.
+  // Every arrival at City Hall or the Courthouse begins with the setup. It is what selects
+  // the people meant to be there and places them, so a context left over from an earlier
+  // visit is never carried into this one — it could otherwise stand in for the setup and
+  // keep the modal from ever appearing.
   useEffect(() => {
-    if (!storageKey || !location?.id) return;
-    let saved = null;
-    try {
-      const raw = sessionStorage.getItem(storageKey);
-      if (raw) saved = JSON.parse(raw);
-    } catch { /* no stored context */ }
-    if (!saved) return;
-    const restored = saved.courtCase || saved.cityHallPlan || null;
-    if (!restored) return;
-    if (saved.courtCase) setCourtCase(saved.courtCase);
-    else setCityHallPlan(saved.cityHallPlan);
-    promptedRef.current = locationId;
-
-    const ids = restored.attendance_ids || [];
-    if (ids.length === 0) return;
-    const eventKey = `${location.id}:${restored.case_id || 'plan'}`;
-    if (placedForRef.current === eventKey) return;
-    placedForRef.current = eventKey;
-    attendanceRef.current = ids;
-    placeEventAttendees({ location, characterIds: ids, ownerEmail: currentUser?.email, characters })
-      .then(() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }))
-      .catch(() => {});
-  }, [storageKey, location?.id]);
+    if (!storageKey) return;
+    try { sessionStorage.removeItem(storageKey); } catch { /* session only */ }
+  }, [storageKey]);
 
   // A new visit asks what it is for — once, before the scene begins.
   useEffect(() => {

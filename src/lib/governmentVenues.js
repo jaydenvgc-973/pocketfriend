@@ -14,20 +14,24 @@
 
 const normalize = (v) => String(v || '').toLowerCase().replace(/[\s\-&]+/g, '_').replace(/_+/g, '_');
 
-/** 'courthouse' | 'city_hall' | null — from the venue's own subtype, identity or name. */
+/**
+ * 'courthouse' | 'city_hall' | null — from the venue's own name and identity first, then
+ * its subtype. A venue that carries both subtypes (a City Hall that also holds a
+ * courthouse) is the place its own name says it is, so its visit opens the right setup.
+ */
 export function getGovernmentVenueType(location) {
   if (!location) return null;
+  const identity = String(location.venue_identity || '').toLowerCase();
+  const name = String(location.name || '').toLowerCase();
+  const haystack = `${identity} ${name}`;
+  if (haystack.includes('city hall') || haystack.includes('cityhall')) return 'city_hall';
+  if (haystack.includes('courthouse') || haystack.includes('court house')) return 'courthouse';
+
   const subtypes = (Array.isArray(location.subtype) ? location.subtype : [location.subtype])
     .filter(Boolean)
     .map(normalize);
   if (subtypes.includes('courthouse')) return 'courthouse';
   if (subtypes.includes('city_hall')) return 'city_hall';
-
-  const identity = String(location.venue_identity || '').toLowerCase();
-  const name = String(location.name || '').toLowerCase();
-  const haystack = `${identity} ${name}`;
-  if (haystack.includes('courthouse') || haystack.includes('court house')) return 'courthouse';
-  if (haystack.includes('city hall') || haystack.includes('cityhall')) return 'city_hall';
   return null;
 }
 
