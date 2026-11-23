@@ -19,6 +19,7 @@ import GovernmentModalShell from "./GovernmentModalShell";
  */
 const SENTENCING_OUTCOMES = [
   { id: "incarceration", label: "Custodial sentence (jail or prison)" },
+  { id: "house_arrest", label: "House arrest (confined to their own home)" },
   { id: "probation", label: "Probation" },
   { id: "fine", label: "Fine" },
   { id: "community_service", label: "Community service" },
@@ -101,6 +102,10 @@ export default function JudicialOutcomeModal({
 
   const outcomes = isContempt ? CONTEMPT_OUTCOMES : SENTENCING_OUTCOMES;
   const custody = outcome === "custody" || outcome === "incarceration";
+  // House arrest is confinement at the character's own home — never a jail or prison
+  // placement, and never routed through a facility.
+  const houseArrest = outcome === "house_arrest";
+  const confinement = custody || houseArrest;
   // Contempt custody is a jail hold, never a prison commitment: only jail-type
   // facilities are offered for it. A custodial sentence offers every facility.
   const facilityOptions = useMemo(() => {
@@ -117,7 +122,8 @@ export default function JudicialOutcomeModal({
   const offenseRequired = !narrativeOnly;
   const ready = !!defendant
     && (!offenseRequired || offense.trim().length > 0)
-    && (!custody || (facilityId && (durationUnit === "life" || Number(durationValue) > 0)));
+    && (!confinement || durationUnit === "life" || Number(durationValue) > 0)
+    && (!custody || !!facilityId);
 
   const submit = async () => {
     if (!ready || saving) return;
@@ -215,7 +221,7 @@ export default function JudicialOutcomeModal({
         </select>
       </div>
 
-      {custody && (
+      {confinement && (
         <>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-2">

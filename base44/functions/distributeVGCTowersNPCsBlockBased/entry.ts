@@ -202,6 +202,9 @@ Deno.serve(async (req) => {
       if (!VGC_ELIGIBLE_TYPES.has(c.character_type)) return false;
       // Exclude protected
       if (c.protected_active) return false;
+      // A resident who is incarcerated or under house arrest is not in the towers to be
+      // moved: their custody is the authority over where they are.
+      if (c.is_jailed === true || c.house_arrest_active === true) return false;
       return true;
     });
 

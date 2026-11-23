@@ -4,6 +4,7 @@ import { base44 } from '@/api/base44Client';
 import { MapPin, Check, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStableLocationReferences } from '@/hooks/useStableLocationReferences';
+import { institutionalHomeSyncFields } from '@/lib/institutionalHome';
 
 export default function HomeLocationField({ character, currentUser }) {
   const queryClient = useQueryClient();
@@ -32,12 +33,17 @@ export default function HomeLocationField({ character, currentUser }) {
   // Detect conflict: profile field doesn't match location page assignment
   const hasConflict = selectedLocationId !== locationPageHome?.id && locationPageHome;
 
-  // Update character's home
+  // Update character's home. An institutional HOME (jail, prison, hospital, residential
+  // school) establishes that character's status at the same moment, through the same
+  // existing fields every other system already reads.
   const updateHomeMutation = useMutation({
-    mutationFn: (homeLocId) =>
-      base44.entities.Character.update(character.id, {
-        current_home_location_id: homeLocId
-      }),
+    mutationFn: (homeLocId) => {
+      const homeLocation = userLocations.find((loc) => loc.id === homeLocId) || null;
+      return base44.entities.Character.update(character.id, {
+        current_home_location_id: homeLocId,
+        ...institutionalHomeSyncFields(character, homeLocation),
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['character', character.id] });
       setShowRepair(false);

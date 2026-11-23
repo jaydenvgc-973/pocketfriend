@@ -27,6 +27,22 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     };
   }
 
+  // HOUSE ARREST: confined to the assigned residence — the same hard block, through the
+  // existing confinement flag rather than the jail flag.
+  if (character.house_arrest_active === true) {
+    const homeName = character.house_arrest_location_name
+      || locationMap[character.house_arrest_location_id]?.name
+      || 'their home';
+    const endDate = character.house_arrest_end_date
+      ? new Date(character.house_arrest_end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      : null;
+    return {
+      available: false,
+      reason: { iconType: 'out', message: `${character.name} is under house arrest at ${homeName} and cannot travel.`, color: 'text-red-400' },
+      availableAt: endDate ? `House arrest ends: ${endDate}` : 'Not available until the restriction ends',
+    };
+  }
+
   // NPCs (standalone or family-embedded) are always available for travel —
   // they have no jobs, school, or strict schedules to block them.
   // Only sleep can block an NPC.

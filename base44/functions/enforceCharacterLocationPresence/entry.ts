@@ -367,6 +367,40 @@ async function findActiveStoryEventVenue(base44, characterId, etTime) {
  * It evaluates the requested transition against the current state and
  * determines: accepted, modified, redirected, deferred, rejected, or no_change.
  */
+/**
+ * A HOME that is an institution makes its resident that institution's person. A jail or
+ * prison HOME is incarceration; a hospital HOME is a patient stay. The authoritative HOME
+ * assignment is enough on its own — the circumstance fields do not have to be written
+ * first — and nothing here invents a conviction, a sentence or a medical record.
+ */
+function institutionalHomeState(character, locationMap) {
+  const homeId = character.current_home_location_id;
+  if (!homeId) return null;
+  const loc = locationMap[homeId];
+  if (!loc) return null;
+  const subtypes = Array.isArray(loc.subtype) ? loc.subtype : [loc.subtype].filter(Boolean);
+  if (loc.category === 'jail_prison' || loc.is_confinement_facility === true) {
+    return {
+      locationId: loc.id,
+      locationName: loc.name,
+      locationType: 'incarcerated',
+      presence: 'incarcerated',
+      source: 'institutional_home',
+    };
+  }
+  if (loc.category === 'medical' || loc.generic_type === 'hospital'
+      || subtypes.some((s) => /hospital/i.test(String(s)))) {
+    return {
+      locationId: loc.id,
+      locationName: loc.name,
+      locationType: 'medical',
+      presence: 'hospitalized',
+      source: 'institutional_home_patient',
+    };
+  }
+  return null;
+}
+
 function evaluateRequestedTransition(character, locationMap, requested, etTime, activeStoryEventVenue = null) {
   const currentStatus = character.resolved_presence_status || '';
   const currentLocId = character.resolved_current_location_id || '';
@@ -475,6 +509,35 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
         resolved_location_type: 'incarcerated',
         resolved_presence_status: 'incarcerated',
         resolved_source_reason: 'incarceration_confinement_lock',
+      },
+    };
+  }
+
+  // ── INSTITUTIONAL HOME — jail/prison (inmate) or hospital (patient) ─────────
+  // Living at the institution IS being there. The authoritative HOME assignment is
+  // enough on its own; the circumstance fields do not have to be written first, and
+  // nothing here invents a conviction or a medical record.
+  const homeState = institutionalHomeState(character, locationMap);
+  if (homeState) {
+    if (currentStatus === homeState.presence && currentLocId === homeState.locationId) {
+      return { disposition: 'no_change', canonicalFields: {} };
+    }
+    return {
+      disposition: 'accepted',
+      canonicalFields: {
+        resolved_current_location_id: homeState.locationId,
+        resolved_current_location_name: homeState.locationName,
+        resolved_location_type: homeState.locationType,
+        resolved_presence_status: homeState.presence,
+        resolved_source_reason: homeState.source,
+        resolved_last_updated_at: new Date().toISOString(),
+      },
+      committed_result: {
+        resolved_current_location_id: homeState.locationId,
+        resolved_current_location_name: homeState.locationName,
+        resolved_location_type: homeState.locationType,
+        resolved_presence_status: homeState.presence,
+        resolved_source_reason: homeState.source,
       },
     };
   }
@@ -1462,6 +1525,19 @@ function computeResolvedLocation(character, locationMap, etTime, activeStoryEven
       resolved_location_type: 'incarcerated',
       resolved_presence_status: 'incarcerated',
       resolved_source_reason: 'incarceration_confinement_lock',
+    };
+  }
+
+  // Institutional HOME lock — a jail/prison home is incarceration, a hospital home is a
+  // patient stay, read from the authoritative HOME assignment itself.
+  const _homeState = institutionalHomeState(character, locationMap);
+  if (_homeState) {
+    return {
+      resolved_current_location_id: _homeState.locationId,
+      resolved_current_location_name: _homeState.locationName,
+      resolved_location_type: _homeState.locationType,
+      resolved_presence_status: _homeState.presence,
+      resolved_source_reason: _homeState.source,
     };
   }
 
