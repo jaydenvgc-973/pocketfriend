@@ -145,6 +145,8 @@ const PARK_ACTIONS = classifyAll([
   { id: "bring_dog", label: "Bring / pet a dog", emoji: "🐕", cost: 0, type: "social" },
   { id: "cloud_watch", label: "Cloud watch", emoji: "☁️", cost: 0, type: "observational" },
   { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "observational" },
+  // Marriage is not City Hall's alone: an open-air ceremony uses the same pipeline.
+  { id: "gov_marry", label: "Wedding Ceremony", emoji: "💍", cost: 0, type: "functional" },
 ]);
 
 // ── RESTAURANT ────────────────────────────────────────────────────────────────
@@ -225,6 +227,8 @@ const HOME_ACTIONS = classifyAll([
   { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"] },
   { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"] },
   { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"] },
+  // A wedding at home is the same marriage, recorded the same way.
+  { id: "gov_marry", label: "Wedding Ceremony", emoji: "💍", cost: 0, type: "functional" },
 ]);
 
 // ── HOTEL ─────────────────────────────────────────────────────────────────────
@@ -324,6 +328,8 @@ const RELIGION_ACTIONS = classifyAll([
   { id: "religion_talk", label: "Speak with clergy", emoji: "💬", cost: 0, type: "social", requires_staff: true },
   { id: "religion_community", label: "Join fellowship", emoji: "👥", cost: 0, type: "social" },
   { id: "religion_quiet", label: "Sit in reflection", emoji: "🕯️", cost: 0, type: "observational" },
+  // A wedding here is the same marriage, recorded through the same pipeline.
+  { id: "gov_marry", label: "Wedding Ceremony", emoji: "💍", cost: 0, type: "functional", suggested_zone: "Sanctuary" },
 ]);
 
 // ── GOVERNMENT ────────────────────────────────────────────────────────────────

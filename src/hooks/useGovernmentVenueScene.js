@@ -118,12 +118,12 @@ export default function useGovernmentVenueScene({
       return;
     }
     const witnessNames = (plan.witness_ids || []).map((id) => characters.find((c) => c.id === id)?.name).filter(Boolean);
-    const ceremony = `A civil marriage ceremony is held at ${location.name}. ${aName} and ${bName} are married${witnessNames.length > 0 ? `, with ${witnessNames.join(" and ")} as witnesses` : ", with no witnesses present"}.`;
+    const ceremony = `A marriage ceremony is held at ${location.name}. ${aName} and ${bName} are married${witnessNames.length > 0 ? `, with ${witnessNames.join(" and ")} as witnesses` : ", with no witnesses present"}.`;
     if (observeMode) {
       if (observeCast.length >= 2) await runObserveBeat({ direction: ceremony });
       else addNarrative(ceremony);
     } else {
-      await sendMessage(`[💍 Civil marriage ceremony — ${aName} and ${bName}]`, true);
+      await sendMessage(`[💍 Marriage ceremony — ${aName} and ${bName}]`, true);
     }
     marriedRef.current.add(pairKey);
     try {
