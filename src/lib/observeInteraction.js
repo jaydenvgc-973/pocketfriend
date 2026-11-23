@@ -18,7 +18,7 @@ import { filterDashes } from '@/lib/dashFilter';
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from '@/lib/sceneBackgroundResponse';
 import { buildSceneCircumstances } from '@/lib/sceneCircumstances';
 import { isInfantCharacter, childSpeechLimit } from '@/lib/characterAgeStage';
-import { scopeCanonicalContext, buildUnitBoundaryBlock } from '@/lib/sceneUnitScope';
+import { scopeCanonicalContext, buildUnitBoundaryBlock, applyObserverAbsence } from '@/lib/sceneUnitScope';
 
 // NARRATIVE — one event that has already happened. It may contain dialogue spoken during
 // it; the whole event, dialogue included, is what these people just lived through.
@@ -174,7 +174,9 @@ ${spokenBy.name} (character ID ${spokenBy.id}) just said this out loud, in this 
   // block below states the real space instead.
   const canonicalSection = cast
     .filter((c) => canonicalCtx[c.id])
-    .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${scopeCanonicalContext(canonicalCtx[c.id], unitScope)}\n=== END ${c.name} ===`)
+    // Observing is not presence: any claim in the record that the account holder is
+    // standing in this place is corrected before it can reach the scene.
+    .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${applyObserverAbsence(scopeCanonicalContext(canonicalCtx[c.id], unitScope))}\n=== END ${c.name} ===`)
     .join('\n\n');
   const memorySection = cast
     .filter((c) => memoryCtx[c.id])

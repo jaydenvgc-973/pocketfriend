@@ -84,6 +84,37 @@ export function scopeCanonicalContext(text, scope) {
 }
 
 /**
+ * OBSERVER ABSENCE — a watched scene contains only its participants.
+ *
+ * The canonical context is written for an interaction WITH the account holder, and when
+ * their own authoritative location happens to be this same place it states that they are
+ * physically here. That is true of the world, never of a watched scene: observing is not
+ * presence. This corrects that single claim, and only that claim — identity, memories,
+ * relationships and everything these people actually lived through pass through untouched.
+ */
+export function applyObserverAbsence(text) {
+  if (!text) return text;
+  return String(text)
+    .replace(/USER IS HERE WITH YOU: YES/g, 'USER IS HERE WITH YOU: NO')
+    .replace(
+      /The user is physically present at your current location \([^)]*\)\./g,
+      'The account holder is not in this scene. They are not here with you, and nobody in this scene sees, hears, or addresses them.'
+    )
+    .replace(
+      /MANDATORY: You must recognize the user as physically present\.[^\n]*/g,
+      'MANDATORY: The account holder is NOT part of this scene. Do not greet, address, thank, ask, hand anything to, wait on, glance toward, or perform for them, and never describe them standing, sitting, or being here. They remain part of your life and may be mentioned as being somewhere else.'
+    )
+    .replace(
+      /The user is sharing this space \([^)]*\) while you sleep\./g,
+      'The account holder is not in this scene.'
+    )
+    .replace(
+      /CO-PRESENCE: The user is physically present with you right now at [^.\n]*\./g,
+      'CO-PRESENCE: The account holder is not in this scene and is not physically present with you.'
+    );
+}
+
+/**
  * The boundary rule for a scene inside one unit of a multi-unit property.
  */
 export function buildUnitBoundaryBlock(scope) {
