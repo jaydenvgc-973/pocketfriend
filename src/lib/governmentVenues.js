@@ -249,6 +249,40 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
   }
   lines.push('');
   lines.push(`• ${userPresent ? `${userName || 'The user'} is present in the courtroom, attending this proceeding.` : `${userName || 'The user'} is NOT in the courtroom — this is being watched, not attended. Never place them in the room.`}`);
+  // ── JUDICIAL DIRECTION ──
+  // The judge leads through ordinary dialogue, and that dialogue is what the existing
+  // Continue Scene / narrative continuation reads. This is procedural direction handed
+  // to the established narrative engine — never a scripted sequence, a mandatory step
+  // list, or a second trial engine.
+  const judge = assignments.find((a) => a.roleKey === 'judge');
+  const hasJury = assignments.some((a) => a.roleKey === 'jurors');
+  const hasAttorneys = assignments.some((a) => ['prosecutor', 'defense_attorney', 'plaintiff_attorney'].includes(a.roleKey));
+  const hasWitnesses = assignments.some((a) => a.roleKey === 'witnesses');
+  if (judge) {
+    lines.push('');
+    lines.push('JUDICIAL DIRECTION — THE JUDGE LEADS:');
+    lines.push(`• ${judge.name} presides over this ${courtCaseTypeLabel(courtCase.case_type).toLowerCase()}. When the scene continues without a specific instruction from the user, ${judge.name} speaks first and gives the next natural direction for where this proceeding actually stands.`);
+    lines.push('• A direction is answered by the person it is addressed to: the prosecution by the prosecuting attorney, the defense by the defense attorney, the plaintiff\'s side by the plaintiff\'s attorney, a witness by that witness, the defendant by the defendant themselves, the jury by an assigned juror.');
+    lines.push('• Directions are plain and concrete, so the next stage is clear: "Counsel for the prosecution, you may present your opening statement." "Call your next witness." "Does the defense wish to cross-examine?" "Members of the jury, have you reached a verdict?"');
+    lines.push('• In one beat, the judge\'s direction and the answer of the person addressed are enough. Everyone else present listens and reacts without speaking unless they are directly addressed.');
+    lines.push('• Only the judge calls the court to order, rules on objections and procedure, instructs the jury, and pronounces sentence. An attorney never rules or sentences; a defendant never rules.');
+    lines.push('• Every continuation continues this same proceeding from what has just happened — the last direction, who was addressed, what each person already said, which witnesses already testified, what evidence is already in. Never restart the case, never repeat an opening already given, never jump to an unrelated stage.');
+    if (hasJury) {
+      lines.push('• A jury is seated. Deliberations and findings belong to those jurors alone: the judge asks whether they have reached a verdict and receives their findings, and never invents a verdict for them.');
+    } else {
+      lines.push('• No jury is seated in this proceeding. The judge hears the case and decides the findings. Never invent jurors, jury deliberations or a jury verdict, and never ask for one.');
+    }
+    if (!hasAttorneys) lines.push('• No attorney is assigned. The judge and the parties themselves conduct the matter directly.');
+    if (!hasWitnesses) lines.push('• No witness has been called. Testimony only enters the case if someone is actually called and speaks.');
+    if (courtCase.case_type === 'sentencing') {
+      lines.push('• This is a sentencing hearing: statements and recommendations are heard, then the judge pronounces sentence. It is not a trial and does not restart the case.');
+    } else if (courtCase.case_type === 'civil' || courtCase.case_type === 'family') {
+      lines.push('• This is a civil matter: arguments and evidence are heard and the judge issues the ruling. Criminal trial stages and sentencing do not apply.');
+    } else if (courtCase.case_type === 'criminal' || courtCase.case_type === 'municipal') {
+      lines.push('• This is a criminal matter: the judge directs openings, evidence, witnesses, objections and the findings, in whatever order this case actually needs.');
+    }
+    lines.push('• The courtroom activities (present evidence, call a witness, cross-examine, object, request a ruling, deliver findings, sentence, adjourn) stay available to the user. Choosing one continues this same proceeding — it never replaces or contradicts the judge\'s direction.');
+  }
   lines.push('');
   lines.push('PRESENCE IS NOT SPEAKING:');
   lines.push('• A juror listens to testimony, a witness waits to be called, a defendant may stay silent while an attorney speaks, and the judge may simply listen. That is full participation.');
