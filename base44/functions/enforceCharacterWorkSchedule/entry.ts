@@ -205,6 +205,10 @@ Deno.serve(async (req) => {
         // is skipped. The character remains free to travel and participate
         // normally. Switching Vacation Mode OFF resumes normal enforcement.
         if (char.vacation_mode === true) return true;
+        // Incarcerated or confined — custody outranks any employment obligation.
+        // The existing confinement lock owns their location until release.
+        if (char.is_jailed === true || char.house_arrest_active === true) return true;
+        if (['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status)) return true;
         // Hospitalized — medical recovery. Existing discharge gate restores
         // presence once all life-needs ≥ 85.
         if (char.resolved_presence_status === 'hospitalized') return true;
@@ -920,6 +924,9 @@ Deno.serve(async (req) => {
         // are handled by the continuous-schedule distinction below.
         const _gBlockedFromWork =
           char.vacation_mode === true ||
+          char.is_jailed === true ||
+          char.house_arrest_active === true ||
+          ['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status) ||
           char.resolved_presence_status === 'hospitalized' ||
           char.resolved_presence_status === 'passed_out' ||
           (char.health_value !== undefined && char.health_value < 20) ||

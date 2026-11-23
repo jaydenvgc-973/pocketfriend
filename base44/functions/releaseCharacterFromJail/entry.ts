@@ -37,7 +37,23 @@ Deno.serve(async (req) => {
     const inmateEntry = (facility?.inmates || []).find((i) => i?.character_id === character_id) || null;
     const priorHomeId = inmateEntry?.prior_home_location_id || null;
     const currentHomeIsFacility = facility && character.current_home_location_id === facility.id;
-    const restoredHomeId = priorHomeId || (currentHomeIsFacility ? null : character.current_home_location_id) || null;
+
+    // The residence they actually live in is the one that still lists them as a
+    // resident — being sentenced never removed them from their own household. This is
+    // the record used when the stay kept no note of where they came from, so a release
+    // never leaves someone still living inside the jail.
+    let residenceOfRecordId = null;
+    if (currentHomeIsFacility && !priorHomeId) {
+      const candidates = await base44.asServiceRole.entities.LocationReference
+        .filter({ resident_character_ids: character_id }, null, 50)
+        .catch(() => []);
+      const residence = (candidates || []).find((l) => l && l.id !== facility.id
+        && l.category !== 'jail_prison' && l.is_confinement_facility !== true);
+      residenceOfRecordId = residence?.id || null;
+    }
+
+    const restoredHomeId = priorHomeId || residenceOfRecordId
+      || (currentHomeIsFacility ? null : character.current_home_location_id) || null;
 
     const releasePayload = {
       is_jailed: false,

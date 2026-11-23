@@ -199,7 +199,18 @@ Deno.serve(async (req) => {
       const homeId = character.data?.current_home_location_id || character.current_home_location_id;
       if (homeId) {
         const home = await base44.asServiceRole.entities.LocationReference.get(homeId);
-        if (home) {
+        // A character in custody — or one whose HOME is the institution holding them — is
+        // not an ordinary resident being sent home. Custody and institutional standing own
+        // their presence, so this auto-link must never overwrite it back to "home".
+        const inCustody = character.is_jailed === true
+          || character.house_arrest_active === true
+          || ['incarcerated', 'house_arrest', 'confined', 'hospitalized'].includes(character.resolved_presence_status);
+        const institutionalHome = !!home && (home.category === 'jail_prison' || home.is_confinement_facility === true);
+        if (home && inCustody) {
+          console.log(`[onCharacterCreated] Skipped home auto-link for ${character.name}: in custody`);
+        } else if (home && institutionalHome) {
+          console.log(`[onCharacterCreated] Skipped home auto-link for ${character.name}: HOME is a confinement facility`);
+        } else if (home) {
           const residentIds = Array.from(new Set([...(home.resident_character_ids || []), character.id]));
           const residentNames = Array.from(new Set([...(home.resident_character_names || []), character.name]));
           await base44.asServiceRole.entities.LocationReference.update(homeId, {

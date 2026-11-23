@@ -129,6 +129,11 @@ Deno.serve(async (req) => {
       if (char.vacation_mode === true) {
         return Response.json({ updated: false, reason: 'vacation_mode_active', next_execution_time: null });
       }
+      // Incarcerated or confined — custody outranks the school schedule.
+      if (char.is_jailed === true || char.house_arrest_active === true
+        || ['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status)) {
+        return Response.json({ updated: false, reason: 'in_custody', next_execution_time: null });
+      }
 
       if (char.student_status !== 'enrolled') {
         return Response.json({ updated: false, reason: 'not_enrolled', next_execution_time: null });
@@ -273,6 +278,9 @@ Deno.serve(async (req) => {
       // Vacation Mode — skip school enforcement for this character. Existing
       // enrollment and schedule remain intact; only enforcement is skipped.
       if (char.vacation_mode === true) continue;
+      // Incarcerated or confined — custody outranks the school schedule.
+      if (char.is_jailed === true || char.house_arrest_active === true
+        || ['incarcerated', 'house_arrest', 'confined'].includes(char.resolved_presence_status)) continue;
       const schoolLocId = char.education_location_id || char.current_school_location_id;
       let schoolLoc = null;
       if (schoolLocId) {

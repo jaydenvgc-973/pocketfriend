@@ -247,22 +247,29 @@ export default function JudicialOutcomeModal({
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Facility</label>
-            <select
-              value={facilityId}
-              onChange={(e) => setFacilityId(e.target.value)}
-              className="w-full h-9 rounded-xl bg-secondary border border-border px-3 text-sm text-foreground"
-            >
-              <option value="">Select a jail or prison…</option>
-              {facilityOptions.map((f) => (
-                <option key={f.id} value={f.id}>{f.name} — {facilityKind(f)}</option>
-              ))}
-            </select>
-            {facilityOptions.length === 0 && (
-              <p className="text-[10px] text-destructive">No correctional facility is set up. Add a Jail / Prison location in Places first.</p>
-            )}
-          </div>
+          {custody && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Facility</label>
+              <select
+                value={facilityId}
+                onChange={(e) => setFacilityId(e.target.value)}
+                className="w-full h-9 rounded-xl bg-secondary border border-border px-3 text-sm text-foreground"
+              >
+                <option value="">Select a jail or prison…</option>
+                {facilityOptions.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name} — {facilityKind(f)}</option>
+                ))}
+              </select>
+              {facilityOptions.length === 0 && (
+                <p className="text-[10px] text-destructive">No correctional facility is set up. Add a Jail / Prison location in Places first.</p>
+              )}
+            </div>
+          )}
+          {houseArrest && (
+            <p className="text-[10px] text-muted-foreground leading-relaxed">
+              House arrest confines {defendant?.name || "this character"} to their own home. No facility is involved.
+            </p>
+          )}
         </>
       )}
 

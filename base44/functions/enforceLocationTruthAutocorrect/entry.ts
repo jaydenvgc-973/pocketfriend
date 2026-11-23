@@ -25,6 +25,21 @@ Deno.serve(async (req) => {
     const already_correct = [];
 
     for (const char of allChars) {
+      // Custody is never "stale travel". An incarcerated, confined or hospitalized
+      // character's presence is owned by the confinement / medical authority, so this
+      // autocorrect leaves it exactly as it is instead of resetting it to home.
+      const inCustody = char.is_jailed === true || char.house_arrest_active === true
+        || ['incarcerated', 'house_arrest', 'confined', 'hospitalized'].includes(char.resolved_presence_status);
+      if (inCustody) {
+        already_correct.push({
+          character_id: char.id,
+          character_name: char.name,
+          location: char.resolved_current_location_name,
+          status: 'in_custody',
+        });
+        continue;
+      }
+
       const hasStaleTravel = char.travel_status === 'traveling' || 
                            ['traveling', 'in_transit'].includes(char.resolved_presence_status);
       
