@@ -302,14 +302,35 @@ export default function Scene() {
   const unitManualDeselectRef = useRef(new Set());
   const previousUnitIdRef = useRef(initialUnitId);
 
+  // WHO IS IN THIS SPACE RIGHT NOW — the physical-presence half of Who's Here.
+  // Inside an open apartment / room / cell the space is that unit alone; everywhere else
+  // (the whole property, a venue, a workplace) it is whoever is genuinely present there.
+  // The user, characters who traveled here with the user (they are already selected), and
+  // background placeholders are not part of this.
+  const presentHereIds = useMemo(() => {
+    if (!location?.id) return [];
+    if (activeUnit) return unitPresentOccupantIds;
+    return getPresenceAtLocation(location, unifiedPresenceEntities)
+      .filter((e) => e?.id
+        && !isUserPresenceEntity(e, currentUser?.id)
+        && !String(e.id).startsWith("npc_")
+        && !characterIds.includes(e.id))
+      .map((e) => e.id);
+  }, [location?.id, activeUnitId, unitPresentOccupantIds.join(','), unifiedPresenceEntities, currentUser?.id]);
+
+  // Presence decides who is AVAILABLE and initially selected; the selection itself decides
+  // who actually participates. Entering a location or one of its units preselects the
+  // characters actually there through the existing Who's Here list. A character the user
+  // deselects is never re-selected for that space, and moving to another space starts a
+  // fresh automatic selection for it.
   useEffect(() => {
-    if (!location || locationUnits.length === 0) return;
-    // Moving to another apartment releases the previous apartment's automatic picks.
+    if (!location?.id) return;
+    // Moving to another apartment releases the previous space's automatic picks.
     if (previousUnitIdRef.current !== activeUnitId) {
       previousUnitIdRef.current = activeUnitId;
       unitManualDeselectRef.current = new Set();
     }
-    const nextAuto = unitPresentOccupantIds.filter((id) => !unitManualDeselectRef.current.has(id));
+    const nextAuto = [...new Set(presentHereIds)].filter((id) => !unitManualDeselectRef.current.has(id));
     const previousAuto = unitAutoSelectedIdsRef.current;
     unitAutoSelectedIdsRef.current = nextAuto;
     setSelectedNpcIds((prev) => {
@@ -319,7 +340,7 @@ export default function Scene() {
       if (merged.length === current.length && merged.every((id) => current.includes(id))) return prev;
       return merged;
     });
-  }, [activeUnitId, location?.id, locationUnits.length, unitPresentOccupantIds.join(',')]);
+  }, [activeUnitId, location?.id, presentHereIds.join(',')]);
 
   // Choosing an apartment is a move between units, not a change of zone: the property's
   // zone references and images stay exactly as they are.
@@ -494,6 +515,19 @@ export default function Scene() {
   );
 
   const selectedNpcs = allPossibleNpcs.filter((n) => selectedNpcIdList.includes(n.id));
+  // The people actually taking part: everyone selected through Who's Here, plus whoever
+  // traveled here with the user and is still selected. Nobody else — presence alone never
+  // adds a person to the scene.
+  const selectedPeopleHere = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    [...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), ...selectedNpcs].forEach((c) => {
+      if (!c?.id || seen.has(c.id)) return;
+      seen.add(c.id);
+      list.push(c);
+    });
+    return list;
+  }, [broughtCharacters.map((c) => c.id).join(','), selectedNpcIdList.join(','), selectedNpcs.map((n) => n.id).join(',')]);
   const traveledWithChars = broughtCharacters;
 
   const baseSceneParticipants = (() => {
@@ -1030,7 +1064,9 @@ export default function Scene() {
 
   usePageContext({ page: 'scene', locationId: locationId || null });
 
-  const _exitMemoryArgs = (outcome) => ({ broughtCharacters, alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
+  // Only the people who were actually taking part keep a memory of the scene: a character
+  // the user deselected is not a participant, so the exit is not written for them.
+  const _exitMemoryArgs = (outcome) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
@@ -1115,8 +1151,12 @@ export default function Scene() {
       // A supervised household is pictured as it is: the caregiver on duty AND the
       // children they are looking after. The image never shows the child alone, and never
       // pulls in a neighbour's child from another unit of the same building.
+      // The Who's Here selection is the authority for who is in the picture. A character
+      // the user deselected is not rendered, even inside their own home — including
+      // someone who traveled here with the user. Only the supervision rule adds anyone:
+      // a child on duty care is never pictured alone.
       const selectedIds = new Set([
-        ...broughtCharacters.map((c) => c.id),
+        ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)).map((c) => c.id),
         // Inside a workplace the frame holds that establishment's own people who are
         // working now — never the property's residents from their apartments.
         ...(isWorkspaceScene ? sceneParticipants.filter((p) => workspaceEmployeeIds.has(p.id)).map((p) => p.id) : []),
@@ -1127,16 +1167,25 @@ export default function Scene() {
     // At a public venue the chosen cast still decides the picture: whoever the user
     // brought or picked is who appears. Other people present only fill in when the
     // user has chosen nobody.
-    const chosenIds = new Set([...broughtCharacters.map((c) => c.id), ...(selectedNpcIdList), ...(userId ? [userId] : [])]);
+    const chosenIds = new Set([
+      ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)).map((c) => c.id),
+      ...selectedNpcIdList, ...(userId ? [userId] : []),
+    ]);
     const chosen = sceneParticipants.filter((p) => chosenIds.has(p.id));
     // An established character always keeps a place in the frame. A background person of
     // the venue only ever fills a remaining slot — never a slot ahead of a real character.
     const isBackgroundPerson = (p) => p.isNpc === true || String(p.id).startsWith("npc_");
     if (chosen.length > 0) return [...chosen.filter((p) => !isBackgroundPerson(p)), ...chosen.filter(isBackgroundPerson)].slice(0, 4);
-    if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
-    const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(selectedNpcIdList), ...(userId ? [userId] : [])]);
-    const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
-    return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
+    // Nobody has been chosen yet: the place's own people fill the frame. Once the user has
+    // made a selection — even an empty one — the picture follows that selection and never
+    // re-injects people they removed.
+    if (selectedNpcIds === null) {
+      if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
+      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(userId ? [userId] : [])]);
+      const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
+      return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
+    }
+    return [];
   };
 
   // Changing who is in the observed moment re-renders the scene with those people.
@@ -1505,7 +1554,9 @@ export default function Scene() {
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      if (actionImageFn) { const presentPeople = [...(isWorkspaceScene ? [] : homeResidentsPresent), ...broughtCharacters].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i); const whoNames = presentPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      // The action picture shows the people taking part — the Who's Here selection — never
+      // every resident who happens to be home.
+      if (actionImageFn) { const whoNames = selectedPeopleHere.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
