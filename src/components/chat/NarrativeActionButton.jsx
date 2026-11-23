@@ -6,6 +6,7 @@ import { buildStyleMotifContext } from "@/lib/narrativeScenarioExamples";
 import { buildExtendedNarrativeExampleContext } from "@/lib/narrativeScenarioExamplesExtended";
 import { isDuplicateDevelopment } from "@/lib/dramaPremiseGate";
 import { isRepeatedSerenity } from "@/lib/serenityPremiseGate";
+import { DRAMA_IMAGINATION_LENS, SERENITY_IMAGINATION_LENS } from "@/lib/narrativeImaginationLenses";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
 import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
 import { getUnitForCharacter, getUnitLabel } from "@/lib/residentialUnits";
@@ -469,7 +470,7 @@ These categories exist only to show how wide the range is. They are not options 
 • Embarrassment: an alarm sounding as they leave a shop with something they own, a chair giving way, a call left unmuted, a stain noticed too late, a door that will not open, being seen in a state they would not have chosen.
 • Strange or serious: police asking about a previous occupant, a storage space someone else has been emptying, someone collapsing nearby, a building-wide commotion with emergency services, an unfamiliar letter about something from their childhood, being told they appear in something they never attended.
 Each category above is one way in, not a box. An invented development that fits none of them is preferred to a recombined one that fits one too exactly.
-
+${DRAMA_IMAGINATION_LENS}
 PLAUSIBILITY ANCHOR — authoritative state outranks any example:
 • Location (including a rabbit hole or a specific zone) decides what is possible here. Do not relocate the character, do not place them inside a business they are not in, and do NOT announce their address or narrate the location name just because it is known.
 • If the character is ASLEEP, the development may wake them (a call, a knock, a sound, something found on waking) but must not require them to already be active.
@@ -583,7 +584,7 @@ These categories exist only to show how wide the range is. They are not options 
 • Extraordinary developments: an anonymous donation made in their honour, a community event dedicated to someone who shaped them, a photograph nobody knew existed, a recording of a voice they believed was lost, someone returning years later to say what a kindness meant, former classmates gathering letters and memories.
 • Remarkable coincidences: meeting someone who looks almost exactly like them, a musician nearby playing the one song that matters to them, a rare photograph found in an old archive, a stranger recognising an inherited object and telling its story, several people from different periods of their life recognising them in one evening, a time capsule opened with their own handwriting inside.
 Each category above is one way in, not a box. An invented moment that fits none of them is preferred to a recombined one that fits one too exactly.
-
+${SERENITY_IMAGINATION_LENS}
 PLAUSIBILITY ANCHOR — authoritative state outranks any example:
 • Location (including a rabbit hole or a specific zone) decides what is possible here. Do not relocate the character to make a pleasant moment happen, do not place them inside a business they are not in, and do NOT announce their address or narrate the location name just because it is known.
 • If the character is ASLEEP, the good thing may be a genuinely restful, uninterrupted night or what greets them on waking — it must not require them to already be active.
