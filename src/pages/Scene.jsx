@@ -1280,6 +1280,7 @@ export default function Scene() {
     showVenueSetup,
     setShowVenueSetup,
     courtCase,
+    cityHallPlan,
     marriageModal,
     setMarriageModal,
     judicialModal,
@@ -1563,6 +1564,13 @@ export default function Scene() {
       {/* Action strip — everything available here. In a watched scene it is what they do. */}
       <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
         <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
+          {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
+          {governmentVenueType && !courtCase && !cityHallPlan && (
+            <button onClick={() => setShowVenueSetup(true)} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-primary/10 border-primary/40 hover:border-primary/60" title={governmentVenueType === "courthouse" ? "Set up the court case and who is in the room" : "Set up what you are here for and who is with you"}>
+              <span className="text-base leading-none">{governmentVenueType === "courthouse" ? "⚖️" : "🏛️"}</span>
+              <span className="text-[9px] text-primary font-medium leading-tight whitespace-nowrap">{governmentVenueType === "courthouse" ? "Begin Court Case" : "Begin City Hall Visit"}</span>
+            </button>
+          )}
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
           {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
