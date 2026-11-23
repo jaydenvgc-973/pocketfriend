@@ -1300,6 +1300,8 @@ export default function Scene() {
     releaseAttendance: releaseGovernmentAttendance,
     handleGovernmentAction,
     handleJudicialResolved,
+    handleJudicialNarrative,
+    recordMarriageMemories,
     addGovernmentNarrative,
   } = useGovernmentVenueScene({
     location,
@@ -1744,6 +1746,9 @@ export default function Scene() {
             addGovernmentNarrative(`A marriage ceremony is held at ${location?.name}. ${names[0]} and ${names[1]} are married.`);
             addGovernmentNarrative(`${names[0]} and ${names[1]} are now married.`);
           }
+          // The couple, their witnesses and everyone who attended keep their own memory
+          // of the marriage that was just recorded.
+          recordMarriageMemories?.(data).catch(() => {});
           queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
           // The ceremony is over — the event attendance ends with it.
           releaseGovernmentAttendance?.();
@@ -1762,7 +1767,7 @@ export default function Scene() {
         caseType={courtCase?.case_type || "criminal"}
         onClose={() => setJudicialModal(null)}
         onResolved={handleJudicialResolved}
-        onNarrativeOnly={(payload) => addGovernmentNarrative(payload.text)}
+        onNarrativeOnly={handleJudicialNarrative}
       />
       {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
     </div>

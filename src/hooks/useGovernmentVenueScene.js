@@ -13,6 +13,39 @@ import {
 } from "@/lib/governmentVenues";
 import { placeEventAttendees, releaseEventAttendees, attendanceRefusalLabel } from "@/lib/governmentAttendance";
 import { courtParticipationMode, isRemoteRefusal, actualLocationName } from "@/lib/courtParticipation";
+import { recordGovernmentEventMemories, easternDateLabel } from "@/lib/governmentEventMemory";
+
+// What each person's own part in a proceeding was. Their memory is written from this,
+// never from another participant's private knowledge.
+const COURT_ROLE_EXPERIENCE = {
+  judge: "You presided over the case.",
+  defendant: "You were the defendant in this case.",
+  plaintiff: "You were the plaintiff/complainant.",
+  prosecutor: "You prosecuted the case.",
+  defense_attorney: "You represented the defendant.",
+  plaintiff_attorney: "You represented the plaintiff.",
+  witnesses: "You were called to give testimony.",
+  jurors: "You sat on the jury.",
+};
+
+/**
+ * Everyone with a character record who took part, each with their own part in it.
+ * `experienceFor(assignment)` states that person's part; a remote participant always
+ * remembers that they took part remotely, not from inside the room.
+ */
+function courtMemoryParticipants(court, experienceFor) {
+  return (court?.assignments || [])
+    .filter((a) => a.characterId)
+    .map((a) => {
+      const part = experienceFor
+        ? experienceFor(a)
+        : (COURT_ROLE_EXPERIENCE[a.roleKey] || `You took part as ${a.roleLabel}.`);
+      const remote = a.remote
+        ? ` You took part remotely from ${a.remote_location_name || "your own location"}.`
+        : "";
+      return { id: a.characterId, name: a.name, experience: `${part}${remote}` };
+    });
+}
 
 /**
  * useGovernmentVenueScene — the City Hall / Courthouse layer of the Scenes page.
@@ -83,10 +116,13 @@ export default function useGovernmentVenueScene({
     setShowVenueSetup(true);
   }, [location?.id, governmentVenueType]);
 
+  // These lines are events the room has already lived through, so they stay canon:
+  // every later continuation builds on them instead of discovering them again.
   const addNarrative = (content) => setMessages((prev) => [...prev, {
     id: `gov_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     sender: "narrative",
     content,
+    is_canon_event: true,
     timestamp: new Date().toISOString(),
   }]);
 
@@ -163,6 +199,16 @@ export default function useGovernmentVenueScene({
       }
       const missing = refusedLine(unavailableRefusals);
       if (missing) addNarrative(missing);
+      // Being part of this proceeding becomes part of each participant's own history,
+      // written from the role they actually hold. Nobody who could not attend is written.
+      await recordGovernmentEventMemories({
+        key: nextCase.case_id,
+        title: `${courtCaseTypeLabel(config.case_type)} at ${location.name}`,
+        summary: `A ${courtCaseTypeLabel(config.case_type).toLowerCase()} proceeding was held at ${location.name} on ${easternDateLabel()}. The case: ${config.description}`,
+        participants: courtMemoryParticipants(nextCase),
+        location,
+        ownerEmail: currentUser?.email,
+      });
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
       return { attendanceIds: nextCase.attendance_ids, tempNpcs: resolved.tempNpcs, remoteParticipants };
     }
@@ -191,6 +237,7 @@ export default function useGovernmentVenueScene({
         witness_ids: (plan.marriage.witness_ids || []).filter((id) => attendingSet.has(id)),
         witness_names: names((plan.marriage.witness_ids || []).filter((id) => attendingSet.has(id))),
       } : null,
+      plan_id: `${location.id}_${Date.now()}`,
       attendance_ids: attendingIds,
       officiant_npc: officiant,
       refused_attendance: refused.map((r) => ({ characterId: r.id, name: nameOf(r.id), reason: r.reason })),
@@ -203,6 +250,26 @@ export default function useGovernmentVenueScene({
     addNarrative(`City Hall — ${cityHallPurposeLabel(plan.purpose)}${plan.marriage?.spouse_a_name ? `: ${plan.marriage.spouse_a_name} and ${plan.marriage.spouse_b_name}` : ""}.`);
     const missing = refusedLine(refused);
     if (missing) addNarrative(missing);
+    // Coming here for this purpose is part of each attendee's own day. A marriage is
+    // remembered as the ceremony itself once it actually takes place — never before.
+    const purposeLabel = cityHallPurposeLabel(plan.purpose);
+    const wedding = nextPlan.marriage;
+    await recordGovernmentEventMemories({
+      key: nextPlan.plan_id,
+      title: `City Hall — ${purposeLabel}`,
+      summary: `${purposeLabel} at ${location.name} on ${easternDateLabel()}.`,
+      participants: attendingIds.map((id) => ({
+        id,
+        name: nameOf(id),
+        experience: wedding && (id === wedding.spouse_a_id || id === wedding.spouse_b_id)
+          ? `You came to ${location.name} for your civil marriage ceremony with ${id === wedding.spouse_a_id ? wedding.spouse_b_name : wedding.spouse_a_name}.`
+          : wedding && (wedding.witness_ids || []).includes(id)
+            ? `You came to ${location.name} as a witness to the civil marriage of ${wedding.spouse_a_name} and ${wedding.spouse_b_name}.`
+            : `You were at ${location.name} for ${String(purposeLabel).toLowerCase()}.`,
+      })),
+      location,
+      ownerEmail: currentUser?.email,
+    });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     return { attendanceIds: attendingIds, tempNpcs: officiant ? [officiant] : [] };
   };
@@ -256,6 +323,38 @@ export default function useGovernmentVenueScene({
     await concludeProceeding('Everyone not held in custody is free to go.');
   };
 
+  /**
+   * The marriage is official: the record and the participants' own memories say the
+   * same thing. Both spouses remember marrying each other, the witnesses remember
+   * witnessing it, and anyone else who attended remembers the ceremony.
+   * `data` is what commitMarriage returned — the marriage that was actually recorded.
+   */
+  const recordMarriageMemories = async (data) => {
+    const spouses = (data?.spouses || []).filter((s) => s?.id && s?.name);
+    if (spouses.length !== 2) return;
+    const [a, b] = spouses;
+    const witnessIds = (data?.witness_ids || []).filter(Boolean);
+    const witnessNames = witnessIds.map((id) => nameOf(id)).filter(Boolean);
+    const venueName = data?.location_name || location?.name;
+    const witnessLine = witnessNames.length > 0 ? `, with ${witnessNames.join(" and ")} as witnesses` : "";
+    const others = (cityHallPlan?.attendance_ids || [])
+      .filter((id) => id !== a.id && id !== b.id && !witnessIds.includes(id));
+
+    await recordGovernmentEventMemories({
+      key: `${cityHallPlan?.plan_id || location?.id}_marriage`,
+      title: `Marriage ceremony at ${venueName}`,
+      summary: `${a.name} and ${b.name} were married in a civil ceremony at ${venueName} on ${easternDateLabel()}${witnessLine}.`,
+      participants: [
+        { id: a.id, name: a.name, experience: `You married ${b.name}${witnessLine}. You and ${b.name} are married.` },
+        { id: b.id, name: b.name, experience: `You married ${a.name}${witnessLine}. You and ${a.name} are married.` },
+        ...witnessIds.map((id) => ({ id, name: nameOf(id), experience: `You witnessed the civil marriage of ${a.name} and ${b.name}.` })),
+        ...others.map((id) => ({ id, name: nameOf(id), experience: `You attended the civil marriage ceremony of ${a.name} and ${b.name}.` })),
+      ],
+      location: location ? { id: location.id, name: venueName } : null,
+      ownerEmail: currentUser?.email,
+    });
+  };
+
   // The ceremony is an event that actually takes place in the scene. Only then is the
   // marriage recorded, through the same pipeline every other marriage uses.
   const performMarriageCeremony = async (plan) => {
@@ -294,6 +393,9 @@ export default function useGovernmentVenueScene({
       });
       if (res?.data?.error) throw new Error(res.data.error);
       addNarrative(`${aName} and ${bName} are now married.`);
+      // The marriage that was just recorded is what they remember — the couple, the
+      // witnesses and everyone who attended the ceremony.
+      await recordMarriageMemories(res.data);
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
       addNarrative("The ceremony is over — everyone is free to return to their day.");
       await releaseAttendance();
@@ -322,16 +424,63 @@ export default function useGovernmentVenueScene({
     }
   };
 
-  const handleJudicialResolved = (data) => {
+  const handleJudicialResolved = async (data) => {
     if (!data) return;
     addNarrative(data.incarceration
       ? `${data.character_name} is sentenced to ${data.incarceration.sentence_label} at ${data.incarceration.facility_name}.`
       : `${data.character_name}'s sentence has been recorded in their criminal history.`);
+    // The confirmed outcome becomes part of what everyone in the proceeding knows. It is
+    // stated exactly as the judicial system recorded it — never upgraded into a
+    // conviction that was not recorded, and never softened.
+    const historyLine = String(data.criminal_record || "")
+      .split("\n").map((l) => l.trim()).filter(Boolean).pop();
+    const outcomeText = data.incarceration
+      ? `${data.character_name} was sentenced to ${data.incarceration.sentence_label} at ${data.incarceration.facility_name}.`
+      : (historyLine || `${data.character_name}'s sentence was recorded in their criminal history.`);
+    await recordGovernmentEventMemories({
+      key: `${courtCase?.case_id || location?.id}_outcome_${data.character_id || data.character_name}`,
+      title: `Court outcome — ${data.character_name}`,
+      summary: `${outcomeText}${historyLine && historyLine !== outcomeText ? ` The court's record: ${historyLine}` : ""}`,
+      participants: courtMemoryParticipants(courtCase, (a) => {
+        if (a.roleKey === "defendant") return `The outcome applies to you: ${outcomeText}`;
+        if (a.remote) return "You took part in this proceeding remotely and heard the outcome given.";
+        if (a.roleKey === "judge") return "You presided over this proceeding and delivered the ruling.";
+        if (a.roleKey === "jurors") return "You sat on the jury and heard this outcome delivered in the courtroom.";
+        if (a.roleKey === "witnesses") return "You testified in this proceeding and were present when the outcome was delivered.";
+        if (["prosecutor", "defense_attorney", "plaintiff_attorney"].includes(a.roleKey)) return "You appeared as counsel and were present when the outcome was delivered.";
+        return "You were present when the outcome was delivered.";
+      }),
+      location,
+      ownerEmail: currentUser?.email,
+    });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     // Sentencing and custody were already applied by the existing judicial system; the
     // event itself ends here and everyone else resumes their own day.
     concludeProceeding("The proceeding is concluded — everyone not held in custody is free to go.");
+  };
+
+  /**
+   * A ruling played out rather than recorded (a contempt warning, removal from the
+   * courtroom) is still something the room experienced, so it becomes memory too —
+   * for the person it was directed at and for everyone who heard it delivered.
+   */
+  const handleJudicialNarrative = async (payload) => {
+    if (!payload?.text) return;
+    addNarrative(payload.text);
+    await recordGovernmentEventMemories({
+      key: `${courtCase?.case_id || location?.id}_ruling_${payload.characterId || "court"}_${payload.outcome || "ruling"}`,
+      title: `Court ruling — ${courtCaseTypeLabel(courtCase?.case_type || "criminal")}`,
+      summary: `${payload.text} This ruling was delivered at ${location?.name}.`,
+      participants: courtMemoryParticipants(courtCase, (a) => {
+        if (a.characterId === payload.characterId) return "This ruling was directed at you.";
+        if (a.remote) return "You took part in this proceeding remotely and heard the ruling.";
+        if (a.roleKey === "judge") return "You presided over this proceeding and delivered the ruling.";
+        return "You were present in the courtroom when the ruling was delivered.";
+      }),
+      location,
+      ownerEmail: currentUser?.email,
+    });
   };
 
   return {
@@ -348,8 +497,10 @@ export default function useGovernmentVenueScene({
     beginVisit,
     releaseAttendance,
     performMarriageCeremony,
+    recordMarriageMemories,
     handleGovernmentAction,
     handleJudicialResolved,
+    handleJudicialNarrative,
     addGovernmentNarrative: addNarrative,
   };
 }
