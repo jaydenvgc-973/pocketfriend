@@ -1574,11 +1574,22 @@ Deno.serve(async (req) => {
         if (_schoolKeywordInPrompt && _presenceForKw !== 'at_school') console.log(`[generateImageAsync] SCHOOL-KEYWORD-SUPPRESSED: presence="${_presenceForKw}" — school loc requires at_school, not prompt keywords`);
         const _school = _presenceForKw === 'at_school' && (charRecord.current_school_location_id || charRecord.education_location_id);
 
-        // Prompt keyword home only accepted when NOT on shift.
-        // Work-shift schedule authority outranks prompt drift.
-        if (_home && !_effectiveWorkLocId && !locationId) {
+        // ── LOCATION AUTHORITY: THE RECORD OUTRANKS PROMPT KEYWORDS ────────────
+        // The prompt is a natural-language description of the moment. Phrases like
+        // "at home", "her apartment" or "busy day at work" describe the KIND of
+        // place, not which record the character is actually standing in. Treating
+        // them as a location selector moved characters to their home or workplace
+        // while they were somewhere else, which changed the scene's mood, privacy
+        // and meaning. Keywords therefore only help legacy records that carry no
+        // resolved location at all — they never override a resolved location.
+        const _hasResolvedLoc = !!(charRecord.resolved_current_location_id || authoritativeState?.location_id);
+        if (_hasResolvedLoc) {
+          if (_home || _work) {
+            console.log(`[generateImageAsync] PROMPT-KEYWORD-LOCATION SUPPRESSED — resolved="${charRecord.resolved_current_location_id || authoritativeState?.location_id}" presence="${charRecord.resolved_presence_status || 'none'}"`);
+          }
+        } else if (_home && !_effectiveWorkLocId && !locationId) {
           locationId = charRecord.current_home_location_id || charRecord.home_location_id || charRecord.temporary_housing_location_id || null;
-          if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (off shift) → ${locationId}`);
+          if (locationId) console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME (legacy, no resolved location) → ${locationId}`);
         } else if (_home && _effectiveWorkLocId) {
           console.log(`[generateImageAsync] PROMPT-KEYWORD-HOME suppressed — character on shift, work authority wins`);
         } else if (_work && !locationId) {
