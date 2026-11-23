@@ -1324,6 +1324,11 @@ export default function Scene() {
     }
     const cast = [...temps.map((n) => n.id), ...(prepared.attendanceIds || [])];
     if (cast.length > 0) setSelectedNpcIds((prev) => [...new Set([...(prev || []), ...cast])]);
+    // Watching a proceeding: everyone the case established is in the room for the whole
+    // case, whether or not they speak in a given moment — so they are in the watched cast.
+    if (observeMode && cast.length > 0) {
+      setObserveCastIds((prev) => [...new Set([...(prev || observeDefaultIds), ...cast])]);
+    }
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] });
   };

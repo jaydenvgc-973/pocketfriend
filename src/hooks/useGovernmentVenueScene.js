@@ -48,6 +48,10 @@ export default function useGovernmentVenueScene({
   const [judicialModal, setJudicialModal] = useState(null);
   const promptedRef = useRef(null);
   const marriedRef = useRef(new Set());
+  // The proceeding that has already been concluded, so a second Adjourn Court click does
+  // not narrate the end twice.
+  const concludedRef = useRef(null);
+  const adjournedRef = useRef(false);
   // The participants whose attendance this session established. Kept in a ref so the
   // release runs from wherever the event ends — including leaving the page.
   const attendanceRef = useRef([]);
@@ -121,6 +125,7 @@ export default function useGovernmentVenueScene({
    */
   const beginVisit = async (config) => {
     if (!location) return null;
+    adjournedRef.current = false;
 
     if (config.venue === "courthouse") {
       const selected = courtAttendanceIds(config);
@@ -217,6 +222,40 @@ export default function useGovernmentVenueScene({
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
   };
 
+  /**
+   * The event is over. The participants are released to their own schedules through the
+   * existing release, the court's temporary people leave, and the case stops being the
+   * active proceeding. Everything already narrated, and any official outcome, is untouched.
+   */
+  const concludeProceeding = async (closingLine = null) => {
+    const key = courtCase?.case_id || cityHallPlan?.purpose || 'event';
+    if (concludedRef.current === key) return;
+    concludedRef.current = key;
+    if (closingLine) addNarrative(closingLine);
+    setCourtCase(null);
+    setCityHallPlan(null);
+    try { if (storageKey) sessionStorage.removeItem(storageKey); } catch { /* session only */ }
+    await releaseAttendance();
+  };
+
+  /**
+   * Adjourn Court ends this proceeding. The adjournment is played out through the existing
+   * scene pathways first, so the people in the room react to it, and only then does the
+   * event end.
+   */
+  const adjournCourt = async () => {
+    if (adjournedRef.current) return;
+    adjournedRef.current = true;
+    const line = `Court is adjourned — the proceeding at ${location?.name} is concluded.`;
+    if (observeMode) {
+      if ((observeCast || []).length >= 2) await runObserveBeat({ direction: line });
+      else addNarrative(line);
+    } else {
+      await sendMessage(`[🚪 Adjourn Court]`, true);
+    }
+    await concludeProceeding('Everyone not held in custody is free to go.');
+  };
+
   // The ceremony is an event that actually takes place in the scene. Only then is the
   // marriage recorded, through the same pipeline every other marriage uses.
   const performMarriageCeremony = async (plan) => {
@@ -267,6 +306,7 @@ export default function useGovernmentVenueScene({
   // Choosing a consequence action is what opens its confirmation. Merely being in the
   // building never marries or sentences anyone.
   const handleGovernmentAction = (action) => {
+    if (action.id === "court_adjourn") { adjournCourt(); return; }
     if (action.id === "gov_marry") {
       const planned = cityHallPlan?.marriage;
       if (planned?.spouse_a_id && planned?.spouse_b_id) { performMarriageCeremony(planned); return; }
@@ -287,12 +327,11 @@ export default function useGovernmentVenueScene({
     addNarrative(data.incarceration
       ? `${data.character_name} is sentenced to ${data.incarceration.sentence_label} at ${data.incarceration.facility_name}.`
       : `${data.character_name}'s sentence has been recorded in their criminal history.`);
-    addNarrative("The proceeding is concluded — everyone not held in custody is free to go.");
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     // Sentencing and custody were already applied by the existing judicial system; the
-    // event attendance itself ends here.
-    releaseAttendance();
+    // event itself ends here and everyone else resumes their own day.
+    concludeProceeding("The proceeding is concluded — everyone not held in custody is free to go.");
   };
 
   return {

@@ -32,7 +32,7 @@ export function getGovernmentVenueType(location) {
 }
 
 /** Actions whose selection opens a setup or confirmation flow instead of a plain scene line. */
-export const GOVERNMENT_ACTION_IDS = ['gov_marry', 'gov_sentence', 'gov_contempt'];
+export const GOVERNMENT_ACTION_IDS = ['gov_marry', 'gov_sentence', 'gov_contempt', 'court_adjourn'];
 export function isGovernmentActionId(id) { return GOVERNMENT_ACTION_IDS.includes(id); }
 
 // ── CITY HALL ────────────────────────────────────────────────────────────────
@@ -213,6 +213,8 @@ export function buildCourtCaseContext(courtCase, { userPresent = true, userName 
   lines.push('RULES:');
   lines.push('• Everyone keeps the role listed above for the whole proceeding. A witness never becomes the prosecutor; a juror never becomes the judge; the judge stays the judge.');
   lines.push('• Speak about the actual case described above. Never substitute a different trial, charge, or dispute.');
+  lines.push('• This is one continuing proceeding. Every continuation builds on what has already happened in this room — it never restarts the case, never repeats its opening, and never drifts into a different case.');
+  lines.push('• Testimony comes only from what a person actually knows: their own memories and lived experience. Someone who did not witness an event does not gain firsthand knowledge by being called as a witness. Accounts may be incomplete, mistaken or in conflict, and are shown that way.');
   lines.push('• Starting or attending a case decides nothing. Only the explicitly selected Sentencing action produces a sentence, and only after the user confirms it.');
   lines.push('• An acquittal, dismissal, adjournment, civil ruling or settlement is a valid outcome and never becomes a conviction.');
   lines.push('• Sentencing, contempt and custody are consequences of the case, not of anyone being present in the building.');
