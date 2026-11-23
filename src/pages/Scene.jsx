@@ -29,6 +29,7 @@ import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import ObserveStageControls from "@/components/scene/ObserveStageControls";
 import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
+import { getCourtActionAuthority, courtActors, courtSubjects, courtActionLine } from "@/lib/courtroomActions";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory, recordNarrativeMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
@@ -139,6 +140,9 @@ export default function Scene() {
   const [directedAction, setDirectedAction] = useState(null);
   // A recipient action (shakedown, search, warning, escort) involves ONE chosen person.
   const [recipientAction, setRecipientAction] = useState(null);
+  // Courtroom activities: who acts, and who the action is directed at.
+  const [courtActorAction, setCourtActorAction] = useState(null);
+  const [courtSubjectAction, setCourtSubjectAction] = useState(null);
   // In a watched scene an activity belongs to a person IN the scene. When more than one
   // eligible character is here, the observer says who before anything happens.
   const [actorAction, setActorAction] = useState(null);
@@ -1440,6 +1444,31 @@ export default function Scene() {
     setActorAction({ action: directed, mode: "directed" });
   };
 
+  // ── COURTROOM AUTHORITY ──
+  // The roles the setup assigned decide who may perform each courtroom activity. An
+  // established character and the court's own temporary person are equally eligible,
+  // because authority comes from the role, never from having a permanent record.
+  const runCourtAction = (action, actor, subject = null) => {
+    if (!actor?.id) return;
+    const subjects = courtSubjects(courtCase, action.id).filter((p) => p.id !== actor.id);
+    if (!subject && subjects.length > 0) { setCourtSubjectAction({ action, actor }); return; }
+    const line = courtActionLine(action, actor, subject);
+    if (observeMode) {
+      if (observeCast.length >= 2) runObserveBeat({ direction: line, actorName: actor.name });
+      else setMessages((prev) => [...prev, { id: `court_${Date.now()}`, sender: "narrative", content: `${actor.name}, the ${actor.roleLabel.toLowerCase()}, ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+      return;
+    }
+    sendMessage(line, true);
+  };
+
+  // A single eligible actor acts directly; several open the existing target picker.
+  const startCourtAction = (action) => {
+    const actors = courtActors(courtCase, action.id);
+    if (actors.length === 0) return;
+    if (actors.length === 1) { runCourtAction(action, actors[0]); return; }
+    setCourtActorAction(action);
+  };
+
   const handleAction = async (action) => {
     if (actionCooldown) return; setActionCooldown(true);
     try {
@@ -1572,12 +1601,12 @@ export default function Scene() {
             </button>
           )}
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {actions.map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+          {(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
               && recipientTargets.length === 0;
             const isDisabled = action.disabled || actionCooldown || needsCharacter; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
@@ -1646,6 +1675,23 @@ export default function Scene() {
         onClose={() => setRecipientAction(null)}
         heading={recipientAction ? `${recipientAction.emoji} ${recipientAction.label} — who is involved?` : null}
         hint="Only people who are here can be chosen."
+      />
+      {/* Courtroom activities: the role assigned in the setup decides who may act. */}
+      <SceneTargetPicker
+        action={courtActorAction}
+        targets={courtActors(courtCase, courtActorAction?.id)}
+        onSelect={(person) => { const pending = courtActorAction; setCourtActorAction(null); runCourtAction(pending, person); }}
+        onClose={() => setCourtActorAction(null)}
+        heading={courtActorAction ? `${courtActorAction.emoji} ${courtActorAction.label} — who does it?` : null}
+        hint="The role assigned in the court setup decides who may do this."
+      />
+      <SceneTargetPicker
+        action={courtSubjectAction?.action}
+        targets={courtSubjects(courtCase, courtSubjectAction?.action?.id).filter((p) => p.id !== courtSubjectAction?.actor?.id)}
+        onSelect={(person) => { const pending = courtSubjectAction; setCourtSubjectAction(null); runCourtAction(pending.action, pending.actor, person); }}
+        onClose={() => setCourtSubjectAction(null)}
+        heading={courtSubjectAction ? `${courtSubjectAction.action.emoji} ${courtSubjectAction.action.label} — who is it directed at?` : null}
+        hint="Only people in this proceeding can be chosen."
       />
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
