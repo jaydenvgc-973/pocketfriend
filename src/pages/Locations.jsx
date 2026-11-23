@@ -842,7 +842,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   // modal) through this same location save, instead of relying on a later click.
   const handleSave = (overrides = {}) => {
     if (!canSave) return;
-    const source = { ...form, ...overrides };
+    // A click handler hands this the browser event; only a plain object is form data.
+    const patch = overrides?.nativeEvent ? {} : overrides;
+    const source = { ...form, ...patch };
     const effectiveType = (source.location_type === "character_specific" && !source.character_id) ? "global" : source.location_type;
     const charObj = (effectiveType === "character_specific") ? characters.find(c => c.id === source.character_id) : null;
     const ownerChar = !source.owner_is_npc && source.owner_character_id
@@ -1809,7 +1811,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
-        <Button onClick={handleSave} disabled={!canSave} className="flex-1 rounded-xl">{editingLocation ? "Save Changes" : "Add Location"}</Button>
+        <Button onClick={() => handleSave()} disabled={!canSave} className="flex-1 rounded-xl">{editingLocation ? "Save Changes" : "Add Location"}</Button>
       </div>
       {!canSave && form.name.trim() && form.zones.length === 0 && !isGenericHome && (
         <p className="text-xs text-destructive text-center">Add at least one zone before saving.</p>
