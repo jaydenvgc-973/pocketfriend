@@ -369,6 +369,39 @@ function isBallroomBallEvent({ title, plot, additionalNotes, venueName }) {
   return mentionsBall && BALLROOM_CULTURE_SIGNAL.test(text);
 }
 
+// ── BALLROOM OUTPUT GUARD ─────────────────────────────────────────────────────
+// The prompt tells the writer that invented houses, personalities and balls are
+// an instruction, never information for the reader — and that Vogue Femme Soft
+// and Cunty and Dramatics are separate categories with separate names. A writer
+// can still slip either through, so ball text is cleaned at the boundary before
+// it is stored: the reader never sees the machinery behind the invention, and a
+// merged category name can never reach a narrative, preview, memory or caption.
+const INVENTED_WORD_RE = /\b(?:fictional|fictitious|imaginary|invented|simulated|made[-\s]?up|not\s+real)\b[ \t]*/gi;
+
+function keepInventionsOffThePage(text) {
+  if (typeof text !== 'string' || !text) return text;
+  let out = text.replace(INVENTED_WORD_RE, '');
+  out = out
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;:!?])/g, '$1')
+    .replace(/\ban[ \t]+([b-df-hj-np-tv-xz])/gi, 'a $1')
+    .replace(/\ba[ \t]+([aeio])/gi, 'an $1')
+    .replace(/^([ \t]*)([a-z])/, (_m, lead, ch) => lead + ch.toUpperCase())
+    .replace(/([.!?]["')\]]?[ \t]+)([a-z])/g, (_m, lead, ch) => lead + ch.toUpperCase());
+  return out;
+}
+
+// Soft and Cunty and Dramatics are separate categories. "Vogue Femme Dramatics"
+// is not one category in this world, so the joined name is never stored.
+function separateVogueFemmeCategories(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text.replace(/\bVogue Femme\s*(?:—|–|-|and|&|\/)?\s*Dramatics\b/gi, 'Dramatics');
+}
+
+function correctBallText(text) {
+  return separateVogueFemmeCategories(keepInventionsOffThePage(text));
+}
+
 const BALLROOM_BALL_PROMPT_BLOCK = `
 ════════════════════════════════════
 BALLROOM CULTURE — THIS EVENT IS A BALL
@@ -379,10 +412,10 @@ TERMINOLOGY
 - The culture is "the ballroom scene." The individual event is "a ball." Never call the event itself "the ballroom" — a ball may be held in a ballroom, but that is a room, not the name of the event.
 - Use the culture's own language where it fits: walking a category, being called to the floor, tens across the board, chopped, battling, the judges' panel, house, house mother, house father, house child, 007 (an independent competitor with no house), legend, icon, the commentator, the DJ.
 
-FICTIONAL IDENTITIES ONLY — MANDATORY
-- Every ball, house, and ballroom personality in this narrative must be an original invention for this story. NEVER use the name of any real house (established or historic), any real mother, father, legend, icon, commentator, judge or competitor, or any real named ball or recurring ball series.
-- Do not lightly alter a recognizable real name. If a name would be recognized as a real person, house, or ball, invent something genuinely different.
-- The existing characters in this event keep their own established names, identities, personalities, relationships, and histories. This rule governs the fictional ballroom world around them; it never renames or replaces them.
+ORIGINAL IDENTITIES ONLY — MANDATORY
+- Every ball, house, and ballroom personality in this narrative must be an original creation for this story. NEVER use the name of any real house (established or historic), any real mother, father, legend, icon, commentator, judge or competitor, or any real named ball or recurring ball series.
+- Do not lightly alter a recognizable real name. If a name would be recognized as a real person, house, or ball, create something genuinely different.
+- The existing characters in this event keep their own established names, identities, personalities, relationships, and histories. This rule governs the ballroom world around them; it never renames or replaces them.
 - Invent houses with their own reputations, strengths, and histories, and invent ballroom personalities with believable standing in the culture. Not everyone in the room is a legend or an icon — that distinction must mean something.
 - KEEP THE INVENTIONS OFF THE PAGE. That these identities are invented is an instruction to you, never information for the reader. Inside the narrative — and in its title, preview, descriptions, house names, ball names, and people's titles — never use "fictional", "fictitious", "imaginary", "made-up", "invented", "simulated", "not real", or any equivalent. Within PocketFriend's world these houses, personalities, and balls are simply real.
   Correct: "The House of Veymont entered the ball." / "A member of the House of Aurell approached the judges." / "Legendary Marquis prepared to walk." / "The house erupted in celebration."
@@ -395,8 +428,8 @@ THE BALL ITSELF
 - Never base the ball on a real ball or a real ball series.
 
 CATEGORIES — AUTHENTIC, AND KEPT DISTINCT
-- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, School Girl Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme Soft and Cunty, Vogue Femme Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
-- Vogue Femme Soft and Cunty and Vogue Femme Dramatics are TWO SEPARATE competitive categories. A ball may call Soft and Cunty, Dramatics, or both, and they are judged on different things. Never merge them into a single "Vogue Femme" category, never call one by the other's name, and never switch between their performance expectations mid-category. When a specific style is called, the performance, the judging, and every description of it must match that style.
+- Ballroom is not only voguing. Choose the categories this ball would actually call, consistent with its theme, and use real category language — for example Schoolboy Realness, School Girl Realness, Executive Realness, Femme Queen Realness, European Runway, All-American Runway, Butch Queen Up in Pumps, Old Way, New Way, Vogue Femme Soft and Cunty, Dramatics, Face, Best Dressed, house productions, and house-versus-house categories.
+- Vogue Femme Soft and Cunty and Dramatics are TWO SEPARATE competitive categories, and they carry TWO SEPARATE names. Call them exactly "Vogue Femme Soft and Cunty" and "Dramatics" — never join the two names into a single label such as "Vogue Femme Dramatics", "Vogue Femme — Dramatics" or any combined category name, and never use one category's name for the other. A ball may call Soft and Cunty, Dramatics, or both, and they are judged on different things. Never merge them into a single category, and never switch between their performance expectations mid-category. When a specific style is called, the performance, the judging, and every description of it must match that style.
 - Realness, Runway and Voguing are three different kinds of category, and they are never interchangeable. Realness is an illusion of identity. Runway is a walk and a presentation. Voguing is a dance. What competitors wear, what they do on the floor, and what the judges are looking at all follow the category actually called.
 
 REALNESS — THE ILLUSION
@@ -429,11 +462,16 @@ VOGUING — RESPECT THE FORM
 - Voguing is a dance tradition created within the ballroom community. It was not invented by Madonna; she helped bring it to a mainstream audience. Do not credit its origins to her, and do not frame the culture as something mainstream culture created or discovered.
 - Old Way, New Way, and Vogue Femme are distinct styles and must read as distinct on the floor — not one generic flamboyant dance.
 - Vogue Femme is built from five core elements: hand performance, catwalk, duckwalk, floor performance, and spins and dips. Describe performances through those elements, and through the control, precision, and musicality that make them land.
-- Vogue Femme Soft and Cunty is soft, fluid, graceful, and alluring. It reads as femininity, elegance, sensuality, and controlled movement: smooth, deliberate transitions, precision and fluidity rather than force. Do not describe it as explosive, aggressive, or built on hard crashes.
-- Vogue Femme Dramatics is explosive, intense, theatrical, and high-energy. It reads as power, impact, and speed: harder movements, sharp transitions, dramatic dips, and crashes, executed with control and technique.
-- Both belong to the Vogue Femme tradition, but they are not the same category and are not interchangeable. A Soft and Cunty performance must never be written like a Dramatics performance, and vice versa.
+- Vogue Femme Soft and Cunty is soft, fluid, graceful, and alluring. It reads as femininity, elegance, sensuality, and controlled movement: smooth, deliberate transitions, precision and fluidity rather than force. Do not describe it as explosive, aggressive, hard-hitting, or built on hard crashes.
+- Dramatics is explosive, intense, theatrical, and high-energy. It reads as power, impact, and speed: harder movements, sharp transitions, dramatic dips, and crashes, executed with control and technique. Do not describe it as soft, dainty, gentle, delicate, or alluring.
+- Both belong to the Vogue Femme tradition, but they are not the same category, they do not share a name, and they are not interchangeable. A Soft and Cunty performance must never be written like a Dramatics performance, and vice versa.
 - A dip is called a dip. Never write "death drop" or "shablam" for it.
 - The DJ's music matters in a battle: the beat being danced to is part of the competition, and the room reacts to what the music does.
+
+CATEGORY DISCIPLINE — CHECK BEFORE YOU RETURN
+- Decide which categories this ball calls before you write, and hold each one to its own standard for the whole narrative. A category is never renamed, merged, or described in another category's language.
+- When both are called, they run as two separate categories: separate call, separate walks, separate judging, separate qualification, separate battles, separate eliminations, and separate winners. A competitor walking one is not walking the other, and nobody moves between them as though they were the same category.
+- Read the finished text back before returning it. Any sentence about Soft and Cunty that uses explosive, aggressive, hard, crashing or forceful language is wrong — rewrite it. Any sentence about Dramatics that uses soft, dainty, gentle, delicate, fluid or alluring language is wrong — rewrite it. Any category label that joins the two names is wrong — name the category actually called.
 
 GLITZ, GLAMOUR, AND CRAFT
 - Fashion and presentation carry real weight: elaborate garments, sequins, feathers, rhinestones, luxurious fabrics, high-fashion styling, dramatic hair and makeup, effects, reveals, and coordinated house looks.
@@ -444,7 +482,7 @@ ATMOSPHERE
 - Include the anticipation before a category is called, competitors preparing to walk, dramatic entrances, and the moment the room turns on a performance.
 
 DRAMA — DO NOT SANITIZE THE EVENT
-- This culture runs on pride, status, rivalry, and emotional investment. This ball may include shade, insults, house rivalries, challenges, disputes over judging, accusations of favoritism, someone feeling robbed, jealousy, shouting matches, shoving, a physical fight, spectators pulled in, security stepping in, and house parents defending their children. Fictional fighting is permitted here and must not be softened into politeness when it is what the story earns.
+- This culture runs on pride, status, rivalry, and emotional investment. This ball may include shade, insults, house rivalries, challenges, disputes over judging, accusations of favoritism, someone feeling robbed, jealousy, shouting matches, shoving, a physical fight, spectators pulled in, security stepping in, and house parents defending their children. Fighting is permitted here and must not be softened into politeness when it is what the story earns.
 - Conflict must grow from what happened at this ball and from who these people are. Do not make every ball end in a fight, do not make every decision controversial, and do not make every house hostile to every other house. Some balls are relatively peaceful and some come apart — that variation is what makes them believable.
 
 HOUSES AND CHOSEN FAMILY
@@ -898,7 +936,7 @@ Deno.serve(async (req) => {
       `}`,
       ``,
       `RULES:`,
-      ...(ballroomBlock ? [`- BALL EVENT RULES (MANDATORY): this event is a ball in the LGBTQ ballroom scene. Follow the BALLROOM CULTURE section above exactly — original names invented for houses, personalities and balls, but NEVER described as fictional, imaginary, invented or simulated anywhere in the narrative, its title, its preview or its descriptions; Vogue Femme Soft and Cunty and Vogue Femme Dramatics kept as two separate categories with their own performance characteristics; authentic categories kept distinct; tens/chopped qualification before a winner is decided; the five Vogue Femme elements; "dip" (never "death drop" or "shablam"); the commentator, the DJ, the houses; and the full range of possible conflict. Keep the existing characters as who they already are.`] : []),
+      ...(ballroomBlock ? [`- BALL EVENT RULES (MANDATORY): this event is a ball in the LGBTQ ballroom scene. Follow the BALLROOM CULTURE section above exactly — original names invented for houses, personalities and balls, but NEVER described as fictional, imaginary, invented or simulated anywhere in the narrative, its title, its preview, its memories or its descriptions; Vogue Femme Soft and Cunty and Dramatics kept as two separate categories, with their own names and their own performance characteristics; authentic categories kept distinct; tens/chopped qualification before a winner is decided; the five Vogue Femme elements; "dip" (never "death drop" or "shablam"); the commentator, the DJ, the houses; and the full range of possible conflict. Keep the existing characters as who they already are.`] : []),
       `- The narrative MUST follow the user's plot. Do not invent a different storyline.`,
       `- Emotional outcomes must be supported by what happens in the narrative. No random emotions.`,
       `- Relationship changes must have a meaningful reason in the narrative. No unsupported changes.`,
@@ -1029,6 +1067,24 @@ Deno.serve(async (req) => {
           model: 'gemini_3_1_pro',
         });
         generated = llmRes;
+
+        // Ball text is cleaned at the boundary before it is stored: the invention
+        // stays off the page, and Soft and Cunty and Dramatics keep their own names.
+        if (ballroomBlock && generated) {
+          generated.narrative = correctBallText(generated.narrative);
+          generated.narrative_preview = correctBallText(generated.narrative_preview);
+          (generated.memories || []).forEach((m) => {
+            m.memory_text = correctBallText(m.memory_text);
+            m.memory_summary = correctBallText(m.memory_summary);
+          });
+          (generated.emotional_outcomes || []).forEach((o) => {
+            o.reason = correctBallText(o.reason);
+          });
+          (generated.image_prompts || []).forEach((p) => {
+            p.prompt = correctBallText(p.prompt);
+            p.description = correctBallText(p.description);
+          });
+        }
 
         // ── STEP 1b: PERSIST GENERATED NARRATIVE DATA (CORE — not terminal yet) ──
         // The narrative is the core Story Event content. Once persisted, the
