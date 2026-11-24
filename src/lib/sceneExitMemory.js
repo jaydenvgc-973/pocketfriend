@@ -107,7 +107,7 @@ export async function writeSceneExitMemories({
   // What happened, as established events. Continuity needs the scene's completed events,
   // never a transcript of who said what — dialogue excerpts do not belong in memory.
   const sceneEvents = messages
-    .filter(m => m.sender === "narrative")
+    .filter(m => m.sender === "narrative" || m.sender === "activity")
     .map(m => String(m.content || "").trim())
     .filter(Boolean)
     .join(" ")

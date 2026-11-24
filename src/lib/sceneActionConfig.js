@@ -182,6 +182,8 @@ export const IN_WORLD_ACTIVITY_TEXT = {
     // both of them chose it, and nothing explicit is written.
     direction: "they are intimate with each other — both unclothed, clearly consensual and unhurried, written without graphic detail and never explicit",
     past: "is intimate with the other",
+    // The same thing said between two named people, for a line that names them both.
+    pair: "is intimate with",
   },
 };
 

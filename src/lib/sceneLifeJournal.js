@@ -65,7 +65,9 @@ export async function writeSceneLifeEvents({
   (messages || []).forEach((m, index) => {
     const text = String(m?.content || "").trim();
     if (!text) return;
-    if (m.sender === "narrative") timeline.push({ index, kind: "event", text });
+    // A strip activity is a scene event, not something anyone said — it belongs in the
+    // journal the same way an established narrative moment does.
+    if (m.sender === "narrative" || m.sender === "activity") timeline.push({ index, kind: "event", text });
     else if (m.sender === "user" || m.sender === "character") {
       timeline.push({
         index,

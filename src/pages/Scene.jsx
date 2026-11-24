@@ -58,6 +58,7 @@ import { isSelectableParticipantAtZone, isIncarceratedCharacter, isJailOrPrison 
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isAdultCharacter } from "@/lib/characterAgeSystem";
+import { activityBehaviorFor, activityFeedLine } from "@/lib/sceneActivityBehavior";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
@@ -73,10 +74,12 @@ import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
+// `verb` is what the person is doing now; `past_verb` is the same thing already done, for
+// the moments that are established the instant they are chosen (a kiss has happened).
 const DIRECTED_SCENE_ACTIONS = [
-  { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses" },
-  { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with" },
-  { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with" },
+  { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses", past_verb: "kissed" },
+  { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with", past_verb: "flirted with" },
+  { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with", past_verb: "argued with" },
   // Moonwink is a moment between two chosen adults, so it uses the same who-and-who
   // selection as Kiss and Flirt With. The strip title is interface-only: the verb and the
   // in-world wording are what the scene is given, never the button's name.
@@ -1027,6 +1030,11 @@ export default function Scene() {
       id: target.id,
       name: target.name,
       instruction: `${displayName} carries out "${action.label}" involving ${target.name}. ${target.name} reacts directly to what ${displayName} does.`,
+    }, {
+      // A strip action between two people, shown centered with both of them named.
+      content: activityFeedLine({ actionId: action.id, label: action.label, participants: [displayName, target.name] }),
+      emoji: action.emoji,
+      behavior: activityBehaviorFor(action),
     });
   };
 
@@ -1075,23 +1083,43 @@ export default function Scene() {
         }),
       });
     }
+    // Whether this action is an established event or behavior being carried out now is
+    // decided in one place, so the feed, the scene and the picture agree.
+    const behavior = activityBehaviorFor(action);
+    const activity = {
+      content: activityFeedLine({
+        actionId: action.id,
+        label: action.label,
+        verb: behavior === "immediate" ? (action.past_verb || action.verb) : action.verb,
+        participants: [actorName, target.name],
+      }),
+      emoji: action.emoji,
+      behavior,
+    };
     // A watched scene stages the moment between the people in it: the cast acts on it.
     if (observeMode) {
       // Both people in a directed interaction take part in it, so the scene is written
-      // as a moment between them — the person spoken to is the one standing there.
-      runObserveBeat({ direction: label, actorName, actorNames: [actorName, target.name].filter(Boolean) });
+      // as a moment between them — the person spoken to is the one standing there. A kiss
+      // is already done; a flirt is played out now.
+      const pairNames = [actorName, target.name].filter(Boolean);
+      if (behavior === "immediate") {
+        runObserveBeat({ narrative: `${activity.content}.`, actorName, actorNames: pairNames, activity });
+      } else {
+        runObserveBeat({ direction: label, actorName, actorNames: pairNames, activity });
+      }
       return;
     }
     sendMessage(label, true, null, null, null, null, null, false, {
       id: target.id,
       name: target.name,
-      instruction: `${displayName} ${action.verb} ${target.name}.`,
-    });
+      instruction: `${displayName} ${behavior === "immediate" ? (action.past_verb || action.verb) : action.verb} ${target.name}.`,
+      behavior,
+    }, activity);
   };
 
   // `actorName` names the person taking the directed action, so the moment is written as
   // theirs and never as anyone else's — the observer above all.
-  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null, actorNames = null } = {}) => {
+  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null, actorNames = null, activity = null } = {}) => {
     if (!observeMode || !location || isObservingTurn) return;
     const cast = observeCast;
     // Established people carry identity and memory. Background people of the venue
@@ -1116,10 +1144,17 @@ export default function Scene() {
     // DIRECT — what happens next. It is played out now, not treated as history.
     const narration = (narrative || "").trim();
     const note = (direction || "").trim();
+    // A strip activity is shown as a centered scene activity naming the people taking
+    // part — never as a message, and never as the user's words. Its mode is unchanged:
+    // an immediate activity is canon, a direct one is a direction being played out.
     if (narration) {
-      setMessages((prev) => [...prev, { id: `nar_${Date.now()}`, sender: "narrative", content: narration, is_canon_event: true, timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, activity
+        ? { id: `act_${Date.now()}`, sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: true, timestamp: new Date().toISOString() }
+        : { id: `nar_${Date.now()}`, sender: "narrative", content: narration, is_canon_event: true, timestamp: new Date().toISOString() }]);
     } else if (note) {
-      setMessages((prev) => [...prev, { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, activity
+        ? { id: `act_${Date.now()}`, sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: false, timestamp: new Date().toISOString() }
+        : { id: `dir_${Date.now()}`, sender: "stage", content: note, timestamp: new Date().toISOString() }]);
     }
 
     // Words the observer spoke as a character ARE that character's words:
@@ -1441,9 +1476,15 @@ export default function Scene() {
   // just spoken to them.
   const sendNarration = (text) => { if (!text.trim()) return; setInputText(""); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: text, is_canon_event: true, timestamp: new Date().toISOString() }]); };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null) => {
+  // `activity` marks a turn that came from the activity strip rather than from something
+  // the user said. It is shown as a centered scene activity — never as an outgoing
+  // message — and it tells the scene whether the moment has already happened (immediate)
+  // or is behavior being carried out now (direct).
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null) => {
     if (!text.trim() || !location) return; setInputText("");
-    const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
+    const userMsg = activity
+      ? { id: Date.now().toString(), sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: activity.behavior === "immediate", timestamp: new Date().toISOString() }
+      : { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages((prev) => [...prev, userMsg]);
 
     const wpIntent = detectWorldPhoneIntent(text);
@@ -1470,6 +1511,7 @@ export default function Scene() {
         if (m.is_canon_event) return `(already happened, before this moment) ${m.content}`;
         if (m.sender === "narrative") return `(situation) ${m.content}`;
         if (m.sender === "stage") return `(already played out) ${m.content}`;
+        if (m.sender === "activity") return `(a directed moment, played out just now) ${m.content}`;
         return `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`;
       }).join("\n");
       const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
@@ -1503,7 +1545,20 @@ export default function Scene() {
       const ageGateRules = speakingEligible.map(childSpeechLimit).filter(Boolean).join('\n');
       const watchContextBlock = watchContext ? `\n=== WATCH PARTY CONTEXT ===\n${displayName} and everyone present are watching a video together right now.\n${buildWatchContextLabel(watchContext) || "A video is playing."}\n\n${watchContext.linkAnalysisContext || `WATCH PARTY RULES (analysis in progress):\n- You know you are watching something together.\n- You MUST NOT pretend to know the video's contents until analysis completes.\n- If asked about the video content, say you can only know what ${displayName} shares.`}\n===\n` : "";
 
-      const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n- A kiss or a flirt is an offer, not a guarantee. Reciprocating must fit this character; hesitating, deflecting, being caught off guard, or turning it down is a valid response.\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
+      // An immediate activity has ALREADY happened: it is a lived moment, not a proposal.
+      // A direct one is being performed now, and how it is received is still open.
+      const directedBlock = directedTarget ? `\n=== DIRECTED INTERACTION ===\n${directedTarget.instruction}\nOnly ${directedTarget.name} answers. React exactly as this character would — given their relationship with ${displayName}, their personality, mood, memories, and what just happened.\n${directedTarget.behavior === "immediate"
+        ? `- This has already happened. ${directedTarget.name} has just lived it: respond to having experienced it. Never question whether it happened, never agree to it, and never play it out a second time.`
+        : `- It is being carried out now, and it is not a guarantee of how it lands: hesitating, deflecting, being caught off guard, or turning it down is a valid response.`}\n- An argument answers the real friction of this moment — never invent an unrelated conflict.\nDo not narrate ${displayName}'s actions or thoughts.\n` : "";
+
+      // What the scene is responding to this turn. A strip activity is never phrased as
+      // something the user said: it is either an event that has happened or a moment being
+      // played out, and in both cases it replaces whatever they were doing before it.
+      const momentLine = activity
+        ? (activity.behavior === "immediate"
+          ? `This has ALREADY HAPPENED, from the moment it was chosen: ${activity.direction || activity.content}\nIt is a lived event — not a proposal, not a question, not an instruction. Nobody asks whether it should happen, nobody agrees to it, and nobody plays it out again. It is the situation they are in now and it replaces whatever they were doing before it. What they say and do is the consequence of it.`
+          : `This is being played out right now: ${activity.direction || activity.content}\nCarry it out through what they actually say and do — never merely acknowledge that it was asked for, and never announce it as a plan.`)
+        : `${displayName} just said: "${text}"`;
 
       // Who is here and why, from their existing records: employment and job title,
       // school enrollment, residence, or genuine visitation. This is what stops an
@@ -1521,7 +1576,7 @@ export default function Scene() {
       const unitBoundary = buildUnitBoundaryBlock(sceneUnitScope);
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}${governmentContextBlock ? `\n${governmentContextBlock}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n${messages.some((m) => m.is_canon_event) ? `\nA line marked "already happened" is an event these people have lived through, its dialogue included. They experienced it; nobody answers it, replies to it, or treats it as something said to them now.\n` : ''}\n${displayName} just said: "${text}"\n${fromAction ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).\n${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).length > 0 ? `CONTINUITY: ${eligibleKnownChars.filter((c) => broughtCharacters.find((b) => b.id === c.id)).map((c) => c.name).join(", ")} traveled here WITH ${displayName} — do NOT treat them as strangers.` : ''}\nPeople present: ${displayName}, ${charSummaries || "no one they know"}\n${canonicalSection ? `\n=== FULL CANONICAL IDENTITY ===\n${canonicalSection}\n===` : ''}${memSection ? `\n=== CROSS-PAGE MEMORY ===\n${memSection}\n===` : ''}${circumstancesBlock ? `\n${circumstancesBlock}\n` : ''}${unitBoundary ? `\n${unitBoundary}\n` : ''}${governmentContextBlock ? `\n${governmentContextBlock}\n` : ''}\n${watchContextBlock}${directedBlock}\n\nRecent scene conversation:\n${conversationHistory}\n${messages.some((m) => m.is_canon_event) ? `\nA line marked "already happened" is an event these people have lived through, its dialogue included. They experienced it; nobody answers it, replies to it, or treats it as something said to them now.\n` : ''}\n${momentLine}\n${fromAction && !activity ? "(This was from a scene action, not typed directly)" : ""}\n\n${npcInstruction}\n${backgroundRule}\n${infantRule}${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}\nKeep each response 1-2 sentences, natural and in-character.\nCRITICAL: Do NOT say your character's own name in the response — use "I", "we", "me", or "us" instead.\n\nReturn JSON:\n{\n  "responses": [\n    { "character_name": "...", "content": "..." }\n  ]\n}`,
         response_json_schema: { type: "object", properties: { responses: { type: "array", items: { type: "object", properties: { character_name: { type: "string" }, content: { type: "string" } } } } } }
       });
 
@@ -1707,11 +1762,33 @@ export default function Scene() {
         actors.forEach((actor) => { base44.functions.invoke('recordEatingEvent', { characterId: actor.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); });
         queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
       }
+      // Which mode this activity uses is decided in one place — a meal already on the
+      // table is an established event, cooking is behavior carried out now.
+      const behavior = activityBehaviorFor(action);
+      const activity = {
+        content: activityFeedLine({
+          actionId: action.id,
+          label: action.label,
+          verb: behavior === "immediate" ? (action.past_verb || action.verb) : action.verb,
+          participants: names,
+        }),
+        emoji: action.emoji,
+        behavior,
+      };
       const direction = inWorld ? `[${inWorld.direction} — ${whoNames}]` : `[${action.emoji} ${action.label} — ${whoNames}]`;
       if (observeCast.length >= 2) {
-        runObserveBeat({ direction, actorName: names.length === 1 ? names[0] : null, actorNames: names });
+        if (behavior === "immediate") {
+          // Already the case: it is canon the moment it is chosen, and it replaces what
+          // they were doing before it (eating after cooking is the meal, not more cooking).
+          const established = action.past_verb && names.length === 2
+            ? `${names[0]} ${action.past_verb} ${names[1]}.`
+            : `${whoNames} ${inWorld ? inWorld.past : action.label.toLowerCase()}${location?.name ? ` at ${location.name}` : ""}.`;
+          runObserveBeat({ narrative: established, actorName: names.length === 1 ? names[0] : null, actorNames: names, activity });
+        } else {
+          runObserveBeat({ direction, actorName: names.length === 1 ? names[0] : null, actorNames: names, activity });
+        }
       } else {
-        setMessages((prev) => [...prev, { id: `obs_act_${Date.now()}`, sender: "narrative", content: inWorld ? `${whoNames} ${inWorld.past} at ${location?.name}.` : `${whoNames} ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+        setMessages((prev) => [...prev, { id: `obs_act_${Date.now()}`, sender: "activity", content: activity.content, emoji: action.emoji, is_canon_event: behavior === "immediate", timestamp: new Date().toISOString() }]);
       }
     } finally {
       setTimeout(() => setActionCooldown(false), 600);
@@ -1760,12 +1837,21 @@ export default function Scene() {
     const subjects = courtSubjects(courtCase, action.id).filter((p) => p.id !== actor.id);
     if (!subject && subjects.length > 0) { setCourtSubjectAction({ action, actor }); return; }
     const line = courtActionLine(action, actor, subject);
+    // The proceeding itself is unchanged; only its presentation is: a courtroom action
+    // from the strip is a centered scene activity, never an outgoing message, and the
+    // court's own wording still reaches the scene through `direction`.
+    const courtActivity = {
+      content: activityFeedLine({ actionId: action.id, label: action.label, participants: [actor.name] }),
+      emoji: action.emoji,
+      behavior: activityBehaviorFor(action),
+      direction: line,
+    };
     if (observeMode) {
-      if (observeCast.length >= 2) runObserveBeat({ direction: line, actorName: actor.name });
-      else setMessages((prev) => [...prev, { id: `court_${Date.now()}`, sender: "narrative", content: `${actor.name}, the ${actor.roleLabel.toLowerCase()}, ${action.label.toLowerCase()} at ${location?.name}.`, timestamp: new Date().toISOString() }]);
+      if (observeCast.length >= 2) runObserveBeat({ direction: line, actorName: actor.name, activity: courtActivity });
+      else setMessages((prev) => [...prev, { id: `court_${Date.now()}`, sender: "activity", content: courtActivity.content, emoji: action.emoji, is_canon_event: courtActivity.behavior === "immediate", timestamp: new Date().toISOString() }]);
       return;
     }
-    sendMessage(line, true);
+    sendMessage(line, true, null, null, null, null, null, false, null, courtActivity);
   };
 
   // A single eligible actor acts directly; several open the existing target picker.
@@ -1794,7 +1880,21 @@ export default function Scene() {
       // every resident who happens to be home.
       if (actionImageFn) { const whoNames = selectedPeopleHere.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
-      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction);
+      // The strip is not a text box: choosing an activity is a scene action, shown as a
+      // centered activity naming the people taking part — not as an outgoing message.
+      const behavior = activityBehaviorFor(action);
+      const activityNames = selectedPeopleHere.map((c) => c.name).filter(Boolean);
+      if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) activityNames.unshift(displayName);
+      await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction, null, {
+        content: activityFeedLine({
+          actionId: action.id,
+          label: action.label,
+          verb: behavior === "immediate" ? (action.past_verb || action.verb) : action.verb,
+          participants: activityNames,
+        }),
+        emoji: action.emoji,
+        behavior,
+      });
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
     } finally { setActionCooldown(false); }
   };
@@ -1889,8 +1989,8 @@ export default function Scene() {
 
         <AnimatePresence>
           {messages.map((msg) => (
-            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-              {msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
+            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" || msg.sender === "activity" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
+              {msg.sender === "activity" ? <span className={`text-[11px] italic px-3 py-1.5 rounded-full max-w-xs text-center border ${msg.is_canon_event ? "text-foreground/80 bg-secondary/60 border-border" : "text-primary/80 bg-primary/5 border-primary/20"}`}><span className="not-italic mr-1">{msg.is_canon_event ? "✓" : "→"}</span>{msg.emoji ? `${msg.emoji} ` : ""}{msg.content}</span> : msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
             </motion.div>
           ))}
         </AnimatePresence>

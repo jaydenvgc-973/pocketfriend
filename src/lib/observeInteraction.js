@@ -145,13 +145,18 @@ export async function generateObserveBeat({ participants, responders, location, 
 
   // Canon narrative from earlier in this scene stays in the record: those events
   // already happened to these people, so later beats continue from them.
+  // A strip activity stays in the record too: an immediate one already happened, and a
+  // direct one was played out — either way the scene continues from it, so something
+  // begun earlier (cooking) is still the situation they are in.
   const transcript = (messages || [])
-    .filter((m) => m.sender === 'character' || (m.is_canon_event && m.content))
+    .filter((m) => m.sender === 'character' || m.sender === 'activity' || (m.is_canon_event && m.content))
     .slice(-18)
     // A character line is spoken dialogue, written as such: who said it, and their words.
-    .map((m) => (m.is_canon_event
-      ? `(already happened, before this moment) ${m.content}`
-      : `${m.senderName} says out loud: "${m.content}"`))
+    .map((m) => {
+      if (m.is_canon_event) return `(already happened, before this moment) ${m.content}`;
+      if (m.sender === 'activity') return `(a moment played out just now) ${m.content}`;
+      return `${m.senderName} says out loud: "${m.content}"`;
+    })
     .join('\n');
 
   const nameList = [...speaking.map((c) => c.name), ...bgSpeaking.map((n) => n.name)].join(', ');
