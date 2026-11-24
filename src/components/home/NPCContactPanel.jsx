@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { Users, X, ChevronDown, UserCheck } from 'lucide-react';
+import { Users, X, ChevronDown, UserCheck, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWorldContactsUnread } from '@/hooks/useWorldContactsUnread';
+import { useUserSettings } from '@/hooks/useUserSettings';
+import AddNPCContactModal from '@/components/home/AddNPCContactModal';
 
 export default function NPCContactPanel() {
   const [isOpen, setIsOpen] = useState(false);
+  const [showAddContact, setShowAddContact] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -71,8 +74,24 @@ export default function NPCContactPanel() {
 
   // Show npc_fictitious AND npc_world_service characters in the contact panel dropdown
   // npc_world_service = permanent world-service operators (e.g. Vick Servicio) — always contactable
+  // Contacts the user explicitly added live in the account's own settings, so the
+  // selection survives navigation, refresh and signing back in.
+  const { settings, updateSettings } = useUserSettings(currentUser?.email);
+  const addedContactIds = Array.isArray(settings?.added_npc_contact_ids)
+    ? settings.added_npc_contact_ids
+    : [];
+
+  // The existing default filter, plus the NPCs the user added. An added contact is the
+  // same existing account record — never a copy, and never an active created character.
   const npcCharacters = allNPCs.filter(
-    c => (c.character_type === 'npc_fictitious' || c.character_type === 'npc_world_service') && c.status !== 'deleted'
+    c => ((c.character_type === 'npc_fictitious' || c.character_type === 'npc_world_service') && c.status !== 'deleted')
+      || (addedContactIds.includes(c.id) && c.character_type !== 'active_created_character')
+  );
+
+  // Offerable in the add selector: account NPCs not already in Contacts. Active created
+  // characters belong on the Home cards and are never offered here.
+  const addableNpcs = allNPCs.filter(
+    c => c.character_type !== 'active_created_character' && !npcCharacters.some(n => n.id === c.id)
   );
 
   // Sort by name
@@ -107,6 +126,12 @@ export default function NPCContactPanel() {
     setIsOpen(false);
     // Navigate to chat with the NPC character directly
     navigate(`/chat/${npc.id}`);
+  };
+
+  const handleAddContact = (npc) => {
+    setShowAddContact(false);
+    if (addedContactIds.includes(npc.id)) return;
+    updateSettings({ added_npc_contact_ids: [...addedContactIds, npc.id] });
   };
 
   const handleDeleteNPC = async (e, npcId) => {
@@ -160,13 +185,13 @@ export default function NPCContactPanel() {
             initial={{ opacity: 0, y: 8, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.95 }}
-            className="fixed left-4 right-4 z-40 bg-card border border-border rounded-xl shadow-lg"
+            className="fixed left-4 right-4 z-40 bg-card border border-border rounded-xl shadow-lg flex flex-col"
             style={{
               bottom: '80px',
-              maxHeight: '200px',
-              overflowY: 'auto'
+              maxHeight: '280px',
             }}
           >
+            <div className="flex-1 min-h-0 overflow-y-auto">
             {sortedNpcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
                 No NPCs to contact
@@ -227,9 +252,23 @@ export default function NPCContactPanel() {
                 ))}
               </div>
             )}
+            </div>
+            <button
+              onClick={() => setShowAddContact(true)}
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2.5 border-t border-border text-xs font-medium text-purple-400 hover:bg-purple-500/10 transition-colors flex-shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add NPC Contact
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AddNPCContactModal
+        isOpen={showAddContact}
+        candidates={addableNpcs}
+        onSelect={handleAddContact}
+        onClose={() => setShowAddContact(false)}
+      />
     </div>
   );
 }

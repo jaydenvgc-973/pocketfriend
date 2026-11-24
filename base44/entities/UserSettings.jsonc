@@ -507,6 +507,14 @@
       "type": "boolean",
       "default": true,
       "description": "When false, characters only travel based on schedules, needs, and personality quirks \u2014 not random wandering."
+    },
+    "added_npc_contact_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Existing account NPCs the user added to the Home page Contacts list. They appear alongside the default contacts, in the same list and ordering. Stores character IDs only \u2014 never a copy of the NPC."
     }
   },
   "required": []
