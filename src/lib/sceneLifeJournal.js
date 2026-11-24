@@ -5,21 +5,18 @@
  *
  * A scene is something the people in it actually lived through, so when it ends it
  * belongs in their journal exactly like a conversation does — one entry per person who
- * was really there. The entry is what that person REMEMBERS: what happened, who they
- * were with, and what stayed with them. It is never a transcript of the scene, never a
- * list of completed activities and never a chapter.
+ * was really there. The entry follows the same standard Pocketfriend already uses when
+ * a Story Event ends: a short, personal account of what stood out to that person, never
+ * a transcript and never a record of everything that happened.
  *
  * Uses the existing LifeEvent entity, which is what the Life Journal reads, and the
- * existing InvokeLLM narrative capability already used for scene narratives. No new
- * entity, no new field, no new generator: the same records Chat already produces.
+ * existing InvokeLLM narrative capability. No new entity, no new field, no new pipeline.
+ *
+ * Called once per scene from pages/Scene (sceneJournalDoneRef), on either exit path.
  */
 
 import { base44 } from "@/api/base44Client";
 import { queryClientInstance } from "@/lib/query-client";
-
-const MAX_ACTION_LINES = 12;
-const MAX_DIALOGUE_LINES = 16;
-const MAX_ENTRY_LENGTH = 900;
 
 function realParticipants(participants = []) {
   const seen = new Set();
@@ -33,86 +30,6 @@ function realParticipants(participants = []) {
 }
 
 /**
- * Separates what the scene actually left behind. Completed actions are events and must
- * reach the journal; dialogue is only context for what the moment meant.
- */
-function sceneMaterial(messages = [], userDisplayName) {
-  const spoken = [];
-  const happened = [];
-
-  (messages || []).forEach((m) => {
-    const text = String(m?.content || "").trim();
-    if (!text) return;
-    if (m.sender === "user" || m.sender === "character") {
-      spoken.push(`${m.sender === "user" ? (userDisplayName || "the user") : (m.senderName || "Someone")}: ${text}`);
-    } else if (m.sender === "narrative") {
-      // Narrative lines are things that already happened: an action performed, a moment
-      // the scene itself established. Stage directions and product cards are not events.
-      happened.push(text);
-    }
-  });
-
-  return {
-    actions: happened.slice(-MAX_ACTION_LINES),
-    dialogue: spoken.slice(-MAX_DIALOGUE_LINES),
-    spoke: spoken.length > 0,
-  };
-}
-
-function buildJournalPrompt({ cast, location, actions, dialogue, userPresent }) {
-  const roster = cast
-    .map((c) => {
-      const note = [c.archetype, c.personality_summary].filter(Boolean).join(" — ").slice(0, 200);
-      return `- ${c.name} (id: ${c.id})${note ? `: ${note}` : ""}`;
-    })
-    .join("\n");
-
-  const actionBlock = actions.length > 0
-    ? actions.join("\n")
-    : "Nothing notable was done — they were simply in the same place at the same time.";
-
-  const dialogueBlock = dialogue.length > 0
-    ? dialogue.join("\n")
-    : "They did not really talk.";
-
-  return `You are writing the Life Journal entry for a scene that has just ended in Pocketfriend. The Life Journal is a character's own private record of their life, and it is read back to them later as their memory of that day.
-
-PEOPLE WHO WERE ACTUALLY THERE
-${roster}
-
-WHERE IT HAPPENED
-${location.name}
-
-WHAT ACTUALLY HAPPENED (completed events, in order — real, and never to be left out)
-${actionBlock}
-
-WHAT WAS SAID (context for what the moment meant only — this is NOT to be written down)
-${dialogueBlock}
-
-Write one entry for EACH person listed above, from that person's own point of view, in first person ("I"), past tense, in their own voice. Each entry answers: what happened, how I experienced it, and what I took away from it.
-
-HOW IT MUST READ
-- One short paragraph: two to four sentences. Never longer.
-- Like a remembered moment, not a report.
-- Include the physical things that actually happened — a kiss, a hug, holding hands, dancing, eating, playing. They are real events and are often the whole memory. Never omit one, and never add one that is not listed.
-- Do NOT quote or list the conversation, and never write one line of dialogue followed by another as if transcribing it. At most one short spoken phrase, and only if those words are what mattered.
-- Do not invent feelings, romance, promises, arguments, reconciliation or relationship changes the material does not support. If nothing romantic happened, do not imply it. If they only talked, that is what happened.
-- No lesson, no dramatic conclusion, no analysis of anyone's psychology. "The time together was what stayed with me" is a complete takeaway.
-- Only what this person actually experienced. Never state another person's inner feelings as fact.
-- Every entry must agree about what happened, while each may notice different things.
-${userPresent ? "" : "- The account holder was NOT there. Never mention them, and never describe anything as something they asked for or directed.\n"}
-Return JSON only: for each person, their id, a short title of at most eight words that reads like a remembered moment, and the entry itself.`;
-}
-
-function fallbackEntry({ char, location, others }) {
-  const who = others.length > 0 ? ` with ${others.join(", ")}` : "";
-  return {
-    title: `At ${location.name}${who}`.slice(0, 120),
-    narrative: `I was at ${location.name}${who}.`,
-  };
-}
-
-/**
  * @param {Object}   params
  * @param {Object[]} params.participants    - everyone who took part in the scene
  * @param {Object}   params.location        - { id, name, category }
@@ -120,7 +37,7 @@ function fallbackEntry({ char, location, others }) {
  * @param {string}   params.userDisplayName - the user's world name
  * @param {string}   params.ownerEmail      - current user's email
  * @param {string}   params.outcome         - "left_together" | "stayed_behind" | null
- * @param {boolean}  params.userPresent     - false in Watch / Send Them Without Me
+ * @param {boolean}  params.userPresent     - false while watching / sent without the user
  */
 export async function writeSceneLifeEvents({
   participants = [],
@@ -134,14 +51,59 @@ export async function writeSceneLifeEvents({
   const cast = realParticipants(participants);
   if (!location?.name || cast.length === 0) return 0;
 
-  const { actions, dialogue, spoke } = sceneMaterial(messages, userDisplayName);
+  // Everything the scene already leaves behind. Completed events (narrative lines) are
+  // kept in full: a moment that mattered early in the scene must still be there at the
+  // end. Talk is context only, and is read the way sceneExitMemory already reads it.
+  const happened = [];
+  const spoken = [];
+  (messages || []).forEach((m) => {
+    const text = String(m?.content || "").trim();
+    if (!text) return;
+    if (m.sender === "narrative") happened.push(text);
+    else if (m.sender === "user" || m.sender === "character") {
+      spoken.push(`${m.sender === "user" ? (userDisplayName || "the user") : (m.senderName || "Someone")}: ${text}`);
+    }
+  });
 
-  // One pass for the whole cast: each person's own entry, all agreeing on what happened.
+  const roster = cast.map((c) => `- ${c.name} (id: ${c.id})`).join("\n");
+  const happenedBlock = happened.length > 0
+    ? happened.join("\n")
+    : "Nothing in particular happened — they were in the same place at the same time.";
+  const spokenBlock = spoken.length > 0
+    ? spoken.slice(-20).join("\n")
+    : "They barely talked.";
+
+  const prompt = `A scene has just ended in Pocketfriend. These people lived it, and each keeps a memory of it — the same kind of memory Pocketfriend already writes when a Story Event ends: a short, personal account of what stood out, not a record of everything that happened.
+
+PEOPLE WHO WERE THERE
+${roster}
+
+WHERE
+${location.name}
+
+WHAT HAPPENED (the scene's completed events, in order)
+${happenedBlock}
+
+WHAT WAS SAID (context for meaning only — never to be written down)
+${spokenBlock}
+
+For EACH person listed, write what that person remembers of it.
+- A few sentences, one short paragraph, in the voice the journal already reads in: third person, past tense, using that person's own name.
+- SELECTIVE. A memory keeps what mattered to that person, not everything that happened. If the defining moment was a kiss, that is the memory; the talk around it is not worth listing. Never enumerate activities or statements.
+- The moment that mattered must be there even if it happened early and much more followed — that is what they carry away.
+- Never quote or replay the conversation. At most a few words of what was said, and only if those words are what stayed.
+- Do not invent feelings, romance, promises, arguments or relationship changes that did not happen. If they simply enjoyed spending time together, that is a complete memory.
+- No life lesson, no dramatic realization, no analysis of anyone's psychology.
+- Each person may remember it differently, but no one contradicts what happened.
+- Only what this person actually experienced. Never state another person's private feelings as fact.
+${userPresent ? "" : "- The account holder was not there. They take no part in this memory and are not mentioned in it.\n"}
+Return JSON only: for each person, their id, a short title of at most eight words, and the memory itself.`;
+
   let entries = [];
-  if (actions.length > 0 || dialogue.length > 0) {
+  if (happened.length > 0 || spoken.length > 0) {
     try {
       const res = await base44.integrations.Core.InvokeLLM({
-        prompt: buildJournalPrompt({ cast, location, actions, dialogue, userPresent }),
+        prompt,
         response_json_schema: {
           type: "object",
           properties: {
@@ -164,37 +126,31 @@ export async function writeSceneLifeEvents({
       });
       entries = Array.isArray(res?.entries) ? res.entries : [];
     } catch (err) {
-      console.error("[sceneLifeJournal] ✗ Scene narrative could not be written:", err?.message || err);
+      console.error("[sceneLifeJournal] ✗ Scene memory could not be written:", err?.message || err);
     }
   }
 
   const now = new Date().toISOString();
 
   const writes = cast.map((char) => {
-    const others = cast.filter((c) => c.id !== char.id).map((c) => c.name);
-
-    const generated = entries.find((e) =>
+    const others = cast.filter((c) => c.id !== char.id).map((c) => c.name).join(", ");
+    const remembered = entries.find((e) =>
       e?.character_id === char.id
       || String(e?.character_name || "").trim().toLowerCase() === String(char.name || "").trim().toLowerCase()
     );
 
-    const narrative = String(generated?.narrative || "").trim().slice(0, MAX_ENTRY_LENGTH);
-    const fallback = fallbackEntry({ char, location, others });
-
-    const title = String(generated?.title || "").trim().slice(0, 120) || fallback.title;
-    const description = narrative || fallback.narrative;
-
     return base44.entities.LifeEvent.create({
       character_id: char.id,
       character_name: char.name,
-      event_type: spoke || actions.length > 0 ? "emotional_exchange" : "routine_positive_event",
+      event_type: spoken.length > 0 || happened.length > 0 ? "emotional_exchange" : "routine_positive_event",
       valence: "neutral",
       severity: "minor",
-      title,
-      description,
+      title: (String(remembered?.title || "").trim() || `At ${location.name}${others ? ` with ${others}` : ""}`).slice(0, 120),
+      description: String(remembered?.narrative || "").trim().slice(0, 800)
+        || `${char.name} spent time at ${location.name}${others ? ` with ${others}` : ""}.`,
       triggered_by: "character_decision",
       evidence_source: "conversation_derived",
-      context_tags: ["scene", location.name, ...others],
+      context_tags: ["scene", location.name, ...cast.filter((c) => c.id !== char.id).map((c) => c.name)],
       systems_updated: ["memory"],
       timestamp: now,
     }).catch((err) => {
