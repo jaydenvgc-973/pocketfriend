@@ -12,6 +12,7 @@
  */
 
 import { base44 } from "@/api/base44Client";
+import { queryClientInstance } from "@/lib/query-client";
 
 const MAX_HIGHLIGHTS = 700;
 
@@ -98,5 +99,14 @@ export async function writeSceneLifeEvents({
   });
 
   await Promise.all(writes);
+
+  // The journal view keeps its own cached list (5 min by app default) and does not
+  // refetch on mount, so a freshly written entry would stay invisible until that cache
+  // expired. The entry exists now: mark each participant's journal stale so the next
+  // look at their profile shows it immediately.
+  cast.forEach((char) => {
+    queryClientInstance.invalidateQueries({ queryKey: ["lifeEvents", char.id] });
+  });
+
   return cast.length;
 }

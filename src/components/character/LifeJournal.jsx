@@ -29,7 +29,7 @@ const EVENT_CONFIG = {
 };
 
 const DEFAULT_CONFIG = { emoji: "📌", color: "text-muted-foreground", bg: "bg-secondary border-border" };
-const SEVERITY_ORDER = { major: 0, significant: 1, moderate: 2, minor: 3 };
+
 
 const SEVERITY_OPTIONS = ["minor", "moderate", "significant", "major"];
 const VALENCE_OPTIONS = ["positive", "negative", "mixed", "neutral"];
@@ -185,11 +185,9 @@ export default function LifeJournal({ characterId, character }) {
   const isJailed = character?.is_jailed;
   const jailRelease = character?.jail_release_date;
 
-  const sorted = [...lifeEvents].sort((a, b) => {
-    const sevDiff = (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3);
-    if (sevDiff !== 0) return sevDiff;
-    return new Date(b.timestamp) - new Date(a.timestamp);
-  });
+  // Most recent first: what a character has just lived through — a conversation, a scene —
+  // is the entry the reader is looking for, never buried behind older, more severe events.
+  const sorted = [...lifeEvents].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
   const visible = showAll ? sorted : sorted.slice(0, PREVIEW_COUNT);
 
