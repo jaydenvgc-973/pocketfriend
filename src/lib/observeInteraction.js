@@ -45,6 +45,8 @@ This has NOT happened yet. It is what should now take place in the moment you ar
 - Carry it out for real: the characters take these actions as the scene moves.
 - When words are attributed to a character, that character says them out loud here, in their own voice, as part of the moment.
 - A name given with the direction is the person who does it: "<action> — <Name>" means that named person takes that action. Nobody else performs it.
+- The bracketed line is a note about the scene, written down outside it. Nobody in the scene hears it, receives it, is told it, or knows it was written. It never arrives as a message, a request, a reminder, or an instruction from anyone, and no one in the scene can know what was written there.
+- The wording inside it is the name of the activity for the person who wrote the note. It is not vocabulary: nobody quotes it, repeats it, thanks anyone for it, or calls what they are doing by it. These people are simply doing it, and they say it in their own words or not at all.
 - Never answer with agreement, commentary, or acknowledgement of the instruction itself. Play the scene out.
 - There is no director, no instruction, no author, and no observer anywhere in this scene.
 ===`;
@@ -207,9 +209,15 @@ ${spokenBy.name} (character ID ${spokenBy.id}) just said this out loud, in this 
     // standing in this place is corrected before it can reach the scene.
     .map((c) => `=== ${c.name} — FULL CANONICAL IDENTITY ===\n${applyObserverAbsence(scopeCanonicalContext(canonicalCtx[c.id], unitScope))}\n=== END ${c.name} ===`)
     .join('\n\n');
+  // Memory arrives from the character's conversations with the account holder, written
+  // with that person as a speaker. Those conversations happened elsewhere and at other
+  // times: here they are history only, never people in this room. The transcript is
+  // re-labelled and framed so nobody in the scene can answer it or mistake it for
+  // someone present.
   const memorySection = cast
     .filter((c) => memoryCtx[c.id])
-    .map((c) => `[${c.name}'s memory]\n${memoryCtx[c.id]}`)
+    .map((c) => `[${c.name}'s memory of their own life]\n${String(memoryCtx[c.id])
+      .replace(/\bUser(\s*\[[^\]]*\])?:/g, 'The account holder, in that earlier conversation elsewhere:')}`)
     .join('\n\n');
   const castLines = cast
     .map((c) => `- ${c.name} (${c.personality_summary?.split('.')[0] || c.archetype || 'character'}; mood: ${c.emotional_state || 'calm'})`)
@@ -247,6 +255,7 @@ THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - Never write dialogue, thoughts, or physical actions at this place for anyone who is not the people listed here or in THE PLACE below.
 - An absent person is still part of these people's lives. They may be mentioned, remembered, discussed, missed, or credited for something that already happened — exactly the way real people talk about someone who is somewhere else. A mention is never presence: the absent person stays absent, does nothing here, and the moment stays with the people who are actually in this place. Never invent a physical arrival for them.
 - Nobody here is aware of being observed, directed, or operated. Nothing may hint at an audience, a narrator, or anyone outside this scene.
+- Nobody in this scene is doing what they are doing because someone told, reminded, suggested, or asked them to. Nobody thanks, credits, blames, or refers to anyone for it, and nobody asks whether anyone wants them to do something, or whether someone is going to join in. It is simply what they are doing.
 
 PARTICIPANTS (the people this moment is about):
 ${castLines || '(no established Pocketfriend character is in this moment)'}
@@ -262,7 +271,9 @@ ${backgroundRule}
 
 ${canonicalSection ? `=== ESTABLISHED IDENTITIES ===\nThese records describe who these people are. Some wording in them was written for conversations with a person who is NOT here now. Nothing in them overrides the rule above: nobody here treats that person as present, addresses them as though they were standing there, or plays to anyone outside this scene. Mentioning them as someone elsewhere is allowed; placing them in this room is not.${unitScope ? ` These records were written for the whole ${unitScope.facilityNoun}: anyone named in them as living, staying or being kept elsewhere in it is not in this ${unitScope.unitNoun} right now. Everything in them that actually happened still happened — a visit someone made to this ${unitScope.unitNoun}, a conversation, time spent together — and is remembered and spoken about normally.` : ''}\n${canonicalSection}\n===` : ''}
 ${namesRule}
-${memorySection ? `=== THEIR CONTINUING LIVES AND MEMORIES ===\n${memorySection}\n===` : ''}
+${memorySection ? `=== THEIR OWN LIVES, LIVED ELSEWHERE AND AT OTHER TIMES ===
+This is history these people carry. Some of it happened with the account holder, in conversations at other times and other places. None of it is happening now: nobody in this scene answers it, replies to it, continues it, or treats anyone in it as being in this room. The account holder is somewhere else and is not part of this moment.
+${memorySection}\n===` : ''}
 
 ${transcript ? `=== WHAT HAS JUST HAPPENED BETWEEN THEM ===\n${transcript}\n===` : 'Nothing has passed between them yet in this scene. It opens from where they already are.'}
 ${spokenAttribution}
@@ -374,10 +385,15 @@ export async function recordNarrativeMemories({ narrative, participants, lines }
   for (const person of cast) {
     const own = (lines || []).find((l) => l.characterId === person.id);
     if (!own?.content) continue;
+    // The event is the situation these people were in, never words spoken to them from
+    // outside the scene. It is anchored to what another person there actually said, so
+    // the memory holds the exchange that happened and never a narrator.
+    const other = (lines || []).find((l) => l.characterId && l.characterId !== person.id && l.content);
     try {
       await base44.functions.invoke('extractMemoriesFromTurn', {
         characterId: person.id,
-        userMessage: text,
+        userMessage: other?.content ? `${other.content} Around them, this had just happened: ${text}` : text,
+        playingAsCharacterId: other?.characterId || undefined,
         characterReply: own.content,
         witnessCharacterIds: cast.filter((p) => p.id !== person.id).map((p) => p.id),
       });
