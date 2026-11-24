@@ -80,10 +80,12 @@ export const ACTION_IMAGE_PROMPTS = {
     : `${who} making the bed in the bedroom — smoothing the duvet, tucking sheets, fluffing a pillow, morning light, photorealistic. No other people.`,
   // Moonwink — a consensual encounter between adults. The label is interface-only and
   // never reaches the picture or the prose, so the prompt describes the moment itself:
-  // discreet, non-explicit, everyone in frame.
+  // both of them unclothed, both clearly willing, and nothing explicit shown. Unclothed
+  // is stated plainly and then covered by the bedding, the low light and the framing —
+  // the same way the shower scenes stay unclothed and tasteful at once.
   moonwink:        (loc, who) => who.includes("empty")
     ? `Dim bedroom at night, rumpled bedding and a soft lamp, empty, photorealistic.`
-    : `${who} together in a dim bedroom at night, close and intimate under the covers, shoulders bare, warm lamp light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. No other people.`,
+    : `${who} together in a dim bedroom at night, both unclothed — no clothing on either of them — close and intimate under the covers, bare shoulders, backs and arms above the rumpled bedding, bodies covered by the bedding, the low warm lamp light and the camera framing, clearly consensual — both relaxed and willing, neither pulling away, turning aside or resisting, warm lamp light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. No other people.`,
 
   // ── PRISON / JAIL — ZONE MOVES ──
   // Each move shows the room it moved to, so the top image follows the zone.
@@ -176,7 +178,9 @@ export const EATING_ACTION_IDS = ['eat', 'order', 'drinks', 'char_pays', 'check'
 //   past      — the same thing already happening, for a plain narrative line
 export const IN_WORLD_ACTIVITY_TEXT = {
   moonwink: {
-    direction: "they are intimate with each other — consensual, unhurried, and discreetly described, never graphic",
+    // Unclothed and clearly willing, told without graphic detail: the moment is theirs,
+    // both of them chose it, and nothing explicit is written.
+    direction: "they are intimate with each other — both unclothed, clearly consensual and unhurried, written without graphic detail and never explicit",
     past: "is intimate with the other",
   },
 };
@@ -200,9 +204,10 @@ export function buildDirectedActionPrompt({ actionId, actorName, targetName, loc
     case "argue_with":
       return `${actor} arguing with ${target} at ${loc}, standing face to face in a tense confrontation, hard expressions, raised hands mid-gesture, defensive posture, clearly NOT affectionate, dramatic lighting, photorealistic. ${together}No other people.`;
     case "moonwink":
-      // A directed moment between the two chosen adults — discreet, non-explicit, and
-      // written as the moment itself. The strip's title never reaches the picture.
-      return `${actor} and ${target} alone together at ${loc}, close and intimate in a private embrace, shoulders bare, warm low light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. ${together}No other people.`;
+      // A directed moment between the two chosen adults — both unclothed, both clearly
+      // willing, and written as the moment itself with nothing explicit shown. The
+      // strip's title never reaches the picture.
+      return `${actor} and ${target} alone together at ${loc}, both unclothed — no clothing on either of them — close and intimate in a private embrace, bare shoulders, backs and arms above the bedding, bodies covered by the covers, the low warm light and the camera framing, clearly consensual — both relaxed and willing, neither pulling away, turning aside or resisting, warm low light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. ${together}No other people.`;
     default:
       return `${actor} and ${target} at ${loc}, photorealistic. ${together}`;
   }
