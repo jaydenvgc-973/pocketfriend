@@ -1160,6 +1160,9 @@ export default function Scene() {
       ? observeCast
       : [...selectedNpcs, ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id))],
     location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email,
+    // Watching means the account holder is not in the scene: their journal entry must not
+    // place them there or describe anything as their instruction.
+    userPresent: !observeMode,
   };
   const _writeSceneJournal = (outcome) => {
     if (sceneJournalDoneRef.current || !sceneJournalArgsRef.current) return Promise.resolve();
