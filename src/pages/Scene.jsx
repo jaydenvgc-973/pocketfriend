@@ -2073,18 +2073,33 @@ export default function Scene() {
     if (!destination?.id) return;
     const travelers = nextSceneParticipants.filter((p) => travelerIds.includes(p.id));
     const moving = mode === "watch" ? [] : travelers;
-    await Promise.all(moving.map((p) => {
-      const home = characters.find((c) => c.id === p.id)?.current_home_location_id === destination.id;
-      return base44.functions.invoke('enforceCharacterLocationPresence', { character_id: p.id, owner_email: currentUser?.email, requested_presence_status: home ? 'home' : 'visiting', requested_location_id: destination.id, requested_location_name: destination.name, requested_source_reason: 'next_scene', requested_authority: 'Scene' }).catch(() => {});
+    // Each chosen person moves through the same teleportation call the app already
+    // uses to place a character at a location. Whoever it refuses stays exactly where
+    // they are — and is never shown in the new scene as if they had traveled.
+    const results = await Promise.all(moving.map(async (p) => {
+      try {
+        const res = await base44.functions.invoke('updateCharacterLocation', { characterId: p.id, locationId: destination.id, locationName: destination.name, presenceStatus: 'visiting', locationType: 'visit', sourceReason: 'next_scene' });
+        const data = res?.data || res;
+        return { ...p, moved: data?.success !== false };
+      } catch {
+        return { ...p, moved: false };
+      }
     }));
+    const arrived = results.filter((r) => r.moved);
+    const refused = results.filter((r) => !r.moved);
+    if (moving.length > 0 && arrived.length === 0) {
+      setMessages((prev) => [...prev, { id: `next_scene_err_${Date.now()}`, sender: "narrative", content: `Nobody could get to ${destination.name}. The scene stays here.`, timestamp: new Date().toISOString() }]);
+      return;
+    }
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    const refusedNote = refused.length > 0 ? ` ${refused.map((r) => r.name).join(", ")} ${refused.length === 1 ? "stays" : "stay"} behind.` : "";
     // Sending them ahead from a scene you are in leaves you here — nobody moves you.
     if (mode === "send" && !observeMode) {
-      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${moving.map((t) => t.name).join(", ")} head to ${destination.name}.`, timestamp: new Date().toISOString() }]);
+      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${arrived.map((t) => t.name).join(", ")} head to ${destination.name}.${refusedNote}`, timestamp: new Date().toISOString() }]);
       return;
     }
     const params = new URLSearchParams({ locationId: destination.id });
-    const ids = (mode === "watch" ? [] : travelers.map((t) => t.id)).join(",");
+    const ids = arrived.map((t) => t.id).join(",");
     if (ids) params.set("characterIds", ids);
     if (zoneName) params.set("zoneName", zoneName);
     if (unitId) params.set("unitId", unitId);
