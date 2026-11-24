@@ -41,6 +41,27 @@ export default function WhosHereDropdown({
   // actually here are grouped — an absent resident is never listed.
   const { groups: unitGroups, order: unitOrder, unassigned: presentWithoutUnit } = splitByDwellingUnit(present, residentialUnits);
 
+  // THE DIRECTORY IS THE WHOLE PROPERTY. People listed in another room — a patient in
+  // their room, a resident in another apartment, an inmate in their cell — are grouped
+  // by the same existing assignment as the people in this room, so the user can see who
+  // is where without opening every room. Being listed here is not participation: the
+  // purple highlight still means selected for the current scene.
+  const { groups: candidateUnitGroups, unassigned: candidatesWithoutSpace } = splitByDwellingUnit(candidateNpcs, residentialUnits);
+  const spaceGroups = {};
+  const spaceOrder = [...unitOrder];
+  Object.keys(candidateUnitGroups).forEach((name) => {
+    if (!spaceOrder.includes(name)) spaceOrder.push(name);
+    spaceGroups[name] = [...candidateUnitGroups[name]];
+  });
+  Object.entries(unitGroups).forEach(([name, list]) => {
+    spaceGroups[name] = [...list, ...(spaceGroups[name] || [])];
+  });
+  // Inside its own room heading a person's room is already stated, so it is not repeated
+  // under their name.
+  const spaceGroupsForRender = Object.fromEntries(
+    Object.entries(spaceGroups).map(([name, list]) => [name, list.map((p) => ({ ...p, unit_name: null }))])
+  );
+
   const patients = presentWithoutUnit.filter((n) => n.sceneRole === 'patient');
   const inmates = presentWithoutUnit.filter((n) => n.sceneRole === 'inmate');
   const realEmployees = presentWithoutUnit.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
@@ -50,15 +71,19 @@ export default function WhosHereDropdown({
   const realVisitors = presentWithoutUnit.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
   const npcVisitors = presentWithoutUnit.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
 
-  // Candidates from allPossibleNpcs (not already present)
-  const candRealEmployees = candidateNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
-  const candNpcEmployees = candidateNpcs.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
-  const candRealResidents = candidateNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
-  const candNpcResidents = candidateNpcs.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
-  const candRealVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
-  const candNpcVisitors = candidateNpcs.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
+  // Candidates from allPossibleNpcs (not already present) that are not already listed
+  // under their own room above.
+  const candRealEmployees = candidatesWithoutSpace.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc !== true);
+  const candNpcEmployees = candidatesWithoutSpace.filter((n) => n.sceneRole === 'on-shift employee' && n.isNpc === true);
+  const candRealResidents = candidatesWithoutSpace.filter((n) => n.sceneRole === 'home resident' && n.isNpc !== true);
+  const candNpcResidents = candidatesWithoutSpace.filter((n) => n.sceneRole === 'home resident' && n.isNpc === true);
+  const candRealVisitors = candidatesWithoutSpace.filter((n) => n.sceneRole === 'visitor' && n.isNpc !== true);
+  const candNpcVisitors = candidatesWithoutSpace.filter((n) => n.sceneRole === 'visitor' && n.isNpc === true);
   // The facility's own population is offered as people, never as staff.
-  const candInmates = candidateNpcs.filter((n) => n.sceneRole === 'inmate');
+  const candInmates = candidatesWithoutSpace.filter((n) => n.sceneRole === 'inmate');
+  // Someone receiving care here stays in the directory whether or not a room is assigned
+  // to them. A patient is never dropped from the list for lacking a room.
+  const candPatients = candidatesWithoutSpace.filter((n) => n.sceneRole === 'patient');
 
   const renderNpcWrapper = (npc) => {
     if (renderNpc) return renderNpc(npc);
@@ -105,8 +130,8 @@ export default function WhosHereDropdown({
             <div className="max-h-72 overflow-y-auto py-1">
               {/* PRESENT — grouped by the property's existing dwelling assignments */}
               <DwellingUnitGroups
-                groups={unitGroups}
-                order={unitOrder}
+                groups={spaceGroupsForRender}
+                order={spaceOrder}
                 locationCategory={locationCategory}
                 renderParticipant={renderNpcWrapper}
               />
@@ -177,6 +202,14 @@ export default function WhosHereDropdown({
               )}
 
               {/* CANDIDATES — from allPossibleNpcs (not already present) */}
+              {candPatients.length > 0 && (
+                <>
+                  <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                    <p className="text-[9px] font-semibold text-rose-400/60 uppercase tracking-wider">Patients</p>
+                  </div>
+                  {candPatients.map(renderNpcWrapper)}
+                </>
+              )}
               {(candRealEmployees.length > 0 || candNpcEmployees.length > 0) && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50 mt-1">

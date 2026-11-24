@@ -297,9 +297,23 @@ export default function Scene() {
     char?.current_home_location_id && char.current_home_location_id === location?.id ? 'home' : 'visiting'
   );
   // Moonwink and any other adults-only activity: only an established adult may take part.
+  // A recorded birthday establishes the same thing when the age field was never filled
+  // in, so an adult is not refused the activity over one empty field. Someone with
+  // neither stays unproven and is never offered.
   const isAdultForActivity = (person) => {
     const age = getCharacterAge(person);
-    return age !== null && age >= 18;
+    if (age !== null) return age >= 18;
+    if (person?.birthday) {
+      const birth = new Date(person.birthday);
+      if (!isNaN(birth.getTime())) {
+        const today = new Date();
+        let years = today.getFullYear() - birth.getFullYear();
+        const monthDiff = today.getMonth() - birth.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) years--;
+        return years >= 18;
+      }
+    }
+    return false;
   };
   const eligibleForAction = (list, action) => (
     action?.adults_only === true ? (list || []).filter(isAdultForActivity) : (list || [])
@@ -934,10 +948,39 @@ export default function Scene() {
       .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url, is_adult: isAdultForActivity(p) }));
   }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id, observeMode, observeCastIdList.join(",")]);
 
+  // WHO THE SELECTOR MAY OFFER — the people already taking part in this scene, plus the
+  // people this property's own directory lists: a patient in their room, a resident in
+  // another apartment, an inmate in their cell. Choosing one of them joins them to the
+  // scene through the same selection Who's Here performs, so nobody is moved and nobody
+  // is chosen on the user's behalf. The selector opens whether or not a pair is already
+  // highlighted, and eligibility (established adult, alive) is judged per person.
+  const directedPickableTargets = (() => {
+    const seen = new Set();
+    const list = [];
+    const add = (person) => {
+      if (!person?.id || seen.has(person.id)) return;
+      if (person.isUser || person.id === currentUser?.id) return;
+      if (person.isNpc === true) return;
+      if (String(person.id).startsWith("npc_")) return;
+      if (person.life_status === "deceased" || person.status === "deceased") return;
+      if (isInfantCharacter(person)) return;
+      seen.add(person.id);
+      list.push(person);
+    };
+    directedTargets.forEach(add);
+    selectableNpcCandidates.forEach((candidate) => {
+      // Eligibility is read from the person's own record, never from a placeholder.
+      const record = characters.find((c) => c.id === candidate?.id);
+      if (!record) return;
+      add({ id: record.id, name: record.name || candidate.name, avatar_url: record.avatar_url || candidate.avatar_url, is_adult: isAdultForActivity(record) });
+    });
+    return list;
+  })();
+
   // Who can be paired with this action: an adults-only activity offers only established
-  // adults, and never the person acting. Nobody is chosen on the user's behalf.
+  // adults, and never the person acting.
   const directedPartnersFor = (action, actorId = null) =>
-    (action?.adults_only ? directedTargets.filter((t) => t.is_adult) : directedTargets)
+    (action?.adults_only ? directedPickableTargets.filter((t) => t.is_adult) : directedPickableTargets)
       .filter((t) => t.id !== actorId);
 
   // In a watched scene the person who starts it is chosen too — the observer never is.
@@ -1026,6 +1069,27 @@ export default function Scene() {
     ? (observeCast.find((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_")) || null)
     : null;
 
+  // Choosing someone from the directory puts them in this scene, exactly as selecting
+  // them in Who's Here does. Where they are does not change.
+  const joinScenePerson = (person) => {
+    if (!person?.id) return;
+    // The user is the one playing the scene, never a person selected from the directory.
+    if (person.isUser === true || isUserPresenceEntity(person, currentUser?.id)) return;
+    setSelectedNpcIds((prev) => {
+      const current = prev || [];
+      if (current.includes(person.id)) return prev;
+      unitManualDeselectRef.current.delete(person.id);
+      return [...current, person.id];
+    });
+    // A watched scene keeps its own cast: the person chosen is in the moment too.
+    if (observeMode) {
+      setObserveCastIds((prev) => {
+        const base = prev || observeDefaultIds;
+        return base.includes(person.id) ? prev : [...base, person.id];
+      });
+    }
+  };
+
   const handleDirectedTarget = (target) => {
     const action = directedAction;
     setDirectedAction(null);
@@ -1039,6 +1103,9 @@ export default function Scene() {
         : (observeCast.find((c) => c.id !== target.id && sceneParticipants.some((p) => p.id === c.id)) || null))
       : userParticipant;
     const actorName = actor?.name || actor?.display_name || null;
+    // Someone chosen from the directory joins the scene before the moment is written, so
+    // both people in it are really part of it — never one of them standing outside.
+    [actor, target].forEach(joinScenePerson);
     // The direction names the person taking the action, so the moment belongs to them
     // and never to the absent observer.
     // An interface-only title never becomes character vocabulary: where the strip's name
@@ -1312,6 +1379,17 @@ export default function Scene() {
       // directed pair, or everyone taking part in a shared activity. None of them is
       // dropped from the picture because a fifth person joined in.
       const focused = sceneParticipants.filter((p) => focusIds.includes(p.id));
+      // Someone who has only just joined from the directory is resolved from their own
+      // record until the participant collection catches up, so a chosen person is never
+      // missing from the picture of the moment they are in.
+      const focusedSeen = new Set(focused.map((p) => p.id));
+      focusIds.forEach((id) => {
+        if (focusedSeen.has(id)) return;
+        const record = characters.find((c) => c.id === id);
+        if (!record) return;
+        focusedSeen.add(id);
+        focused.push({ ...record, isNpc: false });
+      });
       if (focused.length > 0) return focused;
     }
     // Observed scene: the people actually in the moment are the ones in the image.
@@ -1901,7 +1979,7 @@ export default function Scene() {
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
-          {directedTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => {
+          {directedPickableTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => {
             const canPair = directedAvailable(directed);
             const blocked = actionCooldown || !canPair;
             return (
