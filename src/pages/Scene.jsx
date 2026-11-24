@@ -887,6 +887,19 @@ export default function Scene() {
     [observeCast.map((c) => c.id).join(',')]
   );
 
+  // The people who can perform an activity while the user is present: the selected scene
+  // cast only. A coworker on shift, a resident or a background person of the venue is here
+  // but not part of the scene, so they are never offered as the one doing it.
+  const userPresentActors = useMemo(
+    () => selectedPeopleHere.filter((c) => c?.id
+      && !c.isUser
+      && c.id !== currentUser?.id
+      && c.isNpc !== true
+      && !String(c.id).startsWith("npc_")
+      && !isInfantCharacter(c)),
+    [selectedPeopleHere.map((c) => c.id).join(','), currentUser?.id]
+  );
+
   // ── THE PLACE IS POPULATED ──
   // A public venue keeps its ordinary people while the characters are in it. Private
   // residences and restricted/staff-only zones get none. These people are already part
@@ -1407,11 +1420,11 @@ export default function Scene() {
       // the user deselected is not rendered, even inside their own home — including
       // someone who traveled here with the user. Only the supervision rule adds anyone:
       // a child on duty care is never pictured alone.
+      // Only the selection decides the picture. A coworker on shift in this workplace is
+      // physically here, not selected — so they are not in the frame. The same applies to
+      // the property's residents, staff and visitors.
       const selectedIds = new Set([
         ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)).map((c) => c.id),
-        // Inside a workplace the frame holds that establishment's own people who are
-        // working now — never the property's residents from their apartments.
-        ...(isWorkspaceScene ? sceneParticipants.filter((p) => workspaceEmployeeIds.has(p.id)).map((p) => p.id) : []),
         ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : []),
       ]);
       return sceneParticipants.filter((p) => selectedIds.has(p.id));
@@ -1806,7 +1819,9 @@ export default function Scene() {
     setActorAction(null);
     if (!pending || !person?.id) return;
     if (pending.mode === "directed") setDirectedAction({ ...pending.action, actorId: person.id, actorName: person.name });
-    else performObserveAction(pending.action, person);
+    else if (observeMode) performObserveAction(pending.action, person);
+    // The user is present: the chosen person performs it through the normal activity path.
+    else handleAction(pending.action, [person]);
   };
 
   // Several chosen people take part in the same activity, together.
@@ -1814,7 +1829,8 @@ export default function Scene() {
     const pending = actorAction;
     setActorAction(null);
     if (!pending || !people?.length) return;
-    performObserveAction(pending.action, people);
+    if (observeMode) performObserveAction(pending.action, people);
+    else handleAction(pending.action, people);
   };
 
   const handleDirectedSelect = (directed) => {
@@ -1866,8 +1882,11 @@ export default function Scene() {
     setCourtActorAction(action);
   };
 
-  const handleAction = async (action) => {
+  // `actors` is the person or people chosen through the existing selector for an activity
+  // that asks who performs it (Work). Without a choice, the selected scene cast takes part.
+  const handleAction = async (action, actors = null) => {
     if (actionCooldown) return; setActionCooldown(true);
+    const actingPeople = Array.isArray(actors) && actors.length > 0 ? actors : selectedPeopleHere;
     try {
       const actionClass = action.action_class;
       const payer = action.payer || "user"; const cost = Number(action.cost) || 0;
@@ -1882,12 +1901,12 @@ export default function Scene() {
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
       // The action picture shows the people taking part — the Who's Here selection — never
       // every resident who happens to be home.
-      if (actionImageFn) { const whoNames = selectedPeopleHere.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       // The strip is not a text box: choosing an activity is a scene action, shown as a
       // centered activity naming the people taking part — not as an outgoing message.
       const behavior = activityBehaviorFor(action);
-      const activityNames = selectedPeopleHere.map((c) => c.name).filter(Boolean);
+      const activityNames = actingPeople.map((c) => c.name).filter(Boolean);
       if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) activityNames.unshift(displayName);
       await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction, null, {
         content: activityFeedLine({
@@ -2022,7 +2041,7 @@ export default function Scene() {
             const needsAdult = action.adults_only === true && observeMode
               && eligibleForAction(observeActors, action).length === 0;
             const isDisabled = action.disabled || actionCooldown || needsCharacter || needsAdult; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsAdult ? "Only for adults — no adult is here" : needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (action.requires_actor && !observeMode && userPresentActors.length > 0) { if (needsZone) handleZoneChange(action.suggested_zone_name); setActorAction({ action, mode: "activity" }); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsAdult ? "Only for adults — no adult is here" : needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
@@ -2084,17 +2103,19 @@ export default function Scene() {
         action={actorAction?.action}
         targets={actorAction?.mode === "directed"
           ? directedActorsFor(actorAction?.action)
-          : eligibleForAction(observeActors, actorAction?.action)}
+          : eligibleForAction(observeMode ? observeActors : userPresentActors, actorAction?.action)}
         onSelect={handleActorSelect}
         onConfirm={handleActorsConfirm}
         multiple={actorAction?.mode === "activity"}
         confirmLabel="Do it together"
         onClose={() => setActorAction(null)}
-        heading={actorAction ? `${actorAction.action.emoji} ${actorAction.action.label} — ${actorAction.mode === "activity" ? "who takes part?" : "who does it?"}` : null}
+        heading={actorAction ? `${actorAction.action.emoji} ${actorAction.action.label} — ${actorAction.mode === "activity" && observeMode ? "who takes part?" : "who does it?"}` : null}
         hint={actorAction?.mode === "directed"
           ? "The person who starts it. Only people who are here can be chosen."
           : actorAction?.mode === "activity"
-            ? "Pick one person or several — they take part together. Only people who are here can be chosen."
+            ? (observeMode
+              ? "Pick one person or several — they take part together. Only people who are here can be chosen."
+              : "Whoever you pick does it — nobody is assumed. Only people in this scene can be chosen.")
             : "Only people who are here can do it — you are not in the scene."}
       />
       <SceneTargetPicker action={directedAction} targets={directedPartnersFor(directedAction, directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />

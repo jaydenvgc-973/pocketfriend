@@ -166,7 +166,9 @@ export function useSceneImageGenerator() {
     // student residence — is never populated with strangers merely because the school
     // around it has ambient students. The shared school zones are unaffected.
     const privateLivingSpace = isPrivateResidentialZone(location, activeZone);
-    const allowBackgroundExtras = ambientList.length > 0 && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace;
+    // A chosen cast is the whole picture. Background people only fill a venue the user has
+    // not selected anyone for: being at the location is not the same as being in the scene.
+    const allowBackgroundExtras = ambientList.length > 0 && finalParticipants.length === 0 && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace;
     // ⛔ Background people are NEVER named in the prompt. A name makes them a named subject
     // competing for the supplied reference images — that is how a random student, teacher,
     // or bartender could end up rendered in place of the actual character. They are
@@ -199,18 +201,15 @@ export function useSceneImageGenerator() {
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
-      const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace && location.location_type === "global";
-
-      if (!isGlobal && allowBackgroundExtras) {
-        finalPrompt += ` ${namedSubjectsRule(finalParticipants)}${ambientRule}`;
-      } else if (!isGlobal) {
-        if (finalParticipants.length === 0) {
-          finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
-        } else {
-          finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
-          if (isHomeLocation) {
-            finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
-          }
+      // An activity never widens the cast. Whatever the activity is and whatever kind of
+      // place this is, the picture holds exactly the selected participants — no coworkers,
+      // no residents, no staff, no strangers filling the background.
+      if (finalParticipants.length === 0) {
+        finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
+      } else {
+        finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no coworkers, no employees, no residents, no background figures under any circumstances.`;
+        if (isHomeLocation) {
+          finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
         }
       }
       // The people the action involves are the picture, whatever else is in the place.
@@ -267,11 +266,13 @@ export function useSceneImageGenerator() {
     {
       if (isGlobal) {
         const charNames = finalParticipants.map((c) => c.name).join(", ");
+        // A selected cast is never diluted: "among other patrons" invited invented people
+        // into a picture the user had already cast.
         const peopleDesc = charNames
-          ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with ordinary patrons of this place kept as distant, out-of-focus background` : " among other patrons"}`
+          ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with ordinary patrons of this place kept as distant, out-of-focus background` : ""}`
           : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else if (allowBackgroundExtras) {
         prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
       } else {

@@ -27,6 +27,7 @@ export const ACTION_IMAGE_PROMPTS = {
   bottle_service:  (loc, who) => `Champagne bottle with sparkler at a VIP nightclub table, bokeh lights, photorealistic`,
   flirt:           (loc, who) => `${who} laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic. No strangers.`,
   argue:           (loc, who) => `${who} with tense confrontational body language at a ${loc}, dramatic, photorealistic. No strangers.`,
+  business_work:   (loc, who) => who.includes("empty") ? `Empty office workspace in a ${loc}, no people, photorealistic.` : `${who} working at a desk in a ${loc} office, focused, photorealistic. No other people, no coworkers.`,
   workout:         (loc, who) => `${who} working out with gym equipment, athletic energy, photorealistic`,
   lift:            (loc, who) => `${who} lifting weights at the gym, athletic, photorealistic`,
   cardio:          (loc, who) => `${who} on a treadmill or doing cardio at a gym, energetic, photorealistic`,

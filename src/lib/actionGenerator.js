@@ -314,7 +314,8 @@ const SCHOOL_ACTIONS = classifyAll([
 
 // ── WORKPLACE ─────────────────────────────────────────────────────────────────
 const WORKPLACE_ACTIONS = classifyAll([
-  { id: "business_work", label: "Work", emoji: "💼", cost: 0, type: "functional", suggested_zone: "Office" },
+  // Work asks who does it, through the same selector Kiss and the other activities use.
+  { id: "business_work", label: "Work", emoji: "💼", cost: 0, type: "functional", suggested_zone: "Office", requires_actor: true },
   { id: "business_meet", label: "Meeting", emoji: "📊", cost: 0, type: "functional", suggested_zone: "Conference Room" },
   { id: "workplace_break", label: "Coffee break", emoji: "☕", cost: 0, type: "observational" },
   { id: "workplace_chat", label: "Chat with coworker", emoji: "💬", cost: 0, type: "social" },
