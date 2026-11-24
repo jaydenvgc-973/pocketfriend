@@ -10,6 +10,7 @@ import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import SceneMediaArea from "@/components/scene/SceneMediaArea";
 import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
+import { getPrivateSpaceOccupantIds } from "@/lib/sceneImmediateArea";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { isLocationOpen } from "@/lib/locationHoursUtils";
@@ -336,6 +337,18 @@ export default function Scene() {
   const unitManualDeselectRef = useRef(new Set());
   const previousUnitIdRef = useRef(initialUnitId);
 
+  // ── WHOLE FACILITY IS NOT ONE ROOM ──
+  // A property organized into separate occupied spaces — apartments, patient rooms,
+  // cells, dorm rooms, the businesses inside it — is opened at whole-property level
+  // whenever no specific space is chosen. Someone inside one of those spaces is in their
+  // own room, not in the immediate area where the scene opens: they stay available
+  // through Who's Here and join only when the user actually selects them. Nobody is
+  // moved, and a single-household home (which has no such spaces) is untouched.
+  const privateSpaceOccupantIds = useMemo(
+    () => (!activeUnitId ? getPrivateSpaceOccupantIds(location, characters) : new Set()),
+    [location?.id, activeUnitId, locationUnits.length, locationWorkplaces.length, characters.length]
+  );
+
   // WHO IS IN THIS SPACE RIGHT NOW — the physical-presence half of Who's Here.
   // Inside an open apartment / room / cell the space is that unit alone; everywhere else
   // (the whole property, a venue, a workplace) it is whoever is genuinely present there.
@@ -348,6 +361,9 @@ export default function Scene() {
       .filter((e) => e?.id
         && !isUserPresenceEntity(e, currentUser?.id)
         && !String(e.id).startsWith("npc_")
+        // Inside a private space of the property — a patient room, a cell, an apartment,
+        // a workplace — they are not in the immediate area the scene opens in.
+        && !privateSpaceOccupantIds.has(e.id)
         && !characterIds.includes(e.id));
     // ONE WORKPLACE: the chosen space is this establishment, not the property around it.
     // The people in it are its own people whose existing shift has them working here now.
@@ -363,7 +379,7 @@ export default function Scene() {
         .map((e) => e.id);
     }
     return present.map((e) => e.id);
-  }, [location?.id, activeUnitId, activeWorkspace?.workplace_id, unitPresentOccupantIds.join(','), unifiedPresenceEntities, currentUser?.id, characters.length]);
+  }, [location?.id, activeUnitId, activeWorkspace?.workplace_id, unitPresentOccupantIds.join(','), privateSpaceOccupantIds, unifiedPresenceEntities, currentUser?.id, characters.length]);
 
   // Presence decides who is AVAILABLE and initially selected; the selection itself decides
   // who actually participates. Entering a location or one of its units preselects the
@@ -592,6 +608,11 @@ export default function Scene() {
         const otherUnit = getUnitForCharacter(location, entity.id);
         if (otherUnit && otherUnit.unit_id !== activeUnitId) continue;
       }
+      // Whole facility: a resident of another apartment, a patient in their own room, an
+      // inmate in their cell, a student in class, an employee in their own workplace is
+      // elsewhere in the building — never a witness to what happens in the shared area.
+      // They join only when the user selects them.
+      if (!activeUnitId && !characterIds.includes(entity.id) && privateSpaceOccupantIds.has(entity.id)) continue;
       // Visiting ONE workplace: the people here are that establishment's own people —
       // its employees whose existing shift says they are working now — plus whoever
       // traveled in. The property's residents, another business's employees, and staff
