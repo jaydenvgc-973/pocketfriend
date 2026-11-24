@@ -506,6 +506,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       // created location included immediately — no stale "Location not found" flash.
       queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser?.email] });
       const params = new URLSearchParams({ locationId: locationReferenceId, characterIds: selectedCharacterIds.join(",") });
+      const origins = originParamFor(selectedCharacterIds);
+      if (origins) params.set("originLocations", origins);
       navigate(`/scene?${params.toString()}`);
     } catch (err) {
       console.error('Real location travel failed:', err);
@@ -549,6 +551,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (unavailable.length > 0) { setUnavailablePopup(unavailable); return; }
     setIsTraveling(true);
     const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
+    const origins = originParamFor(selectedCharacterIds);
+    if (origins) params.set("originLocations", origins);
     // Pass the first zone assigned to this environment so Scene starts in the correct zone
     // A patient room or cell identifies WHICH space inside the facility: Scenes opens on
     // that facility's own Patient Room / Cell zone. Every other visit keeps its
@@ -650,6 +654,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (unitZone) params.set("zoneName", unitZone);
     navigate(`/scene?${params.toString()}`);
   };
+
+  // Where each companion actually was before this trip. Leaving together returns them to
+  // that place; nobody is sent home merely because they came along.
+  const originParamFor = (ids) => (ids || [])
+    .map((id) => {
+      const char = verifiedTravelCompanions.find((c) => c.id === id);
+      const origin = char?.resolved_current_location_id || char?.current_home_location_id;
+      return origin ? `${id}:${origin}` : null;
+    })
+    .filter(Boolean)
+    .join(",");
 
   const travelLabel = selectedCharacterIds.length === 0
     ? "Go alone"
