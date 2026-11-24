@@ -895,6 +895,28 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
     if ((character.health_value ?? 80) < 20) {
       return { disposition: 'rejected', canonicalFields: {}, reason: 'health_critical_work_blocked' };
     }
+    // WORK LOCK LIFETIME — a work lock is a claim about a shift, so it must end when
+    // that shift ends. A lock with no expiry has no release authority of its own: if the
+    // shift-end pass is ever missed (a yielded sweep, a timeout, a 503), the character
+    // stays locked to work indefinitely and its stale state re-asserts itself forever.
+    // The expiry is the shift's own end time in Eastern Time, so the existing validator's
+    // expiration check releases it on time without any further pass having to run.
+    const shiftEndLockExpiry = (() => {
+      const _shift = (requested.requested_location_id && locationMap?.[requested.requested_location_id]?.worker_shifts?.[character.id])
+        || (character.work_start_time && character.work_end_time
+          ? { start: character.work_start_time, end: character.work_end_time }
+          : null);
+      if (!_shift?.end) return null;
+      const [eh, em] = String(_shift.end).split(':').map(Number);
+      if (Number.isNaN(eh) || Number.isNaN(em)) return null;
+      // Build the end instant in Eastern Time, then convert to a real UTC instant.
+      const endET = new Date(etTime.getTime());
+      endET.setHours(eh, em, 0, 0);
+      if (endET.getTime() <= etTime.getTime()) endET.setDate(endET.getDate() + 1);
+      const offsetMs = new Date(endET.toLocaleString('en-US', { timeZone: 'America/New_York' })).getTime()
+        - new Date(endET.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+      return new Date(endET.getTime() - offsetMs).toISOString();
+    })();
     // RABBIT-HOLE WORKPLACE — only for scheduler-authority requests with no linked location.
     // The saved occupation entry (primary or additional) determines classification:
     //   - Non-null saved location_id → linked workplace (even if the record is missing)
@@ -950,9 +972,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
         presence_stay_lock_authority: 'enforceCharacterWorkSchedule',
         presence_stay_lock_set_at: etTime.toISOString(),
         presence_stay_lock_created_by: 'system_automation',
-        // Clear stale nap/home lock fields so the committed work reality is coherent
-        presence_stay_lock_expires_at: null,
-        presence_stay_lock_release_condition: null,
+        // The lock lives exactly as long as the shift it describes.
+        presence_stay_lock_expires_at: shiftEndLockExpiry,
+        presence_stay_lock_release_condition: 'shift_end',
         presence_stay_lock_location_id: null,
       };
       if (wasSleeping) {
@@ -996,9 +1018,9 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
       presence_stay_lock_set_at: etTime.toISOString(),
       presence_stay_lock_location_id: workLocId,
       presence_stay_lock_created_by: 'system_automation',
-      // Clear stale nap/home lock fields so the committed work reality is coherent
-      presence_stay_lock_expires_at: null,
-      presence_stay_lock_release_condition: null,
+      // The lock lives exactly as long as the shift it describes.
+      presence_stay_lock_expires_at: shiftEndLockExpiry,
+      presence_stay_lock_release_condition: 'shift_end',
     };
     if (wasSleeping) {
       canonicalFields.last_wake_time = etTime.toISOString();

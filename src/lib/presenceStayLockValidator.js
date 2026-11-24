@@ -163,6 +163,22 @@ export default function validatePresenceStayLock(character, context) {
   }
 
   if (lockReason === 'work_shift') {
+    // A work lock claims "on shift, at this workplace". If the character is recorded
+    // somewhere else, the claim is already false and the lock must not re-assert it.
+    // Without this check a wrong location written once holds itself forever, because
+    // the status the lock is meant to protect is the very field being read back.
+    const lockedAt = character.presence_stay_lock_location_id || null;
+    const locatedAt = character.resolved_current_location_id || null;
+    if (lockedAt && locatedAt && lockedAt !== locatedAt) {
+      return {
+        shouldRespectLock: false,
+        shouldReleaseLock: true,
+        releaseReason: 'work_lock_location_mismatch',
+        authority: lockAuthority,
+        lockReason: lockReason,
+        proof: `Locked at ${lockedAt}, recorded at ${locatedAt}`,
+      };
+    }
     const isStillAtWork = status === 'at_work' || sourceReason === 'work_schedule';
     if (!isStillAtWork) {
       return {

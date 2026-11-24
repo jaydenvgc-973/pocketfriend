@@ -850,13 +850,12 @@ export default function Scene() {
     // its own space — its people on shift, never the building's residents. When the whole
     // property or venue is the scene, everyone genuinely present is the cast: the count
     // comes from actual presence, never from a fixed number.
-    const base = observeSentIds.length > 0
-      ? observeSentIds
-      : activeWorkspace
-        ? presentHereIds
-        : activeUnit
-          ? unitPresentOccupantIds
-          : observeCandidates.filter((c) => !c.isNpc).map((c) => c.id);
+    // The cast is exactly the people in the space being watched: an apartment's own
+    // occupants, or the business's own people on shift. Never the rest of the building
+    // and never every resident of a multi-unit property — a multi-purpose property does
+    // not make everyone in it part of this moment. Those people stay offered in Who's
+    // Here and join only when the observer picks them.
+    const base = observeSentIds.length > 0 ? observeSentIds : presentHereIds;
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
     // The household's assigned caregiver is part of a watched residence: the children they
     // actually supervise are never in the moment alone, and the caregiver is never replaced
@@ -1445,8 +1444,11 @@ export default function Scene() {
     // made a selection — even an empty one — the picture follows that selection and never
     // re-injects people they removed.
     if (selectedNpcIds === null) {
-      if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
-      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(userId ? [userId] : [])]);
+      // Nobody has been chosen yet, so the people actually in this space fill the frame —
+      // the unit's occupants, or the business's people on shift. Never everyone else in
+      // the building. Once the user picks or un-picks anyone, only that selection is
+      // pictured, so the frame always matches the checkmarks in Who's Here.
+      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...presentHereIds, ...(userId ? [userId] : [])]);
       const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
       return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
     }
