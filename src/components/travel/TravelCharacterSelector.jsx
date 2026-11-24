@@ -50,7 +50,7 @@ function buildCanonicalFamilyKey(char) {
   return `${type}::name::${normName}`;
 }
 
-export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle, presenceEntities = [] }) {
+export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle, presenceEntities = [], userSelected = true, onToggleUser }) {
   const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
 
   // ── CANONICAL DEDUPLICATION ─────────────────────────────────────────────────
@@ -227,8 +227,13 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
   return (
     <div className="space-y-2">
-      {/* User card — always available */}
-      <div className="flex items-center gap-3 p-3 rounded-xl bg-primary/10 border border-primary/30">
+      {/* User card — selected by default, but the user may choose to stay behind */}
+      <button
+        onClick={onToggleUser}
+        className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+          userSelected ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/30"
+        }`}
+      >
         <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
           {avatarUrl
             ? <img src={avatarUrl} alt={displayName} className="w-full h-full object-cover" />
@@ -237,12 +242,12 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">{displayName}</p>
-          <p className="text-xs text-primary">You • Always going</p>
+          <p className="text-xs text-muted-foreground">You</p>
         </div>
-        <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
-          <Check className="w-3.5 h-3.5 text-white" />
+        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${userSelected ? "bg-primary border-primary" : "border-border"}`}>
+          {userSelected && <Check className="w-3.5 h-3.5 text-white" />}
         </div>
-      </div>
+      </button>
 
       {/* Active created characters */}
       {activeCreatedChars.length > 0 && (

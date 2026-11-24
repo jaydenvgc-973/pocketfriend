@@ -42,6 +42,9 @@ export default function Travel() {
   const popupRef = useRef(null);
   const [hasRunDistribution, setHasRunDistribution] = useState(false);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
+  // The user travels by default, but may stay behind. Selection is preparation only —
+  // changing it never moves anyone and never writes a location.
+  const [userIncluded, setUserIncluded] = useState(true);
   const [convincedCharacterIds, setConvincedCharacterIds] = useState([]);
   const [unavailablePopup, setUnavailablePopup] = useState(null);
   const [busyPopup, setBusyPopup] = useState(null);
@@ -522,7 +525,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   };
 
   const handleTravel = async () => {
-    if (!selectedLocation) return;
+    // Going with companions (or alone) means the user is one of the travellers. If they
+    // have deselected themselves, this option cannot carry them along.
+    if (!selectedLocation || !userIncluded) return;
     const isOpen = isLocationActiveNow(selectedLocation);
     // The SELECTED environment is authoritative: an accessible residential (or
     // explicitly non-business-hours) environment is not blocked by the property's
@@ -792,6 +797,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             locationMap={locationMap}
             onToggle={toggleCharacter}
             presenceEntities={allPresenceEntities}
+            userSelected={userIncluded}
+            onToggleUser={() => setUserIncluded((prev) => !prev)}
           />
         </div>
 
@@ -1072,10 +1079,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     <>
                       {presenceSummary}
                       {vgcTowersNote}
-                      <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
+                      <Button onClick={handleTravel} disabled={isTraveling || !userIncluded} className="w-full h-12 rounded-xl gap-2">
                         <Navigation className="w-4 h-4" />
                         {travelLabel}
                       </Button>
+                      {!userIncluded && (
+                        <p className="text-[10px] text-muted-foreground text-center leading-tight">
+                          You're staying behind. Select yourself above to go with them.
+                        </p>
+                      )}
                       {selectedCharacterIds.length >= 1 && (
                         <>
                           <Button onClick={handleSendCharacters} disabled={isTraveling} variant="outline" className="w-full h-10 rounded-xl gap-2 mt-2">
