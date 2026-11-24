@@ -532,7 +532,7 @@ export function resolveTravelPresenceForUserScope(location, characters = []) {
 // ─── MODULE ELIGIBILITY MAP ───────────────────────────────────────────────────
 const MODULE_ALLOWED_TYPES = {
   story:             ['active_created_character', 'npc_fictitious'],
-  photos:            ['active_created_character', 'npc_fictitious'],
+  photos:            ['active_created_character', 'npc_fictitious', 'npc_regular'],
   emotions:          ['active_created_character', 'npc_fictitious'],
   relationships:     ['active_created_character', 'npc_fictitious'],
   traits:            ['active_created_character', 'npc_fictitious'],
@@ -545,12 +545,13 @@ const MODULE_ALLOWED_TYPES = {
 };
 
 // Enforced hierarchy order for grouping
-const TYPE_HIERARCHY = ['active_created_character', 'npc_fictitious', 'npc_family_member'];
+const TYPE_HIERARCHY = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
 
 const SECTION_LABELS = {
   active_created_character: 'Active Characters',
   npc_fictitious:           'NPC Fictitious',
   npc_family_member:        'NPC Family Members',
+  npc_regular:              'NPC Regular',
 };
 
 /**

@@ -135,6 +135,9 @@ export default function CharacterProfile() {
   const [promotingNPC, setPromotingNPC] = useState(null);
   const [editingNPCPhoto, setEditingNPCPhoto] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  // True only when the enlarged photo is this profile's own avatar, so Change Photo
+  // appears beneath that photo alone.
+  const [lightboxForAvatar, setLightboxForAvatar] = useState(false);
   const [showOutfitSharer, setShowOutfitSharer] = useState(false);
   const [expandedMemory, setExpandedMemory] = useState(null);
   // Timeout guard: after 12s of spinning, escape to a retry-able error state.
@@ -551,7 +554,19 @@ export default function CharacterProfile() {
       />
 
       <div className="max-w-lg mx-auto px-0 py-0 flex flex-col h-full">
-        <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
+        <ImageLightbox
+          src={lightboxSrc}
+          alt={character.name}
+          onClose={() => { setLightboxSrc(null); setLightboxForAvatar(false); }}
+          footer={lightboxForAvatar ? (
+            <button
+              onClick={() => navigate(`/edit-character-photos?characterId=${character.id}`)}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Camera className="w-4 h-4" /> Change Photo
+            </button>
+          ) : null}
+        />
 
         <TestCharacterToggle character={character} />
 
@@ -580,7 +595,7 @@ export default function CharacterProfile() {
           <div className="px-6 py-6 space-y-6 border-b border-border">
             {/* Avatar, Name, Bio in one row */}
             <div className="flex gap-4 items-start">
-              <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer flex-shrink-0" : "cursor-default flex-shrink-0"}>
+              <button onClick={() => { if (!character.avatar_url) return; setLightboxForAvatar(true); setLightboxSrc(character.avatar_url); }} className={character.avatar_url ? "cursor-pointer flex-shrink-0" : "cursor-default flex-shrink-0"}>
                 <CharacterAvatar character={character} size="lg" />
               </button>
               <div className="flex-1 min-w-0">
@@ -1218,7 +1233,7 @@ export default function CharacterProfile() {
                       <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <button
-                            onClick={() => displayAvatarUrl && setLightboxSrc(displayAvatarUrl)}
+                            onClick={() => { if (!displayAvatarUrl) return; setLightboxForAvatar(false); setLightboxSrc(displayAvatarUrl); }}
                             className={displayAvatarUrl ? "cursor-pointer" : "cursor-default"}
                           >
                             <div className="flex items-center gap-3">

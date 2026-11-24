@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function ImageLightbox({ src, alt, onClose }) {
+export default function ImageLightbox({ src, alt, onClose, footer = null }) {
   useEffect(() => {
     const handler = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", handler);
@@ -25,15 +25,21 @@ export default function ImageLightbox({ src, alt, onClose }) {
           >
             <X className="w-5 h-5" />
           </button>
-          <motion.img
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            src={src}
-            alt={alt || ""}
-            className="max-w-full max-h-[90vh] rounded-2xl object-contain shadow-2xl"
+          <div
+            className="flex flex-col items-center gap-4 max-w-full"
             onClick={e => e.stopPropagation()}
-          />
+          >
+            <motion.img
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              src={src}
+              alt={alt || ""}
+              className={`max-w-full ${footer ? "max-h-[78vh]" : "max-h-[90vh]"} rounded-2xl object-contain shadow-2xl`}
+            />
+            {/* Optional actions shown directly beneath the enlarged image. */}
+            {footer}
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

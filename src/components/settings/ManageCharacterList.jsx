@@ -80,6 +80,10 @@ export default function ManageCharacterList({ characters: propCharacters, curren
 
   const npcFamily = characters.filter(c => inTypeSection(c, 'npc_family_member')).sort(alpha);
 
+  // Regular NPCs have their own type section. Test eligibility never decides it, and an
+  // NPC's presence here never depends on the Home page Contacts list.
+  const npcRegular = characters.filter(c => inTypeSection(c, 'npc_regular')).sort(alpha);
+
   // Test Characters also appear here — including legacy ones with no type — alongside
   // untyped records. Moved Away keeps its own section, so no one is listed twice there.
   const untyped = characters.filter(c =>
@@ -97,6 +101,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
     { title: 'Active Characters', items: activeChars.map(c => ({ type: 'character', data: c })), color: 'bg-green-500/10' },
     { title: 'NPC Fictitious', items: npcFictitious.map(c => ({ type: 'character', data: c })), color: 'bg-purple-500/10' },
     { title: 'NPC Family', items: npcFamily.map(c => ({ type: 'character', data: c })), color: 'bg-blue-500/10' },
+    { title: 'NPC Characters', items: npcRegular.map(c => ({ type: 'character', data: c })), color: 'bg-teal-500/10' },
     { title: 'Untyped / Test Characters', items: untyped.map(c => ({ type: 'character', data: c })), color: 'bg-zinc-500/10' },
     { title: 'Moved Away', items: movedAway.map(c => ({ type: 'character', data: c })), color: 'bg-amber-500/10' },
   ];

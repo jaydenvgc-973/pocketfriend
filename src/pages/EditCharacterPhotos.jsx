@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Upload, RefreshCw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
@@ -22,6 +22,12 @@ export default function EditCharacterPhotos() {
   });
 
   const { sections, isLoading } = useSettingsCharacters(currentUser, "photos");
+
+  // Opened from a character's profile via Change Photo: that exact character is selected
+  // here, so the user never has to find them again in the list.
+  const [searchParams] = useSearchParams();
+  const targetCharacterId = searchParams.get("characterId");
+  const [autoSelectAttempted, setAutoSelectAttempted] = useState(false);
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -47,6 +53,14 @@ export default function EditCharacterPhotos() {
       voice_style_note: freshChar.voice_style_note || "",
     });
   };
+
+  useEffect(() => {
+    if (!targetCharacterId || selectedChar || autoSelectAttempted) return;
+    setAutoSelectAttempted(true);
+    base44.entities.Character.filter({ id: targetCharacterId }).then(list => {
+      if (list?.[0]) handleSelect(list[0]);
+    });
+  }, [targetCharacterId, selectedChar, autoSelectAttempted]);
 
   const handleAvatarGenerated = async (newAvatarUrl, newRefUrls, newGenerationPrompt, newDescriptionText) => {
     if (!selectedChar) return;
