@@ -1146,9 +1146,33 @@ export default function Scene() {
 
   usePageContext({ page: 'scene', locationId: locationId || null });
 
+  // Who was actually in the scene, and when. Someone who arrives partway through cannot
+  // remember what happened before they got there, and someone who leaves does not remember
+  // what came after. Recorded against message positions so each person's memory is built
+  // from their own part of the scene.
+  const presenceWindowsRef = useRef({});
+  const messagesLengthRef = useRef(0);
+  messagesLengthRef.current = messages.length;
+  const participantKey = observeMode
+    ? (observeCastIdList || []).join(',')
+    : selectedNpcIdList.join(',');
+  useEffect(() => {
+    const at = messagesLengthRef.current;
+    const windows = presenceWindowsRef.current;
+    const present = new Set(participantKey ? participantKey.split(',') : []);
+    Object.keys(windows).forEach((id) => {
+      if (!present.has(id) && !Number.isInteger(windows[id].to)) windows[id].to = at;
+    });
+    present.forEach((id) => {
+      if (!id) return;
+      if (!windows[id]) windows[id] = { from: at };
+      else if (Number.isInteger(windows[id].to)) delete windows[id].to; // came back
+    });
+  }, [participantKey, observeMode]);
+
   // Only the people who were actually taking part keep a memory of the scene: a character
   // the user deselected is not a participant, so the exit is not written for them.
-  const _exitMemoryArgs = (outcome) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
+  const _exitMemoryArgs = (outcome) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome, userPresent: !observeMode });
 
   // Scene journal: what the people here actually lived through belongs in their Life
   // Journal. Written once per scene — whether it ends through the leave modal or by
@@ -1160,6 +1184,8 @@ export default function Scene() {
       ? observeCast
       : [...selectedNpcs, ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id))],
     location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email,
+    // Each person's own part of the scene, so nobody remembers what they did not witness.
+    presenceWindows: presenceWindowsRef.current,
     // Watching means the account holder is not in the scene: their journal entry must not
     // place them there or describe anything as their instruction.
     userPresent: !observeMode,

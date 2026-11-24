@@ -77,6 +77,7 @@ export function resolveSceneParticipants(broughtCharacters, alreadyPresentChars,
  * @param {string}   params.userDisplayName        - display name of the user
  * @param {string}   params.ownerEmail             - currentUser.email (required for RLS)
  * @param {string}   params.outcome                - "left_together" | "stayed_behind"
+ * @param {boolean}  params.userPresent            - false while watching / sent without the user
  */
 export async function writeSceneExitMemories({
   broughtCharacters = [],
@@ -87,6 +88,7 @@ export async function writeSceneExitMemories({
   userDisplayName,
   ownerEmail,
   outcome,
+  userPresent = true,
 }) {
   if (!location || !ownerEmail) {
     console.warn('[sceneExitMemory] Skipped — missing location or ownerEmail');
@@ -102,16 +104,19 @@ export async function writeSceneExitMemories({
 
   const now = new Date().toISOString();
 
-  // Scene highlights: last 20 dialogue turns, max 600 chars
-  const sceneHighlights = messages
-    .filter(m => m.sender === "user" || m.sender === "character")
-    .slice(-20)
-    .map(m => `${m.sender === "user" ? (userDisplayName || "User") : (m.senderName || "Character")}: ${m.content}`)
-    .join("\n")
-    .slice(0, 600);
+  // What happened, as established events. Continuity needs the scene's completed events,
+  // never a transcript of who said what — dialogue excerpts do not belong in memory.
+  const sceneEvents = messages
+    .filter(m => m.sender === "narrative")
+    .map(m => String(m.content || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 400);
 
-  const outcomeText =
-    outcome === "left_together"
+  const outcomeText = !userPresent
+    // Watched or sent without the user: nobody left, and the user was never here.
+    ? `The scene at ${location.name} ended.`
+    : outcome === "left_together"
       ? `They left ${location.name} together and returned home.`
       : `${userDisplayName || "the user"} left — they stayed at ${location.name}.`;
 
@@ -123,14 +128,18 @@ export async function writeSceneExitMemories({
       .map(c => c.name)
       .join(", ");
 
-    const howPresent = broughtCharacters.some(b => b.id === char.id)
-      ? `traveled to ${location.name} with ${userDisplayName || "the user"}`
-      : `was already at ${location.name} when ${userDisplayName || "the user"} arrived`;
+    // In a watched scene the user is physically absent: nothing may describe them as having
+    // been here, arrived, or taken part.
+    const howPresent = !userPresent
+      ? `was at ${location.name}`
+      : broughtCharacters.some(b => b.id === char.id)
+        ? `traveled to ${location.name} with ${userDisplayName || "the user"}`
+        : `was already at ${location.name} when ${userDisplayName || "the user"} arrived`;
 
     const description = [
       `${char.name} ${howPresent}${othersLabel ? `. Others present: ${othersLabel}` : ""}.`,
       outcomeText,
-      sceneHighlights ? `\nScene highlights:\n${sceneHighlights}` : "",
+      sceneEvents ? `\nWhat happened:\n${sceneEvents}` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -139,7 +148,7 @@ export async function writeSceneExitMemories({
       // Write to Memory entity (existing — used by memory audit/review)
       await base44.entities.Memory.create({
         character_id: char.id,
-        title: `Scene at ${location.name} with ${userDisplayName || "the user"}`,
+        title: userPresent ? `Scene at ${location.name} with ${userDisplayName || "the user"}` : `Scene at ${location.name}`,
         description,
         emotional_impact: "shared experience",
         timestamp: now,
@@ -156,17 +165,19 @@ export async function writeSceneExitMemories({
     // CharacterMemory is the durable layer read by the LLM pipeline.
     try {
       const memoryText = [
-        `${userDisplayName || "the user"} and ${char.name} were at ${location.name} (${location.category || "venue"}) together.`,
+        userPresent
+          ? `${userDisplayName || "the user"} and ${char.name} were at ${location.name} (${location.category || "venue"}) together.`
+          : `${char.name} was at ${location.name} (${location.category || "venue"}).`,
         othersLabel ? `Others present: ${othersLabel}.` : "",
         outcomeText,
-        sceneHighlights ? `Key moments: ${sceneHighlights.substring(0, 300)}` : "",
+        sceneEvents ? `What happened: ${sceneEvents.substring(0, 300)}` : "",
       ].filter(Boolean).join(" ");
 
       await base44.entities.CharacterMemory.create({
         character_id: char.id,
         memory_type: "event",
         memory_text: memoryText,
-        memory_summary: `Scene at ${location.name} with ${userDisplayName || "the user"}${othersLabel ? ` and ${othersLabel}` : ""}`,
+        memory_summary: `Scene at ${location.name}${userPresent ? ` with ${userDisplayName || "the user"}` : ""}${othersLabel ? ` and ${othersLabel}` : ""}`,
         related_location_id: location.id || null,
         importance_score: 7,
         confidence_score: 1.0,
