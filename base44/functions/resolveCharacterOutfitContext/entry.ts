@@ -567,7 +567,12 @@ Deno.serve(async (req) => {
     const effectiveLocationId = locationId
       || (presence === 'at_work' ? (character.current_work_location_id || character.occupation_location_id || null) : null)
       || (presence === 'at_school' ? (character.current_school_location_id || character.education_location_id || null) : null)
-      || (presence === 'incarcerated' ? (character.incarceration_facility_id || null) : null)
+      // A confined character's facility is their incarceration record when it is set, and
+      // otherwise the place they are actually held — a prisoner whose facility link is
+      // empty must still reach the facility, never fall through to their own closet.
+      || (presence === 'incarcerated'
+        ? (character.incarceration_facility_id || character.resolved_current_location_id || character.current_home_location_id || null)
+        : null)
       || (presence === 'hospitalized' ? (character.resolved_current_location_id || null) : null);
 
     if (effectiveLocationId) {

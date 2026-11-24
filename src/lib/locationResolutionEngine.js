@@ -192,6 +192,58 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // CONFINEMENT GUARD: a person held at a facility is physically in that facility — their
+  // cell — not at home. Home is where they live, not where they are being held, so the
+  // work, school and home layers below must never re-resolve a confined person back to
+  // their house. A sentence served in a facility stays in the facility until release.
+  // House arrest is the one confinement served AT a residence, and it is preserved at its
+  // own assigned residence, never silently dropped.
+  const _confinedStatus = character.resolved_presence_status;
+  const _isHeld = character.is_jailed === true
+    || _confinedStatus === 'incarcerated'
+    || _confinedStatus === 'confined';
+  if (_isHeld) {
+    const _facilityId = character.incarceration_facility_id
+      || character.resolved_current_location_id
+      || null;
+    if (_facilityId) {
+      const _facility = locationMap[_facilityId];
+      // Rest states keep their own presence; the place they are held is unchanged.
+      const _resting = ['sleeping', 'napping', 'passed_out'].includes(_confinedStatus);
+      return {
+        resolved_current_location_id: _facilityId,
+        resolved_current_location_name: _facility?.name
+          || character.resolved_current_location_name
+          || character.incarceration_facility_name
+          || 'Correctional Facility',
+        resolved_location_type: 'incarcerated',
+        resolved_presence_status: _resting ? _confinedStatus : 'incarcerated',
+        resolved_source_reason: character.resolved_source_reason || 'incarceration_confinement_lock',
+        resolved_zone: null,
+      };
+    }
+  }
+  if (character.house_arrest_active === true) {
+    const _houseArrestId = character.house_arrest_location_id
+      || character.current_home_location_id
+      || character.resolved_current_location_id
+      || null;
+    if (_houseArrestId) {
+      const _houseArrestHome = locationMap[_houseArrestId];
+      const _resting = ['sleeping', 'napping', 'passed_out'].includes(_confinedStatus);
+      return {
+        resolved_current_location_id: _houseArrestId,
+        resolved_current_location_name: _houseArrestHome?.name
+          || character.resolved_current_location_name
+          || 'Home',
+        resolved_location_type: 'house_arrest',
+        resolved_presence_status: _resting ? _confinedStatus : 'house_arrest',
+        resolved_source_reason: character.resolved_source_reason || 'house_arrest_confinement_lock',
+        resolved_zone: null,
+      };
+    }
+  }
+
   // INVITED-TO-SCENE GUARD: When a character accepts an invitation and arrives
   // at a scene (inviteCharacterToLocation sets resolved_source_reason =
   // 'invited_to_scene'), the work/school/home layers below must NOT override

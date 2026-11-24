@@ -63,6 +63,60 @@ function medicalRoleAt(character, location) {
   return roleFromText(title);
 }
 
+// ── CONFINEMENT ATTIRE ────────────────────────────────────────────────────────
+// A prison or jail always dresses the people held in it in prison attire. This is not a
+// location setting that may be left blank: a facility with no uniforms saved still has
+// inmates, and an inmate in their own clothes is wrong. Staff on shift keep their own
+// uniform, and visitors keep theirs.
+export const DEFAULT_INMATE_UNIFORM = 'facility-issued prison uniform — plain institutional jumpsuit or matching scrub-style shirt and trousers in a muted neutral color, worn and plain, no lettering, no logos, no prints';
+export const DEFAULT_CORRECTIONAL_UNIFORM = 'police-style correctional officer uniform — dark navy duty shirt and trousers with a duty belt, plain without lettering';
+export const DEFAULT_NURSE_UNIFORM = 'nurse uniform — plain clinical scrubs in a solid muted color, professional, no lettering';
+export const DEFAULT_DOCTOR_UNIFORM = 'doctor uniform — white physician coat over a plain clinical shirt, professional, no lettering';
+
+function isConfinementFacility(location) {
+  return location?.is_confinement_facility === true || (location?.category || '') === 'jail_prison';
+}
+
+/** Is this person held in this facility? Their own records decide — never a guess. */
+function isConfinedAt(character, location) {
+  const id = character?.id;
+  if (!id || !location?.id) return false;
+  if (isInLocationArray(location.inmates, id)) return true;
+  const presence = character.resolved_presence_status || '';
+  const atThisFacility = character.resolved_current_location_id === location.id
+    || character.incarceration_facility_id === location.id;
+  if (character.is_jailed === true && atThisFacility) return true;
+  if ((presence === 'incarcerated' || presence === 'confined') && atThisFacility) return true;
+  // A prison that is this person's own home is their confinement, not an address. A
+  // worker who lives on site is staff, not an inmate.
+  if (character.current_home_location_id === location.id
+      && !(location.worker_character_ids || []).includes(id)) return true;
+  return false;
+}
+
+/** The prison attire a confined person wears at this facility, or null. */
+function confinementAttire(character, location) {
+  if (!isConfinementFacility(location) || !isConfinedAt(character, location)) return null;
+  const attire = location.correctional_attire || {};
+  const written = String(attire.uniform_description || '').trim();
+  const color = String(attire.uniform_color || '').trim();
+  const description = written
+    ? (color && !written.toLowerCase().includes(color.toLowerCase()) ? `${written} in ${color}` : written)
+    : DEFAULT_INMATE_UNIFORM;
+  return {
+    uniform: {
+      name: 'Inmate uniform',
+      description,
+      image_url: attire.uniform_image_url || undefined,
+      applicability: 'role_status',
+      role_status: 'inmates',
+    },
+    applicability: 'role_status',
+    reason: 'confined_inmate',
+    source: 'confinement_default',
+  };
+}
+
 /**
  * Check whether a character is a member of a Location array.
  * Handles both arrays of strings (character IDs) and arrays of objects
@@ -97,6 +151,12 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
   if (!character || !location) {
     return { uniform: null, applicability: null, reason: null, source: 'none' };
   }
+
+  // A prison or jail dresses the people held in it, whatever its uniform list says. Checked
+  // before any configured uniform so an inmate is never left in their own clothes just
+  // because the facility never had uniforms saved on it.
+  const confinement = confinementAttire(character, location);
+  if (confinement) return confinement;
 
   const uniforms = location.uniforms || {};
   if (Object.keys(uniforms).length === 0) {
