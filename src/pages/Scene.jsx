@@ -77,6 +77,16 @@ const DIRECTED_SCENE_ACTIONS = [
   { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with" },
 ];
 
+// Moonwink sits with the directed interactions, not buried among the ordinary venue
+// activities: it is the last activity in the strip, immediately beside Kiss and Flirt With.
+const MOONWINK_ACTION_ID = "moonwink";
+function orderStripActions(list) {
+  if (!Array.isArray(list)) return [];
+  const others = list.filter((a) => a.id !== MOONWINK_ACTION_ID);
+  const moonwink = list.filter((a) => a.id === MOONWINK_ACTION_ID);
+  return [...others, ...moonwink];
+}
+
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
   food_drink: "🍽️", outdoor: "🌳", social: "🍸", medical: "🏨",
@@ -1777,7 +1787,7 @@ export default function Scene() {
             </button>
           )}
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+          {orderStripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
               && recipientTargets.length === 0;
