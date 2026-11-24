@@ -30,6 +30,7 @@ import TestCharacterToggle from "@/components/character/TestCharacterToggle.jsx"
 import CharacterDeathModal from "@/components/character/CharacterDeathModal.jsx";
 import { isDeletionCompleted } from "@/lib/characterDeletionState";
 import HomeLocationField from "@/components/character/HomeLocationField.jsx";
+import HousingStatusField from "@/components/character/HousingStatusField.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
@@ -714,17 +715,20 @@ export default function CharacterProfile() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-border text-xs">
-                <div>
-                  <p className="text-muted-foreground uppercase tracking-wider mb-1">Birthday & Zodiac</p>
-                  {character.birthday ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-foreground font-medium">{format(new Date(character.birthday), "MMM d")}</span>
-                      {zodiacData && <span className="text-lg">{zodiacData.emoji}</span>}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground italic">Not set</p>
-                  )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4 pt-4 border-t border-border text-xs">
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-muted-foreground uppercase tracking-wider mb-1">Birthday & Zodiac</p>
+                    {character.birthday ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-foreground font-medium">{format(new Date(character.birthday), "MMM d")}</span>
+                        {zodiacData && <span className="text-lg">{zodiacData.emoji}</span>}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground italic">Not set</p>
+                    )}
+                  </div>
+                  <HousingStatusField character={character} />
                 </div>
                 <div>
                   <HomeLocationField character={character} currentUser={currentUser} />

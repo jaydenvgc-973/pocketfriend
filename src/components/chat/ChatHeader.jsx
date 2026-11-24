@@ -210,6 +210,9 @@ export default function ChatHeader({
           shopping: !!character,
           troubleshoot: !!character && !!conversationId,
           right_now: !!character && !!conversationId,
+          // Move opens the same housing-change modal the conversation-triggered flow uses,
+          // so it only shows where that modal is actually wired.
+          move: !!character && !!onHousingChangeToggle,
           housing_change: !!character,
           location_share: !!character && !!conversationId,
           instant_image: !!character && !!conversationId,
@@ -223,6 +226,7 @@ export default function ChatHeader({
           if (id === "money") onSendMoneyToggle();
           if (id === "shopping") onShoppingToggle();
           if (id === "troubleshoot") onTroubleshootingToggle();
+          if (id === "move") onHousingChangeToggle?.();
           if (id === "housing_change") onHousingChangeToggle?.();
           if (id === "location_share") onLocationShareToggle?.();
           if (id === "instant_image") triggerInstantImage();
