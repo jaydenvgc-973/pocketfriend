@@ -18,6 +18,7 @@ import ConversationTypeSelector from "@/components/scene/ConversationTypeSelecto
 import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
 import WhosHereDropdown from "@/components/scene/WhosHereDropdown";
 import { writeSceneExitMemories } from "@/lib/sceneExitMemory";
+import { writeSceneLifeEvents } from "@/lib/sceneLifeJournal";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
@@ -1149,6 +1150,24 @@ export default function Scene() {
   // the user deselected is not a participant, so the exit is not written for them.
   const _exitMemoryArgs = (outcome) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome });
 
+  // Scene journal: what the people here actually lived through belongs in their Life
+  // Journal. Written once per scene — whether it ends through the leave modal or by
+  // leaving the page — for everyone who was really taking part.
+  const sceneJournalArgsRef = useRef(null);
+  const sceneJournalDoneRef = useRef(false);
+  sceneJournalArgsRef.current = {
+    participants: observeMode
+      ? observeCast
+      : [...selectedNpcs, ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id))],
+    location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email,
+  };
+  const _writeSceneJournal = (outcome) => {
+    if (sceneJournalDoneRef.current || !sceneJournalArgsRef.current) return Promise.resolve();
+    sceneJournalDoneRef.current = true;
+    return writeSceneLifeEvents({ ...sceneJournalArgsRef.current, outcome });
+  };
+  useEffect(() => () => { _writeSceneJournal(null); }, []);
+
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
     await Promise.all([
@@ -1172,7 +1191,8 @@ export default function Scene() {
           requested_source_reason: 'returned_home_with_user', requested_authority: 'SceneExit'
         }).catch(() => {});
       }),
-      writeSceneExitMemories(_exitMemoryArgs('left_together'))
+      writeSceneExitMemories(_exitMemoryArgs('left_together')),
+      _writeSceneJournal('left_together')
     ]);
     // A government proceeding or ceremony ends with the scene: the participants are
     // released to their own schedules instead of staying anchored to the venue.
@@ -1195,7 +1215,8 @@ export default function Scene() {
           presence_stay_lock_created_by: 'user'
         }).catch(() => {})
       ),
-      writeSceneExitMemories(_exitMemoryArgs('stayed_behind'))
+      writeSceneExitMemories(_exitMemoryArgs('stayed_behind')),
+      _writeSceneJournal('stayed_behind')
     ]);
     releaseGovernmentAttendance?.();
     if (isSharedResidence) setUserAway().catch(() => {});
