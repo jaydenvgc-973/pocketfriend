@@ -46,6 +46,77 @@ const DEFAULT_CORRECTIONAL_UNIFORM = 'police-style correctional officer uniform 
 const DEFAULT_NURSE_UNIFORM = 'nurse uniform — plain clinical scrubs in a solid muted color, professional, no lettering';
 const DEFAULT_DOCTOR_UNIFORM = 'doctor uniform — white physician coat over a plain clinical shirt, professional, no lettering';
 
+// A uniform's own identity decides how it is described when it carries no written
+// description. A location that assigns a "Doctor" uniform but leaves the description
+// empty must still dress the doctor — the uniform's name is not clothing text.
+const ROLE_ATTIRE: Record<string, string> = {
+  doctor: 'white physician coat over clinical scrubs — professional on-duty doctor attire, no lettering, no logos',
+  nurse: 'clinical scrubs in a solid muted color — professional on-duty nurse attire, no lettering, no logos',
+};
+const DOCTOR_ROLE = /(doctor|physician|surgeon|psychiatr|dentist|radiolog|cardiolog|oncolog|pediatric|obstetric|gynecolog|patholog|neurolog|internist|anesthesiolog)/;
+const NURSE_ROLE = /(nurse|nursing|clinician)/;
+
+function roleFromText(text: string): string | null {
+  const t = String(text || '').toLowerCase();
+  if (DOCTOR_ROLE.test(t)) return 'doctor';
+  if (NURSE_ROLE.test(t)) return 'nurse';
+  return null;
+}
+
+// Is the character actually working at this location right now? Eastern Time is the only
+// time reference — UTC is infrastructure metadata and never decides a shift.
+function isOnShiftAt(character: any, location: any): boolean {
+  const presence = character.resolved_presence_status || character.location_status || '';
+  const workId = character.current_work_location_id || character.occupation_location_id || null;
+  if (presence === 'at_work' && (!workId || workId === location.id)) return true;
+
+  const activity = (character.current_activity || '').toLowerCase();
+  if (/\b(on shift|on duty|working|seeing patients|rounds|surgery|clinic hours)\b/.test(activity)) return true;
+
+  // Present at this facility and inside their own shift window.
+  if (character.resolved_current_location_id !== location.id) return false;
+  const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const mins = et.getHours() * 60 + et.getMinutes();
+  const day = et.getDay();
+  const inWindow = (start: string, end: string) => {
+    const toMin = (t: string) => {
+      const p = String(t || '').split(':').map(Number);
+      return p.length === 2 && !Number.isNaN(p[0]) ? p[0] * 60 + (p[1] || 0) : null;
+    };
+    const a = toMin(start); const b = toMin(end);
+    if (a == null || b == null) return false;
+    return a <= b ? (mins >= a && mins < b) : (mins >= a || mins < b);
+  };
+  const shift = location.worker_shifts?.[character.id];
+  if (shift?.start && shift?.end) {
+    if (shift.days?.length && !shift.days.includes(day)) return false;
+    return inWindow(shift.start, shift.end);
+  }
+  if (character.work_start_time && character.work_end_time) {
+    if (character.work_days?.length && !character.work_days.includes(day)) return false;
+    return inWindow(character.work_start_time, character.work_end_time);
+  }
+  return false;
+}
+
+// The clinical role this character actually holds at this medical facility.
+function medicalRoleAt(character: any, location: any): string | null {
+  const charId = character.id;
+  const isStaffHere = location.worker_character_ids?.includes(charId)
+    || character.occupation_location_id === location.id
+    || (Array.isArray(character.additional_occupation_locations)
+      && character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id));
+  if (!isStaffHere) return null;
+  const title = location.worker_job_titles?.[charId]
+    || (character.occupation_location_id === location.id ? character.work_details?.job_title : null)
+    || (Array.isArray(character.additional_occupation_locations)
+      ? character.additional_occupation_locations.find((l: any) => (l.location_id || l.id) === location.id)?.job_title
+      : null)
+    || character.occupation
+    || '';
+  return roleFromText(title);
+}
+
 // ── INLINE UNIFORM TEXT RESOLVER ──────────────────────────────────────────────
 // Minimal uniform check for the backend's image-generation outfit context.
 // Evaluates the Location's uniforms against the character's actual status/
@@ -55,14 +126,37 @@ function resolveUniformText(character: any, location: any): string | null {
   // confinement defaults at the end of this resolver apply. Every uniform lookup below
   // is a no-op on an empty object, so nothing else changes here.
   const uniforms = location.uniforms || {};
+  const locCatEarly = (location.category || '').toLowerCase();
+
+  // A medical facility with nothing configured still dresses its on-shift clinical staff
+  // in role attire — "no location-specific uniform" is not "no attire".
+  if (Object.keys(uniforms).length === 0 && locCatEarly === 'medical') {
+    const role = medicalRoleAt(character, location);
+    if (role && isOnShiftAt(character, location)) return ROLE_ATTIRE[role];
+  }
 
   const charId = character.id;
   const presence = character.resolved_presence_status || character.location_status || '';
-  const uText = (u: any) => u?.description || u?.name || null;
+  // A uniform's name is not clothing text. When the location left the description empty,
+  // the uniform's own identity supplies wearable attire.
+  const uText = (u: any) => {
+    const d = (u?.description || '').trim();
+    if (d) return d;
+    const role = roleFromText(`${u?.name || ''} ${u?.job_title || ''} ${u?.role_status || ''}`);
+    if (role) return ROLE_ATTIRE[role];
+    const name = (u?.name || '').trim();
+    if (!name) return null;
+    return /(coat|gown|apron|scrubs|suit|dress|uniform|shirt|pants|trousers|jacket|robe|vest|outfit|attire|clothing)/i.test(name)
+      ? name
+      : `${name} uniform`;
+  };
 
   const locCat = (location.category || '').toLowerCase();
   const isConfinement = location.is_confinement_facility === true || locCat === 'jail_prison';
   const isMedical = locCat === 'medical';
+  // At a medical facility, employment attire applies only while actually on shift — an
+  // off-duty doctor visiting the hospital is not dressed for work.
+  const onShiftHere = isMedical ? isOnShiftAt(character, location) : true;
 
   // 0. Facility role attire — incarcerated → inmate/prisoner, hospitalized → patient
   // Official character status (not just location presence) determines the role.
@@ -99,7 +193,7 @@ function resolveUniformText(character: any, location: any): string | null {
   }
 
   // 2. Job title at THIS location (employment — suppressed during Vacation Mode)
-  if (!_vacationMode) {
+  if (!_vacationMode && onShiftHere) {
     let jobTitle = location.worker_job_titles?.[charId] || null;
     if (!jobTitle && character.occupation_location_id === location.id && character.work_details?.job_title) {
       jobTitle = character.work_details.job_title;
@@ -142,9 +236,25 @@ function resolveUniformText(character: any, location: any): string | null {
     }
   }
 
+  // 3.5 MEDICAL ROLE ATTIRE — a doctor (or nurse) who is ON SHIFT at a medical facility
+  // always reads as their clinical role. Runs before the facility-wide uniform so a
+  // hospital's patient gown can never be worn by working staff, and before the closet so
+  // a personal outfit can never replace work attire. Off shift, normal clothing applies.
+  if (isMedical && onShiftHere) {
+    const role = medicalRoleAt(character, location);
+    if (role) {
+      const assigned = (Object.values(uniforms) as any[]).find((u: any) =>
+        (u?.applicability === 'job_title' && roleFromText(u.job_title) === role) ||
+        (u?.applicability === 'role_status' && roleFromText(u.role_status) === role) ||
+        roleFromText(u?.name) === role
+      ) || (Object.values(uniforms) as any[]).find((u: any) => u?.applicability === 'generic_staff');
+      return (assigned?.description || '').trim() || ROLE_ATTIRE[role];
+    }
+  }
+
   // 4. Generic staff — worker at THIS location, no job title required
   // Employment inference — suppressed during Vacation Mode.
-  const isStaff = !_vacationMode && (
+  const isStaff = !_vacationMode && onShiftHere && (
     location.worker_character_ids?.includes(charId) ||
     character.occupation_location_id === location.id ||
     (Array.isArray(character.additional_occupation_locations) &&

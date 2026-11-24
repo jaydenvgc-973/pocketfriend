@@ -16,6 +16,53 @@
  *   defines patient clothing (role_status match)
  */
 
+import { isCharacterAtWork } from './workScheduleUtils.js';
+
+// A uniform's own identity decides how it is described when it carries no written
+// description. A location that assigns a "Doctor" uniform but leaves the description
+// empty must still dress the doctor — the uniform's name is not clothing text.
+export const ROLE_ATTIRE = {
+  doctor: 'white physician coat over clinical scrubs — professional on-duty doctor attire, no lettering, no logos',
+  nurse: 'clinical scrubs in a solid muted color — professional on-duty nurse attire, no lettering, no logos',
+};
+const DOCTOR_ROLE = /(doctor|physician|surgeon|psychiatr|dentist|radiolog|cardiolog|oncolog|pediatric|obstetric|gynecolog|patholog|neurolog|internist|anesthesiolog)/;
+const NURSE_ROLE = /(nurse|nursing|clinician)/;
+
+export function roleFromText(text) {
+  const t = String(text || '').toLowerCase();
+  if (DOCTOR_ROLE.test(t)) return 'doctor';
+  if (NURSE_ROLE.test(t)) return 'nurse';
+  return null;
+}
+
+/**
+ * Is the character actually working at this location right now? Eastern Time is the
+ * only time reference — UTC is infrastructure metadata and never decides a shift.
+ */
+function isOnShiftAt(character, location) {
+  const presence = character?.resolved_presence_status || character?.location_status || '';
+  const workId = character?.current_work_location_id || character?.occupation_location_id || null;
+  if (presence === 'at_work' && (!workId || workId === location?.id)) return true;
+  const activity = (character?.current_activity || '').toLowerCase();
+  if (/\b(on shift|on duty|working|seeing patients|rounds|surgery|clinic hours)\b/.test(activity)) return true;
+  return isCharacterAtWork(character, location);
+}
+
+/** The clinical role this character actually holds at this medical facility. */
+function medicalRoleAt(character, location) {
+  const charId = character?.id;
+  const isStaffHere = location?.worker_character_ids?.includes(charId)
+    || character?.occupation_location_id === location?.id
+    || (character?.additional_occupation_locations || []).some(l => (l.location_id || l.id) === location?.id);
+  if (!isStaffHere) return null;
+  const title = location?.worker_job_titles?.[charId]
+    || (character?.occupation_location_id === location?.id ? character?.work_details?.job_title : null)
+    || (character?.additional_occupation_locations || []).find(l => (l.location_id || l.id) === location?.id)?.job_title
+    || character?.occupation
+    || '';
+  return roleFromText(title);
+}
+
 /**
  * Check whether a character is a member of a Location array.
  * Handles both arrays of strings (character IDs) and arrays of objects
@@ -53,11 +100,29 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
 
   const uniforms = location.uniforms || {};
   if (Object.keys(uniforms).length === 0) {
+    // A medical facility with nothing configured still dresses its on-shift clinical
+    // staff in role attire — "no location-specific uniform" is not "no attire".
+    if ((location.category || '') === 'medical') {
+      const role = medicalRoleAt(character, location);
+      if (role && isOnShiftAt(character, location)) {
+        return {
+          uniform: { description: ROLE_ATTIRE[role], name: `${role} attire` },
+          applicability: 'role_attire',
+          reason: `${role}_on_shift`,
+          source: `medical_${role}`,
+          role,
+        };
+      }
+    }
     return { uniform: null, applicability: null, reason: null, source: 'none' };
   }
 
   const charId = character.id;
   const presence = character.resolved_presence_status || character.location_status || '';
+  const isMedical = (location.category || '') === 'medical';
+  // At a medical facility, employment attire applies only while actually on shift —
+  // an off-duty doctor visiting the hospital is not dressed for work.
+  const onShiftHere = isMedical ? isOnShiftAt(character, location) : true;
 
   // Vacation Mode suppresses employment-based uniform activation (manual
   // assignment, job title, generic staff). Legitimate non-employment role
@@ -91,7 +156,7 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
       }
     }
   }
-  if (jobTitle) {
+  if (jobTitle && onShiftHere) {
     const normalizedTitle = jobTitle.toLowerCase().trim();
     for (const u of Object.values(uniforms)) {
       if (u && u.applicability === 'job_title' &&
@@ -131,9 +196,31 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
     }
   }
 
+  // 3.5 Medical role attire — a doctor (or nurse) who is ON SHIFT at a medical facility
+  // always reads as their clinical role. Runs before the facility-wide uniform so a
+  // hospital's patient gown can never be worn by working staff, and before the closet so
+  // a personal outfit can never replace work attire. Off shift, normal clothing applies.
+  if (isMedical && onShiftHere) {
+    const role = medicalRoleAt(character, location);
+    if (role) {
+      const assigned = Object.values(uniforms).find(u =>
+        (u?.applicability === 'job_title' && roleFromText(u.job_title) === role) ||
+        (u?.applicability === 'role_status' && roleFromText(u.role_status) === role) ||
+        roleFromText(u?.name) === role
+      ) || Object.values(uniforms).find(u => u?.applicability === 'generic_staff');
+      return {
+        uniform: assigned || { description: ROLE_ATTIRE[role], name: `${role} attire` },
+        applicability: 'role_attire',
+        reason: `${role}_on_shift`,
+        source: `medical_${role}`,
+        role,
+      };
+    }
+  }
+
   // 4. Generic staff — established worker at THIS Location, no job title required
   // Employment inference — suppressed during Vacation Mode.
-  const isStaff = !_vacationMode && (
+  const isStaff = !_vacationMode && onShiftHere && (
     (location.worker_character_ids && location.worker_character_ids.includes(charId)) ||
     character.occupation_location_id === location.id ||
     (Array.isArray(character.additional_occupation_locations) &&
@@ -159,10 +246,20 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
     }
   }
 
-  // 6. Location-wide — no preceding gate, always applies if defined
-  for (const u of Object.values(uniforms)) {
-    if (u && u.applicability === 'location_wide') {
-      return { uniform: u, applicability: 'location_wide', reason: 'location_wide', source: 'location_wide' };
+  // 6. Location-wide — no preceding gate, always applies if defined.
+  // At a medical facility the facility-wide item (typically patient attire) applies only
+  // to people actually established there — never to an off-duty doctor visiting.
+  const establishedHere = !isMedical || isStaff || presence === 'hospitalized'
+    || isInLocationArray(location.inmates, charId)
+    || isInLocationArray(location.enrolled_students, charId)
+    || isInLocationArray(location.residents, charId)
+    || isInLocationArray(location.religious_members, charId)
+    || (location.gym_members || []).includes(charId);
+  if (establishedHere) {
+    for (const u of Object.values(uniforms)) {
+      if (u && u.applicability === 'location_wide') {
+        return { uniform: u, applicability: 'location_wide', reason: 'location_wide', source: 'location_wide' };
+      }
     }
   }
 
@@ -179,13 +276,22 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
 export function buildUniformOutfitContext(resolvedUniform) {
   if (!resolvedUniform || !resolvedUniform.uniform) return null;
 
-  const { uniform, applicability, reason, source } = resolvedUniform;
+  const { uniform, applicability, reason, source, role } = resolvedUniform;
+
+  // The uniform's name is not clothing text. When the location left the description
+  // empty, the uniform's own identity supplies wearable attire.
+  const resolvedRole = role || roleFromText(`${uniform.name || ''} ${uniform.job_title || ''} ${uniform.role_status || ''}`);
+  const name = (uniform.name || '').trim();
+  const GARMENT = /(coat|gown|apron|scrubs|suit|dress|uniform|shirt|pants|trousers|jacket|robe|vest|outfit|attire|clothing)/i;
+  const description = (uniform.description || '').trim()
+    || (resolvedRole ? ROLE_ATTIRE[resolvedRole] : null)
+    || (name ? (GARMENT.test(name) ? name : `${name} uniform`) : 'uniform');
 
   return {
     outfit: uniform,
     category: 'uniform',
     reason: reason || applicability,
-    description: uniform.description || uniform.name || 'uniform',
+    description,
     source: `uniform:${source}`,
   };
 }
