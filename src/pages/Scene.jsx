@@ -838,20 +838,25 @@ export default function Scene() {
     return list;
   }, [observeMode, broughtCharacters.map((c) => c.id).join(','), sceneParticipants.map((p) => p.id).join(','), currentUser?.id, (selectedNpcIds || []).join(','), remoteParticipants.map((p) => p.id).join(',')]);
 
-  // The characters who were sent are the ones in the moment by default. When nothing was
-  // sent, the moment starts empty: everyone here is offered in Who's Here, never assumed.
+  // The characters who were sent are the ones in the moment by default. When nothing
+  // was sent, the people already at this place are the moment. Everyone else here is
+  // offered, not assumed — the user picks who they came to see.
   const observeSentIds = useMemo(
     () => broughtCharacters.filter((c) => !c.isNpc && c.id).map((c) => c.id),
     [broughtCharacters.map((c) => c.id).join(',')]
   );
   const observeDefaultIds = useMemo(() => {
-    // Physical presence is NOT selection. Being in the building, on shift in this
-    // workplace or living in this unit puts someone in Who's Here — it never puts them in
-    // the moment and never puts them in the picture. Only the observer's own choice does:
-    // the characters they sent here, the background people they picked from Who's Here,
-    // and the caregiver the supervision rule keeps with the children they look after.
-    // Everybody else present stays offered in Who's Here, never assumed.
-    const base = observeSentIds;
+    // The cast of a watched scene is exactly who is in the chosen space. A workplace is
+    // its own space — its people on shift, never the building's residents. When the whole
+    // property or venue is the scene, everyone genuinely present is the cast: the count
+    // comes from actual presence, never from a fixed number.
+    const base = observeSentIds.length > 0
+      ? observeSentIds
+      : activeWorkspace
+        ? presentHereIds
+        : activeUnit
+          ? unitPresentOccupantIds
+          : observeCandidates.filter((c) => !c.isNpc).map((c) => c.id);
     const chosenBackground = observeCandidates.filter((c) => c.isNpc).map((c) => c.id);
     // The household's assigned caregiver is part of a watched residence: the children they
     // actually supervise are never in the moment alone, and the caregiver is never replaced
@@ -864,7 +869,7 @@ export default function Scene() {
       })
       .map((c) => c.id);
     return [...new Set([...base, ...chosenBackground, ...supervision])];
-  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), supervisedChildIds.join(',')]);
+  }, [observeSentIds.join(','), observeCandidates.map((c) => c.id).join(','), unitPresentOccupantIds.join(','), presentHereIds.join(','), activeWorkspace?.workplace_id]);
   const observeCastIdList = observeCastIds || observeDefaultIds;
   const observeCast = observeCandidates.filter((c) => observeCastIdList.includes(c.id));
   const toggleObserveCast = (id) => setObserveCastIds((prev) => {
@@ -1440,11 +1445,10 @@ export default function Scene() {
     // made a selection — even an empty one — the picture follows that selection and never
     // re-injects people they removed.
     if (selectedNpcIds === null) {
-      // Nobody has picked anyone yet. The user is in their own scene; whoever else is
-      // standing here is offered in Who's Here, never assumed. Being present — on shift,
-      // resident, or just in the building — is not selection and never fills the frame.
-      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...(userId ? [userId] : [])]);
-      return sceneParticipants.filter((p) => selectedIds.has(p.id)).slice(0, 4);
+      if (!isRestrictedEnv && location?.location_type === "global") { const nonUser = sceneParticipants.filter((p) => p.id !== userId); const userP = sceneParticipants.find((p) => p.id === userId); return [...nonUser.slice(0, 3), ...(userP ? [userP] : [])]; }
+      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...workerCharacters.map((w) => w.id), ...(userId ? [userId] : [])]);
+      const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
+      return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
     }
     return [];
   };
