@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, X, ChevronDown, UserCheck, Plus } from 'lucide-react';
+import { Users, X, ChevronDown, UserCheck, Plus, MinusCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
@@ -80,16 +80,23 @@ export default function NPCContactPanel() {
   const addedContactIds = Array.isArray(settings?.added_npc_contact_ids)
     ? settings.added_npc_contact_ids
     : [];
+  const removedContactIds = Array.isArray(settings?.removed_npc_contact_ids)
+    ? settings.removed_npc_contact_ids
+    : [];
 
-  // The existing default filter, plus the NPCs the user added. An added contact is the
-  // same existing account record — never a copy, and never an active created character.
+  // The existing default filter, plus the NPCs the user added, minus the NPCs the user
+  // removed. An added or removed contact is always the same existing account record —
+  // never a copy, and never an active created character.
   const npcCharacters = allNPCs.filter(
-    c => ((c.character_type === 'npc_fictitious' || c.character_type === 'npc_world_service') && c.status !== 'deleted')
-      || (addedContactIds.includes(c.id) && c.character_type !== 'active_created_character')
+    c => c.character_type !== 'active_created_character'
+      && !removedContactIds.includes(c.id)
+      && (((c.character_type === 'npc_fictitious' || c.character_type === 'npc_world_service') && c.status !== 'deleted')
+        || addedContactIds.includes(c.id))
   );
 
-  // Offerable in the add selector: account NPCs not already in Contacts. Active created
-  // characters belong on the Home cards and are never offered here.
+  // Offerable in the add selector: account NPCs not currently in Contacts — including
+  // NPCs the user removed, so they can be restored. Active created characters belong on
+  // the Home cards and are never offered here.
   const addableNpcs = allNPCs.filter(
     c => c.character_type !== 'active_created_character' && !npcCharacters.some(n => n.id === c.id)
   );
@@ -130,8 +137,20 @@ export default function NPCContactPanel() {
 
   const handleAddContact = (npc) => {
     setShowAddContact(false);
-    if (addedContactIds.includes(npc.id)) return;
-    updateSettings({ added_npc_contact_ids: [...addedContactIds, npc.id] });
+    updateSettings({
+      added_npc_contact_ids: addedContactIds.includes(npc.id) ? addedContactIds : [...addedContactIds, npc.id],
+      removed_npc_contact_ids: removedContactIds.filter(id => id !== npc.id),
+    });
+  };
+
+  // Hides the NPC from Contacts only. The character, its conversations, memories and
+  // everything else it owns are untouched — it stays re-addable from the picker.
+  const handleRemoveContact = (e, npc) => {
+    e.stopPropagation();
+    updateSettings({
+      added_npc_contact_ids: addedContactIds.filter(id => id !== npc.id),
+      removed_npc_contact_ids: removedContactIds.includes(npc.id) ? removedContactIds : [...removedContactIds, npc.id],
+    });
   };
 
   const handleDeleteNPC = async (e, npcId) => {
@@ -229,25 +248,34 @@ export default function NPCContactPanel() {
                         {unreadByContact[npc.name] > 9 ? '9+' : unreadByContact[npc.name]}
                       </motion.div>
                     )}
-                    {/* npc_world_service characters are permanent — hide destructive/promotion actions */}
-                    {npc.character_type !== 'npc_world_service' && (
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={(e) => handleMarkAsActive(e, npc)}
-                          className="p-1 rounded hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors"
-                          title="Not an NPC — move to active characters"
-                        >
-                          <UserCheck className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={(e) => handleDeleteNPC(e, npc.id)}
-                          className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                          title="Delete NPC"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={(e) => handleRemoveContact(e, npc)}
+                        className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                        title="Remove from Contacts"
+                      >
+                        <MinusCircle className="w-4 h-4" />
+                      </button>
+                      {/* npc_world_service characters are permanent — hide destructive/promotion actions */}
+                      {npc.character_type !== 'npc_world_service' && (
+                        <>
+                          <button
+                            onClick={(e) => handleMarkAsActive(e, npc)}
+                            className="p-1 rounded hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors"
+                            title="Not an NPC — move to active characters"
+                          >
+                            <UserCheck className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteNPC(e, npc.id)}
+                            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                            title="Delete NPC"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </motion.button>
                 ))}
               </div>

@@ -515,6 +515,14 @@
       },
       "default": [],
       "description": "Existing account NPCs the user added to the Home page Contacts list. They appear alongside the default contacts, in the same list and ordering. Stores character IDs only \u2014 never a copy of the NPC."
+    },
+    "removed_npc_contact_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Existing account NPCs the user removed from the Home page Contacts list. They are hidden from Contacts only \u2014 never deleted, never altered \u2014 and remain available in the Add NPC Contact picker so they can be restored. Stores character IDs only."
     }
   },
   "required": []
