@@ -476,8 +476,38 @@ const CLOTHING_STORE_ACTIONS = classifyAll([
   { id: "clothing_ask_price", label: "Ask the price", emoji: "💰", cost: 0, type: "social", requires_staff: true },
   { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
   { id: "clothing_buy", label: "Buy item", emoji: "🛒", cost: 35, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  // A complete outfit is a different purchase from a single piece: it goes through the
+  // same product card and transaction authority, and lands in the recipient's Outfits.
+  { id: "buy_outfit", label: "Buy outfit", emoji: "👗", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", item_kind: "outfit", suggested_zone: "Register", requires_staff: true },
   { id: "clothing_accessories", label: "Check accessories", emoji: "👜", cost: 0, type: "observational", suggested_zone: "Accessories" },
   { id: "clothing_register", label: "Go to register", emoji: "🏷️", cost: 0, type: "functional", suggested_zone: "Register", requires_staff: true },
+  { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+]);
+
+// ── SHOE / SNEAKER STORE ─────────────────────────────────────────────────────
+// Footwear is tried on where it is sold: seated in the sales area, a few steps to test
+// the fit, a look in the mirror — never a clothing fitting room.
+const SHOE_STORE_ACTIONS = classifyAll([
+  { id: "shoe_browse", label: "Look at the shoes", emoji: "👟", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "shoe_sit_try", label: "Sit down and try on a pair", emoji: "🪑", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "shoe_walk_fit", label: "Walk a few steps to test the fit", emoji: "🚶", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "shoe_mirror", label: "Check them in the mirror", emoji: "🪞", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "shoe_ask_size", label: "Ask for a size", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+  { id: "shoe_ask_price", label: "Ask the price", emoji: "💰", cost: 0, type: "social", requires_staff: true },
+  { id: "shoe_buy", label: "Buy the shoes", emoji: "💳", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  { id: "buy", label: "Buy something", emoji: "🛒", cost: 120, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+]);
+
+// ── ACCESSORIES STORE ────────────────────────────────────────────────────────
+// Accessories are examined and tried on in the sales area, at a counter or mirror.
+const ACCESSORIES_STORE_ACTIONS = classifyAll([
+  { id: "accessories_browse", label: "Look over the displays", emoji: "👜", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "accessories_try", label: "Try a piece on", emoji: "🪞", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "accessories_mirror", label: "Check it in the mirror", emoji: "✨", cost: 0, type: "functional", suggested_zone: "Sales Floor" },
+  { id: "accessories_ask", label: "Ask about a piece", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
+  { id: "accessories_buy", label: "Buy the accessory", emoji: "💳", cost: 65, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
+  { id: "buy", label: "Buy something", emoji: "🛒", cost: 65, type: "functional", payer: "user", action_category: "clothing", purchase_source: "store", suggested_zone: "Register", requires_staff: true },
   { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
 ]);
 
@@ -592,8 +622,11 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
   thrift_store:          CLOTHING_STORE_ACTIONS,
   mall:                  CLOTHING_STORE_ACTIONS,
   department_store:      CLOTHING_STORE_ACTIONS,
-  shoe_store:            CLOTHING_STORE_ACTIONS,
-  accessories:           CLOTHING_STORE_ACTIONS,
+  shoe_store:            SHOE_STORE_ACTIONS,
+  sneaker_store:         SHOE_STORE_ACTIONS,
+  sneakers:              SHOE_STORE_ACTIONS,
+  accessories:           ACCESSORIES_STORE_ACTIONS,
+  accessories_store:     ACCESSORIES_STORE_ACTIONS,
   // General retail
   bookstore:         RETAIL_STORE_ACTIONS,
   record_store:      RETAIL_STORE_ACTIONS,

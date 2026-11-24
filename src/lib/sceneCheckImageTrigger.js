@@ -43,6 +43,7 @@ export function checkImageTrigger({
   explicitPrice = null,
   purchaseSource = null,
   isFreeOffering = false,
+  purchaseItemKind = null,
   location,
   messages,
   generateFocusedImage,
@@ -87,6 +88,9 @@ export function checkImageTrigger({
       locationName: location.name,
       preview_image_url: null,
       purchase_type: purchaseType,
+      // 'outfit' only for an explicit complete-outfit purchase (Buy Outfit); otherwise a
+      // single item, which belongs in the closet's Items section.
+      item_kind: purchaseItemKind === 'outfit' ? 'outfit' : 'item',
       item_label: resolved.label,
       item_category: resolved.category,
       timestamp: new Date().toISOString(),

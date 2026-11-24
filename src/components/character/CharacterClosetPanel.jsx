@@ -56,7 +56,7 @@ function generateId(prefix) {
 }
 
 // ── Clothing Piece Card ──────────────────────────────────────────────────────
-function PieceCard({ piece, onDelete, onToggleFavorite }) {
+function PieceCard({ piece, onDelete, onToggleFavorite, onEdit }) {
   const typeDef = PIECE_TYPES.find(t => t.value === piece.piece_type) || PIECE_TYPES[0];
   return (
     <div className="relative rounded-xl border border-border bg-card p-3 space-y-2">
@@ -85,6 +85,15 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
       )}
       {piece.description && (
         <p className="text-xs text-muted-foreground leading-relaxed">{piece.description}</p>
+      )}
+      {/* A purchased item is already owned; its details are completed here, later. */}
+      {piece.pending_details && onEdit && (
+        <button
+          onClick={() => onEdit(piece)}
+          className="w-full text-xs text-amber-400 border border-amber-400/30 hover:bg-amber-400/10 rounded-lg py-1.5 transition-colors font-medium"
+        >
+          Finish details
+        </button>
       )}
     </div>
   );
@@ -235,9 +244,17 @@ function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActi
 }
 
 // ── Add Piece Form ────────────────────────────────────────────────────────────
-function AddPieceForm({ character, onSave, onCancel }) {
-  const [form, setForm] = useState({ label: "", piece_type: "top", description: "", is_favorite: false });
-  const [imageUrl, setImageUrl] = useState("");
+// Exported so the Scenes purchase flow can open this exact Items interface instead of
+// building a lookalike form. `initialValues` / `initialImageUrl` prefill it — a purchased
+// item arrives with its own product image and keeps its own record ids.
+export function AddPieceForm({ character, onSave, onCancel, initialValues = null, initialImageUrl = "", heading = "Add Clothing Piece", submitLabel = "Save Piece" }) {
+  const [form, setForm] = useState({
+    label: initialValues?.label || "",
+    piece_type: initialValues?.piece_type || "top",
+    description: initialValues?.description || "",
+    is_favorite: initialValues?.is_favorite || false,
+  });
+  const [imageUrl, setImageUrl] = useState(initialImageUrl || "");
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -303,10 +320,11 @@ function AddPieceForm({ character, onSave, onCancel }) {
     try {
       const finalImageUrl = imageUrl || previewUrl || "";
       await onSave({
-        piece_id: generateId("piece"),
-        outfit_id: generateId("piece"),
+        ...(initialValues || {}),
+        piece_id: initialValues?.piece_id || generateId("piece"),
+        outfit_id: initialValues?.outfit_id || generateId("piece"),
         type: "piece",
-        created_at: new Date().toISOString(),
+        created_at: initialValues?.created_at || new Date().toISOString(),
         ...form,
         image_url: finalImageUrl,
       });
@@ -317,7 +335,7 @@ function AddPieceForm({ character, onSave, onCancel }) {
 
   return (
     <div className="border border-border rounded-xl bg-secondary/20 p-4 space-y-3">
-      <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Add Clothing Piece</p>
+      <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{heading}</p>
 
       <div className="grid grid-cols-2 gap-2">
         <div className="col-span-2">
@@ -379,7 +397,7 @@ function AddPieceForm({ character, onSave, onCancel }) {
         <Button variant="outline" size="sm" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
         <Button size="sm" onClick={handleSave} disabled={!form.label.trim() || saving} className="flex-1 rounded-xl">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-          Save Piece
+          {submitLabel}
         </Button>
       </div>
     </div>
@@ -387,17 +405,30 @@ function AddPieceForm({ character, onSave, onCancel }) {
 }
 
 // ── Add Outfit Form ────────────────────────────────────────────────────────────
-function AddOutfitForm({ character, onSave, onCancel }) {
+// Exported for the same reason as AddPieceForm: a purchased outfit opens this exact
+// Outfits interface, prefilled, with the outfit image already generated in Scenes.
+export function AddOutfitForm({ character, onSave, onCancel, initialValues = null, initialImageUrl = "", heading = "New Outfit", submitLabel = "Save Outfit" }) {
   const [form, setForm] = useState({
-    label: "", category: "daily_casual", rotation_number: "", top: "", bottom: "", shoes: "",
-    outerwear: "", accessories: "", hair_state: "", full_description: "", is_favorite: false,
+    label: initialValues?.label || "",
+    category: initialValues?.category || "daily_casual",
+    rotation_number: initialValues?.rotation_number ?? "",
+    top: initialValues?.top || "",
+    bottom: initialValues?.bottom || "",
+    shoes: initialValues?.shoes || "",
+    outerwear: initialValues?.outerwear || "",
+    accessories: initialValues?.accessories || "",
+    hair_state: initialValues?.hair_state || "",
+    full_description: initialValues?.full_description || "",
+    is_favorite: initialValues?.is_favorite || false,
   });
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
-  const [generatedImageUrl, setGeneratedImageUrl] = useState("");
+  // A purchased outfit arrives with the image generated in Scenes — it is the outfit's
+  // initial image and is never replaced by a newly generated one.
+  const [generatedImageUrl, setGeneratedImageUrl] = useState(initialImageUrl || "");
   const [uploading, setUploading] = useState(false);
   const [previewModal, setPreviewModal] = useState(null); // { url, type }
 
@@ -516,9 +547,10 @@ Return JSON:
         ? null
         : (Number.isFinite(parseInt(String(rawRot), 10)) ? parseInt(String(rawRot), 10) : null);
       await onSave({
-        outfit_id: generateId("outfit"),
+        ...(initialValues || {}),
+        outfit_id: initialValues?.outfit_id || generateId("outfit"),
         type: "outfit",
-        created_at: new Date().toISOString(),
+        created_at: initialValues?.created_at || new Date().toISOString(),
         label: form.label,
         category: form.category,
         top: form.top,
@@ -539,7 +571,7 @@ Return JSON:
 
   return (
     <div className="border border-border rounded-xl bg-secondary/20 p-4 space-y-3">
-      <p className="text-xs font-semibold text-foreground uppercase tracking-wider">New Outfit</p>
+      <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{heading}</p>
 
       {/* AI generation */}
       <div className="flex gap-2">
@@ -647,7 +679,7 @@ Return JSON:
         <Button variant="outline" size="sm" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
         <Button size="sm" onClick={handleSave} disabled={!form.label.trim() || saving} className="flex-1 rounded-xl">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
-          Save Outfit
+          {submitLabel}
         </Button>
       </div>
 
@@ -680,6 +712,7 @@ export default function CharacterClosetPanel({ character }) {
   const [showAddOutfit, setShowAddOutfit] = useState(false);
   const [showAddPiece, setShowAddPiece] = useState(false);
   const [editingOutfit, setEditingOutfit] = useState(null); // outfit being edited
+  const [editingPiece, setEditingPiece] = useState(null); // purchased piece completing its details
   const [saving, setSaving] = useState(false);
 
   // outfit_rotation_enabled is stored on the character record.
@@ -759,6 +792,12 @@ export default function CharacterClosetPanel({ character }) {
   const handleSavePiece = async (piece) => {
     await saveCloset([...closet, piece]);
     setShowAddPiece(false);
+  };
+
+  // Complete an already-owned purchased item in place — same record, same id.
+  const handleUpdatePiece = async (piece) => {
+    await saveCloset(closet.map((p) => (p.piece_id === piece.piece_id ? { ...piece, pending_details: false } : p)));
+    setEditingPiece(null);
   };
 
   const handleDeleteOutfit = async (outfit_id) => {
@@ -1075,6 +1114,17 @@ export default function CharacterClosetPanel({ character }) {
               onCancel={() => setShowAddPiece(false)}
             />
           )}
+          {editingPiece && (
+            <AddPieceForm
+              character={character}
+              initialValues={editingPiece}
+              initialImageUrl={editingPiece.image_url || ""}
+              heading="Finish Item Details"
+              submitLabel="Save Details"
+              onSave={handleUpdatePiece}
+              onCancel={() => setEditingPiece(null)}
+            />
+          )}
           {pieces.length === 0 && !showAddPiece ? (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground italic">No clothing pieces saved yet.</p>
@@ -1095,6 +1145,7 @@ export default function CharacterClosetPanel({ character }) {
                         piece={piece}
                         onDelete={handleDeletePiece}
                         onToggleFavorite={handleToggleFavoritePiece}
+                        onEdit={setEditingPiece}
                       />
                     ))}
                   </div>

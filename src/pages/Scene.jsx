@@ -26,6 +26,7 @@ import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import ProductPurchaseModal from "@/components/scene/ProductPurchaseModal";
+import PurchaseClosetEntryModal from "@/components/closet/PurchaseClosetEntryModal";
 import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
@@ -167,6 +168,9 @@ export default function Scene() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [privateTarget, setPrivateTarget] = useState(null);
   const [pendingPurchase, setPendingPurchase] = useState(null);
+  // A paid purchase whose closet entry is being completed. The entry already exists in
+  // the recipient's real closet — this only finishes its details.
+  const [pendingClosetEntry, setPendingClosetEntry] = useState(null);
   const [watchVideoActive, setWatchVideoActive] = useState(false);
   const [watchContext, setWatchContext] = useState(null);
   const [showChangeClothesModal, setShowChangeClothesModal] = useState(false);
@@ -1469,7 +1473,7 @@ export default function Scene() {
     base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
   };
 
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, location, messages, generateFocusedImage, setMessages }); };
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, location, messages, generateFocusedImage, setMessages }); };
 
   // A narrative is something that has already happened, dialogue included. It is recorded
   // as canon so character replies treat it as a recent lived experience, never as words
@@ -1480,7 +1484,7 @@ export default function Scene() {
   // the user said. It is shown as a centered scene activity — never as an outgoing
   // message — and it tells the scene whether the moment has already happened (immediate)
   // or is behavior being carried out now (direct).
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null) => {
     if (!text.trim() || !location) return; setInputText("");
     const userMsg = activity
       ? { id: Date.now().toString(), sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: activity.behavior === "immediate", timestamp: new Date().toISOString() }
@@ -1493,7 +1497,7 @@ export default function Scene() {
       if (wpSender) base44.functions.invoke('sendWorldPhoneMessage', { sender_character_id: wpSender.id, recipient_identifier: wpIntent.recipient, requested_message: wpIntent.message, user_instruction_context: wpIntent.message ? null : text, source: 'user_instruction', owner_email: currentUser?.email }).catch(err => console.warn('[Scene] World Phone send failed:', err?.message));
     }
 
-    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering);
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind);
     setIsTyping(true);
 
     const _memIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
@@ -1894,7 +1898,7 @@ export default function Scene() {
         }),
         emoji: action.emoji,
         behavior,
-      });
+      }, isProductCardAction ? (action.item_kind || null) : null);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
     } finally { setActionCooldown(false); }
   };
@@ -2122,7 +2126,17 @@ export default function Scene() {
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
-      <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(message) => { const price = pendingPurchase?.price; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `✓ Purchased for $${price} — ${message}.`, timestamp: new Date().toISOString() }]); setPendingPurchase(null); }} />
+      <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={(observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs.filter((n) => !n.isNpc)]).filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i)} userPresent={!observeMode} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} item_kind={pendingPurchase?.item_kind} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(purchase) => { const price = pendingPurchase?.price; setPendingPurchase(null); setPendingClosetEntry(purchase); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: purchase.recipient.kind === "character" ? `✓ Purchased for $${price} — added to ${purchase.recipient.name}'s ${purchase.kind === "outfit" ? "Outfits" : "Items"}.` : `✓ Purchased for $${price} — added to your closet.`, timestamp: new Date().toISOString() }]); }} />
+
+      {/* The paid purchase opens the recipient's real closet entry interface. */}
+      <PurchaseClosetEntryModal
+        purchase={pendingClosetEntry}
+        onClose={() => setPendingClosetEntry(null)}
+        onSaved={(saved) => {
+          setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `✓ ${saved?.label || "The purchase"} is saved in ${pendingClosetEntry?.recipient?.kind === "character" ? `${pendingClosetEntry.recipient.name}'s ${pendingClosetEntry.kind === "outfit" ? "Outfits" : "Items"}` : "your closet"}.`, timestamp: new Date().toISOString() }]);
+          setPendingClosetEntry(null);
+        }}
+      />
       <ChangeClothesModal isOpen={showChangeClothesModal} onClose={() => setShowChangeClothesModal(false)} settings={settings} isUserSettingsLoading={isUserSettingsLoading} presentCharacters={changeClothesEligibleCharacters} location={location} currentUser={currentUser} userAvatar={currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || currentUser?.avatar_url || null} userName={displayName} onOutfitChanged={(targetType) => { if (targetType === 'user') queryClient.invalidateQueries({ queryKey: ['userSettings', currentUser?.email] }); else queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] }); setOutfitVersion((v) => v + 1); setHasUserRequestedImage(true); setSceneImage(null); }} />
       {governmentVenueType && (
         <GovernmentVenueSetupModal

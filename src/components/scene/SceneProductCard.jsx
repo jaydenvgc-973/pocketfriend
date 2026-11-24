@@ -54,6 +54,10 @@ export default function SceneProductCard({
         return `Professional food photography of ${itemLabel}, beautifully plated on a dish, restaurant quality, close-up, clean light background, high detail, no drinks`;
       }
       case "clothing":
+        // A complete outfit is photographed as a whole look; a single item on its own.
+        if (msg.item_kind === "outfit") {
+          return `Professional retail flat-lay photography of a complete ${itemLabel} outfit — every piece of the look laid out together on a clean light background, studio lighting, high detail, no people wearing it`;
+        }
         return `Professional retail product photography of ${itemLabel}, isolated on clean white background, studio lighting, high detail, no people`;
       case "home_goods":
         return `Professional product photography of ${itemLabel}, clean white or light grey background, studio shot, sharp detail, no people`;
@@ -109,6 +113,7 @@ export default function SceneProductCard({
         purchase_type: msg.purchase_type,
         action_class: msg.action_class || 'purchase',
         purchase_source: msg.purchase_source || 'menu',
+        item_kind: msg.item_kind || 'item',
       });
     } else {
       // Consumable — route through transaction authority.

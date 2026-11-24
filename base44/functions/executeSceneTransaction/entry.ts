@@ -140,8 +140,9 @@ Deno.serve(async (req) => {
         await base44.entities.UserSettings.update(settings.id, { user_balance: newBalance });
 
         // Step 2: Create ledger record — REQUIRED for transaction to be valid
+        let ledgerRecord = null;
         try {
-          await base44.entities.FinancialTransaction.create(ledgerPayload);
+          ledgerRecord = await base44.entities.FinancialTransaction.create(ledgerPayload);
         } catch (ledgerErr) {
           // LEDGER CREATION FAILED — Restore the balance and reject the entire transaction
           console.error(`[executeSceneTransaction] CRITICAL: Ledger creation failed. Restoring balance. action_id=${action_id}, user=${user.email}, cost=${numericCost}. Error: ${ledgerErr.message}`);
@@ -181,6 +182,7 @@ Deno.serve(async (req) => {
         success: true,
         transaction_class: action_class,
         action_id,
+        transaction_id: ledgerRecord?.id || null,
         amount_charged: numericCost,
         balance_before: currentBalance,
         balance_after: newBalance,
@@ -189,12 +191,33 @@ Deno.serve(async (req) => {
       });
 
     } else if (payer_type === 'character' && character_id) {
-      // Character pays — delegate to existing expense function
-      await base44.functions.invoke('calculateCharacterExpenses', {
+      // Character pays — the character's own established finances are charged through the
+      // existing character expense pipeline (recordCharacterExpense), which writes the
+      // FinancialTransaction ledger entry and deducts the character's balance.
+      const financial = await base44.asServiceRole.entities.CharacterFinancial
+        .filter({ character_id })
+        .then((rows) => rows[0]);
+
+      if (!financial) {
+        return Response.json({ error: 'Character financial record not found' }, { status: 404 });
+      }
+
+      const characterBalance = typeof financial.current_balance === 'number' ? financial.current_balance : 0;
+      if (characterBalance < numericCost) {
+        return Response.json({ error: 'Transaction rejected: insufficient balance', balance: characterBalance, cost: numericCost }, { status: 400 });
+      }
+
+      const expense = await base44.functions.invoke('recordCharacterExpense', {
         characterId: character_id,
-        expenseAmount: numericCost,
-        expenseLabel: action_label || `Scene ${action_class}`
+        amount: numericCost,
+        transactionType: 'scene_purchase',
+        description: `${action_label || `Scene ${action_class}`}${location_name ? ` at ${location_name}` : ''}`,
+        locationName: location_name || null,
       });
+
+      if (expense?.data?.success !== true) {
+        return Response.json({ error: expense?.data?.error || 'Character transaction failed' }, { status: 500 });
+      }
 
       console.log(`[executeSceneTransaction] CHARACTER transaction approved: ${action_class} "${action_label}" — character ${character_id} charged $${numericCost}`);
 
@@ -202,7 +225,9 @@ Deno.serve(async (req) => {
         success: true,
         transaction_class: action_class,
         action_id,
+        transaction_id: expense.data.transactionId || null,
         amount_charged: numericCost,
+        balance_after: expense.data.newBalance,
         payer: 'character',
         character_id
       });
