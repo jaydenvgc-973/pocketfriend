@@ -72,6 +72,9 @@ import MarriageConfirmationModal from "@/components/government/MarriageConfirmat
 import JudicialOutcomeModal from "@/components/government/JudicialOutcomeModal";
 import { isGovernmentActionId } from "@/lib/governmentVenues";
 import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
+import ArrestTransitionModal from "@/components/scene/ArrestTransitionModal";
+import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
+import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
 // Directed interactions act on ONE chosen person who is actually present.
 // They are performed through the existing scene/narrative pathway — no new system.
@@ -81,6 +84,9 @@ const DIRECTED_SCENE_ACTIONS = [
   { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses", past_verb: "kissed" },
   { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with", past_verb: "flirted with" },
   { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with", past_verb: "argued with" },
+  // A physical confrontation, not a louder argument. Same who-and-who selector as Argue
+  // With; Argue With keeps its own meaning and both stay available.
+  { id: "fight_with", label: "Fight With", emoji: "🥊", verb: "fights", past_verb: "fought" },
   // Moonwink is a moment between two chosen adults, so it uses the same who-and-who
   // selection as Kiss and Flirt With. The strip title is interface-only: the verb and the
   // in-world wording are what the scene is given, never the button's name.
@@ -881,6 +887,16 @@ export default function Scene() {
     const base = prev || observeDefaultIds;
     return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
   });
+
+  // Thief and Lawbreaker may attempt a theft wherever a target exists. This is
+  // CHARACTER-specific availability: it is offered because of who is in the scene, never
+  // because of where the scene is — and only for the people who actually carry it.
+  const traitCrimeActions = useMemo(() => {
+    const cast = observeMode ? observeCast : selectedPeopleHere;
+    if (!castHasCrimeTrait(cast)) return [];
+    const present = new Set(actions.map((a) => a.id));
+    return TRAIT_GATED_CRIME_ACTIONS.filter((a) => !present.has(a.id));
+  }, [actions.map((a) => a.id).join(','), observeMode, (observeMode ? observeCast : selectedPeopleHere).map((p) => p.id).join(',')]);
 
   // The people actually here who can DO something: an activity belongs to one of them.
   // Background people of the venue are never puppeted and infants cannot act on cue.
@@ -1870,6 +1886,7 @@ export default function Scene() {
     const pending = actorAction;
     setActorAction(null);
     if (!pending || !person?.id) return;
+    if (CRIME_ACTIVITY_IDS.includes(pending.action.id)) { handleCrimeAction(pending.action, [person]); return; }
     if (pending.mode === "directed") setDirectedAction({ ...pending.action, actorId: person.id, actorName: person.name });
     else if (observeMode) performObserveAction(pending.action, person);
     // The user is present: the chosen person performs it through the normal activity path.
@@ -1881,6 +1898,7 @@ export default function Scene() {
     const pending = actorAction;
     setActorAction(null);
     if (!pending || !people?.length) return;
+    if (CRIME_ACTIVITY_IDS.includes(pending.action.id)) { handleCrimeAction(pending.action, people); return; }
     if (observeMode) performObserveAction(pending.action, people);
     else handleAction(pending.action, people);
   };
@@ -1932,6 +1950,137 @@ export default function Scene() {
     if (actors.length === 0) return;
     if (actors.length === 1) { runCourtAction(action, actors[0]); return; }
     setCourtActorAction(action);
+  };
+
+  // ── CRIME ACTIVITIES ─────────────────────────────────────────────────────────
+  // Pickpocket, Burglarize and Call the Cops use the same strip, the same actor selector
+  // and the same narrative pipeline as every other activity. What actually comes of the
+  // attempt is settled from the circumstances that already exist — the thief is not
+  // automatically caught, being caught is not automatically an arrest, and calling the
+  // police does not guarantee one. When an arrest really happens it is carried out by the
+  // existing custody pathway and the modal only decides where the user's view goes.
+  const [arrestTransition, setArrestTransition] = useState(null);
+  const [arrestVisitors, setArrestVisitors] = useState(null);
+  const [isResolvingCrime, setIsResolvingCrime] = useState(false);
+
+  const crimeCast = observeMode ? observeCast : selectedPeopleHere;
+
+  const handleCrimeAction = async (action, people = null) => {
+    if (actionCooldown || isResolvingCrime) return;
+    const chosen = (Array.isArray(people) ? people : people ? [people] : []).filter((p) => p?.id);
+    const actors = chosen.length > 0 ? chosen : crimeCast.filter((p) => p?.id);
+    const names = actors.map((p) => p.name || p.display_name).filter(Boolean);
+    if (names.length === 0 && !observeMode) names.push(displayName);
+    setActionCooldown(true);
+    setIsResolvingCrime(true);
+    try {
+      const outcome = await resolveCrimeOutcome({
+        actionId: action.id,
+        actorNames: names,
+        castNames: crimeCast.map((p) => p.name || p.display_name).filter(Boolean),
+        locationName: location?.name,
+        locationCategory: location?.category,
+        circumstances: buildSceneCircumstances({
+          location,
+          participants: sceneParticipants,
+          backgroundPeople: [],
+          onShiftAtLocationIds: onShiftIds,
+          homeResidentIds,
+          locationsById: locationMap,
+        }),
+        recentContext: messages.slice(-6).map((m) => m.content).filter(Boolean).join('\n'),
+      });
+
+      // Police attendance, when it is actually needed, comes from the app's existing
+      // temporary-NPC mechanism — never a new character record.
+      if (outcome.officerNeeded && !officerAlreadyHere(crimeCast)) {
+        const officer = buildRespondingOfficer();
+        setExtraNpcs((prev) => (prev.find((n) => n.id === officer.id) ? prev : [...prev, officer]));
+        setSelectedNpcIds((prev) => [...new Set([...(prev || []), officer.id])]);
+        if (observeMode) setObserveCastIds((prev) => [...new Set([...(prev || observeDefaultIds), officer.id])]);
+      }
+
+      const activity = {
+        content: activityFeedLine({ actionId: action.id, label: action.label, participants: names }),
+        emoji: action.emoji,
+        behavior: "immediate",
+        direction: outcome.direction || `${names.join(" and ")} — ${action.label.toLowerCase()}.`,
+      };
+
+      if (observeMode) {
+        runObserveBeat({ narrative: `${activity.content}. ${outcome.direction}`.trim(), actorNames: names, activity });
+      } else {
+        await sendMessage(`[${action.emoji} ${action.label} — ${names.join(" and ")}]`, true, null, null, null, null, null, false, null, activity);
+      }
+
+      if (outcome.arrested) {
+        const arrested = actors.find((p) => (p.name || p.display_name) === outcome.arrestedName) || actors[0];
+        const facility = pickCustodyFacility(locationsData);
+        const isRealCharacter = arrested?.id && !arrested.isNpc && !String(arrested.id).startsWith("npc_");
+        if (isRealCharacter && facility?.id) {
+          const res = await base44.functions.invoke('arrestCharacter', {
+            character_id: arrested.id,
+            facility_id: facility.id,
+            offense: action.label,
+            notes: outcome.direction,
+          });
+          const data = res?.data || {};
+          if (data?.success && !data.skipped) {
+            queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+            setArrestTransition({
+              character: arrested,
+              facility: { ...facility, name: data.facility_name || facility.name },
+              unitId: data.unit_id || null,
+              unitName: data.unit_name || null,
+            });
+          }
+        }
+      }
+    } catch {
+      setMessages((prev) => [...prev, { id: `crime_err_${Date.now()}`, sender: "narrative", content: "That did not go through.", timestamp: new Date().toISOString() }]);
+    } finally {
+      setIsResolvingCrime(false);
+      setTimeout(() => setActionCooldown(false), 600);
+    }
+  };
+
+  // The arrest has already happened. These only decide where the view goes next.
+  const goToCustody = (visitorIds = []) => {
+    const arrest = arrestTransition;
+    setArrestTransition(null);
+    setArrestVisitors(null);
+    if (!arrest) return;
+    const ids = [arrest.character.id, ...visitorIds].filter(Boolean).join(",");
+    const unit = arrest.unitId ? `&unitId=${arrest.unitId}` : "";
+    navigate(`/scene?locationId=${arrest.facility.id}&characterIds=${ids}${unit}`);
+  };
+  const followArrest = () => {
+    const arrest = arrestTransition;
+    if (!arrest) return;
+    // Anyone else from this scene may come along as a visitor — never as an inmate.
+    const companions = crimeCast.filter((p) => p?.id
+      && p.id !== arrest.character.id
+      && p.id !== currentUser?.id
+      && !p.isUser
+      && p.isNpc !== true
+      && !String(p.id).startsWith("npc_"));
+    if (companions.length > 0) {
+      setArrestVisitors({
+        action: { id: "arrest_visitors", label: "Come along", emoji: "🚗" },
+        targets: companions.map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url })),
+      });
+      return;
+    }
+    goToCustody([]);
+  };
+  const watchCustody = () => {
+    const arrest = arrestTransition;
+    setArrestTransition(null);
+    setArrestVisitors(null);
+    if (!arrest) return;
+    const unit = arrest.unitId ? `&unitId=${arrest.unitId}` : "";
+    navigate(`/scene?locationId=${arrest.facility.id}&observe=1&characterIds=${arrest.character.id}${unit}`);
   };
 
   // `actors` is the person or people chosen through the existing selector for an activity
@@ -2085,7 +2234,7 @@ export default function Scene() {
             </button>
           )}
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {stripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+          {stripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : [...actions, ...traitCrimeActions]).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
               && recipientTargets.length === 0;
@@ -2093,7 +2242,7 @@ export default function Scene() {
             const needsAdult = action.adults_only === true && observeMode
               && eligibleForAction(observeActors, action).length === 0;
             const isDisabled = action.disabled || actionCooldown || needsCharacter || needsAdult; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (action.requires_actor && !observeMode && userPresentActors.length > 0) { if (needsZone) handleZoneChange(action.suggested_zone_name); setActorAction({ action, mode: "activity" }); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsAdult ? "Only for adults — no adult is here" : needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
+            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (CRIME_ACTIVITY_IDS.includes(action.id)) { const pool = observeMode ? observeActors : userPresentActors; if (pool.length > 1) { setActorAction({ action, mode: "activity" }); return; } handleCrimeAction(action, pool.length === 1 ? [pool[0]] : null); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (action.requires_actor && !observeMode && userPresentActors.length > 0) { if (needsZone) handleZoneChange(action.suggested_zone_name); setActorAction({ action, mode: "activity" }); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsAdult ? "Only for adults — no adult is here" : needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
@@ -2259,6 +2408,24 @@ export default function Scene() {
         onClose={() => setJudicialModal(null)}
         onResolved={handleJudicialResolved}
         onNarrativeOnly={handleJudicialNarrative}
+      />
+      {/* The arrest has already happened — this only decides where the view goes next. */}
+      <ArrestTransitionModal
+        arrest={arrestTransition}
+        onGo={followArrest}
+        onWatch={watchCustody}
+        onStay={() => { setArrestTransition(null); setArrestVisitors(null); }}
+      />
+      <SceneTargetPicker
+        action={arrestVisitors?.action}
+        targets={arrestVisitors?.targets || []}
+        multiple
+        confirmLabel="Come with you"
+        heading={arrestTransition ? `Who comes with you to ${arrestTransition.facility?.name}?` : null}
+        hint="They come as visitors — not inmates. Only people from this scene can be chosen."
+        onConfirm={(people) => goToCustody((people || []).map((p) => p.id))}
+        onSelect={(person) => goToCustody([person.id])}
+        onClose={() => setArrestVisitors(null)}
       />
       {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
     </div>

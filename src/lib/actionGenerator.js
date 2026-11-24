@@ -522,6 +522,26 @@ const RETAIL_STORE_ACTIONS = classifyAll([
   { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "social", requires_staff: true },
 ]);
 
+// ── SCENE-WIDE ACTIVITIES ─────────────────────────────────────────────────────
+// Activities that belong to the moment rather than to one venue type. They are added
+// to whatever the venue already offers — never a replacement, never a re-price.
+// `requires_actor` means the existing actor selector asks who does it.
+const SMOKE_ACTION = { id: "smoke", label: "Smoke", emoji: "🚬", cost: 0, type: "functional", requires_actor: true };
+const CALL_COPS_ACTION = { id: "call_the_cops", label: "Call the Cops", emoji: "📞", cost: 0, type: "functional", requires_actor: true };
+const FIND_WARM_ACTION = { id: "find_somewhere_warm", label: "Find Somewhere Warm", emoji: "🔥", cost: 0, type: "functional", requires_actor: true };
+const PICKPOCKET_ACTION = { id: "pickpocket", label: "Pickpocket", emoji: "🤏", cost: 0, type: "risky", requires_actor: true };
+const BURGLARIZE_ACTION = { id: "burglarize", label: "Burglarize", emoji: "🪟", cost: 0, type: "risky", requires_actor: true };
+
+// Places that actually contain property someone could break into. Outdoors and transit
+// are excluded: standing in the open is not a burglary opportunity.
+const BURGLARY_VENUE_EXCLUDED_CATEGORIES = new Set(['outdoor', 'public', 'transportation']);
+
+// Pickpocket and Burglarize are available everywhere a suitable target exists for the
+// characters who live that way — Thief and Lawbreaker. This is CHARACTER-specific
+// availability, decided by Scene from the traits of the people actually in the scene;
+// it is never a venue-wide addition for everyone.
+export const TRAIT_GATED_CRIME_ACTIONS = classifyAll([PICKPOCKET_ACTION, BURGLARIZE_ACTION]);
+
 // ── GENERIC FALLBACK ──────────────────────────────────────────────────────────
 const DEFAULT_ACTIONS = classifyAll([
   { id: "talk", label: "Talk", emoji: "💬", cost: 0, type: "social" },
@@ -830,6 +850,23 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
     const alreadyPresent = new Set(actions.map((a) => a.id));
     actions = [...actions, ...householdActions.filter((a) => !alreadyPresent.has(a.id))];
   }
+
+  // Scene-wide activities — added to the venue's own list, never replacing any of it.
+  //   Smoke               — everywhere, indoors and out, subject to what the place is
+  //   Call the Cops       — everywhere
+  //   Find Somewhere Warm — the Slums, where seeking warmth is a real errand
+  //   Pickpocket          — Slums and City (Thief/Lawbreaker get it elsewhere, via Scene)
+  //   Burglarize          — wherever there is a property to break into
+  const subtypesHere = normalizeSubtypes(venue);
+  const sceneExtras = [SMOKE_ACTION, CALL_COPS_ACTION];
+  if (subtypesHere.includes('slums')) sceneExtras.push(FIND_WARM_ACTION);
+  if (subtypesHere.includes('slums') || subtypesHere.includes('city')) sceneExtras.push(PICKPOCKET_ACTION);
+  if (!BURGLARY_VENUE_EXCLUDED_CATEGORIES.has(String(venue.category || 'generic').toLowerCase())) {
+    sceneExtras.push(BURGLARIZE_ACTION);
+  }
+  const alreadyPresent = new Set(actions.map((a) => a.id));
+  const sceneAdditions = classifyAll(sceneExtras).filter((a) => !alreadyPresent.has(a.id));
+  if (sceneAdditions.length > 0) actions = [...actions, ...sceneAdditions];
 
   // Caffeine filter: only restrict within 2 hours of character's scheduled sleep.
   // The old arbitrary 1:00 PM Eastern cutoff has been removed — it was incorrect.

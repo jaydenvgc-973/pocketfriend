@@ -27,6 +27,12 @@ export const ACTION_IMAGE_PROMPTS = {
   bottle_service:  (loc, who) => `Champagne bottle with sparkler at a VIP nightclub table, bokeh lights, photorealistic`,
   flirt:           (loc, who) => `${who} laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic. No strangers.`,
   argue:           (loc, who) => `${who} with tense confrontational body language at a ${loc}, dramatic, photorealistic. No strangers.`,
+  // ── SCENE-WIDE ACTIVITIES ──
+  smoke:           (loc, who) => who.includes("empty") ? `A lit cigarette smouldering in an ashtray at a ${loc}, thin curl of smoke, photorealistic. No people.` : `${who} smoking at a ${loc}, a lit cigarette in hand and a thin curl of smoke, unhurried posture, photorealistic. No other people.`,
+  find_somewhere_warm: (loc, who) => who.includes("empty") ? `A sheltered corner out of the wind at a ${loc}, bare and cold, photorealistic. No people.` : `${who} out of the wind in a sheltered spot at a ${loc}, shoulders drawn in against the cold, breath visible, photorealistic. No other people.`,
+  pickpocket:      (loc, who) => `${who} close to another person in a crowd at a ${loc}, a hand reaching low and out of sight, tense and furtive, photorealistic.`,
+  call_the_cops:   (loc, who) => who.includes("empty") ? `A phone lying face up on a surface at a ${loc}, call in progress, photorealistic. No people.` : `${who} on the phone at a ${loc}, urgent expression, one hand pressed to the other ear, photorealistic. No other people.`,
+  burglarize:      (loc, who) => `${who} at a ${loc} after forcing entry — a window or door standing open, furtive posture, dim light, photorealistic.`,
   business_work:   (loc, who) => who.includes("empty") ? `Empty office workspace in a ${loc}, no people, photorealistic.` : `${who} working at a desk in a ${loc} office, focused, photorealistic. No other people, no coworkers.`,
   workout:         (loc, who) => `${who} working out with gym equipment, athletic energy, photorealistic`,
   lift:            (loc, who) => `${who} lifting weights at the gym, athletic, photorealistic`,
@@ -214,6 +220,9 @@ export function buildDirectedActionPrompt({ actionId, actorName, targetName, loc
       return `${actor} flirting with ${target} at ${loc}, leaning in close, playful smile, teasing eye contact, a light touch on the arm, warm chemistry between them, photorealistic. ${together}No other people.`;
     case "argue_with":
       return `${actor} arguing with ${target} at ${loc}, standing face to face in a tense confrontation, hard expressions, raised hands mid-gesture, defensive posture, clearly NOT affectionate, dramatic lighting, photorealistic. ${together}No other people.`;
+    case "fight_with":
+      // A physical confrontation, not an argument: bodies engaged, no weapons, no gore.
+      return `${actor} and ${target} physically fighting at ${loc}, the two of them grappling and scuffling with each other, clenched fists and torn-away grips, strained faces, mussed clothing, a real physical struggle — not a calm argument, not affectionate, no weapons, no visible blood or serious injury, harsh available light, photorealistic. ${together}No other people.`;
     case "moonwink":
       // A directed moment between the two chosen adults — both unclothed, both clearly
       // willing, and written as the moment itself with nothing explicit shown. The

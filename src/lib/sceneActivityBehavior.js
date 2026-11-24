@@ -30,6 +30,12 @@ const IMMEDIATE_ACTIVITY_IDS = new Set([
   'bathroom', 'bathroom_break', 'home_shower', 'jail_shower', 'home_brush_teeth',
   // Checked in: the room, the bed or the table is theirs now.
   'hotel_checkin', 'hotel_room', 'shelter_checkin', 'shelter_rest', 'sk_sit',
+  // A fight has happened the moment it is chosen: it is a lived event both of them were
+  // in, never a proposal to be agreed to.
+  'fight_with',
+  // An attempt and its outcome are settled when it is chosen: the theft happened, the
+  // call was made, and what came of it already did.
+  'pickpocket', 'burglarize', 'call_the_cops',
 ]);
 
 /**
