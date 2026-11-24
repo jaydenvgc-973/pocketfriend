@@ -73,52 +73,12 @@ import JudicialOutcomeModal from "@/components/government/JudicialOutcomeModal";
 import { isGovernmentActionId } from "@/lib/governmentVenues";
 import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
 import ArrestTransitionModal from "@/components/scene/ArrestTransitionModal";
+import SceneStripTransitionControls from "@/components/scene/SceneStripTransitionControls";
+import NextSceneModal from "@/components/scene/NextSceneModal";
 import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
 import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
-// Directed interactions act on ONE chosen person who is actually present.
-// They are performed through the existing scene/narrative pathway — no new system.
-// `verb` is what the person is doing now; `past_verb` is the same thing already done, for
-// the moments that are established the instant they are chosen (a kiss has happened).
-const DIRECTED_SCENE_ACTIONS = [
-  { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses", past_verb: "kissed" },
-  { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with", past_verb: "flirted with" },
-  { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with", past_verb: "argued with" },
-  // A physical confrontation, not a louder argument. Same who-and-who selector as Argue
-  // With; Argue With keeps its own meaning and both stay available.
-  { id: "fight_with", label: "Fight With", emoji: "🥊", verb: "fights", past_verb: "fought" },
-  // Moonwink is a moment between two chosen adults, so it uses the same who-and-who
-  // selection as Kiss and Flirt With. The strip title is interface-only: the verb and the
-  // in-world wording are what the scene is given, never the button's name.
-  { id: "moonwink", label: "Moonwink", emoji: "🌙", verb: "is intimate with", adults_only: true },
-];
-
-// Moonwink is drawn in the directed row beside Kiss and Flirt With. Its venue entry stays
-// in the activity catalog — it is still this place's activity — but it is never drawn a
-// second time as a one-person button.
-const MOONWINK_ACTION_ID = "moonwink";
-function stripActions(list) {
-  if (!Array.isArray(list)) return [];
-  return list.filter((a) => a.id !== MOONWINK_ACTION_ID);
-}
-
-const CATEGORY_EMOJIS = {
-  home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
-  food_drink: "🍽️", outdoor: "🌳", social: "🍸", medical: "🏨",
-  bar: "🍸", generic: "📍", transportation: "🚉"
-};
-
-/**
- * The user's OWN presence, as the unified presence list represents it (`user_<id>`),
- * and the active user participant are the SAME person. Both must never become two
- * participants in the scene, its images, or its counts.
- */
-function isUserPresenceEntity(entity, userId) {
-  if (!entity) return false;
-  if (entity.effective_presence_type === 'user' || entity.is_user === true) return true;
-  if (userId && entity.id === userId) return true;
-  return typeof entity.id === 'string' && entity.id.startsWith('user_');
-}
+import { DIRECTED_SCENE_ACTIONS, stripActions, CATEGORY_EMOJIS, isUserPresenceEntity } from "@/lib/sceneStripConfig";
 
 export default function Scene() {
   const navigate = useNavigate();
@@ -2083,6 +2043,55 @@ export default function Scene() {
     navigate(`/scene?locationId=${arrest.facility.id}&observe=1&characterIds=${arrest.character.id}${unit}`);
   };
 
+  // ── SCENE TRANSITION CONTROLS ────────────────────────────────────────────────
+  // Arrest uses the same custody pathway as the crime activities; Next Scene moves the
+  // scene to another existing location through the existing presence pipeline. Neither is
+  // a character activity, and neither adds anyone to the scene.
+  const [arrestPicker, setArrestPicker] = useState(null);
+  const [showNextScene, setShowNextScene] = useState(false);
+  const arrestTargets = crimeCast.filter((p) => p?.id && !p.isNpc && !String(p.id).startsWith("npc_") && p.id !== currentUser?.id)
+    .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+  const nextSceneParticipants = (observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs, ...extraNpcs])
+    .filter((c, i, arr) => c?.id && arr.findIndex((x) => x.id === c.id) === i)
+    .filter((c) => !c.isNpc && !String(c.id).startsWith("npc_") && c.id !== currentUser?.id)
+    .map((c) => ({ id: c.id, name: c.name || c.display_name, avatar_url: c.avatar_url }));
+
+  const handleArrest = async (person) => {
+    setArrestPicker(null);
+    const facility = pickCustodyFacility(locationsData);
+    if (!person?.id || !facility?.id) return;
+    const res = await base44.functions.invoke('arrestCharacter', { character_id: person.id, facility_id: facility.id, offense: 'Arrest', notes: 'Taken into custody from the scene.' });
+    const data = res?.data || {};
+    if (!data?.success || data.skipped) { setMessages((prev) => [...prev, { id: `arrest_err_${Date.now()}`, sender: "narrative", content: `${person.name || "They"} could not be taken into custody.`, timestamp: new Date().toISOString() }]); return; }
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+    setArrestTransition({ character: person, facility: { ...facility, name: data.facility_name || facility.name }, unitId: data.unit_id || null, unitName: data.unit_name || null });
+  };
+
+  const handleNextSceneConfirm = async ({ destination, zoneName, unitId, travelerIds, mode }) => {
+    setShowNextScene(false);
+    if (!destination?.id) return;
+    const travelers = nextSceneParticipants.filter((p) => travelerIds.includes(p.id));
+    const moving = mode === "watch" ? [] : travelers;
+    await Promise.all(moving.map((p) => {
+      const home = characters.find((c) => c.id === p.id)?.current_home_location_id === destination.id;
+      return base44.functions.invoke('enforceCharacterLocationPresence', { character_id: p.id, owner_email: currentUser?.email, requested_presence_status: home ? 'home' : 'visiting', requested_location_id: destination.id, requested_location_name: destination.name, requested_source_reason: 'next_scene', requested_authority: 'Scene' }).catch(() => {});
+    }));
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    // Sending them ahead from a scene you are in leaves you here — nobody moves you.
+    if (mode === "send" && !observeMode) {
+      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${moving.map((t) => t.name).join(", ")} head to ${destination.name}.`, timestamp: new Date().toISOString() }]);
+      return;
+    }
+    const params = new URLSearchParams({ locationId: destination.id });
+    const ids = (mode === "watch" ? [] : travelers.map((t) => t.id)).join(",");
+    if (ids) params.set("characterIds", ids);
+    if (zoneName) params.set("zoneName", zoneName);
+    if (unitId) params.set("unitId", unitId);
+    if (observeMode || mode === "watch") params.set("observe", "1");
+    navigate(`/scene?${params.toString()}`);
+  };
+
   // `actors` is the person or people chosen through the existing selector for an activity
   // that asks who performs it (Work). Without a choice, the selected scene cast takes part.
   const handleAction = async (action, actors = null) => {
@@ -2265,6 +2274,12 @@ export default function Scene() {
               <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Invite Character</span>
             </button>
           )}
+          {/* Arrest and Next Scene are scene controls, not character activities — they close the strip. */}
+          <SceneStripTransitionControls
+            onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
+            onNextScene={() => setShowNextScene(true)}
+            arrestDisabled={arrestTargets.length === 0 || actionCooldown}
+          />
         </div>
       </div>
 
@@ -2427,6 +2442,24 @@ export default function Scene() {
         onSelect={(person) => goToCustody([person.id])}
         onClose={() => setArrestVisitors(null)}
       />
+      <SceneTargetPicker
+        action={arrestPicker}
+        targets={arrestTargets}
+        onSelect={handleArrest}
+        onClose={() => setArrestPicker(null)}
+        heading={arrestPicker ? "Arrest — who is taken into custody?" : null}
+        hint="Held pending proceedings — an arrest, not a conviction."
+      />
+      {showNextScene && (
+        <NextSceneModal
+          open
+          locations={locationsData}
+          participants={nextSceneParticipants}
+          userPresent={!observeMode}
+          onClose={() => setShowNextScene(false)}
+          onConfirm={handleNextSceneConfirm}
+        />
+      )}
       {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
     </div>
   );
