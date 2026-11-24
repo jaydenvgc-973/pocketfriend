@@ -948,37 +948,15 @@ export default function Scene() {
       .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url, is_adult: isAdultForActivity(p) }));
   }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id, observeMode, observeCastIdList.join(",")]);
 
-  // WHO THE SELECTOR MAY OFFER — the people already taking part in this scene, plus the
-  // people this property's own directory lists: a patient in their room, a resident in
-  // another apartment, an inmate in their cell. Choosing one of them joins them to the
-  // scene through the same selection Who's Here performs, so nobody is moved and nobody
-  // is chosen on the user's behalf. The selector opens whether or not a pair is already
-  // highlighted, and eligibility (established adult, alive) is judged per person.
-  const directedPickableTargets = (() => {
-    const seen = new Set();
-    const list = [];
-    const add = (person) => {
-      if (!person?.id || seen.has(person.id)) return;
-      if (person.isUser || person.id === currentUser?.id) return;
-      if (person.isNpc === true) return;
-      if (String(person.id).startsWith("npc_")) return;
-      if (person.life_status === "deceased" || person.status === "deceased") return;
-      if (isInfantCharacter(person)) return;
-      seen.add(person.id);
-      list.push(person);
-    };
-    directedTargets.forEach(add);
-    selectableNpcCandidates.forEach((candidate) => {
-      // Eligibility is read from the person's own record, never from a placeholder.
-      const record = characters.find((c) => c.id === candidate?.id);
-      if (!record) return;
-      add({ id: record.id, name: record.name || candidate.name, avatar_url: record.avatar_url || candidate.avatar_url, is_adult: isAdultForActivity(record) });
-    });
-    return list;
-  })();
+  // WHO THE SELECTOR MAY OFFER — exactly the people already taking part in this scene,
+  // the same pool Kiss, Flirt With and Argue With use. The Who's Here directory is a
+  // separate thing: someone in another room is listed there, never offered here. If the
+  // user wants someone else involved, they bring them into the scene through Who's Here
+  // first, and that selection — never this picker — decides who is here.
+  const directedPickableTargets = directedTargets;
 
   // Who can be paired with this action: an adults-only activity offers only established
-  // adults, and never the person acting.
+  // adults, and never the person acting. Nobody outside the scene is ever substituted in.
   const directedPartnersFor = (action, actorId = null) =>
     (action?.adults_only ? directedPickableTargets.filter((t) => t.is_adult) : directedPickableTargets)
       .filter((t) => t.id !== actorId);
@@ -1069,27 +1047,6 @@ export default function Scene() {
     ? (observeCast.find((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_")) || null)
     : null;
 
-  // Choosing someone from the directory puts them in this scene, exactly as selecting
-  // them in Who's Here does. Where they are does not change.
-  const joinScenePerson = (person) => {
-    if (!person?.id) return;
-    // The user is the one playing the scene, never a person selected from the directory.
-    if (person.isUser === true || isUserPresenceEntity(person, currentUser?.id)) return;
-    setSelectedNpcIds((prev) => {
-      const current = prev || [];
-      if (current.includes(person.id)) return prev;
-      unitManualDeselectRef.current.delete(person.id);
-      return [...current, person.id];
-    });
-    // A watched scene keeps its own cast: the person chosen is in the moment too.
-    if (observeMode) {
-      setObserveCastIds((prev) => {
-        const base = prev || observeDefaultIds;
-        return base.includes(person.id) ? prev : [...base, person.id];
-      });
-    }
-  };
-
   const handleDirectedTarget = (target) => {
     const action = directedAction;
     setDirectedAction(null);
@@ -1103,9 +1060,6 @@ export default function Scene() {
         : (observeCast.find((c) => c.id !== target.id && sceneParticipants.some((p) => p.id === c.id)) || null))
       : userParticipant;
     const actorName = actor?.name || actor?.display_name || null;
-    // Someone chosen from the directory joins the scene before the moment is written, so
-    // both people in it are really part of it — never one of them standing outside.
-    [actor, target].forEach(joinScenePerson);
     // The direction names the person taking the action, so the moment belongs to them
     // and never to the absent observer.
     // An interface-only title never becomes character vocabulary: where the strip's name
@@ -1981,7 +1935,10 @@ export default function Scene() {
             </button>); })}
           {directedPickableTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => {
             const canPair = directedAvailable(directed);
-            const blocked = actionCooldown || !canPair;
+            // An adults-only activity stays reachable so its picker can open; whether the
+            // interaction can actually happen is decided by who is here, never by
+            // graying the button out or by offering someone from outside the scene.
+            const blocked = actionCooldown || (!canPair && !directed.adults_only);
             return (
             <button key={directed.id} onClick={() => handleDirectedSelect(directed)} disabled={blocked} title={canPair ? `${directed.label} — choose who` : directed.adults_only ? "Only for adults — two adults need to be here" : "No one else is here to choose"} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${blocked ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{directed.emoji}</span>

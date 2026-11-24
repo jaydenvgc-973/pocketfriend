@@ -77,7 +77,11 @@ export default function SceneTargetPicker({
             {targets.length === 0 ? (
               <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
                 <Users className="w-5 h-5" />
-                <p className="text-xs">No one here to {verb}.</p>
+                <p className="text-xs">
+                  {action.adults_only
+                    ? "No adult is taking part in this scene for that."
+                    : `No one here to ${verb}.`}
+                </p>
               </div>
             ) : (
               targets.map((person) => {
