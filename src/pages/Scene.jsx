@@ -57,7 +57,7 @@ import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver"
 import { isSelectableParticipantAtZone, isIncarceratedCharacter, isJailOrPrison } from "@/lib/jailSceneRules";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
-import { getCharacterAge } from "@/lib/characterAgeSystem";
+import { isAdultCharacter } from "@/lib/characterAgeSystem";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
@@ -296,25 +296,14 @@ export default function Scene() {
   const residencePresenceStatus = (char) => (
     char?.current_home_location_id && char.current_home_location_id === location?.id ? 'home' : 'visiting'
   );
-  // Moonwink and any other adults-only activity: only an established adult may take part.
-  // A recorded birthday establishes the same thing when the age field was never filled
-  // in, so an adult is not refused the activity over one empty field. Someone with
-  // neither stays unproven and is never offered.
-  const isAdultForActivity = (person) => {
-    const age = getCharacterAge(person);
-    if (age !== null) return age >= 18;
-    if (person?.birthday) {
-      const birth = new Date(person.birthday);
-      if (!isNaN(birth.getTime())) {
-        const today = new Date();
-        let years = today.getFullYear() - birth.getFullYear();
-        const monthDiff = today.getMonth() - birth.getMonth();
-        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) years--;
-        return years >= 18;
-      }
-    }
-    return false;
-  };
+  // Moonwink and any other adults-only activity: only an adult may take part, judged by
+  // the application's established age rule (isAdultCharacter) — never by whether an
+  // optional field happens to be filled in. An unknown age is an adult unless the
+  // character has an established minor identity, so a character without a birthday is
+  // not refused the activity over a missing field. This one check feeds the strip, the
+  // who-and-who selector, the actor and partner lists, and the validation before the
+  // moment runs, so no part of the activity can disagree about who is an adult.
+  const isAdultForActivity = (person) => isAdultCharacter(person);
   const eligibleForAction = (list, action) => (
     action?.adults_only === true ? (list || []).filter(isAdultForActivity) : (list || [])
   );

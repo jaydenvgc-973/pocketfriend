@@ -26,14 +26,10 @@ export function getCharacterAge(character) {
 
   const rawAge = character.age;
 
-  // Missing / blank / null → unknown age
-  if (
-    rawAge === undefined ||
-    rawAge === null ||
-    (typeof rawAge === 'string' && rawAge.trim() === '')
-  ) {
-    return null;
-  }
+  // Missing / blank / null age is NOT the end of the answer: a recorded birthday below
+  // establishes the age just as well, so these fall through to the birthday calculation
+  // instead of stopping here. (This branch used to return null first, which made the
+  // birthday below unreachable and reported every birthday-only character as unknown.)
 
   // Numeric age (including 0) — trust it directly
   if (typeof rawAge === 'number' && Number.isFinite(rawAge) && rawAge >= 0) {
@@ -46,8 +42,8 @@ export function getCharacterAge(character) {
     if (!isNaN(parsed) && parsed >= 0 && String(parsed) === rawAge.trim()) {
       return parsed;
     }
-    // Malformed string (e.g. "abc", "0.5") → treat as unknown
-    return null;
+    // Malformed string (e.g. "abc", "0.5") → no usable numeric age; fall through to
+    // the birthday rather than declaring the character's age unknown.
   }
 
   // Calculate from birthday if age field is absent/unparseable
@@ -65,6 +61,37 @@ export function getCharacterAge(character) {
   }
 
   return null;
+}
+
+/**
+ * ADULTHOOD — the application's established rule, read through the same age authority.
+ *
+ * A known age decides it: adultAge or older is an adult, below it is not. A recorded
+ * birthday establishes the same thing, because getCharacterAge derives the age from it.
+ *
+ * When no age can be determined the character is an ADULT. That is how the rest of the
+ * app already treats them — canCharacterTravel, requiresSitter and the age communication
+ * rules all assume adult for an unknown age, because most NPCs are created without a
+ * birthdate. An empty age field is never proof of a minor.
+ *
+ * The single exception is an explicitly established minor identity: a developmental stage
+ * recorded on the character (age_range such as "child", "toddler", "teenager") keeps them
+ * a minor even when no numeric age or birthday exists. Missing age data never overrides
+ * an established minor.
+ */
+const MINOR_STAGE_WORDS = ['infant', 'baby', 'toddler', 'child', 'kid', 'teen', 'adolescent', 'minor', 'juvenile'];
+
+export function isAdultCharacter(character, adultAge = 18) {
+  if (!character) return false;
+
+  const age = getCharacterAge(character);
+  if (age !== null) return age >= adultAge;
+
+  // No numeric age and no usable birthday — fall back to the established stage.
+  const stage = typeof character.age_range === 'string' ? character.age_range.toLowerCase() : '';
+  if (stage && MINOR_STAGE_WORDS.some((word) => stage.includes(word))) return false;
+
+  return true;
 }
 
 /**
