@@ -12,9 +12,14 @@
  *   The Scene Change Clothes action writes `scene_explicit_outfit` (a location-scoped
  *   explicit outfit reference) on the owner record. The backend resolvers
  *   (resolveUserOutfitContext / resolveCharacterOutfitContext) honor this field
- *   ABOVE all automatic logic (uniform, special occasion, rotation, category
- *   fallback) for the matching location only. This lets the user manually wear ANY
- *   complete stored outfit regardless of its category.
+ *   ABOVE automatic closet logic (special occasion, rotation, category fallback) for
+ *   the matching location only. This lets the user manually wear ANY complete stored
+ *   outfit regardless of its category.
+ *
+ *   ONE EXCEPTION: required work attire during an active shift. A character who is on
+ *   duty where they owe a uniform (an on-shift doctor at a medical facility, a worker
+ *   with an assigned uniform) is dressed by that uniform — a saved outfit never
+ *   replaces it while the shift is active. Off shift, the saved outfit applies as before.
  *
  *   This pathway does NOT touch today_category_outfit_overrides, manual_category_selections,
  *   current_outfit, or the closet — so the Profile closet's automatic category behavior

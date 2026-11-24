@@ -117,6 +117,50 @@ function medicalRoleAt(character: any, location: any): string | null {
   return roleFromText(title);
 }
 
+/**
+ * Does this character owe the location WORK attire right now — an employment uniform
+ * (manual assignment, job title, clinical role attire, or staff attire) while actually
+ * on shift? Only required work attire outranks a manually saved scene outfit. Patient
+ * gowns, gym wear, inmate clothing and every other uniform keep their existing order.
+ */
+function hasOnShiftWorkAttire(character: any, location: any): boolean {
+  if (!character || !location) return false;
+  if (character.vacation_mode === true) return false;
+  if (!isOnShiftAt(character, location)) return false;
+
+  const uniforms = location.uniforms || {};
+  const charId = character.id;
+
+  // Manual assignment — the facility explicitly chose this uniform for this worker.
+  const manualKey = location.worker_manual_uniforms?.[charId];
+  if (manualKey && uniforms[manualKey]) return true;
+
+  // Job title at THIS location.
+  let jobTitle = location.worker_job_titles?.[charId] || null;
+  if (!jobTitle && character.occupation_location_id === location.id && character.work_details?.job_title) {
+    jobTitle = character.work_details.job_title;
+  }
+  if (!jobTitle && Array.isArray(character.additional_occupation_locations)) {
+    const alt = character.additional_occupation_locations.find((l: any) => (l.location_id || l.id) === location.id);
+    jobTitle = alt?.job_title || null;
+  }
+  const list = Object.values(uniforms) as any[];
+  if (jobTitle) {
+    const norm = String(jobTitle).toLowerCase().trim();
+    if (list.some(u => u?.applicability === 'job_title' && (u.job_title || '').toLowerCase().trim() === norm)) return true;
+  }
+
+  // Clinical role attire — an on-shift doctor or nurse at a medical facility.
+  if ((location.category || '').toLowerCase() === 'medical' && medicalRoleAt(character, location)) return true;
+
+  // Staff attire for an established worker here.
+  const isStaff = location.worker_character_ids?.includes(charId)
+    || character.occupation_location_id === location.id
+    || (Array.isArray(character.additional_occupation_locations)
+      && character.additional_occupation_locations.some((l: any) => (l.location_id || l.id) === location.id));
+  return isStaff && list.some(u => u?.applicability === 'generic_staff');
+}
+
 // ── INLINE UNIFORM TEXT RESOLVER ──────────────────────────────────────────────
 // Minimal uniform check for the backend's image-generation outfit context.
 // Evaluates the Location's uniforms against the character's actual status/
@@ -487,19 +531,32 @@ Deno.serve(async (req) => {
     // falls through to the normal clothing system (closet rotation → dynamic fallback).
 
     // ── PRIORITY 0: EXPLICIT SCENE OUTFIT (manual Change Clothes selection) ──
-    // Honored ABOVE all automatic logic (uniform, special occasion, rotation,
-    // category fallback) for the exact location where the user manually chose it
-    // via Scene > Change Clothes. Scope: the stored location_id must match the
-    // request locationId. Category is NEVER considered here — this is the ONLY
-    // path that lets a user wear an out-of-category outfit.
+    // Honored ABOVE automatic closet logic (special occasion, rotation, category
+    // fallback) for the exact location where the user manually chose it via
+    // Scene > Change Clothes. Scope: the stored location_id must match the request
+    // locationId. Category is NEVER considered here — this is the ONLY path that lets
+    // a user wear an out-of-category outfit.
+    //
+    // ONE EXCEPTION: required WORK attire during an active shift. A stored outfit must
+    // never replace the uniform a worker owes their workplace while they are on duty —
+    // an on-shift doctor wears the facility's doctor uniform, not a saved nightlife
+    // outfit. Off shift, or where no work uniform applies, the saved outfit wins as before.
     const explicitSceneOutfit = character.scene_explicit_outfit;
+    let prefetchedLocation: any = null;
     if (explicitSceneOutfit?.outfit_id && locationId && explicitSceneOutfit.location_id === locationId) {
-      const explicitOutfit = (character.character_closet || []).find((o: any) => o.outfit_id === explicitSceneOutfit.outfit_id);
-      if (explicitOutfit) {
-        const t = buildOutfitText(explicitOutfit) || explicitOutfit.label?.trim() || null;
-        if (t) {
-          console.log(`[resolveCharacterOutfitContext] ✅ SCENE_EXPLICIT outfit_id="${explicitSceneOutfit.outfit_id}" at location="${locationId}" (category="${explicitOutfit.category || 'none'}")`);
-          return Response.json({ text: t, source: 'scene_explicit_outfit', category: explicitOutfit.category || null, outfit_id: explicitOutfit.outfit_id });
+      const preList = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []);
+      prefetchedLocation = preList?.[0] || null;
+      const workAttireRequired = prefetchedLocation ? hasOnShiftWorkAttire(character, prefetchedLocation) : false;
+      if (workAttireRequired) {
+        console.log(`[resolveCharacterOutfitContext] ⚠️ Saved scene outfit ignored for "${character.name}" — on-shift work attire applies at "${prefetchedLocation.name}"`);
+      } else {
+        const explicitOutfit = (character.character_closet || []).find((o: any) => o.outfit_id === explicitSceneOutfit.outfit_id);
+        if (explicitOutfit) {
+          const t = buildOutfitText(explicitOutfit) || explicitOutfit.label?.trim() || null;
+          if (t) {
+            console.log(`[resolveCharacterOutfitContext] ✅ SCENE_EXPLICIT outfit_id="${explicitSceneOutfit.outfit_id}" at location="${locationId}" (category="${explicitOutfit.category || 'none'}")`);
+            return Response.json({ text: t, source: 'scene_explicit_outfit', category: explicitOutfit.category || null, outfit_id: explicitOutfit.outfit_id });
+          }
         }
       }
     }
@@ -514,8 +571,9 @@ Deno.serve(async (req) => {
       || (presence === 'hospitalized' ? (character.resolved_current_location_id || null) : null);
 
     if (effectiveLocationId) {
-      const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []);
-      const locRecord = locList?.[0] || null;
+      const locRecord = (prefetchedLocation && prefetchedLocation.id === effectiveLocationId)
+        ? prefetchedLocation
+        : ((await base44.asServiceRole.entities.LocationReference.filter({ id: effectiveLocationId }, null, 1).catch(() => []))?.[0] || null);
       if (locRecord) {
         const uniformText = resolveUniformText(character, locRecord);
         if (uniformText) {
