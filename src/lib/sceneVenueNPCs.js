@@ -115,6 +115,51 @@ export const VENUE_NPCS = {
   ],
 };
 
+// Venue type → ambient people for venues that describe a kind of settlement. Ambient
+// only: they are never staff on shift, never permanent character records, and never
+// selected into the scene by themselves. Who is around still follows the existing
+// venue, zone, time-of-day and scene-context behavior.
+export const VENUE_NPCS_BY_SUBTYPE = {
+  outdoor: {
+    slums: [
+      { id: "npc_person_walking", name: "Person walking", role: "Passerby", npcType: "customer" },
+      { id: "npc_person_on_corner", name: "Person standing on a corner", role: "Passerby", npcType: "customer" },
+      { id: "npc_police_officer", name: "Police officer", role: "Police officer", npcType: "customer" },
+      { id: "npc_mail_person", name: "Mail person", role: "Mail person", npcType: "customer" },
+      { id: "npc_stranger", name: "Stranger", role: "Passerby", npcType: "customer" },
+    ],
+    city: [
+      { id: "npc_commuter", name: "Commuter", role: "Commuter", npcType: "customer" },
+      { id: "npc_street_vendor", name: "Street vendor", role: "Street vendor", npcType: "customer" },
+      { id: "npc_pedestrian", name: "Pedestrian", role: "Pedestrian", npcType: "customer" },
+      { id: "npc_delivery_worker", name: "Delivery worker", role: "Delivery worker", npcType: "customer" },
+      { id: "npc_local_resident", name: "Local resident", role: "Local resident", npcType: "customer" },
+      { id: "npc_tourist", name: "Tourist", role: "Tourist", npcType: "customer" },
+    ],
+    neighborhood: [
+      { id: "npc_local_resident", name: "Local resident", role: "Local resident", npcType: "customer" },
+      { id: "npc_mail_person", name: "Mail person", role: "Mail person", npcType: "customer" },
+      { id: "npc_pedestrian", name: "Pedestrian", role: "Pedestrian", npcType: "customer" },
+      { id: "npc_person_walking_dog", name: "Person walking dog", role: "Neighbor", npcType: "customer" },
+      { id: "npc_delivery_worker", name: "Delivery worker", role: "Delivery worker", npcType: "customer" },
+      { id: "npc_jogger", name: "Jogger", role: "Neighbor", npcType: "customer" },
+    ],
+  },
+};
+
+// The ambient people for a location: its venue type when that venue type defines them,
+// otherwise the established category defaults. Jail/prison keeps the facility's own people.
+export function getVenueNpcDefaults(location, isConfinementFacility = false) {
+  if (isConfinementFacility) return VENUE_NPCS.jail_prison || DEFAULT_VENUE_NPC;
+  const bySubtype = VENUE_NPCS_BY_SUBTYPE[location?.category];
+  if (bySubtype) {
+    const selected = Array.isArray(location?.subtype) ? location.subtype : location?.subtype ? [location.subtype] : [];
+    const match = selected.find((s) => bySubtype[s]);
+    if (match) return bySubtype[match];
+  }
+  return VENUE_NPCS[location?.category] || DEFAULT_VENUE_NPC;
+}
+
 // Category → required operational staff roles (for temporary NPC generation)
 export const REQUIRED_STAFF_ROLES = {
   food_drink:  [{ id: "tmp_server",       name: "Server",              role: "Server",              npcType: "staff", isTemporary: true }],

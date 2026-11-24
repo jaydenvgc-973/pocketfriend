@@ -65,7 +65,7 @@ export const SUBTYPE_OPTIONS = {
   food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub", "all_you_can_eat_buffet", "free_food_soup_kitchen"],
   social: ["cocktail_bar", "dive_bar", "sports_bar", "beer_hall", "gay_bar", "lesbian_bar", "queer_bar", "upscale_lounge", "neighborhood_bar", "wine_bar", "tiki_bar", "house_music_club", "hip_hop_club", "electronic_club", "punk_venue", "rock_venue", "latin_dance_club", "country_bar", "jazz_club", "karaoke_bar", "nightclub", "dance_club", "rave_venue", "rooftop_bar", "lounge_club"],
   gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
-  outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza"],
+  outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza", "slums", "city", "neighborhood"],
   grocery: ["grocery_store", "supermarket", "farmers_market", "convenience_store"],
   business: ["clothing_store", "shoe_store", "sneaker_store", "accessories_store", "bookstore", "record_store", "electronics_store", "home_goods_store", "thrift_store", "warehouse", "mall", "shopping_district", "salon", "barbershop"],
   workplace: ["office", "corporate_office", "startup_office", "factory", "warehouse", "retail_store"],

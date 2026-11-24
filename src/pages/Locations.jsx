@@ -16,6 +16,7 @@ import BottomNav from "@/components/BottomNav";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
+import VenueTypeSelector from "@/components/location/VenueTypeSelector";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import SavedPlaces from "@/components/location/SavedPlaces";
@@ -967,20 +968,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
-      {SUBTYPE_OPTIONS[form.category] && (
-        <div>
-          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Venue Type</label>
-          <div className="grid grid-cols-2 gap-2">
-            {SUBTYPE_OPTIONS[form.category].map(subtype => (
-              <button key={subtype}
-                onClick={() => update("subtype", form.subtype.includes(subtype) ? form.subtype.filter(s => s !== subtype) : [...form.subtype, subtype])}
-                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype.includes(subtype) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                {SUBTYPE_LABELS[subtype] || subtype.replace(/_/g, ' ')}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <VenueTypeSelector category={form.category} subtype={form.subtype} onChange={(next) => update("subtype", next)} />
 
       {/* ── ADDITIONAL VENUE TYPES (Home only) ──
           A Home can also carry the Workplace capability without becoming a workplace

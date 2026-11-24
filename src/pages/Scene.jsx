@@ -46,7 +46,7 @@ import { useUserPresence } from "@/hooks/useUserPresence";
 import { useSharedResidenceParticipants } from "@/hooks/useSharedResidencePresence";
 import SharedResidenceConversation from "@/components/scene/SharedResidenceConversation";
 import { useSceneImageGenerator } from "@/hooks/useSceneImageGenerator";
-import { VENUE_NPCS, DEFAULT_VENUE_NPC } from "@/lib/sceneVenueNPCs";
+import { getVenueNpcDefaults } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useAuth } from "@/lib/AuthContext";
 import SceneProductCard from "@/components/scene/SceneProductCard";
@@ -552,7 +552,7 @@ export default function Scene() {
         .length;
       // A confinement facility is a prison/jail whatever its category says: it keeps the
       // facility's own people (officers, court officer, inmate) instead of a venue's.
-      const venueDefaults = VENUE_NPCS[isJailOrPrison(location) ? "jail_prison" : location?.category] || DEFAULT_VENUE_NPC;
+      const venueDefaults = getVenueNpcDefaults(location, isJailOrPrison(location));
       venueDefaults.forEach((n) => {
         if (n.npcType === 'inmate' && establishedInmatesHere >= 2) return;
         if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
