@@ -78,6 +78,12 @@ export const ACTION_IMAGE_PROMPTS = {
   home_make_bed:   (loc, who) => who.includes("empty")
     ? `Neatly made bed in a sunlit bedroom, folded duvet and arranged pillows, no people, photorealistic.`
     : `${who} making the bed in the bedroom — smoothing the duvet, tucking sheets, fluffing a pillow, morning light, photorealistic. No other people.`,
+  // Moonwink — a consensual encounter between adults. The label is interface-only and
+  // never reaches the picture or the prose, so the prompt describes the moment itself:
+  // discreet, non-explicit, everyone in frame.
+  moonwink:        (loc, who) => who.includes("empty")
+    ? `Dim bedroom at night, rumpled bedding and a soft lamp, empty, photorealistic.`
+    : `${who} together in a dim bedroom at night, close and intimate under the covers, shoulders bare, warm lamp light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. No other people.`,
 
   // ── PRISON / JAIL — ZONE MOVES ──
   // Each move shows the room it moved to, so the top image follows the zone.
@@ -161,6 +167,19 @@ export function buildShowerStateRule() {
 // One authority for which actions record an ordinary meal or drink against the
 // person who actually has it.
 export const EATING_ACTION_IDS = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round', 'order_breakfast', 'pie', 'milkshake', 'order_late_night', 'dessert', 'hotel_dining', 'school_lunch', 'sk_soup', 'sk_sandwich', 'sk_hot_meal', 'sk_pasta', 'sk_bread', 'sk_fruit', 'buffet_plate', 'bar_food_tacos', 'bar_food_sliders', 'bar_food_burger', 'bar_food_wings', 'bar_food_nachos', 'bar_food_pizza', 'bar_food_sandwich', 'bar_food_fries', 'bar_food_hotdog'];
+
+// ── IN-WORLD WORDING FOR ACTIVITIES WHOSE LABEL IS INTERFACE-ONLY ────────────
+// An activity's strip title is never something the characters know or say. Where the
+// label would otherwise be handed to the narrative engine, the activity's real
+// experience is described instead, in the words the moment itself would use.
+//   direction — what happens, played out now
+//   past      — the same thing already happening, for a plain narrative line
+export const IN_WORLD_ACTIVITY_TEXT = {
+  moonwink: {
+    direction: "they are intimate with each other — consensual, unhurried, and discreetly described, never graphic",
+    past: "is intimate with the other",
+  },
+};
 
 // ── DIRECTED INTERACTION PROMPTS ──────────────────────────────────────────────
 // Kiss / Flirt With / Argue With are interactions BETWEEN two specific people, so the

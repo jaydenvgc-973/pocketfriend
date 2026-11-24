@@ -34,7 +34,7 @@ import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory,
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
 import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccessibleNow } from "@/components/location/EnvironmentSelectorModal";
 import { isOnSiteResidenceZone } from "@/lib/onsiteResidence";
-import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS } from "@/lib/sceneActionConfig";
+import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS, IN_WORLD_ACTIVITY_TEXT } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
@@ -55,6 +55,7 @@ import { resolveSceneRole, isEmployedAtLocation } from "@/lib/sceneRoleResolver"
 import { isSelectableParticipantAtZone, isIncarceratedCharacter, isJailOrPrison } from "@/lib/jailSceneRules";
 import { buildSceneCircumstances } from "@/lib/sceneCircumstances";
 import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
+import { getCharacterAge } from "@/lib/characterAgeSystem";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
@@ -110,6 +111,17 @@ export default function Scene() {
   // A location can be opened for viewing without sending anyone: the people already
   // there are the scene. Opening it is not travel and is not an arrival.
   const observeMode = urlParams.get("observe") === "1";
+  // Each traveling companion's own resolved location at the moment they were chosen for
+  // this trip, carried through the existing travel navigation as id:locationId pairs.
+  // It is the destination a companion returns to when the user leaves with them.
+  const travelOrigins = useMemo(() => {
+    const map = {};
+    (urlParams.get("originLocations") || "").split(",").filter(Boolean).forEach((pair) => {
+      const [id, originId] = pair.split(":");
+      if (id && originId) map[id] = originId;
+    });
+    return map;
+  }, [urlParams.get("originLocations") || ""]);
 
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState("");
@@ -262,9 +274,20 @@ export default function Scene() {
   // Its own zones behave residentially; the business's zones keep their operational behavior.
   const inOnSiteResidence = isOnSiteResidenceZone(location, activeZone || locationZones[0]?.zone_name);
   const isResidentialSpace = isHomeLocation || inOnSiteResidence;
-  // A resident of this property is at home inside the residence; anyone else here is visiting.
+  // A resident of this property is at home inside the residence; anyone else here is
+  // visiting. Only someone whose OWN home is this place is 'home': the 'home' presence
+  // branch returns a character to their own residence, so marking a guest 'home' at
+  // someone else's address is what sent them away from a place they were left at.
   const residencePresenceStatus = (char) => (
-    isHomeLocation || (inOnSiteResidence && char?.current_home_location_id === location?.id) ? 'home' : 'visiting'
+    char?.current_home_location_id && char.current_home_location_id === location?.id ? 'home' : 'visiting'
+  );
+  // Moonwink and any other adults-only activity: only an established adult may take part.
+  const isAdultForActivity = (person) => {
+    const age = getCharacterAge(person);
+    return age !== null && age >= 18;
+  };
+  const eligibleForAction = (list, action) => (
+    action?.adults_only === true ? (list || []).filter(isAdultForActivity) : (list || [])
   );
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   // Gateway House — the administrator-shared residence where characters from

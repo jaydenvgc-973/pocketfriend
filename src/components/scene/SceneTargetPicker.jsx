@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Users } from "lucide-react";
+import { X, Users, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 /**
  * SceneTargetPicker — chooses WHICH character a directed scene interaction is aimed at.
@@ -9,14 +11,36 @@ import { X, Users } from "lucide-react";
  * are actually present in this scene are offered, and the user always picks one — no
  * target is ever chosen automatically. Selecting a person hands them back to the scene,
  * which runs the interaction through the existing narrative/interaction pathway.
+ *
+ * It is also the selector for WHO performs an activity in a watched scene. There it is
+ * `multiple`: any number of the people here can take part in the same activity, from one
+ * to everyone present. Nothing is preselected — the observer picks exactly who joins, and
+ * confirms once the group is right. A directed interaction stays single-choice.
  */
-export default function SceneTargetPicker({ action, targets = [], onSelect, onClose, heading = null, hint = null }) {
+export default function SceneTargetPicker({
+  action,
+  targets = [],
+  onSelect,
+  onClose,
+  heading = null,
+  hint = null,
+  multiple = false,
+  selectedIds = [],
+  onConfirm = null,
+  confirmLabel = "Do it together",
+}) {
+  const [picked, setPicked] = useState(selectedIds || []);
   if (!action) return null;
   const verb = String(action.label || "").toLowerCase();
   // The same picker also chooses WHO performs an activity in a watched scene, so its
   // heading can be asked differently without changing how a target is chosen.
   const title = heading || `${action.emoji} ${action.label} — who?`;
   const subtitle = hint || "Only people who are here can be chosen.";
+
+  const toggle = (person) => {
+    setPicked((prev) => (prev.includes(person.id) ? prev.filter((id) => id !== person.id) : [...prev, person.id]));
+  };
+  const chosen = targets.filter((t) => picked.includes(t.id));
 
   return createPortal(
     <AnimatePresence>
@@ -56,24 +80,49 @@ export default function SceneTargetPicker({ action, targets = [], onSelect, onCl
                 <p className="text-xs">No one here to {verb}.</p>
               </div>
             ) : (
-              targets.map((person) => (
-                <button
-                  key={person.id}
-                  onClick={() => onSelect(person)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-secondary transition-colors text-left"
-                >
-                  <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center overflow-hidden flex-shrink-0">
-                    {person.avatar_url
-                      ? <img src={person.avatar_url} alt={person.name} className="w-full h-full object-cover" />
-                      : <span className="text-xs font-bold text-foreground">{person.name?.[0]}</span>
+              targets.map((person) => {
+                const isPicked = picked.includes(person.id);
+                return (
+                  <button
+                    key={person.id}
+                    onClick={() => (multiple ? toggle(person) : onSelect?.(person))}
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 transition-colors text-left ${isPicked ? "bg-primary/10" : "hover:bg-secondary"}`}
+                  >
+                    <div className="w-9 h-9 rounded-full bg-secondary flex items-center justify-center overflow-hidden flex-shrink-0">
+                      {person.avatar_url
+                        ? <img src={person.avatar_url} alt={person.name} className="w-full h-full object-cover" />
+                        : <span className="text-xs font-bold text-foreground">{person.name?.[0]}</span>
+                      }
+                    </div>
+                    <p className={`flex-1 min-w-0 text-sm font-medium truncate ${isPicked ? "text-primary" : "text-foreground"}`}>{person.name}</p>
+                    {multiple
+                      ? (isPicked
+                        ? <span className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0"><Check className="w-3 h-3 text-primary-foreground" /></span>
+                        : <span className="w-5 h-5 rounded-full border border-border flex-shrink-0" />)
+                      : <span className="text-base leading-none">{action.emoji}</span>
                     }
-                  </div>
-                  <p className="flex-1 min-w-0 text-sm font-medium text-foreground truncate">{person.name}</p>
-                  <span className="text-base leading-none">{action.emoji}</span>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
+
+          {multiple && targets.length > 0 && (
+            <div className="px-4 py-3 border-t border-border space-y-2">
+              <p className="text-[11px] text-muted-foreground">
+                {chosen.length === 0
+                  ? "Pick who takes part — one person or several."
+                  : `${chosen.length} ${chosen.length === 1 ? "person" : "people"}: ${chosen.map((c) => c.name).join(", ")}`}
+              </p>
+              <Button
+                onClick={() => onConfirm?.(chosen)}
+                disabled={chosen.length === 0}
+                className="w-full rounded-xl"
+              >
+                {confirmLabel}
+              </Button>
+            </div>
+          )}
         </motion.div>
       </motion.div>
     </AnimatePresence>,

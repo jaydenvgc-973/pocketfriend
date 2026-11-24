@@ -227,6 +227,9 @@ const HOME_ACTIONS = classifyAll([
   { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"] },
   { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"] },
   { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"] },
+  // Moonwink — the strip's title only. The label is never spoken, written, or remembered
+  // by a character; the interaction is played out in ordinary language. Adults only.
+  { id: "moonwink", label: "Moonwink", emoji: "🌙", cost: 0, type: "social", suggested_zone: "Bedroom", adults_only: true },
   // A wedding at home is the same marriage, recorded the same way.
   { id: "gov_marry", label: "Wedding Ceremony", emoji: "💍", cost: 0, type: "functional" },
 ]);
@@ -240,6 +243,7 @@ const HOTEL_ACTIONS = classifyAll([
   { id: "hotel_pool", label: "Use the pool", emoji: "🏊", cost: 0, type: "functional", suggested_zone: "Pool" },
   { id: "hotel_concierge", label: "Ask concierge", emoji: "🛎️", cost: 0, type: "social", requires_staff: true },
   { id: "hotel_relax", label: "Relax in room", emoji: "😌", cost: 0, type: "observational", suggested_zone: "Rooms" },
+  { id: "moonwink", label: "Moonwink", emoji: "🌙", cost: 0, type: "social", suggested_zone: "Rooms", adults_only: true },
   { id: "hotel_gym", label: "Use hotel gym", emoji: "💪", cost: 0, type: "functional", suggested_zone: "Fitness Center" },
   { id: "hotel_checkout", label: "Check out", emoji: "🧾", cost: 0, type: "functional", suggested_zone: "Front Desk", requires_staff: true },
 ]);
