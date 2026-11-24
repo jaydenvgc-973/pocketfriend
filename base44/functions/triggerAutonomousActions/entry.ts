@@ -641,6 +641,28 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     candidates.push({ weight: 22, label: 'running errands', type: 'errand_activity', needsEffect: {} });
   }
 
+  // ── SHOPPING INTEREST — optional leisure activity, never forced ──────────
+  // The character's existing spending quirks make an optional shopping outing
+  // more likely when the day already allows optional activity. Frugal and
+  // financially anxious characters keep it out of the pool entirely.
+  {
+    const _qw = (id) => {
+      const q = (character.quirks || []).find(x => x && x.quirk_id === id && x.active !== false);
+      return !q ? 0 : q.intensity === 'strong' ? 1.5 : q.intensity === 'mild' ? 0.6 : 1;
+    };
+    const _shopInterest = _qw('shopaholic') + _qw('retail_therapy') + _qw('luxury_oriented') + _qw('sneaker_obsession');
+    const _shopAvoid = _qw('frugal') + _qw('financially_anxious');
+    if (_shopInterest > 0 && _shopAvoid === 0 && financial >= 30 && (isMorning || isAfternoon || isEvening)) {
+      candidates.push({ weight: 22 + 10 * Math.min(2, _shopInterest), label: 'shopping', type: 'recreation_activity', needsEffect: { mental: 8, comfort: 5 } });
+      if (_qw('sneaker_obsession') > 0) {
+        candidates.push({ weight: 20 + 10 * _qw('sneaker_obsession'), label: 'shopping for sneakers', type: 'recreation_activity', needsEffect: { mental: 8, comfort: 5 } });
+      }
+      if (_qw('luxury_oriented') > 0) {
+        candidates.push({ weight: 18 + 8 * _qw('luxury_oriented'), label: 'browsing premium shops', type: 'recreation_activity', needsEffect: { mental: 6, comfort: 5 } });
+      }
+    }
+  }
+
   // ── SELF-CARE / GROOMING — activity, not destination ─────────────────────
   // Self-Care Focused quirk makes grooming more likely even without image-consciousness.
   {

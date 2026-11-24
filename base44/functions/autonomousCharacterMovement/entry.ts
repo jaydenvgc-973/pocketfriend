@@ -243,27 +243,18 @@ async function getProtectedArrivalCommitment(base44, char) {
 
 /**
  * AUTONOMOUS CHARACTER MOVEMENT — NEEDS-DRIVEN
- *
- * Runs every 30 minutes. Evaluates each active_created_character's raw need
- * values and moves them to the best available location.
- *
- * THRESHOLD (internal urgency — NOT UI labels):
- *   > 70    no urgency — optional movement only (25% chance)
- *   50–70   awareness  — begin evaluating (50% chance)
- *   < 50    URGENT     — mandatory movement attempt
- *   < 25    HIGH       — strong prioritization, no delay
- *   < 10    EMERGENCY  — maximum urgency score
- *
- * Below 50 = system MUST attempt movement or prove a blocking reason.
- * Silent skipping at < 50 is a SYSTEM FAILURE.
- *
- * OWNER_EMAIL ISOLATION: character may only move to locations where
- *   destination.owner_email === character.owner_email
+ * Runs every 30 minutes: evaluates each active_created_character's raw needs and
+ * moves them to the best available location.
+ * THRESHOLDS (internal urgency, NOT UI labels): >70 optional (25% chance),
+ * 50–70 awareness (50%), <50 URGENT mandatory, <25 HIGH, <10 EMERGENCY.
+ * Below 50 the system MUST attempt movement or prove a blocking reason; silent
+ * skipping at < 50 is a SYSTEM FAILURE.
+ * OWNER_EMAIL ISOLATION: a character may only move where destination.owner_email
+ * matches their own.
  */
 
-// sleep_start_time and wake_up_time are METADATA only.
-// They are NOT used to enforce sleep or wake for active_created_characters.
-// Sleep onset is driven by energy levels. Wake is driven by energy recovery and real obligations.
+// sleep_start_time and wake_up_time are METADATA only. Sleep onset is driven by
+// energy levels; wake is driven by energy recovery and real obligations.
 
 // ── CURRENT-LOCATION SATISFACTION CHECK ───────────────────────────────────────
 // Returns true if the character's urgent need can be satisfied at their current
@@ -672,6 +663,31 @@ function scoreLocation(location, char, vals, nowET) {
   const hygieneU = urgencyLevel(vals.hygiene);
   const comfortU = urgencyLevel(vals.comfort);
 
+  // ── ESTABLISHED SHOPPING INTEREST (existing traits + quirks) ────────────
+  // A preference inside a destination the scorer is already choosing. It is only
+  // applied inside the existing optional-activity branches below, so it can never
+  // create a destination, a trip, or a movement trigger on its own.
+  // Venue type is stored in subtype (SUBTYPE_OPTIONS); venue_types is the secondary field.
+  const _vt = [...(location.subtype || []), ...(location.venue_types || [])].map(v => String(v).toLowerCase());
+  const _qw = (id) => {
+    const q = (char.quirks || []).find(x => x && x.quirk_id === id && x.active !== false);
+    return !q ? 0 : q.intensity === 'strong' ? 1.5 : q.intensity === 'mild' ? 0.6 : 1;
+  };
+  const isRetailVenue = cat === 'business' &&
+    ['clothing_store', 'shoe_store', 'sneaker_store', 'accessories_store', 'bookstore', 'record_store', 'electronics_store', 'home_goods_store', 'thrift_store', 'retail_store', 'mall', 'shopping_district'].some(v => _vt.includes(v));
+  const _shoeShop = isRetailVenue && (_vt.includes('sneaker_store') || _vt.includes('shoe_store'));
+  const _premiumShop = isRetailVenue && /boutique|luxury|designer|premium|atelier|haute|jewel/i.test(location.name || '');
+  const _bal = char._financialBalance;
+  const _canBuy = _bal === undefined || _bal === null || _bal >= 40;
+  const retailAppeal = (isRetailVenue && _canBuy)
+    ? 0.9 * _qw('shopaholic')
+      + 1.3 * _qw('sneaker_obsession') * (_shoeShop ? 1 : 0.15)
+      + 0.9 * _qw('luxury_oriented') * (_premiumShop ? 1 : 0.3)
+      + 0.4 * (_qw('generous_spender') + (char.trait_generous ? 1 : 0))
+      + (char.trait_bougie ? (_premiumShop ? 0.7 : 0.2) : 0)
+      - 1.2 * (_qw('frugal') + _qw('financially_anxious'))
+    : 0;
+
   // ── HUNGER — drives eating, NOT grocery shopping ────────────────────────
   const isIntro = ['introvert', 'mostly_introvert'].includes(se);
   if (hungerU >= 2) {
@@ -715,7 +731,7 @@ function scoreLocation(location, char, vals, nowET) {
     const balance = char._financialBalance;
     const inventoryData = char._householdInventory;
     const hasHomeFood = inventoryData && inventoryData.homeFoodValue > 0;
-    const isSpendingCat = cat === 'food_drink' || cat === 'grocery' ||
+    const isSpendingCat = cat === 'food_drink' || cat === 'grocery' || isRetailVenue ||
       (cat === 'social' && (location.name || '').toLowerCase().includes('bar'));
 
     if (isSpendingCat && balance !== undefined && balance !== null) {
@@ -778,6 +794,8 @@ function scoreLocation(location, char, vals, nowET) {
   if (mentalU >= 2) {
     if (['outdoor', 'home', 'religion'].includes(cat)) score += 2 + mentalU;
     if (cat === 'gym') score += 1 + mentalU;
+    // Retail Therapy: shopping as coping when mood is low — quirk holders only.
+    if (isRetailVenue && _canBuy) score += (1 + mentalU * 0.5) * _qw('retail_therapy');
   }
 
   // ── REPAIRED: HYGIENE — home/self-care only, PENALIZE food/social/outdoor ──
@@ -801,6 +819,8 @@ function scoreLocation(location, char, vals, nowET) {
   if (comfortU >= 2) {
     if (cat === 'outdoor' || cat === 'food_drink') score += 1 + comfortU;
     if (cat === 'home') score -= 1;
+    // Retail outings appeal where the character's established interest is shopping.
+    if (retailAppeal > 0) score += retailAppeal + comfortU * 0.5;
   }
 
   // BASE social energy preference (minor, overridden by urgent needs)
@@ -829,20 +849,10 @@ function scoreLocation(location, char, vals, nowET) {
   }
 
   // ── SOCIAL WORKPLACE RECOGNITION ──────────────────────────────────────────
-  // If the character has recently completed a shift at a people-facing workplace
-  // (bar, restaurant, salon, school, retail, customer service, medical, etc.),
-  // their social need has already been partially met during work.
-  // A server who just got off a 6-hour shift at a restaurant does NOT need to
-  // go to a bar or café for social recovery — they already had 6 hours of social contact.
-  //
-  // Detection: check resolved_source_reason for 'work_schedule' and the work location's
-  // category/subtype. If the character is marked as currently at work (or just finished
-  // work and went somewhere nearby), recognize the social exposure.
-  //
-  // This modifies social urgency for NEED SCORING ONLY. It does NOT affect
-  // the character's actual social_value — that number is independent.
-  // It only prevents the scorer from sending them to a social venue when their
-  // social need has already been addressed by work context.
+  // A people-facing shift (bar, restaurant, salon, school, retail, medical, …) has
+  // already met social need, so it must not route them to another social venue.
+  // Detection uses resolved_source_reason + the work location's category/subtype.
+  // Modifies NEED SCORING ONLY — the character's actual social_value is unchanged.
   {
     const presenceSource = char.resolved_source_reason || '';
     const currentlyAtWork = char.resolved_presence_status === 'at_work';
@@ -1508,18 +1518,11 @@ Deno.serve(async (req) => {
         }
 
         // ── TIER 2: ALREADY PASSED OUT — 6-HOUR MINIMUM GUARD ───────────────
-        // Character is passed out. autonomousCharacterMovement must NOT route them to home
-        // or change their presence until the 6-hour minimum has elapsed from last_pass_out_at.
-        // Energy recovery reaching > 10 is the intended physiological response — it does NOT
-        // mean the character is ready to get up. They are still unconscious/recovering.
-        //
-        // CANONICAL RULE: passed_out → home transition requires:
-        //   a) 6h elapsed from last_pass_out_at, OR
-        //   b) Medical emergency (health ≤ 15 — hospitalization overrides everything)
-        //
-        // The 12h hard cap in simulateActiveCharacterNeeds is the MAXIMUM.
-        // The energy > 35 stay_lock_release is governed by the same 6h guard (fixed there too).
-        // autonomousCharacterMovement must NOT circumvent both guards by routing to home directly.
+        // Energy recovering above 10 is physiological, not readiness: a passed-out
+        // character must not be routed home or have presence changed until 6h from
+        // last_pass_out_at, unless a medical emergency (health ≤ 15) overrides. The
+        // 12h cap in simulateActiveCharacterNeeds is the MAXIMUM; the energy > 35
+        // stay_lock release obeys the same guard. Do not circumvent either guard.
         if (status === 'passed_out') {
           const passOutAt = char.last_pass_out_at;
           const isMedicalEmergencyPassOut = (char.health_value ?? 80) <= 15;
@@ -2304,23 +2307,14 @@ Deno.serve(async (req) => {
         // ── VACATION MODE LOCATION AUTHORITY + DESTINATION EXCLUSION ──────────
         // Two rules applied at the shared destination-selection point:
         //
-        // 1. DESTINATION TYPE EXCLUSION (always applies):
-        //    Locations with location_type "destination" are intentionally excluded
-        //    from ordinary autonomous needs-based travel. A Destination becomes
-        //    eligible ONLY when Vacation Mode is ON for this character AND that
-        //    Destination is explicitly selected in this character's
-        //    vacation_location_ids.
-        //
-        // 2. VACATION LOCATION RESTRICTION (Vacation Mode ON only):
-        //    When Vacation Mode is ON and vacation_location_ids is non-empty,
-        //    autonomous destination selection is restricted to those selected
-        //    locations only. The permanent home is NOT eligible unless explicitly
-        //    included. This prevents autonomous selection of otherwise-normal
-        //    locations merely because a need, social rule, routine, or general
-        //    travel logic would ordinarily make them eligible.
-        //
-        // When Vacation Mode is OFF, only rule 1 (Destination exclusion) applies.
-        // The permanent home and all normal locations remain normally eligible.
+        // 1. DESTINATION TYPE EXCLUSION (always applies): location_type "destination"
+        //    is excluded from ordinary needs-based travel. A Destination becomes
+        //    eligible ONLY with Vacation Mode ON and explicitly selected.
+        // 2. VACATION LOCATION RESTRICTION (Vacation Mode ON only): selection is
+        //    restricted to vacation_location_ids; the permanent home is NOT eligible
+        //    unless included. Prevents ordinary need/routine logic from selecting a
+        //    normal location while on vacation.
+        // With Vacation Mode OFF only rule 1 applies; all normal locations stay eligible.
         const _vacationModeOn = char.vacation_mode === true;
         const _vacIds = Array.isArray(char.vacation_location_ids) ? char.vacation_location_ids : [];
         const eligibleLocations = openLocations.filter(loc => {
