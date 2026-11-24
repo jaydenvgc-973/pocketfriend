@@ -199,6 +199,10 @@ export function buildDirectedActionPrompt({ actionId, actorName, targetName, loc
       return `${actor} flirting with ${target} at ${loc}, leaning in close, playful smile, teasing eye contact, a light touch on the arm, warm chemistry between them, photorealistic. ${together}No other people.`;
     case "argue_with":
       return `${actor} arguing with ${target} at ${loc}, standing face to face in a tense confrontation, hard expressions, raised hands mid-gesture, defensive posture, clearly NOT affectionate, dramatic lighting, photorealistic. ${together}No other people.`;
+    case "moonwink":
+      // A directed moment between the two chosen adults — discreet, non-explicit, and
+      // written as the moment itself. The strip's title never reaches the picture.
+      return `${actor} and ${target} alone together at ${loc}, close and intimate in a private embrace, shoulders bare, warm low light, tasteful and non-explicit, faces and shoulders in frame, photorealistic. ${together}No other people.`;
     default:
       return `${actor} and ${target} at ${loc}, photorealistic. ${together}`;
   }

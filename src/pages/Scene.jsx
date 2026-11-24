@@ -77,16 +77,19 @@ const DIRECTED_SCENE_ACTIONS = [
   { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses" },
   { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with" },
   { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with" },
+  // Moonwink is a moment between two chosen adults, so it uses the same who-and-who
+  // selection as Kiss and Flirt With. The strip title is interface-only: the verb and the
+  // in-world wording are what the scene is given, never the button's name.
+  { id: "moonwink", label: "Moonwink", emoji: "🌙", verb: "is intimate with", adults_only: true },
 ];
 
-// Moonwink sits with the directed interactions, not buried among the ordinary venue
-// activities: it is the last activity in the strip, immediately beside Kiss and Flirt With.
+// Moonwink is drawn in the directed row beside Kiss and Flirt With. Its venue entry stays
+// in the activity catalog — it is still this place's activity — but it is never drawn a
+// second time as a one-person button.
 const MOONWINK_ACTION_ID = "moonwink";
-function orderStripActions(list) {
+function stripActions(list) {
   if (!Array.isArray(list)) return [];
-  const others = list.filter((a) => a.id !== MOONWINK_ACTION_ID);
-  const moonwink = list.filter((a) => a.id === MOONWINK_ACTION_ID);
-  return [...others, ...moonwink];
+  return list.filter((a) => a.id !== MOONWINK_ACTION_ID);
 }
 
 const CATEGORY_EMOJIS = {
@@ -928,8 +931,23 @@ export default function Scene() {
         seen.add(p.id);
         return true;
       })
-      .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+      .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url, is_adult: isAdultForActivity(p) }));
   }, [sceneParticipants.map((p) => p.id).join(","), currentUser?.id, observeMode, observeCastIdList.join(",")]);
+
+  // Who can be paired with this action: an adults-only activity offers only established
+  // adults, and never the person acting. Nobody is chosen on the user's behalf.
+  const directedPartnersFor = (action, actorId = null) =>
+    (action?.adults_only ? directedTargets.filter((t) => t.is_adult) : directedTargets)
+      .filter((t) => t.id !== actorId);
+
+  // In a watched scene the person who starts it is chosen too — the observer never is.
+  const directedActorsFor = (action) => observeActors
+    .filter((c) => (action?.adults_only ? isAdultForActivity(c) : true))
+    .filter((c) => directedPartnersFor(action, c.id).length > 0);
+
+  const directedAvailable = (action) => (observeMode
+    ? directedActorsFor(action).length > 0
+    : directedPartnersFor(action).length > 0);
 
   // ── RECIPIENT ACTIONS (prison / jail interactions) ──
   // A shakedown, a search, a warning, an escort involves ONE person who is actually
@@ -1023,9 +1041,15 @@ export default function Scene() {
     const actorName = actor?.name || actor?.display_name || null;
     // The direction names the person taking the action, so the moment belongs to them
     // and never to the absent observer.
-    const label = observeMode && actorName
-      ? `[${action.emoji} ${action.label} — ${actorName} with ${target.name}]`
-      : `[${action.emoji} ${action.label} — ${target.name}]`;
+    // An interface-only title never becomes character vocabulary: where the strip's name
+    // would otherwise reach the narrative, the moment itself is described instead.
+    const inWorld = IN_WORLD_ACTIVITY_TEXT[action.id] || null;
+    const pairNames = actorName ? `${actorName} with ${target.name}` : target.name;
+    const label = inWorld
+      ? `[${inWorld.direction} — ${pairNames}]`
+      : observeMode && actorName
+        ? `[${action.emoji} ${action.label} — ${actorName} with ${target.name}]`
+        : `[${action.emoji} ${action.label} — ${target.name}]`;
     if (actor?.id && actorName) {
       generateSceneImage({
         location, locationZones, activeZone, sceneParticipants, userParticipant,
@@ -1695,9 +1719,11 @@ export default function Scene() {
     if (actionCooldown) return;
     if (!observeMode) { setDirectedAction(directed); return; }
     // Only someone here can start it, and only toward someone else who is here.
-    const actors = observeActors.filter((c) => directedTargets.filter((t) => t.id !== c.id).length > 0);
+    const actors = directedActorsFor(directed);
     if (actors.length === 0) {
-      setMessages((prev) => [...prev, { id: `obs_nopair_${Date.now()}`, sender: "narrative", content: "No one else is here to try that with yet — pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `obs_nopair_${Date.now()}`, sender: "narrative", content: directed.adults_only
+        ? "That is only for adults, and no two adults are here for it."
+        : "No one else is here to try that with yet — pick someone from Who's Here.", timestamp: new Date().toISOString() }]);
       return;
     }
     if (actors.length === 1) { setDirectedAction({ ...directed, actorId: actors[0].id, actorName: actors[0].name }); return; }
@@ -1863,7 +1889,7 @@ export default function Scene() {
             </button>
           )}
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {orderStripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
+          {stripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : actions).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
             // An activity that acts on a chosen character needs someone here to involve.
             const needsCharacter = action.requires_selected_character === true
               && recipientTargets.length === 0;
@@ -1875,12 +1901,16 @@ export default function Scene() {
               <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
             </button>); })}
-          {directedTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => (
-            <button key={directed.id} onClick={() => handleDirectedSelect(directed)} disabled={actionCooldown} title={`${directed.label} — choose who`} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
+          {directedTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => {
+            const canPair = directedAvailable(directed);
+            const blocked = actionCooldown || !canPair;
+            return (
+            <button key={directed.id} onClick={() => handleDirectedSelect(directed)} disabled={blocked} title={canPair ? `${directed.label} — choose who` : directed.adults_only ? "Only for adults — two adults need to be here" : "No one else is here to choose"} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${blocked ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
               <span className="text-base leading-none">{directed.emoji}</span>
               <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{directed.label}</span>
             </button>
-          ))}
+            );
+          })}
           {characterInviter && (
             <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
               <span className="text-base leading-none">🙋</span>
@@ -1925,7 +1955,7 @@ export default function Scene() {
       <SceneTargetPicker
         action={actorAction?.action}
         targets={actorAction?.mode === "directed"
-          ? observeActors.filter((c) => directedTargets.filter((t) => t.id !== c.id).length > 0)
+          ? directedActorsFor(actorAction?.action)
           : eligibleForAction(observeActors, actorAction?.action)}
         onSelect={handleActorSelect}
         onConfirm={handleActorsConfirm}
@@ -1939,7 +1969,7 @@ export default function Scene() {
             ? "Pick one person or several — they take part together. Only people who are here can be chosen."
             : "Only people who are here can do it — you are not in the scene."}
       />
-      <SceneTargetPicker action={directedAction} targets={directedTargets.filter((t) => t.id !== directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
+      <SceneTargetPicker action={directedAction} targets={directedPartnersFor(directedAction, directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
       <SceneTargetPicker
         action={recipientAction}
         targets={recipientTargets}
