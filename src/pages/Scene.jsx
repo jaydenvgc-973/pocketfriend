@@ -1021,7 +1021,9 @@ export default function Scene() {
     }
     // A watched scene stages the moment between the people in it: the cast acts on it.
     if (observeMode) {
-      runObserveBeat({ direction: label, actorName });
+      // Both people in a directed interaction take part in it, so the scene is written
+      // as a moment between them — the person spoken to is the one standing there.
+      runObserveBeat({ direction: label, actorName, actorNames: [actorName, target.name].filter(Boolean) });
       return;
     }
     sendMessage(label, true, null, null, null, null, null, false, {
@@ -1091,6 +1093,9 @@ export default function Scene() {
         participants: characterCast, responders, location, activeZone,
         messages: priorLine ? [...messages, priorLine] : messages,
         direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
+        // The account holder's world name, so the scene can be told plainly who is not
+        // here and whose name is never the person being spoken to.
+        observerName: displayName || null,
         actorName: actorName || null,
         // Several people taking part in the same activity at once.
         actorNames: Array.isArray(actorNames) && actorNames.length > 1 ? actorNames : null,

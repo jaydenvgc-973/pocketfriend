@@ -91,7 +91,7 @@ function backgroundCast(list) {
 
 // `spokenBy` is the character the observer spoke as, resolved from the existing Speak As
 // selection: { id, name, content }. The words are that character's own, not the observer's.
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, actorNames = null, unitScope = null, spokenBy = null, venueContext = null }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, observerName = null, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, actorNames = null, unitScope = null, spokenBy = null, venueContext = null }) {
   // One chosen person, or several taking part in the same activity. `actorName` is kept
   // for every existing caller; an activity performed by a group passes `actorNames`.
   const actionNames = (Array.isArray(actorNames) ? actorNames : []).filter(Boolean);
@@ -185,7 +185,8 @@ Everyone in this scene is already at this place${activeZone ? `, in the ${active
   const namesRule = `=== NAMES ARE EXACT IDENTITY ===
 - Every person here is exactly the name given in PARTICIPANTS and in the transcript. Use those names, and only those, for those people.
 - Never substitute a different or similar-sounding name for anyone, never shorten one person's name into another person's, and never merge two people because their names look or sound alike. A speaker named in a line is that speaker and nobody else.
-- Nobody is addressed by another person's name by accident, and no one is addressed as a person who is not in this scene.`;
+- Nobody is addressed by another person's name by accident, and no one is addressed as a person who is not in this scene.
+- Whenever one person here speaks to another, the person spoken to is someone in PARTICIPANTS, called by their own name. A line is never aimed at anyone else, and a name from outside this scene never stands in for the person actually being spoken to.`;
 
   // SPEAK AS ATTRIBUTION — the words typed through Speak As belong to that character,
   // identified by their own record ID. They are not the observer's words, and the others
@@ -247,6 +248,21 @@ ${spokenBy.name} (character ID ${spokenBy.id}) just said this out loud, in this 
 
   const speechLimitRuleText = speaking.map(childSpeechLimit).filter(Boolean).join('\n');
 
+  // The account holder is a real person in these characters' lives and is NOT in this
+  // scene. Their name is everywhere in the records, memories and conversations below, so
+  // it is named here explicitly: knowing someone is not having them in the room, and
+  // their name is never the person a line spoken here is addressed to.
+  // A placeholder name ("You") is not a name in these people's world — the general
+  // absence rule above already covers that case.
+  const holder = /^(you|the user)$/i.test(String(observerName || '').trim()) ? '' : String(observerName || '').trim();
+  const accountHolderRule = holder ? `
+THE ACCOUNT HOLDER, ${holder}, IS NOT IN THIS SCENE:
+- ${holder} owns this world. They are NOT here: not standing anywhere in this place, not within sight or hearing, and not one of the people in this scene.
+- ${holder}'s name appears throughout the records, memories and conversations below because these people know them and have a life with them. Knowing ${holder} does not put ${holder} in this room.
+- Every line spoken here is spoken to a person who is actually in this scene, under that person's own name. Never address, answer, ask, thank, invite, touch, kiss, hand something to, or look toward ${holder}.
+- When one person here speaks to another, the name used is the other person's name, the one standing there. ${holder}'s name is never used as the person being spoken to, and never replaces anyone in this scene.
+- ${holder} may be talked about in the third person, as someone who is somewhere else. That is the only way ${holder} appears in this moment.` : '';
+
   const prompt = `You are writing a scene that takes place between the characters themselves at ${location.name}${activeZone ? `, in the ${activeZone}` : ''} (${location.category}).
 
 THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
@@ -256,6 +272,7 @@ THE OBSERVER IS NOT PRESENT — NON-NEGOTIABLE:
 - An absent person is still part of these people's lives. They may be mentioned, remembered, discussed, missed, or credited for something that already happened — exactly the way real people talk about someone who is somewhere else. A mention is never presence: the absent person stays absent, does nothing here, and the moment stays with the people who are actually in this place. Never invent a physical arrival for them.
 - Nobody here is aware of being observed, directed, or operated. Nothing may hint at an audience, a narrator, or anyone outside this scene.
 - Nobody in this scene is doing what they are doing because someone told, reminded, suggested, or asked them to. Nobody thanks, credits, blames, or refers to anyone for it, and nobody asks whether anyone wants them to do something, or whether someone is going to join in. It is simply what they are doing.
+${accountHolderRule}
 
 PARTICIPANTS (the people this moment is about):
 ${castLines || '(no established Pocketfriend character is in this moment)'}
