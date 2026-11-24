@@ -242,21 +242,16 @@ Deno.serve(async (req) => {
       };
       if (idx >= 0) inmates[idx] = { ...inmates[idx], ...inmateRecord }; else inmates.push(inmateRecord);
 
-      // The facility's existing residential units are its cells. Take a free one so the
-      // sentence includes the accommodation the facility already provides.
-      const units = Array.isArray(facility.residential_units) ? facility.residential_units : [];
-      const alreadyHoused = units.some((u) => (u.occupant_character_ids || []).includes(character.id));
-      const freeUnit = alreadyHoused ? null : units.find((u) => (u.occupant_character_ids || []).length === 0);
-      const residential_units = freeUnit
-        ? units.map((u) => (u.unit_id === freeUnit.unit_id
-          ? { ...u, occupant_character_ids: [...(u.occupant_character_ids || []), character.id] }
-          : u))
-        : units;
+      await base44.asServiceRole.entities.LocationReference.update(facility.id, { inmates });
 
-      await base44.asServiceRole.entities.LocationReference.update(facility.id, {
-        inmates,
-        ...(freeUnit ? { residential_units } : {}),
-      });
+      // The sentence includes the accommodation the facility already provides: the
+      // existing cell assignment gives this inmate a cell — a cell with space first, a new
+      // cell in the facility's own sequence only when every cell is full. A cell this
+      // character already holds is never replaced.
+      await base44.asServiceRole.functions.invoke('autoAssignFacilityUnit', {
+        character_id: character.id,
+        location_id: facility.id,
+      }).catch((err) => console.warn(`[applyJudicialSentence] cell assignment failed (non-blocking): ${err.message}`));
     }
 
     await base44.asServiceRole.entities.LifeEvent.create({

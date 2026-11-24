@@ -31,12 +31,18 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
   const speaker = speakable.find((c) => c.id === speakAsId) || speakable[0] || null;
   const speaking = mode === "speak" && !!speaker;
 
+  // Speaking as a character is never gated on the others finishing: a person can say two
+  // things in a row. Only a beat the observer drives (Narrative / Direct) waits its turn.
   const submit = () => {
     const body = text.trim();
-    if (!body || isGenerating) return;
-    if (speaking) onVoice(speaker, body);
-    else if (mode === "direct") onDirect(body);
-    else onNarrate(body);
+    if (!body) return;
+    if (speaking) {
+      onVoice(speaker, body);
+    } else {
+      if (isGenerating) return;
+      if (mode === "direct") onDirect(body);
+      else onNarrate(body);
+    }
     setText("");
   };
 
@@ -47,7 +53,9 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
       : "What already happened — past events the characters already lived";
 
   return (
-    <div className="border-t border-border bg-card/60 flex-shrink-0">
+    // The strip can grow taller than the screen on a phone; it scrolls rather than
+    // pushing its own buttons below the viewport, and keeps the home indicator clear.
+    <div className="border-t border-border bg-card/60 flex-shrink-0 max-h-[62dvh] overflow-y-auto pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-center gap-1.5 px-3 pt-2 text-[10px] text-muted-foreground">
         <Eye className="w-3 h-3" />
         <span>You are not in the scene. No one here can see or hear you.</span>
@@ -104,7 +112,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
         <Button
           size="icon"
           onClick={submit}
-          disabled={isGenerating || !text.trim() || (mode === "speak" && !speaker)}
+          disabled={(!speaking && isGenerating) || !text.trim() || (mode === "speak" && !speaker)}
           className="h-10 w-10 rounded-xl flex-shrink-0"
           title={speaking ? `Say it as ${speaker?.name}` : mode === "direct" ? "Play this out next" : "Record this as already happened"}
         >
@@ -117,7 +125,7 @@ export default function ObserveStageControls({ candidates, castIds, onToggleCast
           variant="outline"
           onClick={onContinue}
           disabled={isGenerating}
-          className="w-full h-9 rounded-xl gap-2 text-xs"
+          className="w-full h-11 rounded-xl gap-2 text-xs touch-manipulation select-none"
         >
           <Play className="w-3.5 h-3.5" />
           {isGenerating ? "They're talking..." : "Let them continue"}

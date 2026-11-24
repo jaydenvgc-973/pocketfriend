@@ -312,10 +312,14 @@ ${direction ? `- Now play out the directed moment above: the people named take t
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.${spokenBy?.name ? `\n- The line just spoken belongs to ${spokenBy.name}. The others answer ${spokenBy.name} as the person who said it.` : ''}
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
+- Continuing is not an event. Ordinary conversation is a complete continuation: they simply keep talking. An activity already underway stays underway without being re-announced. Include a physical action or a new development ONLY when it genuinely follows from what was just said and done between these people — never because a beat was requested, and never to make the moment busier than it is.
 - Give each speaking participant at most one turn, 1-2 sentences, natural and in-character.
 - Characters do not say their own name out loud when speaking about themselves.
 - Background people of the place stay background unless they are the ones being spoken to: when a line is aimed at them they answer for themselves, in role; otherwise they work, pass by, and never take the moment over or replace the named participants.
 - No narration of the observer. No summary of the scene.
+- These people act on their own. You may return ONE spontaneous_action, and only when what has just passed between them genuinely leads to it: an affectionate exchange that is already going there between two adults who are free to, a conflict that has actually escalated, or the ordinary task their role and this conversation have already put in front of them. It must follow from the transcript, their relationship and their circumstances.
+- Most beats have NO action. Conversation alone is a complete beat. Never add one to make the scene busier, never repeat an action already in the transcript, never force flirting into a kiss or an argument into a fight, and never give anyone an action that belongs to another person's role or that their circumstances forbid.
+- Describe it briefly in the third person, naming the person, the way an established scene activity reads ("Marisol starts filing the intake forms."). Set ongoing true when it is something they are now doing rather than something completed in this beat.
 
 Return JSON only.`;
 
@@ -334,6 +338,16 @@ Return JSON only.`;
             },
           },
         },
+        // Their own action, when the moment genuinely led to one. Absent on most beats.
+        spontaneous_action: {
+          type: 'object',
+          properties: {
+            character_name: { type: 'string' },
+            description: { type: 'string' },
+            emoji: { type: 'string' },
+            ongoing: { type: 'boolean' },
+          },
+        },
       },
     },
   });
@@ -344,7 +358,7 @@ Return JSON only.`;
   ]);
   const bgIds = new Set(bgSpeaking.map((n) => n.id));
   const stamp = Date.now();
-  return (res?.lines || [])
+  const lines = (res?.lines || [])
     .map((line, i) => {
       const char = allowed.get(line?.character_name?.trim()?.toLowerCase());
       if (!char || !line?.content) return null;
@@ -362,6 +376,24 @@ Return JSON only.`;
       };
     })
     .filter(Boolean);
+
+  // An action these people take on their own is the SAME scene activity the strip
+  // produces, so it is shown, remembered and continued from exactly as one the observer
+  // chose — only ever for someone actually in this scene.
+  const raw = res?.spontaneous_action;
+  const actor = raw?.character_name ? allowed.get(String(raw.character_name).trim().toLowerCase()) : null;
+  const description = String(raw?.description || '').trim();
+  const action = (actor && description && !isInfantCharacter(actor))
+    ? {
+        id: `${stamp}_act`,
+        emoji: raw?.emoji || null,
+        content: filterDashes(description),
+        // A finished action is canon; something they are now doing is still underway.
+        is_canon_event: raw?.ongoing !== true,
+      }
+    : null;
+
+  return { lines, action };
 }
 
 /**

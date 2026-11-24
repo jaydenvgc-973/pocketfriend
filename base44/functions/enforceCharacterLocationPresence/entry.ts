@@ -2255,6 +2255,18 @@ Deno.serve(async (req) => {
     }
     await base44.asServiceRole.entities.Character.update(character_id, updatePayload);
 
+    // A patient or inmate the facility has taken in also gets the space that facility
+    // provides: the existing patient room or cell assignment, from the same
+    // residential_units Travel, Who's Here and Scenes already read. Non-blocking — the
+    // presence commit above stands whatever happens to the accommodation.
+    if (['hospitalized', 'incarcerated', 'confined'].includes(updatePayload.resolved_presence_status)) {
+      try {
+        await base44.asServiceRole.functions.invoke('autoAssignFacilityUnit', { character_id });
+      } catch (unitErr) {
+        console.warn(`[enforceCharacterLocationPresence] room/cell assignment failed (non-blocking): ${unitErr.message}`);
+      }
+    }
+
     // ── OBLIGATED TRANSITION NARRATIVE EMISSION ────────────────────────────────
     // Emit an authoritative narrative record for obligated life-state transitions
     // (work, school, hospitalization, return-home) directly at the sole canonical

@@ -811,6 +811,12 @@ export default function Scene() {
   // moment. The observer is absent — their direction only shapes the circumstances,
   // and when they speak as a character those words belong to that character.
   const [isObservingTurn, setIsObservingTurn] = useState(false);
+  // The same turn state as a ref, so a line spoken mid-beat is handled at once instead of
+  // reading a stale value, and the latest messages are always the ones a beat answers.
+  const observingTurnRef = useRef(false);
+  const messagesRef = useRef([]);
+  const pendingVoicesRef = useRef(0);
+  messagesRef.current = messages;
   const [observeCastIds, setObserveCastIds] = useState(null);
   const observeAutoStartedRef = useRef(false);
 
@@ -1135,8 +1141,43 @@ export default function Scene() {
 
   // `actorName` names the person taking the directed action, so the moment is written as
   // theirs and never as anyone else's — the observer above all.
+  // A line the observer speaks AS a character belongs to that character and is shown at
+  // once — never the observer's words — and is remembered by them exactly as before.
+  const appendVoicedLine = (speaker, spoken) => {
+    if (!speaker?.id || !spoken) return null;
+    const line = {
+      id: `voiced_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      sender: "character",
+      senderName: speaker.name,
+      characterId: speaker.id,
+      avatarUrl: speaker.avatar_url,
+      content: spoken,
+      timestamp: new Date().toISOString(),
+    };
+    setMessages((prev) => [...prev, line]);
+    messagesRef.current = [...messagesRef.current, line];
+    // A background person of the facility has no record to remember with — only an
+    // established character keeps the memory of their own words.
+    if (speaker.isNpc !== true && !String(speaker.id).startsWith("npc_")) {
+      recordVoicedLineMemory({ speaker, listeners: observeCast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
+    }
+    return line;
+  };
+
   const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null, actorNames = null, activity = null } = {}) => {
-    if (!observeMode || !location || isObservingTurn) return;
+    if (!observeMode || !location) return;
+    const speaker = voiceAs?.character;
+    const spoken = (voiceAs?.content || "").trim();
+    // The others are still answering. A line spoken as a character is recorded now and
+    // answered by the next beat, in the order it was said — the observer never waits for
+    // another character to finish before saying the next thing.
+    if (observingTurnRef.current) {
+      if (speaker?.id && spoken) {
+        appendVoicedLine(speaker, spoken);
+        pendingVoicesRef.current += 1;
+      }
+      return;
+    }
     const cast = observeCast;
     // Established people carry identity and memory. Background people of the venue
     // speak in role only and never write memories.
@@ -1156,6 +1197,7 @@ export default function Scene() {
       return;
     }
     setIsObservingTurn(true);
+    observingTurnRef.current = true;
     // NARRATIVE — what has already happened. Canon: the characters already lived it.
     // DIRECT — what happens next. It is played out now, not treated as history.
     const narration = (narrative || "").trim();
@@ -1175,18 +1217,7 @@ export default function Scene() {
 
     // Words the observer spoke as a character ARE that character's words:
     // shown as their line and remembered by them as something they said.
-    let priorLine = null;
-    const speaker = voiceAs?.character;
-    const spoken = (voiceAs?.content || "").trim();
-    if (speaker?.id && spoken) {
-      priorLine = { id: `voiced_${Date.now()}`, sender: "character", senderName: speaker.name, characterId: speaker.id, avatarUrl: speaker.avatar_url, content: spoken, timestamp: new Date().toISOString() };
-      setMessages((prev) => [...prev, priorLine]);
-      // A background person of the facility has no record to remember with — only an
-      // established character keeps the memory of their own words.
-      if (speaker.isNpc !== true && !String(speaker.id).startsWith("npc_")) {
-        recordVoicedLineMemory({ speaker, listeners: characterCast.filter((c) => c.id !== speaker.id), content: spoken, location }).catch(() => {});
-      }
-    }
+    const priorLine = appendVoicedLine(speaker, spoken);
 
     const responders = priorLine ? cast.filter((c) => c.id !== priorLine.characterId) : cast;
     // A character who is alone still speaks for themselves: the line is recorded as
@@ -1196,9 +1227,9 @@ export default function Scene() {
       return;
     }
     try {
-      const lines = await generateObserveBeat({
+      const { lines, action } = await generateObserveBeat({
         participants: characterCast, responders, location, activeZone,
-        messages: priorLine ? [...messages, priorLine] : messages,
+        messages: priorLine ? [...messagesRef.current, priorLine] : messagesRef.current,
         direction: note || null, narrative: narration || null, ownerEmail: currentUser?.email,
         // The account holder's world name, so the scene can be told plainly who is not
         // here and whose name is never the person being spoken to.
@@ -1220,8 +1251,13 @@ export default function Scene() {
           ? (buildWatchContextLabel(watchContext) || watchContext.linkAnalysisContext || (watchContext.title ? `They are watching "${watchContext.title}" together.` : "They are watching a video together."))
           : null,
       });
+      // Something they did on their own, when the moment genuinely led to it. It reads
+      // exactly like an activity the observer selected — because it is the same thing.
+      if (action) {
+        setMessages((prev) => [...prev, { id: action.id, sender: "activity", content: action.content, emoji: action.emoji, is_canon_event: action.is_canon_event, timestamp: new Date().toISOString() }]);
+      }
       if (lines.length === 0) {
-        setMessages((prev) => [...prev, { id: `obs_quiet_${Date.now()}`, sender: "narrative", content: "The moment passes quietly between them.", timestamp: new Date().toISOString() }]);
+        if (!action) setMessages((prev) => [...prev, { id: `obs_quiet_${Date.now()}`, sender: "narrative", content: "The moment passes quietly between them.", timestamp: new Date().toISOString() }]);
       } else {
         for (const line of lines) {
           setMessages((prev) => [...prev, line]);
@@ -1237,6 +1273,13 @@ export default function Scene() {
       setMessages((prev) => [...prev, { id: `obs_err_${Date.now()}`, sender: "narrative", content: "The moment did not continue.", timestamp: new Date().toISOString() }]);
     } finally {
       setIsObservingTurn(false);
+      observingTurnRef.current = false;
+      // Lines spoken while this beat was running are answered now, in the order they were
+      // said: nothing is dropped, and the cast replies once to what it was actually told.
+      if (pendingVoicesRef.current > 0) {
+        pendingVoicesRef.current = 0;
+        runObserveBeat();
+      }
     }
   };
 
