@@ -1,5 +1,6 @@
-import React from "react";
-import SceneStripTransitionControls from "@/components/scene/SceneStripTransitionControls";
+import React, { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import { ArrestControl, NextSceneControl } from "@/components/scene/SceneStripTransitionControls";
 import {
   DIRECTED_SCENE_ACTIONS,
   stripActions,
@@ -9,16 +10,41 @@ import {
   LIFE_NEED_LABELS,
 } from "@/lib/sceneStripConfig";
 
+// The three activity folders, with their established colours. Each control is always in
+// reach: opening one only reveals that folder's own activities in the same horizontal strip.
+const CATEGORY_FOLDERS = [
+  {
+    key: "place",
+    label: "This Location",
+    openClass: "bg-[#2563EB] border-[#2563EB] text-white",
+    closedClass: "bg-[#2563EB]/10 border-[#2563EB]/50 text-[#2563EB]",
+  },
+  {
+    key: "needs",
+    label: "Life Needs",
+    openClass: "bg-[#EAB308] border-[#EAB308] text-[#171717]",
+    closedClass: "bg-[#EAB308]/10 border-[#EAB308]/50 text-[#EAB308]",
+  },
+  {
+    key: "general",
+    label: "General",
+    openClass: "bg-[#16A34A] border-[#16A34A] text-white",
+    closedClass: "bg-[#16A34A]/10 border-[#16A34A]/50 text-[#16A34A]",
+  },
+];
+
 /**
  * SceneActionStrip — the scene's activity strip.
  *
  * ORGANIZATION (the only thing this file decides):
- *   1. This place   — the venue's own activities, whatever their Life Need effect.
- *   2. Life Needs   — the everyday activities grouped under the eight established needs.
- *   3. General      — the general interactions, in their established order, then Arrest
- *                     and Next Scene as scene controls.
- * Every activity appears exactly once. No activity's effect, price, availability rule or
- * pipeline is changed here — the buttons call the same handlers Scene always passed them.
+ *   1. This Location — the venue's own activities, whatever their Life Need effect.
+ *   2. Life Needs    — the everyday activities grouped under the eight established needs.
+ *   3. General       — the general interactions in their established order, with Arrest.
+ * Each group is a folder: selecting its heading reveals its activities in the same
+ * horizontal strip, selecting it again hides them. Next Scene is pinned beside the
+ * headings, so it is reachable whatever folder is open. Nothing is removed: every activity
+ * appears exactly once, and no effect, price, availability rule or pipeline changes here —
+ * the buttons call the same handlers Scene always passed them.
  */
 export default function SceneActionStrip({
   actions,
@@ -64,32 +90,26 @@ export default function SceneActionStrip({
 
   const { place, needs, general } = buildActivitySections(list);
   const generalByKey = new Map(general.map((a) => [generalStripKey(a), a]));
-  const showGroupNames = place.length > 0 && (needs.length > 0 || general.length > 0);
 
-  const items = [
-    ...(showGroupNames ? [{ section_label: "This place", key: "lbl_place" }] : []),
-    ...place,
-    ...(needs.length > 0 ? [{ section_label: "Life Needs", key: "lbl_needs" }] : []),
-    ...needs.map(({ action, need }) => ({ ...action, need_tag: need })),
-    ...(general.length > 0 ? [{ section_label: "General", key: "lbl_general" }] : []),
-    ...GENERAL_STRIP_ORDER.flatMap((key) => {
-      const directed = DIRECTED_SCENE_ACTIONS.find((d) => d.id === key);
-      if (directed) return directedPickableTargets.length > 0 ? [{ directed }] : [];
-      const action = generalByKey.get(key);
-      return action ? [action] : [];
-    }),
-  ];
+  const generalItems = GENERAL_STRIP_ORDER.flatMap((key) => {
+    const directed = DIRECTED_SCENE_ACTIONS.find((d) => d.id === key);
+    if (directed) return directedPickableTargets.length > 0 ? [{ directed }] : [];
+    const action = generalByKey.get(key);
+    return action ? [action] : [];
+  });
+
+  // Which folders are open. Nothing is hidden away permanently: a closed folder is one tap
+  // from its activities, and the headings never scroll out of reach.
+  const [openFolders, setOpenFolders] = useState(null);
+  const defaultFolder = place.length > 0 ? "place" : needs.length > 0 ? "needs" : "general";
+  const folderIsOpen = (key) => (openFolders ? openFolders.has(key) : key === defaultFolder);
+  const toggleFolder = (key) => {
+    const next = new Set(openFolders || [defaultFolder]);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setOpenFolders(next);
+  };
 
   const renderItem = (action) => {
-    // A group name — a marker in the same row, never a button.
-    if (action.section_label) {
-      return (
-        <span key={action.key} className="flex items-center px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60 whitespace-nowrap flex-shrink-0 border-l border-border">
-          {action.section_label}
-        </span>
-      );
-    }
-
     // Flirt With / Kiss / Argue With / Fight With / Moonwink — a moment between two chosen
     // people. Same selector Scene has always used for them.
     if (action.directed) {
@@ -125,6 +145,29 @@ export default function SceneActionStrip({
 
   return (
     <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
+      {/* The folder headings and Next Scene stay put: whichever folder is open, switching
+          folders or leaving the scene never means scrolling past every activity first. */}
+      <div className="flex items-center gap-1.5 pb-2">
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide flex-1 min-w-0">
+          {CATEGORY_FOLDERS.map((folder) => {
+            const open = folderIsOpen(folder.key);
+            return (
+              <button
+                key={folder.key}
+                onClick={() => toggleFolder(folder.key)}
+                aria-expanded={open}
+                title={open ? `Hide ${folder.label} activities` : `Show ${folder.label} activities`}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg border-2 transition-all flex-shrink-0 ${open ? folder.openClass : folder.closedClass}`}
+              >
+                <span className="text-[9px] font-bold uppercase tracking-wide whitespace-nowrap">{folder.label}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${open ? "" : "-rotate-90"}`} />
+              </button>
+            );
+          })}
+        </div>
+        <NextSceneControl onNextScene={() => setShowNextScene(true)} />
+      </div>
+
       <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
         {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
         {governmentVenueType && !courtCase && !cityHallPlan && (
@@ -135,7 +178,23 @@ export default function SceneActionStrip({
         )}
         <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
 
-        {items.map(renderItem)}
+        {/* Only the open folders' own activities appear, in the established order and with
+            the established card layout. */}
+        {folderIsOpen("place") && place.map(renderItem)}
+        {folderIsOpen("needs") && needs.map(({ action, need }) => renderItem({ ...action, need_tag: need }))}
+        {folderIsOpen("general") && generalItems.map(renderItem)}
+
+        {CATEGORY_FOLDERS.map((folder) => {
+          const count = folder.key === "place" ? place.length
+            : folder.key === "needs" ? needs.length
+              : generalItems.length + (arrestTargets.length > 0 ? 1 : 0);
+          if (!folderIsOpen(folder.key) || count > 0) return null;
+          return (
+            <span key={`empty_${folder.key}`} className="flex items-center px-2 text-[9px] text-muted-foreground/60 whitespace-nowrap flex-shrink-0">
+              No {folder.label} activities here
+            </span>
+          );
+        })}
 
         {characterInviter && (
           <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
@@ -143,12 +202,14 @@ export default function SceneActionStrip({
             <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Invite Character</span>
           </button>
         )}
-        {/* Arrest and Next Scene are scene controls, not character activities — they close the strip. */}
-        <SceneStripTransitionControls
-          onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
-          onNextScene={() => setShowNextScene(true)}
-          arrestDisabled={arrestTargets.length === 0 || actionCooldown}
-        />
+        {/* Arrest is a general activity, so it lives in that folder. Next Scene is the scene
+            control pinned above, outside every folder. */}
+        {folderIsOpen("general") && (
+          <ArrestControl
+            onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
+            arrestDisabled={arrestTargets.length === 0 || actionCooldown}
+          />
+        )}
       </div>
     </div>
   );
