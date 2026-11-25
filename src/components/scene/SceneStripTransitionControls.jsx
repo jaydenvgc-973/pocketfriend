@@ -14,10 +14,10 @@ export function ArrestControl({ onArrest, arrestDisabled = false }) {
       onClick={onArrest}
       disabled={arrestDisabled}
       title={arrestDisabled ? "No one in this scene can be arrested" : "Take someone into custody"}
-      className={`flex flex-col items-center justify-center gap-1 p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center ${arrestDisabled ? "opacity-40 cursor-not-allowed border-destructive/20 bg-destructive/5" : "bg-destructive/15 border-destructive/60 hover:bg-destructive/25"}`}
+      className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[62px] min-w-[62px] rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center ${arrestDisabled ? "opacity-40 cursor-not-allowed border-destructive/20 bg-destructive/5" : "bg-destructive/15 border-destructive/60 hover:bg-destructive/25"}`}
     >
       <Siren className="w-4 h-4 text-destructive" />
-      <span className="text-[9px] text-destructive font-bold leading-tight whitespace-nowrap uppercase tracking-wide">Arrest</span>
+      <span className="w-full text-[9px] text-destructive font-bold leading-tight whitespace-normal break-words text-center uppercase tracking-wide">Arrest</span>
     </button>
   );
 }
