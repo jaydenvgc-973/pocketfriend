@@ -88,6 +88,7 @@ export async function writeSceneExitMemories({
   userDisplayName,
   ownerEmail,
   outcome,
+  destinationName = null,
   userPresent = true,
 }) {
   if (!location || !ownerEmail) {
@@ -116,7 +117,10 @@ export async function writeSceneExitMemories({
   const outcomeText = !userPresent
     // Watched or sent without the user: nobody left, and the user was never here.
     ? `The scene at ${location.name} ended.`
-    : outcome === "left_together"
+    : outcome === "moved_on"
+      // The scene moved to another place rather than ending in a departure.
+      ? `The scene at ${location.name} ended${destinationName ? `, and the scene moved on to ${destinationName}` : ""}.`
+      : outcome === "left_together"
       ? `They left ${location.name} together and returned home.`
       : `${userDisplayName || "the user"} left — they stayed at ${location.name}.`;
 

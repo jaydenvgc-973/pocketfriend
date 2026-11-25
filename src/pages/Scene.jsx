@@ -72,9 +72,8 @@ import MarriageConfirmationModal from "@/components/government/MarriageConfirmat
 import JudicialOutcomeModal from "@/components/government/JudicialOutcomeModal";
 import { isGovernmentActionId } from "@/lib/governmentVenues";
 import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
-import ArrestTransitionModal from "@/components/scene/ArrestTransitionModal";
 import SceneStripTransitionControls from "@/components/scene/SceneStripTransitionControls";
-import NextSceneModal from "@/components/scene/NextSceneModal";
+import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
 import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
 import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
@@ -1297,7 +1296,7 @@ export default function Scene() {
 
   // Only the people who were actually taking part keep a memory of the scene: a character
   // the user deselected is not a participant, so the exit is not written for them.
-  const _exitMemoryArgs = (outcome) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome, userPresent: !observeMode });
+  const _exitMemoryArgs = (outcome, destinationName = null) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome, destinationName, userPresent: !observeMode });
 
   // Scene journal: what the people here actually lived through belongs in their Life
   // Journal. Written once per scene — whether it ends through the leave modal or by
@@ -1319,6 +1318,14 @@ export default function Scene() {
     if (sceneJournalDoneRef.current || !sceneJournalArgsRef.current) return Promise.resolve();
     sceneJournalDoneRef.current = true;
     return writeSceneLifeEvents({ ...sceneJournalArgsRef.current, outcome });
+  };
+  // Moving the scene on is the scene ending: the one being left is completed through the
+  // same process the leave paths use, once, before the next scene begins. The guard above
+  // is the scene's single completion, so a transition can never journal it twice.
+  const _completeSceneBeforeTransition = (destinationName = null) => {
+    if (sceneJournalDoneRef.current) return;
+    _writeSceneJournal("moved_on");
+    writeSceneExitMemories(_exitMemoryArgs("moved_on", destinationName));
   };
   useEffect(() => () => { _writeSceneJournal(null); }, []);
 
@@ -2011,6 +2018,9 @@ export default function Scene() {
     setArrestTransition(null);
     setArrestVisitors(null);
     if (!arrest) return;
+    // Following the arrest ends this scene, so it is completed before the custody scene
+    // loads — the arrest and what led to it stay part of what happened here.
+    _completeSceneBeforeTransition(arrest.facility.name);
     const ids = [arrest.character.id, ...visitorIds].filter(Boolean).join(",");
     const unit = arrest.unitId ? `&unitId=${arrest.unitId}` : "";
     navigate(`/scene?locationId=${arrest.facility.id}&characterIds=${ids}${unit}`);
@@ -2039,8 +2049,21 @@ export default function Scene() {
     setArrestTransition(null);
     setArrestVisitors(null);
     if (!arrest) return;
+    // Watching the custody scene still ends this one: it is recorded before the new
+    // scene loads, without putting the user in the room.
+    _completeSceneBeforeTransition(arrest.facility.name);
     const unit = arrest.unitId ? `&unitId=${arrest.unitId}` : "";
     navigate(`/scene?locationId=${arrest.facility.id}&observe=1&characterIds=${arrest.character.id}${unit}`);
+  };
+  // Accepting an invitation from inside a scene moves the scene elsewhere, so it ends this
+  // one the same way — recorded first, then the destination scene loads.
+  const handleAcceptInvite = (invite) => {
+    base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {});
+    const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId);
+    setPendingInvitations(remaining.length > 0 ? remaining : null);
+    _completeSceneBeforeTransition(locationMap[invite.locationId]?.name || null);
+    const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
+    navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
   };
 
   // ── SCENE TRANSITION CONTROLS ────────────────────────────────────────────────
@@ -2063,6 +2086,9 @@ export default function Scene() {
     const res = await base44.functions.invoke('arrestCharacter', { character_id: person.id, facility_id: facility.id, offense: 'Arrest', notes: 'Taken into custody from the scene.' });
     const data = res?.data || {};
     if (!data?.success || data.skipped) { setMessages((prev) => [...prev, { id: `arrest_err_${Date.now()}`, sender: "narrative", content: `${person.name || "They"} could not be taken into custody.`, timestamp: new Date().toISOString() }]); return; }
+    // The arrest is an established event of this scene, so it is part of what the scene
+    // records — not something that only exists in the transition modal.
+    setMessages((prev) => [...prev, { id: `arrest_${Date.now()}`, sender: "narrative", content: `${person.name || "They"} is taken into custody and led away.`, timestamp: new Date().toISOString() }]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     setArrestTransition({ character: person, facility: { ...facility, name: data.facility_name || facility.name }, unitId: data.unit_id || null, unitName: data.unit_name || null });
@@ -2098,12 +2124,17 @@ export default function Scene() {
       if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${arrived.map((t) => t.name).join(", ")} head to ${destination.name}.${refusedNote}`, timestamp: new Date().toISOString() }]);
       return;
     }
+    // The scene being left is recorded before the next one begins.
+    _completeSceneBeforeTransition(destination.name);
     const params = new URLSearchParams({ locationId: destination.id });
     const ids = arrived.map((t) => t.id).join(",");
     if (ids) params.set("characterIds", ids);
     if (zoneName) params.set("zoneName", zoneName);
     if (unitId) params.set("unitId", unitId);
     if (observeMode || mode === "watch") params.set("observe", "1");
+    // Marks this as a scene of its own even when it happens to share the same place and
+    // cast — a confirmed transition always starts the destination scene.
+    params.set("started", String(Date.now()));
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -2439,43 +2470,27 @@ export default function Scene() {
         onResolved={handleJudicialResolved}
         onNarrativeOnly={handleJudicialNarrative}
       />
-      {/* The arrest has already happened — this only decides where the view goes next. */}
-      <ArrestTransitionModal
-        arrest={arrestTransition}
-        onGo={followArrest}
-        onWatch={watchCustody}
-        onStay={() => { setArrestTransition(null); setArrestVisitors(null); }}
+      <SceneTransitionModals
+        arrestTransition={arrestTransition}
+        onFollowArrest={followArrest}
+        onWatchCustody={watchCustody}
+        onStayArrest={() => { setArrestTransition(null); setArrestVisitors(null); }}
+        arrestVisitors={arrestVisitors}
+        onVisitorsConfirm={(people) => goToCustody((people || []).map((p) => p.id))}
+        onVisitorsSelect={(person) => goToCustody([person.id])}
+        onCloseVisitors={() => setArrestVisitors(null)}
+        arrestPicker={arrestPicker}
+        arrestTargets={arrestTargets}
+        onArrestSelect={handleArrest}
+        onCloseArrestPicker={() => setArrestPicker(null)}
+        showNextScene={showNextScene}
+        onCloseNextScene={() => setShowNextScene(false)}
+        locationsData={locationsData}
+        nextSceneParticipants={nextSceneParticipants}
+        userPresent={!observeMode}
+        onNextSceneConfirm={handleNextSceneConfirm}
       />
-      <SceneTargetPicker
-        action={arrestVisitors?.action}
-        targets={arrestVisitors?.targets || []}
-        multiple
-        confirmLabel="Come with you"
-        heading={arrestTransition ? `Who comes with you to ${arrestTransition.facility?.name}?` : null}
-        hint="They come as visitors — not inmates. Only people from this scene can be chosen."
-        onConfirm={(people) => goToCustody((people || []).map((p) => p.id))}
-        onSelect={(person) => goToCustody([person.id])}
-        onClose={() => setArrestVisitors(null)}
-      />
-      <SceneTargetPicker
-        action={arrestPicker}
-        targets={arrestTargets}
-        onSelect={handleArrest}
-        onClose={() => setArrestPicker(null)}
-        heading={arrestPicker ? "Arrest — who is taken into custody?" : null}
-        hint="Held pending proceedings — an arrest, not a conviction."
-      />
-      {showNextScene && (
-        <NextSceneModal
-          open
-          locations={locationsData}
-          participants={nextSceneParticipants}
-          userPresent={!observeMode}
-          onClose={() => setShowNextScene(false)}
-          onConfirm={handleNextSceneConfirm}
-        />
-      )}
-      {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={(invite) => { base44.functions.invoke('recordCharacterInviteAccepted', { characterId: invite.characterId, locationId: invite.locationId, inviteType: invite.inviteType }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== invite.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId; navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`); }} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
+      {pendingInvitations && <InviteOutModal invitations={pendingInvitations} onAccept={handleAcceptInvite} onDecline={(selectedInv) => { base44.functions.invoke('recordCharacterInviteDeclined', { characterId: selectedInv.characterId, locationId: selectedInv.locationId }).catch(() => {}); const remaining = pendingInvitations.filter((i) => i.characterId !== selectedInv.characterId); setPendingInvitations(remaining.length > 0 ? remaining : null); }} onClose={() => { if (settings.id) base44.entities.UserSettings.update(settings.id, { pending_character_invites: [] }).catch(() => {}); setPendingInvitations(null); }} />}
     </div>
   );
 }

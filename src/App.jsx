@@ -89,6 +89,26 @@ function TextChannelMount() {
   return <Text key={`${characterId}:phone`} chatTypeOverride="phone" />;
 }
 
+/**
+ * SceneRouteMount
+ *
+ * A scene transition navigates to /scene carrying the new scene's own identity — its
+ * location, its cast, and whether the user is present or watching. Keying the page by
+ * that identity starts the destination scene as a scene of its own (its location,
+ * participants and transcript) instead of leaving the completed scene's state on screen.
+ */
+function SceneRouteMount() {
+  const [searchParams] = useSearchParams();
+  const identity = [
+    searchParams.get("locationId") || "",
+    searchParams.get("characterIds") || "",
+    searchParams.get("observe") || "",
+    searchParams.get("unitId") || "",
+    searchParams.get("started") || "",
+  ].join(":");
+  return <Scene key={identity} />;
+}
+
 const AuthenticatedApp = ({ holidaysEnabled }) => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
 
@@ -158,7 +178,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/vick-diagnostic-proof" element={<VickDiagnosticProof />} />
       <Route path="/travel" element={<Travel />} />
       <Route path="/gathering-room/:roomId" element={<GatheringRoom />} />
-      <Route path="/scene" element={<Scene />} />
+      <Route path="/scene" element={<SceneRouteMount />} />
       <Route path="/image-diagnostics" element={<ImageGenerationDiagnostics />} />
       <Route path="/school-contamination-proof" element={<SchoolContaminationProof />} />
       <Route path="/multi-character-proof" element={<MultiCharacterProof />} />
