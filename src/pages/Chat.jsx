@@ -11,15 +11,13 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
 import { getCharacterLivePresence, buildLiveLocationContext, resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 import { buildCharacterInScene } from "@/lib/chatSceneCharacter";
-import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
+import ChatUtilityModals from "@/components/chat/ChatUtilityModals";
 
 import FinancialActionsPanel from "@/components/chat/FinancialActionsPanel";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
-import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
-import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
-import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
+import ChatShareModals from "@/components/chat/ChatShareModals";
 import GameLauncher from "@/components/games/GameLauncher";
 import ShoppingApp from "@/components/chat/ShoppingApp";
 import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
@@ -124,6 +122,7 @@ export default function Chat({ chatTypeOverride } = {}) {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [forwardTarget, setForwardTarget] = useState(null);
+  const [shareNarrativeTarget, setShareNarrativeTarget] = useState(null);
   const [newPeopleDetected, setNewPeopleDetected] = useState(null);
   const [showSendMoney, setShowSendMoney] = useState(false);
   const [isSendingMoney, setIsSendingMoney] = useState(false);
@@ -2384,7 +2383,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
                 }
                 return next;
               });
-            }} onShareNarrative={(msg) => setForwardTarget(msg)} onLocationSignal={handleLocationSignal} hasOlderMessages={hasOlderMessages} onLoadOlderMessages={loadOlderMessages} />
+            }} onShareNarrative={(msg) => setShareNarrativeTarget(msg)} onLocationSignal={handleLocationSignal} hasOlderMessages={hasOlderMessages} onLoadOlderMessages={loadOlderMessages} />
       )}
       {activeCharacter && character ? (
         <DialogueSelector
@@ -2405,26 +2404,20 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           <span>Reconnecting to {character?.name || 'character'}…</span>
         </div>
       )}
-      <NarrativeBuilderPopup
-        isOpen={showNarrativeBuilder}
-        onClose={() => setShowNarrativeBuilder(false)}
+      <ChatUtilityModals
+        showNarrativeBuilder={showNarrativeBuilder}
+        onCloseNarrativeBuilder={() => setShowNarrativeBuilder(false)}
         characterId={characterId}
         conversationId={conversationId}
         chatHistory={messages}
         currentUser={currentUser}
         userSettings={userSettings}
         onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
-      />
-      <WorldContactsPopup
-        isOpen={showWorldContacts}
-        onClose={() => setShowWorldContacts(false)}
+        showWorldContacts={showWorldContacts}
+        onCloseWorldContacts={() => setShowWorldContacts(false)}
         character={character}
-      />
-      <TroubleshootingPanel
-        isOpen={showTroubleshooting}
-        onClose={() => setShowTroubleshooting(false)}
-        conversationId={conversationId}
-        characterId={characterId}
+        showTroubleshooting={showTroubleshooting}
+        onCloseTroubleshooting={() => setShowTroubleshooting(false)}
       />
       <DeleteMemoryChoiceModal
         message={deleteTarget}
@@ -2438,13 +2431,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         onArchive={handleArchiveMessage}
         isRegenerating={isRegeneratingNarrative}
       />
-      {forwardTarget && (
-        <ForwardMessageModal
-          message={forwardTarget}
-          chatType={chatType}
-          onClose={() => setForwardTarget(null)}
-        />
-      )}
+      <ChatShareModals forwardTarget={forwardTarget} onCloseForward={() => setForwardTarget(null)} chatType={chatType} shareTarget={shareNarrativeTarget} onCloseShare={() => setShareNarrativeTarget(null)} isPhone={isPhone} />
       <BottomNav />
 
       <ChatApprovals

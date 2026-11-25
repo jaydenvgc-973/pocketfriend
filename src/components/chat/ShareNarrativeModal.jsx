@@ -5,7 +5,7 @@ import { X, Share2, Check, Loader2, Globe2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { resolveNarrativeShareRecipients } from "@/lib/narrativeShareRecipients";
 
-export default function ShareNarrativeModal({ message, onClose }) {
+export default function ShareNarrativeModal({ message, onClose, channel = "direct" }) {
   const [ownCharacters, setOwnCharacters] = useState([]);
   const [crossAccountCharacters, setCrossAccountCharacters] = useState([]);
   const [isLoadingRecipients, setIsLoadingRecipients] = useState(true);
@@ -42,6 +42,18 @@ export default function ShareNarrativeModal({ message, onClose }) {
       for (const charId of selectedIds) {
         const char = allRecipients.find(c => c.id === charId);
         if (!char) continue;
+
+        // A character on another account is delivered through the existing
+        // shareNarrativeToCharacter pathway: it writes into that character's own
+        // thread on their account, which the client cannot reach directly.
+        if (crossAccountCharacters.some(c => c.id === charId)) {
+          await base44.functions.invoke("shareNarrativeToCharacter", {
+            source_message_id: message.id,
+            recipient_character_id: charId,
+            channel,
+          });
+          continue;
+        }
 
         // Find or create direct conversation for this character
         const convos = await base44.entities.Conversation.filter({ type: "direct", character_ids: [charId] });
