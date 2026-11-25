@@ -6,6 +6,7 @@ import PositionInput from "@/components/location/PositionInput";
 import WorkplaceZoneImages from "@/components/location/WorkplaceZoneImages";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import { Input } from "@/components/ui/input";
+import { ZONE_PRESETS } from "@/lib/locationFormConfig";
 
 /**
  * WorkplaceManager — the individual businesses inside ONE location.
@@ -77,9 +78,13 @@ export default function WorkplaceManager({
   locationDescription = "",
   onAddZoneImage,
   onRemoveZoneImage,
+  // Adds a room / zone to the property's own existing zone list, so a business's zone is
+  // the same record the Rooms / Zones section and Scenes already read.
+  onAddLocationZone = null,
 }) {
   const [expandedId, setExpandedId] = useState(null);
   const [pickingFor, setPickingFor] = useState(null);
+  const [zoneDraft, setZoneDraft] = useState("");
   // Which employee's own employment controls are open. One at a time keeps the
   // section compact; it never changes what is saved.
   const [editingKey, setEditingKey] = useState(null);
@@ -90,12 +95,39 @@ export default function WorkplaceManager({
   const updateWorkplace = (workplaceId, patch) =>
     onChange(list.map(w => (w.workplace_id === workplaceId ? { ...w, ...patch } : w)));
 
+  // A business can be several kinds of establishment at once — a sneaker store that is also
+  // a clothing store. business_types holds them all; the first one stays the primary type in
+  // business_category / business_type so every existing reader is unchanged.
+  const typesOf = (workplace) => {
+    if (Array.isArray(workplace?.business_types) && workplace.business_types.length > 0) return workplace.business_types;
+    return workplace?.business_type ? [{ category: workplace.business_category || "", type: workplace.business_type }] : [];
+  };
+  const withTypes = (workplace, types) => {
+    const primary = types[0] || {};
+    return {
+      ...workplace,
+      business_types: types,
+      business_category: primary.category || "",
+      business_type: primary.type || "",
+    };
+  };
+
+  // The rooms / zones the existing venue classification already offers for this business's
+  // selected types — the same ZONE_PRESETS every other location form uses.
+  const presetZonesFor = (types) => {
+    const categories = types.map(t => t.category).filter(Boolean);
+    const source = categories.length > 0 ? categories : ["other"];
+    const names = Array.from(new Set(source.flatMap(cat => ZONE_PRESETS[cat] || ZONE_PRESETS.other || [])));
+    return names.filter(name => !zoneNames.some(z => z.toLowerCase() === name.toLowerCase()));
+  };
+
   const addWorkplace = () => {
     const created = {
       workplace_id: generateWorkplaceId(),
       name: "",
       business_category: "",
       business_type: "",
+      business_types: [],
       zone_names: [],
       worker_character_ids: [],
     };
@@ -121,13 +153,31 @@ export default function WorkplaceManager({
     });
   };
 
-  const chooseBusinessType = (workplaceId, rawValue) => {
-    if (!rawValue) {
-      updateWorkplace(workplaceId, { business_category: "", business_type: "" });
-      return;
+  // Adding a type keeps the ones already chosen; removing one leaves the rest in place.
+  const toggleBusinessType = (workplaceId, category, type) => {
+    const workplace = list.find(w => w.workplace_id === workplaceId);
+    if (!workplace || !type) return;
+    const current = typesOf(workplace);
+    const isSelected = current.some(t => t.category === category && t.type === type);
+    const next = isSelected
+      ? current.filter(t => !(t.category === category && t.type === type))
+      : [...current, { category, type }];
+    onChange(list.map(w => (w.workplace_id === workplaceId ? withTypes(w, next) : w)));
+  };
+
+  // A zone added here joins the property's existing zone list and this business's zones in
+  // the same action, so its images attach to the right business and room immediately.
+  const addZoneToWorkplace = (workplaceId, rawName) => {
+    const name = String(rawName || "").trim();
+    if (!name) return;
+    const workplace = list.find(w => w.workplace_id === workplaceId);
+    const current = workplace?.zone_names || [];
+    const existingZone = zoneNames.find(z => z.toLowerCase() === name.toLowerCase());
+    const finalName = existingZone || name;
+    if (!existingZone) onAddLocationZone?.(name);
+    if (!current.some(z => z.toLowerCase() === finalName.toLowerCase())) {
+      updateWorkplace(workplaceId, { zone_names: [...current, finalName] });
     }
-    const [business_category, business_type] = rawValue.split("::");
-    updateWorkplace(workplaceId, { business_category, business_type });
   };
 
   const resolveName = (id) =>
@@ -157,9 +207,9 @@ export default function WorkplaceManager({
           const isExpanded = expandedId === workplace.workplace_id;
           const employees = workplace.worker_character_ids || [];
           const selectedZones = workplace.zone_names || [];
-          const typeValue = workplace.business_type
-            ? `${workplace.business_category}::${workplace.business_type}`
-            : "";
+          const businessTypes = typesOf(workplace);
+          const unselectedPropertyZones = zoneNames.filter(z => !selectedZones.some(s => s.toLowerCase() === z.toLowerCase()));
+          const presetZones = presetZonesFor(businessTypes);
 
           return (
             <div key={workplace.workplace_id} className="rounded-lg bg-card border border-border overflow-hidden">
@@ -176,10 +226,11 @@ export default function WorkplaceManager({
                       {workplace.name?.trim() || "Untitled workplace"}
                     </p>
                     <p className="text-[10px] text-muted-foreground truncate">
-                      {workplace.business_type
-                        ? labelOf(workplace.business_type, subtypeLabels)
+                      {businessTypes.length > 0
+                        ? businessTypes.map(t => labelOf(t.type, subtypeLabels)).join(" · ")
                         : "No business type"}
                       {" · "}{employees.length} {employees.length === 1 ? "employee" : "employees"}
+                      {selectedZones.length > 0 ? ` · ${selectedZones.length} ${selectedZones.length === 1 ? "zone" : "zones"}` : ""}
                     </p>
                   </div>
                 </button>
@@ -217,15 +268,41 @@ export default function WorkplaceManager({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Business Type</label>
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                      Business Type{businessTypes.length > 1 ? "s" : ""}
+                    </label>
+                    {businessTypes.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {businessTypes.map(t => (
+                          <button
+                            key={`${t.category}::${t.type}`}
+                            onClick={() => toggleBusinessType(workplace.workplace_id, t.category, t.type)}
+                            title="Remove this business type"
+                            className="px-2 py-1 rounded-full text-[10px] border bg-primary/10 border-primary/40 text-primary flex items-center gap-1"
+                          >
+                            {labelOf(t.type, subtypeLabels)}
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-muted-foreground italic">No business type chosen yet.</p>
+                    )}
                     <select
-                      value={typeValue}
-                      onChange={e => chooseBusinessType(workplace.workplace_id, e.target.value)}
+                      value=""
+                      onChange={e => {
+                        const value = e.target.value;
+                        if (!value) return;
+                        const [groupCategory, groupType] = value.split("::");
+                        toggleBusinessType(workplace.workplace_id, groupCategory, groupType);
+                        e.target.value = "";
+                      }}
                       className="w-full text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground capitalize"
                     >
-                      <option value="">Choose a business type…</option>
+                      <option value="">{businessTypes.length > 0 ? "Add another business type…" : "Choose a business type…"}</option>
                       {BUSINESS_CATEGORIES.map(group => {
-                        const options = subtypeOptions[group.category] || [];
+                        const options = (subtypeOptions[group.category] || []).filter(type =>
+                          !businessTypes.some(t => t.category === group.category && t.type === type));
                         if (options.length === 0) return null;
                         return (
                           <optgroup key={group.category} label={group.label}>
@@ -238,28 +315,96 @@ export default function WorkplaceManager({
                         );
                       })}
                     </select>
+                    <p className="text-[10px] text-muted-foreground/70">
+                      A business can be more than one kind of establishment — a sneaker store that is
+                      also a clothing store. Tap a chosen type to remove it; the others stay.
+                    </p>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Zones of this property</label>
-                    {zoneNames.length === 0 ? (
-                      <p className="text-[10px] text-muted-foreground italic">Add rooms / zones above first.</p>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Rooms / Zones of this business</label>
+                    {selectedZones.length === 0 ? (
+                      <p className="text-[10px] text-muted-foreground italic">
+                        No rooms yet. Add this business's zones below — no need to go back to the property's section.
+                      </p>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
-                        {zoneNames.map(zoneName => {
-                          const active = selectedZones.includes(zoneName);
-                          return (
+                        {selectedZones.map(zoneName => (
+                          <button
+                            key={zoneName}
+                            onClick={() => toggleZone(workplace.workplace_id, zoneName)}
+                            title="Remove this zone from the business"
+                            className="px-2 py-1 rounded-full text-[10px] border bg-primary/10 border-primary/40 text-primary flex items-center gap-1"
+                          >
+                            {zoneName}
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {unselectedPropertyZones.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wider">Already on this property</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {unselectedPropertyZones.map(zoneName => (
                             <button
                               key={zoneName}
                               onClick={() => toggleZone(workplace.workplace_id, zoneName)}
-                              className={`px-2 py-1 rounded-full text-[10px] border transition-colors ${active ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                              className="px-2 py-1 rounded-full text-[10px] border bg-card border-border text-muted-foreground hover:border-primary/40"
                             >
-                              {active ? "✓ " : ""}{zoneName}
+                              + {zoneName}
                             </button>
-                          );
-                        })}
+                          ))}
+                        </div>
                       </div>
                     )}
+
+                    {presetZones.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wider">Typical for this kind of business</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {presetZones.map(zoneName => (
+                            <button
+                              key={zoneName}
+                              onClick={() => addZoneToWorkplace(workplace.workplace_id, zoneName)}
+                              className="px-2 py-1 rounded-full text-[10px] border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                            >
+                              + {zoneName}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={zoneDraft}
+                        onChange={e => setZoneDraft(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key !== "Enter") return;
+                          addZoneToWorkplace(workplace.workplace_id, zoneDraft);
+                          setZoneDraft("");
+                        }}
+                        placeholder="Custom zone — e.g. Sneaker Wall"
+                        className="flex-1 h-7 px-2 rounded-lg bg-secondary border border-border text-[11px] text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                      />
+                      <button
+                        onClick={() => {
+                          addZoneToWorkplace(workplace.workplace_id, zoneDraft);
+                          setZoneDraft("");
+                        }}
+                        disabled={!zoneDraft.trim()}
+                        className="px-2.5 h-7 rounded-lg bg-primary text-primary-foreground text-[10px] font-medium disabled:opacity-40"
+                      >
+                        Add zone
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/70">
+                      A zone added here becomes part of this property's own rooms, so Scenes and the
+                      property's Rooms / Zones section see the same record.
+                    </p>
                   </div>
 
                   <div className="rounded-lg bg-secondary/30 border border-border p-2.5">

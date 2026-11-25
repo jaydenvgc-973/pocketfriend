@@ -31,6 +31,9 @@ export default function ApartmentManager({
   maxUnits = 0,
   nameById = {},
   zoneOptions = null,
+  // When the editor draws this section's heading itself (so it can expand and collapse),
+  // the card shows only its contents.
+  showHeader = true,
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -142,12 +145,14 @@ export default function ApartmentManager({
 
   return (
     <div className="space-y-3 p-3 rounded-xl bg-secondary/30 border border-border">
-      <div>
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{sectionLabel}</p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">
-          Organize {contextNoun} residents into individual {unitSingular}s. Residents remain {contextNoun} residents regardless of {unitSingular} assignment.
-        </p>
-      </div>
+      {showHeader && (
+        <div>
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{sectionLabel}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Organize {contextNoun} residents into individual {unitSingular}s. Residents remain {contextNoun} residents regardless of {unitSingular} assignment.
+          </p>
+        </div>
+      )}
 
       {/* Existing apartments */}
       {units.length > 0 && (

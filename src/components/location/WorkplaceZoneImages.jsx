@@ -1,5 +1,6 @@
-import React from "react";
-import { X } from "lucide-react";
+import React, { useState } from "react";
+import { X, Upload } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 
 /**
@@ -30,10 +31,40 @@ export default function WorkplaceZoneImages({
   otherWorkplaces = [],
   onAddImage,
   onRemoveImage,
+  maxImages = 5,
 }) {
+  const [uploadingZone, setUploadingZone] = useState(null);
   const zoneNames = workplace?.zone_names || [];
   const zoneImages = workplace?.zone_images || [];
   const businessName = workplace?.name?.trim() || "this business";
+  // Every kind of establishment this business is, so its pictures are generated from all of
+  // its venue types, not only the first one.
+  const businessSubtypes = Array.isArray(workplace?.business_types) && workplace.business_types.length > 0
+    ? workplace.business_types.map(t => t.type).filter(Boolean)
+    : (workplace?.business_type ? [workplace.business_type] : []);
+
+  // Uploading uses the same storage and the same 5-images-per-zone limit as the property's
+  // own Rooms / Zones section.
+  const handleUpload = async (zoneName, event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length) return;
+    const remaining = Math.max(0, maxImages - imagesForZone(zoneName).length);
+    const toUpload = files.slice(0, remaining);
+    if (toUpload.length === 0) return;
+    setUploadingZone(zoneName);
+    const uploaded = [];
+    for (const file of toUpload) {
+      try {
+        const res = await base44.integrations.Core.UploadFile({ file });
+        if (res?.file_url) uploaded.push(res.file_url);
+      } catch (err) {
+        console.error("[WorkplaceZoneImages] Upload failed:", err?.message);
+      }
+    }
+    uploaded.forEach(url => onAddImage?.(zoneName, url));
+    setUploadingZone(null);
+  };
 
   // A picture that already sits on one of this business's zones in the property is this
   // business's picture, even when it was made before the business had its own image
@@ -85,16 +116,29 @@ export default function WorkplaceZoneImages({
                 ) : (
                   <p className="text-[10px] text-muted-foreground italic">No images for this zone yet.</p>
                 )}
-                <ZoneImageGenerator
-                  zoneName={zoneName}
-                  locationName={locationName ? `${businessName} — inside ${locationName}` : businessName}
-                  category={workplace?.business_category || category}
-                  subtype={workplace?.business_type || ""}
-                  locationDescription={workplace?.description?.trim() || locationDescription}
-                  hasExistingImage={images.length > 0}
-                  existingZoneImageUrls={parentZone?.image_urls || []}
-                  onGenerate={(url) => onAddImage?.(zoneName, url)}
-                />
+                {images.length < maxImages ? (
+                  <div className="space-y-1.5">
+                    <label className="block cursor-pointer">
+                      <input type="file" accept="image/*" multiple onChange={e => handleUpload(zoneName, e)} className="hidden" />
+                      <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-[10px]">
+                        <Upload className="w-3 h-3" />
+                        {uploadingZone === zoneName ? "Uploading..." : `Upload images (${maxImages - images.length} remaining)`}
+                      </div>
+                    </label>
+                    <ZoneImageGenerator
+                      zoneName={zoneName}
+                      locationName={locationName ? `${businessName} — inside ${locationName}` : businessName}
+                      category={workplace?.business_category || category}
+                      subtype={businessSubtypes}
+                      locationDescription={workplace?.description?.trim() || locationDescription}
+                      hasExistingImage={images.length > 0}
+                      existingZoneImageUrls={parentZone?.image_urls || []}
+                      onGenerate={(url) => onAddImage?.(zoneName, url)}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground text-center">Maximum {maxImages} images per zone reached</p>
+                )}
               </div>
             );
           })}

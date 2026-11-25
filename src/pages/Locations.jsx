@@ -3,15 +3,15 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Plus, MapPin, Globe, User, Trash2, Upload, X, Pencil,
-  ChevronDown, ChevronUp, Home, Briefcase, Coffee, Trees,
+  Plus, MapPin, Globe, User, Trash2, X, Pencil,
+  ChevronDown, ChevronRight, ChevronUp, Home, Briefcase, Coffee, Trees,
   Wine, GraduationCap, Heart, Dumbbell, ArrowLeft, Users,
   Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
+
 import BottomNav from "@/components/BottomNav";
 import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -21,7 +21,7 @@ import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggest
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import SavedPlaces from "@/components/location/SavedPlaces";
 import LocationDescriptionGenerator from "@/components/location/LocationDescriptionGenerator";
-import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
+import ZonesSection from "@/components/location/ZonesSection";
 import JailInmatePanel from "@/components/location/JailInmatePanel";
 import UniformsEditor from "@/components/location/UniformsEditor";
 import GroupedCharacterSelector from "@/components/location/GroupedCharacterSelector";
@@ -323,119 +323,6 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
 
 // Venue subtypes live in src/lib/locationFormConfig.js
 
-function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "", workplaceByImageUrl = {} }) {
-  const [uploading, setUploading] = useState(false);
-
-  const handleUpload = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    const remaining = 5 - (zone.image_urls?.length || 0);
-    const toUpload = files.slice(0, remaining);
-    setUploading(true);
-    const uploaded = [];
-    for (const file of toUpload) {
-      let res = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          res = await base44.integrations.Core.UploadFile({ file });
-          break;
-        } catch (err) {
-          const status = err?.response?.status || err?.status;
-          if ((status === 502 || status === 503 || status === 504) && attempt < 2) {
-            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
-          } else {
-            console.error('[ZoneEditor] Upload failed:', err?.message);
-            break;
-          }
-        }
-      }
-      if (res?.file_url) uploaded.push(res.file_url);
-    }
-    onUpdateImages([...(zone.image_urls || []), ...uploaded]);
-    setUploading(false);
-  };
-
-  const removeImage = (i) => {
-    onUpdateImages((zone.image_urls || []).filter((_, idx) => idx !== i));
-  };
-
-  const handleGeneratedImage = (imageUrl) => {
-    onUpdateImages([...(zone.image_urls || []), imageUrl]);
-  };
-
-  const imgCount = zone.image_urls?.length || 0;
-
-  return (
-    <div className="border border-border rounded-xl p-3 space-y-3 bg-secondary/30">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-foreground">{zone.zone_name}</p>
-        {!readOnly && <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
-        <X className="w-3.5 h-3.5" />
-        </button>}
-      </div>
-      {!readOnly && (
-        <label className="flex items-center gap-2 cursor-pointer select-none -mt-1">
-          <Checkbox
-            checked={!!zone.is_primary_category}
-            onCheckedChange={(checked) => onTogglePrimaryCategory?.(checked === true)}
-          />
-          <span className="text-[11px] text-muted-foreground">Part of Main Category</span>
-        </label>
-      )}
-      {imgCount > 0 && (
-        <div className="grid grid-cols-4 gap-1.5">
-          {zone.image_urls.map((url, i) => {
-            const workplaceName = workplaceByImageUrl[url];
-            return (
-              <div key={i} className="relative group">
-                <img src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
-                {!readOnly && <button
-                  onClick={() => removeImage(i)}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="w-3 h-3 text-white" />
-                </button>}
-                {workplaceName && (
-                  <p className="text-[9px] text-muted-foreground truncate text-center mt-0.5" title={`${zone.zone_name}, ${workplaceName}`}>
-                    {workplaceName}
-                  </p>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {!readOnly && imgCount < 5 && (
-        <div className="space-y-2">
-          <label className="block cursor-pointer">
-            <input type="file" accept="image/*" multiple onChange={handleUpload} className="hidden" />
-            <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-xs">
-              <Upload className="w-3.5 h-3.5" />
-              {uploading ? "Uploading..." : `Upload images (${5 - imgCount} remaining)`}
-            </div>
-          </label>
-          <ZoneImageGenerator
-            zoneName={zone.zone_name}
-            locationName={locationName}
-            category={category}
-            subtype={subtype}
-            locationDescription={locationDescription}
-            hasExistingImage={imgCount > 0}
-            existingZoneImageUrls={zone.image_urls || []}
-            onGenerate={handleGeneratedImage}
-          />
-        </div>
-      )}
-      {imgCount >= 5 && !readOnly && (
-        <p className="text-xs text-muted-foreground text-center">Maximum 5 images per zone reached</p>
-      )}
-      {imgCount === 0 && !readOnly && (
-        <p className="text-xs text-amber-500/80">⚠ No images yet — add reference photos for this zone</p>
-      )}
-    </div>
-  );
-}
-
 // Work categories and day labels live in src/lib/locationFormConfig.js
 
 function formatShift(shift) {
@@ -700,6 +587,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
+  // Sections collapse to a heading so a property with many zone images can be worked on one
+  // part at a time. This is display only — nothing is cleared, removed or re-saved.
+  const [zonesExpanded, setZonesExpanded] = useState(true);
+  const [apartmentsExpanded, setApartmentsExpanded] = useState(true);
   const [residentSearch, setResidentSearch] = useState("");
   // Names for every saved resident, including people whose record this account does not
   // load directly (shared residency) — a saved resident is never shown as missing.
@@ -1025,63 +916,37 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── ZONE SECTION ── */}
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
-            Rooms / Zones <span className="text-destructive">*</span>
-          </label>
-          <p className="text-xs text-muted-foreground mt-0.5">Each uploaded set of images must be assigned to a specific room or zone.</p>
-        </div>
-        {isRecoveryYard(editingLocation) && currentUser?.role !== 'admin' && (
+      {/* ── ZONE SECTION ──
+          Collapsible: the property's own rooms and their reference images fold away so
+          Apartments and Workspaces can be reached without scrolling past every image. */}
+      <ZonesSection
+        zones={form.zones}
+        presets={presets}
+        existingZoneNames={existingZoneNames}
+        expanded={zonesExpanded}
+        onToggle={() => setZonesExpanded(v => !v)}
+        onAddPreset={addPresetZone}
+        showCustomInput={showCustomInput}
+        onToggleCustomInput={() => setShowCustomInput(v => !v)}
+        customZoneName={newZoneName}
+        onCustomZoneNameChange={setNewZoneName}
+        onAddCustomZone={addCustomZone}
+        onUpdateZoneImages={updateZoneImages}
+        onTogglePrimaryCategory={updateZonePrimaryCategory}
+        onRemoveZone={removeZone}
+        isZoneReadOnly={(zoneName) => isLockedRecoveryYardZone(editingLocation, zoneName, currentUser?.role === 'admin')}
+        isGenericHome={isGenericHome}
+        lockedNotice={isRecoveryYard(editingLocation) && currentUser?.role !== 'admin' ? (
           <p className="text-[11px] text-muted-foreground rounded-xl border border-border bg-secondary/30 px-3 py-2">
             The facility's own zones are managed by Vick Servicio and can't be changed here. Zones you add yourself save normally.
           </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {presets.map(name => {
-            const already = existingZoneNames.includes(name.toLowerCase());
-            return (
-              <button key={name} onClick={() => addPresetZone(name)} disabled={already}
-                className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${already ? "bg-primary/10 border-primary/30 text-primary cursor-default" : "bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
-                {already ? "✓ " : "+ "}{name}
-              </button>
-            );
-          })}
-          <button onClick={() => setShowCustomInput(v => !v)}
-            className="px-3 py-1.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors">
-            + Custom zone
-          </button>
-        </div>
-        {showCustomInput && (
-          <div className="flex gap-2">
-            <Input value={newZoneName} onChange={e => setNewZoneName(e.target.value)} placeholder="e.g. Rooftop, Garage, Studio..." className="h-9 rounded-xl text-sm" onKeyDown={e => e.key === "Enter" && addCustomZone()} />
-            <Button size="sm" onClick={addCustomZone} disabled={!newZoneName.trim()} className="rounded-xl px-4">Add</Button>
-          </div>
-        )}
-        {form.zones.length === 0 && !isGenericHome && (
-          <div className="py-4 rounded-xl border border-dashed border-destructive/30 bg-destructive/5 text-center">
-            <p className="text-xs text-destructive font-medium">At least one zone is required before uploading images.</p>
-          </div>
-        )}
-        <div className="space-y-3">
-          {form.zones.map((zone, i) => (
-            <ZoneEditor 
-              key={i} 
-              zone={zone} 
-              onUpdateImages={(urls) => updateZoneImages(i, urls)} 
-              onTogglePrimaryCategory={(value) => updateZonePrimaryCategory(i, value)}
-              onDelete={() => removeZone(i)} 
-              readOnly={isLockedRecoveryYardZone(editingLocation, zone.zone_name, currentUser?.role === 'admin')}
-              locationName={form.name}
-              category={form.category}
-              subtype={form.subtype}
-              locationDescription={form.description}
-              workplaceByImageUrl={workplaceNameByImageUrl}
-            />
-          ))}
-        </div>
-      </div>
+        ) : null}
+        locationName={form.name}
+        category={form.category}
+        subtype={form.subtype}
+        locationDescription={form.description}
+        workplaceByImageUrl={workplaceNameByImageUrl}
+      />
 
       {/* ── ON-SITE RESIDENCE (business properties) ── */}
       {form.category === 'business' && (
@@ -1398,17 +1263,46 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Residential students of this school and characters whose home is this school can be assigned to a dorm room or apartment." };
         }
 
+        // The section folds to its heading, the same way a business does in Workspaces, so
+        // the property's other parts can be reached without scrolling past every unit.
         return (
-          <ApartmentManager
-            residentialUnits={activeUnits}
-            residentCharacterIds={assignableIds}
-            allCharacters={allCharacters}
-            nameById={characterNameById}
-            maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
-            zoneOptions={form.category === 'school' ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
-            onChange={(units) => update("residential_units", units)}
-            {...labels}
-          />
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setApartmentsExpanded(v => !v)}
+              className="w-full flex items-start gap-2 text-left"
+            >
+              <span className="mt-0.5 text-muted-foreground flex-shrink-0">
+                {apartmentsExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">
+                  {labels.sectionLabel || "Apartments"}
+                </span>
+                <span className="text-[10px] text-muted-foreground mt-0.5 block">
+                  Organize {labels.contextNoun || "building"} residents into individual {labels.unitSingular || "apartment"}s.
+                </span>
+                {!apartmentsExpanded && (
+                  <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">
+                    {activeUnits.length} {activeUnits.length === 1 ? (labels.unitSingular || "apartment") : `${labels.unitSingular || "apartment"}s`} · tap to open
+                  </span>
+                )}
+              </span>
+            </button>
+            {apartmentsExpanded && (
+              <ApartmentManager
+                showHeader={false}
+                residentialUnits={activeUnits}
+                residentCharacterIds={assignableIds}
+                allCharacters={allCharacters}
+                nameById={characterNameById}
+                maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
+                zoneOptions={form.category === 'school' ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
+                onChange={(units) => update("residential_units", units)}
+                {...labels}
+              />
+            )}
+          </div>
         );
       })()}
 
@@ -1438,6 +1332,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           locationDescription={form.description}
           onAddZoneImage={addWorkplaceZoneImage}
           onRemoveZoneImage={removeWorkplaceZoneImage}
+          onAddLocationZone={addPresetZone}
         />
       )}
 
