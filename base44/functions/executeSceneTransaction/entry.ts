@@ -43,6 +43,7 @@ Deno.serve(async (req) => {
       item_label,
       item_category,
       target_character_id,
+      target_character_name,
       scene_instance_id,
     } = data;
 
@@ -104,8 +105,13 @@ Deno.serve(async (req) => {
       const now = new Date().toISOString();
       const ledgerPayload = {
         // Ownership / scope
-        character_id: target_character_id || null,
-        character_name: null,
+        // character_id is a REQUIRED string on FinancialTransaction and must never be null.
+        // When the purchase is for a character, the row belongs to that character. When the
+        // account holder buys for themselves there is no character, so the row is recorded
+        // as their own ledger entry under the established 'user' id — the same convention
+        // already used by transferMoneyBetweenCharacters and processVGCMobileBills.
+        character_id: target_character_id || 'user',
+        character_name: target_character_id ? (target_character_name || null) : (user.full_name || 'Player'),
         sender_id: user.id,
         sender_type: 'user',
         sender_name: user.full_name || user.email,

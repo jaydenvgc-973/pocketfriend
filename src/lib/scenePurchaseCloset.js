@@ -134,15 +134,27 @@ export function buildRecipient({ kind, character = null, settings = null, displa
  * the Character Closet panel uses (character_closet / user_closet).
  */
 export async function appendClosetEntry({ recipient, entry }) {
+  const entryId = entry.piece_id || entry.outfit_id;
+  const alreadyThere = (closet) =>
+    (closet || []).some((item) => (item.piece_id || item.outfit_id) === entryId);
+
   if (recipient.kind === "character") {
-    const closet = [...(recipient.closet || []), entry];
-    await base44.entities.Character.update(recipient.id, { character_closet: closet });
-    return closet;
+    // Read the closet fresh: a retry of a paid purchase must find its own entry and stop,
+    // never append a second one.
+    const fresh = await base44.entities.Character.get(recipient.id);
+    const closet = fresh?.character_closet || [];
+    if (alreadyThere(closet)) return closet;
+    const next = [...closet, entry];
+    await base44.entities.Character.update(recipient.id, { character_closet: next });
+    return next;
   }
   if (!recipient.id) throw new Error("No user settings record to save the purchase to");
-  const closet = [...(recipient.closet || []), entry];
-  await base44.entities.UserSettings.update(recipient.id, { user_closet: closet });
-  return closet;
+  const freshSettings = await base44.entities.UserSettings.get(recipient.id);
+  const closet = freshSettings?.user_closet || [];
+  if (alreadyThere(closet)) return closet;
+  const next = [...closet, entry];
+  await base44.entities.UserSettings.update(recipient.id, { user_closet: next });
+  return next;
 }
 
 /** Complete the details of an entry that already exists — never creates a second entry. */

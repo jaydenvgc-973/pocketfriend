@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -50,6 +50,16 @@ export default function ProductPurchaseModal({
   const [error, setError] = useState(null);
   const [recipientId, setRecipientId] = useState(null);
   const [payerChoice, setPayerChoice] = useState("user");
+  // A purchase whose payment already succeeded but whose closet handoff did not.
+  // While this is set, Buy finishes that step only — it never charges again.
+  // The ref is the synchronous authority (the catch below must know, in the same tick,
+  // that money was already taken); the state only drives the UI.
+  const paidRef = useRef(null);
+  const [paidPurchase, setPaidPurchase] = useState(null);
+  const rememberPaidPurchase = (purchase) => {
+    paidRef.current = purchase;
+    setPaidPurchase(purchase);
+  };
 
   const recipients = traveledWithChars || [];
   // One character present: that is the only possible owner. Never the user by default.
@@ -59,12 +69,30 @@ export default function ProductPurchaseModal({
   const isOutfit = item_kind === "outfit";
   const canAfford = typeof userBalance === "number" && userBalance >= price;
   const payerIsCharacter = payerChoice === "character" && !!chosenCharacter;
-  const blocked = !chosenRecipientId || (payerChoice === "user" && !canAfford);
+  const blocked = !chosenRecipientId || (!paidPurchase && payerChoice === "user" && !canAfford);
 
   const reset = () => {
     setError(null);
     setRecipientId(null);
     setPayerChoice("user");
+    rememberPaidPurchase(null);
+  };
+
+  /** Save the paid purchase into the recipient's existing closet — never charges. */
+  const savePaidPurchase = async (purchase) => {
+    await appendClosetEntry({ recipient: purchase.recipient, entry: purchase.entry });
+    queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    if (purchase.recipient.kind === "character") {
+      queryClient.invalidateQueries({ queryKey: ["character", purchase.recipient.id] });
+    }
+    onPurchased?.({
+      recipient: purchase.recipient,
+      entry: purchase.entry,
+      kind: purchase.kind,
+      price,
+      payerName: purchase.payerName,
+    });
   };
 
   const handleBuy = async () => {
@@ -72,6 +100,14 @@ export default function ProductPurchaseModal({
     setIsProcessing(true);
     setError(null);
     try {
+      // A payment that already succeeded is never charged a second time: Buy finishes
+      // only the closet handoff that failed after the money was taken.
+      if (paidRef.current) {
+        await savePaidPurchase(paidRef.current);
+        reset();
+        return;
+      }
+
       // 1. Charge through the existing transaction authority. Payer decides the account.
       const result = await base44.functions.invoke("executeSceneTransaction", {
         action_class: "purchase",
@@ -80,6 +116,7 @@ export default function ProductPurchaseModal({
         payer_type: payerIsCharacter ? "character" : "user",
         character_id: payerIsCharacter ? chosenCharacter.id : null,
         target_character_id: chosenCharacter?.id || null,
+        target_character_name: chosenCharacter?.name || null,
         action_id: action_id || `modal_purchase_${productId || Date.now()}`,
         purchase_source: purchase_source || "store",
         action_label: item_label || "Scene Purchase",
@@ -89,7 +126,7 @@ export default function ProductPurchaseModal({
       });
 
       if (result?.data?.success !== true) {
-        setError(result?.data?.error || "Transaction failed — insufficient funds or validation error.");
+        setError(result?.data?.error || "The payment was declined — insufficient funds or a validation error.");
         return;
       }
 
@@ -108,31 +145,41 @@ export default function ProductPurchaseModal({
           : buildPurchasedPiece({ label: item_label, imageUrl: preview_image_url, price, transactionId }))
         : buildUserPurchaseEntry({ label: item_label, imageUrl: preview_image_url, price, transactionId });
 
-      await appendClosetEntry({ recipient, entry });
-
-      queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
-      if (chosenCharacter) queryClient.invalidateQueries({ queryKey: ["character", chosenCharacter.id] });
-
-      // 3. Hand the completed purchase to Scenes, which opens the closet entry interface
-      //    for the recipient. Nothing here charges again.
-      onPurchased?.({
+      const paid = {
         recipient,
         entry,
         kind: isOutfit ? "outfit" : "item",
-        price,
+        transactionId,
         payerName: payerIsCharacter ? chosenCharacter.name : (currentUser?.full_name || "you"),
-      });
+      };
+
+      // The charge is recorded before the closet write, so a failed save can never
+      // cause a second charge and is never mistaken for a failed payment.
+      rememberPaidPurchase(paid);
+      await savePaidPurchase(paid);
+
+      // 3. Hand the completed purchase to Scenes, which opens the closet entry interface
+      //    for the recipient. Nothing here charges again.
       reset();
     } catch (err) {
-      setError("Purchase failed. Please try again.");
+      const reason = err?.response?.data?.error || err?.data?.error || err?.message;
+      if (paidRef.current) {
+        setError(`Payment succeeded — $${price} was charged once. Saving it to the closet failed${reason ? ` (${reason})` : ""}. Press Buy again to finish saving — you will not be charged again.`);
+      } else {
+        setError(reason || "The purchase could not be completed. Nothing was charged.");
+      }
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleClose = () => {
+  const handleClose = async () => {
     if (isProcessing) return;
+    // Closing must not throw away a purchase that was already paid for: finish its
+    // closet save once more (the entry is idempotent, so this can never duplicate it).
+    if (paidRef.current) {
+      try { await savePaidPurchase(paidRef.current); } catch { /* user has been told */ }
+    }
     reset();
     onClose?.();
   };
@@ -193,7 +240,7 @@ export default function ProductPurchaseModal({
                       <button
                         key={char.id}
                         onClick={() => { setRecipientId(char.id); if (payerChoice === "character" && char.id !== chosenCharacter?.id) setPayerChoice("user"); }}
-                        disabled={isProcessing}
+                        disabled={isProcessing || !!paidPurchase}
                         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${active ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-foreground hover:bg-secondary/70"}`}
                       >
                         <span className="w-5 h-5 rounded-full overflow-hidden bg-background flex items-center justify-center flex-shrink-0">
@@ -210,7 +257,7 @@ export default function ProductPurchaseModal({
                   {userPresent && (
                     <button
                       onClick={() => { setRecipientId("user"); setPayerChoice("user"); }}
-                      disabled={isProcessing}
+                      disabled={isProcessing || !!paidPurchase}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors ${chosenRecipientId === "user" ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-foreground hover:bg-secondary/70"}`}
                     >
                       <User className="w-3.5 h-3.5" /> You
@@ -230,14 +277,14 @@ export default function ProductPurchaseModal({
                   <div className="flex gap-2">
                     <button
                       onClick={() => setPayerChoice("user")}
-                      disabled={isProcessing}
+                      disabled={isProcessing || !!paidPurchase}
                       className={`flex-1 py-2 rounded-xl border text-xs font-medium transition-colors ${!payerIsCharacter ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-foreground"}`}
                     >
                       You {canAfford ? `($${price})` : "(insufficient funds)"}
                     </button>
                     <button
                       onClick={() => setPayerChoice("character")}
-                      disabled={isProcessing}
+                      disabled={isProcessing || !!paidPurchase}
                       className={`flex-1 py-2 rounded-xl border text-xs font-medium transition-colors ${payerIsCharacter ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary text-foreground"}`}
                     >
                       {chosenCharacter.name} pays
@@ -253,7 +300,9 @@ export default function ProductPurchaseModal({
               >
                 {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 {chosenRecipientId
-                  ? `Pay $${price}${payerIsCharacter ? ` · ${chosenCharacter.name} pays` : ""}`
+                  ? (paidPurchase
+                    ? "Finish saving — no charge"
+                    : `Pay $${price}${payerIsCharacter ? ` · ${chosenCharacter.name} pays` : ""}`)
                   : "Choose a recipient"}
               </button>
 
