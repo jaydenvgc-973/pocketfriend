@@ -68,6 +68,7 @@ import { isInfantCharacter, childSpeechLimit } from "@/lib/characterAgeStage";
 import { isAdultCharacter } from "@/lib/characterAgeSystem";
 import { activityBehaviorFor, activityFeedLine } from "@/lib/sceneActivityBehavior";
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
+import { buildPossibleNpcs } from "@/lib/scenePossibleNpcs";
 import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
@@ -195,9 +196,17 @@ export default function Scene() {
     enabled: !!locationId && !locationsData.find((l) => l.id === locationId),
   });
 
-  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
+  const { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, npcRegular, sharedLocationEmployees, sharedLocationVisitors } = useSceneCharacters(currentUser);
 
   const location = locationsData.find((l) => l.id === locationId) || directLocation || null;
+
+  // Regular NPCs are present in the world like anyone else, so they appear in Who's Here.
+  // They are never auto-added to the cast: being here is not being selected. The
+  // household's assigned caregiver is the exception — supervision already selects them.
+  const regularNpcIds = useMemo(
+    () => new Set((npcRegular || []).filter((c) => !isCaregiverOnDuty(c, location?.id)).map((c) => c.id)),
+    [npcRegular, location?.id]
+  );
 
 
 
@@ -247,8 +256,8 @@ export default function Scene() {
       currentUser, userSettings: settings || null, activeCharacters: activeChars,
       npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
       npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i),
-      // Assigned child-care caregivers are part of the household they supervise.
-      npcRegular: sceneCaregivers,
+      // Regular NPCs — caregivers included — carry their own authoritative presence.
+      npcRegular,
       allCharacters: characters, sharedLocationEmployees, sharedLocationVisitors, locations: locationsData
     });
     const withBrought = resolved.map((entity) => {
@@ -261,7 +270,7 @@ export default function Scene() {
       }
     });
     return withBrought;
-  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, sceneCaregivers, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
+  }, [currentUser?.id, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner, npcRegular, sharedLocationEmployees, sharedLocationVisitors, locationsData, broughtCharacters, locationId, location?.name]);
 
   // The household's temporary child-care caregiver, exactly as the existing
   // child-supervision system maintains them. The assignment (is_sitter + the home it is
@@ -354,6 +363,8 @@ export default function Scene() {
         // Inside a private space of the property — a patient room, a cell, an apartment,
         // a workplace — they are not in the immediate area the scene opens in.
         && !privateSpaceOccupantIds.has(e.id)
+        // A Regular NPC who is here is listed in Who's Here; they are never auto-selected.
+        && !regularNpcIds.has(e.id)
         && !characterIds.includes(e.id));
     // ONE WORKPLACE: the chosen space is this establishment, not the property around it.
     // The people in it are its own people whose existing shift has them working here now.
@@ -369,7 +380,7 @@ export default function Scene() {
         .map((e) => e.id);
     }
     return present.map((e) => e.id);
-  }, [location?.id, activeUnitId, activeWorkspace?.workplace_id, unitPresentOccupantIds.join(','), privateSpaceOccupantIds, unifiedPresenceEntities, currentUser?.id, characters.length]);
+  }, [location?.id, activeUnitId, activeWorkspace?.workplace_id, unitPresentOccupantIds.join(','), privateSpaceOccupantIds, unifiedPresenceEntities, currentUser?.id, characters.length, regularNpcIds]);
 
   // Presence decides who is AVAILABLE and initially selected; the selection itself decides
   // who actually participates. Entering a location or one of its units preselects the
@@ -508,42 +519,13 @@ export default function Scene() {
       });
   }, [location, unifiedPresenceEntities, characterIds, characters]);
 
-  const allPossibleNpcs = (() => {
-    const npcs = [];
-    if (isResidentialSpace) {
-      vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.character_type === 'family_npc' ? 'Family' : 'Resident', isNpc: true, npcType: 'resident', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); });
-      homeResidents.forEach((c) => { if (!npcs.find((x) => x.id === c.id) && !characterIds.includes(c.id)) npcs.push({ id: c.id, name: c.name, role: isAssignedCaregiverHere(c) ? 'Caregiver' : 'Resident', isNpc: false, npcType: 'resident', avatar_url: c.avatar_url || null, personality_summary: c.personality_summary, emotional_state: c.emotional_state, unit_name: locationUnits.length > 0 ? getUnitLabel(getUnitForCharacter(location, c.id)?.unit_name, location) || null : null }); });
-      (location.resident_family_members || []).forEach((fm) => { if (!fm.name) return; const alreadyAdded = npcs.find((x) => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); if (alreadyAdded) return; const sourceChar = fm.source_character_id ? characters.find((c) => c.id === fm.source_character_id) : homeResidents.find((c) => c.family_members?.some((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())); const familyMemberRecord = sourceChar?.family_members?.find((m) => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()); npcs.push({ id: `npc_${fm.name.replace(/\s+/g, "_")}`, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, npcType: "resident", avatar_url: familyMemberRecord?.photo_url || null }); });
-    }
-    if (!isResidentialSpace && location?.owner_is_npc && location?.owner_npc_name) npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
-    workerCharacters.forEach((w) => { if (npcs.find((x) => x.id === w.id)) return; if (characterIds.includes(w.id)) return; const jobTitle = location.worker_job_titles?.[w.id] || w.work_details?.job_title || "Employee"; npcs.push({ id: w.id, name: w.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: w.avatar_url || null, personality_summary: w.personality_summary, archetype: w.archetype, emotional_state: w.emotional_state, resolved_presence_status: w.resolved_presence_status }); });
-    const locationWorkerIds = location?.worker_character_ids || [];
-    const canonicalLocByIdWorkerLoop = {};
-    unifiedPresenceEntities.forEach((e) => { if (e.id) canonicalLocByIdWorkerLoop[e.id] = e.resolved_current_location_id; });
-    locationWorkerIds.forEach((wid) => { if (workerCharacters.find((w) => w.id === wid)) return; if (characterIds.includes(wid)) return; const workerChar = characters.find((c) => c.id === wid); if (!workerChar) return; const canonicalLocId = canonicalLocByIdWorkerLoop[wid] || workerChar.resolved_current_location_id; if (canonicalLocId !== locationId) return; const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee"; npcs.push({ id: workerChar.id, name: workerChar.name, role: jobTitle, isNpc: false, npcType: "staff", avatar_url: workerChar.avatar_url, personality_summary: workerChar.personality_summary, archetype: workerChar.archetype, emotional_state: workerChar.emotional_state }); });
-    if (isResidentialSpace) { hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i); }
-    if (!isRestrictedEnv) { const onShiftIdsLocal = workerCharacters.map((w) => w.id); const tempSceneStaff = getTemporarySceneStaff(location, onShiftIdsLocal); tempSceneStaff.forEach((tmpNpc) => { if (!npcs.find((x) => x.id === tmpNpc.id)) npcs.push(tmpNpc); }); }
-    if (!isRestrictedEnv) { Object.keys(location?.worker_job_titles || {}).filter((k) => k.startsWith("npc_")).forEach((key) => { if (isNPCOnShift(location, key)) { const npcName = key.replace(/^npc_/, "").replace(/_/g, " "); const jobTitle = location.worker_job_titles[key]; if (!npcs.find((x) => x.id === key)) npcs.push({ id: key, name: npcName, role: jobTitle || "Staff", isNpc: true, npcType: "staff", avatar_url: null }); } }); }
-    if (!isRestrictedEnv) {
-      // A confined character always has the facility's own population to interact with.
-      // Only when another established inmate is already here do they have each other.
-      const establishedInmatesHere = getPresenceAtLocation(location, unifiedPresenceEntities)
-        .filter((e) => isIncarceratedCharacter(characters.find((c) => c.id === e.id) || e, location))
-        .length;
-      // A confinement facility is a prison/jail whatever its category says: it keeps the
-      // facility's own people (officers, court officer, inmate) instead of a venue's.
-      const venueDefaults = getVenueNpcDefaults(location, isJailOrPrison(location));
-      venueDefaults.forEach((n) => {
-        if (n.npcType === 'inmate' && establishedInmatesHere >= 2) return;
-        if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
-      });
-    }
-    if (!isRestrictedEnv) { npcsTravelingHere.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); }); }
-    if (!isRestrictedEnv) { vgcDistributedNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ id: n.id, name: n.name, role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation' ? 'Visiting' : n.character_type === 'family_npc' ? 'Family' : 'NPC', isNpc: true, npcType: 'customer', avatar_url: n.avatar_url || null, personality_summary: n.personality_summary, emotional_state: n.emotional_state }); }); }
-    hereNowFromPresence.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push(n); });
-    extraNpcs.forEach((n) => { if (!npcs.find((x) => x.id === n.id)) npcs.push({ ...n, npcType: n.npcType || 'present' }); });
-    return npcs.filter((n, i, arr) => arr.findIndex((x) => x.id === n.id) === i);
-  })().map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : n.npcType === 'inmate' ? 'inmate' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
+  const allPossibleNpcs = buildPossibleNpcs({
+    location, locationId, characterIds, characters, homeResidents, vgcDistributedNpcs,
+    workerCharacters, unifiedPresenceEntities, hereNowFromPresence, npcsTravelingHere,
+    extraNpcs, locationUnits, isResidentialSpace, isRestrictedEnv,
+    isAssignedCaregiverHere, getUnitForCharacter, getUnitLabel, getTemporarySceneStaff,
+    isNPCOnShift, getVenueNpcDefaults, isJailOrPrison, isIncarceratedCharacter, getPresenceAtLocation,
+  }).map((n) => ({ ...n, sceneRole: n.isNpc === true ? (n.npcType === 'staff' ? 'on-shift employee' : n.npcType === 'resident' ? 'home resident' : n.npcType === 'inmate' ? 'inmate' : 'visitor') : resolveSceneRole(n, { onShiftAtLocationIds: onShiftIds, homeResidentIds }) }));
 
   // A caregiver the existing supervision system currently has on duty in THIS household is
   // an ACTIVE participant from the first render: physically present, automatically
@@ -594,6 +576,9 @@ export default function Scene() {
     const ownUserPresence = presentEntities.find((e) => isUserPresenceEntity(e, currentUser?.id)) || null;
     for (const entity of presentEntities) {
       if (!entity || !entity.id || seenIds.has(entity.id)) continue;
+      // A Regular NPC who is present appears in Who's Here and joins the cast only when
+      // the user selects them. Being here never means being part of the scene.
+      if (regularNpcIds.has(entity.id) && !characterIds.includes(entity.id)) continue;
       // Visiting ONE apartment: a resident of another apartment in the same building is
       // not in this room. They stay available through Who's Here and join the scene only
       // when the user actually selects them.

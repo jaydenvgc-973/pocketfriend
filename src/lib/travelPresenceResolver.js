@@ -243,6 +243,10 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
   // Include it here so the travel map shows passed-out characters at their home (not as missing).
   const isSleeping = resolvedStatus === 'sleeping' || resolvedStatus === 'napping';
   const isPassedOut = resolvedStatus === 'passed_out';
+  // ON SHIFT is a presence of its own. A character working inside the property they also
+  // live in is at work, not at home — the property being residential never overrides the
+  // shift that put them there.
+  const isAtWork = resolvedStatus === 'at_work';
 
   console.log(`[travelPresenceResolver:normalize] ${char.name} → loc="${resolvedLocName}" status="${resolvedStatus}" sleeping=${isSleeping} source="${canonical.resolved_source_reason}"`);
 
@@ -264,7 +268,8 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
 
     is_home_resident: !!homeLocId,
     is_currently_present: isCurrentlyPresent,
-    is_home: !isRabbitHole && isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
+    is_home: !isRabbitHole && !isAtWork && isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
+    is_at_work: isAtWork,
     is_away: isRabbitHole || (isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId),
     is_sleeping: isSleeping,
     is_passed_out: isPassedOut,

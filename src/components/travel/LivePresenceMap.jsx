@@ -399,7 +399,7 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
                     <div style={{ fontSize: 10, color: "#64748b" }}>
-                      {o.isAsleep ? "😴 Sleeping" : isUser ? "You" : isFamilyChar ? "Family" : label}
+                      {o.isAsleep ? "😴 Sleeping" : o.isAtWork ? "💼 At work" : isUser ? "You" : isFamilyChar ? "Family" : label}
                     </div>
                   </div>
                 </div>
@@ -512,6 +512,18 @@ function CharacterPin({ marker, onClick, offset }) {
           background: `linear-gradient(135deg, ${borderColor}, ${borderColor}cc)`,
         }}>
           {marker.initials || marker.name?.slice(0, 1)?.toUpperCase() || '?'}
+        </div>
+      )}
+      {/* On-shift badge — the map states that a character here is working */}
+      {marker.isAtWork && (
+        <div style={{
+          position: "absolute", top: 0, right: 0,
+          background: "#3b82f6", color: "#fff",
+          fontSize: 8, fontWeight: 800,
+          padding: "0 3px", borderRadius: 4,
+          lineHeight: 1.5, pointerEvents: "none",
+        }}>
+          💼
         </div>
       )}
       {/* "You" badge for user marker */}
@@ -718,6 +730,9 @@ function buildMarkers(entities, locations, gridCoords, travelingCharacterIds = n
       locationName: resolvedLocation.name,
       coordinates,
       isAsleep: entity.resolved_presence_status === 'sleeping' || entity.resolved_presence_status === 'napping',
+      // On shift is part of where they are: a working character is at work, even when
+      // that workplace sits inside the property they live in.
+      isAtWork: entity.resolved_presence_status === 'at_work',
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
       isUserMarker: entity.effective_presence_type === 'user',
     });

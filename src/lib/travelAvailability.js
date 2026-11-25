@@ -67,6 +67,19 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
         availableAt: `May be free after ${toDisplay12h(wakeTime)}`,
       };
     }
+    // A Regular NPC holds a real job like anyone else. When the presence engine has them
+    // on shift, the same Busy rule applies — whether their workplace stands alone or sits
+    // inside a larger property changes nothing.
+    const npcResolved = resolveCharacterLocation(character, locationMap);
+    if (npcResolved.resolved_presence_status === 'at_work') {
+      const workEnd = resolveWorkEnd(character, locationMap);
+      return {
+        available: false,
+        isBusy: true,
+        reason: `${character.name} is at work${workEnd ? ` until ${toDisplay12h(workEnd)}` : ''}`,
+        availableAt: workEnd ? `May be free after ${toDisplay12h(workEnd)}` : null,
+      };
+    }
     return { available: true, reason: null, availableAt: null };
   }
 
@@ -84,13 +97,17 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   const isPraying = resolved.resolved_source_reason === 'praying_at_home';
   const category = locationObj?.category || 'generic';
   
-  // Determine travel blockage based on resolved state
+  // Determine travel blockage based on resolved state.
+  // The resolved PRESENCE STATUS is the authority — never one exact source-reason string.
+  // A shift locked by the work authority, a shift at a workplace inside a larger property,
+  // and a plain scheduled shift all resolve to at_work and all mean the same thing: Busy.
+  const resolvedStatus = resolved.resolved_presence_status;
   let iconType = 'calm';
   if (isSleeping) iconType = 'sleep';
+  else if (resolvedStatus === 'at_work') iconType = 'work';
+  else if (resolvedStatus === 'at_school') iconType = 'school';
   else if (isPraying) iconType = 'prayer';
-  else if (resolved.resolved_source_reason === 'work_schedule') iconType = 'work';
-  else if (resolved.resolved_source_reason === 'school_schedule') iconType = 'school';
-  else if (category === 'medical') iconType = 'hospital';
+  else if (resolvedStatus === 'hospitalized' || category === 'medical') iconType = 'hospital';
 
   if (iconType === 'sleep') {
     const wakeTime = character.wake_up_time || '07:00';
@@ -106,15 +123,7 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     const hasJob = character?.work_details?.job_title || character?.occupation_location_id;
     if (!hasJob) return { available: true, reason: null, availableAt: null };
 
-    // Look up the real shift end from the location's worker_shifts first
-    let workEnd = null;
-    if (character.occupation_location_id && locationMap[character.occupation_location_id]) {
-      const workLoc = locationMap[character.occupation_location_id];
-      const shift = workLoc.worker_shifts?.[character.id];
-      if (shift?.end) workEnd = shift.end;
-    }
-    // Fall back to character's own work_end_time only if no shift data found
-    if (!workEnd) workEnd = character.work_end_time || null;
+    const workEnd = resolveWorkEnd(character, locationMap);
 
     return {
       available: false,
@@ -152,6 +161,24 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   }
 
   return { available: true, reason: null, availableAt: null };
+}
+
+/**
+ * The end of the shift a working character is on.
+ * The location's own worker_shifts entry is the authority; the character-level
+ * work_end_time is only the fallback when no shift record exists. Same source the
+ * existing work enforcement reads, so the "until" shown is the real shift end.
+ */
+function resolveWorkEnd(character, locationMap = {}) {
+  const jobLocIds = [
+    character.occupation_location_id,
+    ...(character.additional_occupation_locations || []).map((e) => e?.location_id).filter(Boolean),
+  ].filter(Boolean);
+  for (const locId of jobLocIds) {
+    const shift = locationMap[locId]?.worker_shifts?.[character.id];
+    if (shift?.end) return shift.end;
+  }
+  return character.work_end_time || null;
 }
 
 /**

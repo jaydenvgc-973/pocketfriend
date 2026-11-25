@@ -100,6 +100,7 @@ export default function Travel() {
     activeCreated: activeCharacters,
     npcFictitious: npcCharacters,
     npcFamilyMembers,
+    npcRegular,
     travelCompanions,
     sharedLocationEmployees,
     sharedLocationVisitors,
@@ -204,6 +205,9 @@ export default function Travel() {
     activeCharacters,
     npcFictitious: npcCharacters,
     npcFamilyMembers,
+    // Regular NPCs are world characters with real presence. Their type must never be
+    // the reason they are missing from the map or a location card.
+    npcRegular,
     allCharacters: allCharactersForFamilyScan,
     sharedLocationEmployees,
     sharedLocationVisitors,
@@ -217,6 +221,7 @@ export default function Travel() {
     activeCharacters.length,
     npcCharacters.length,
     npcFamilyMembers.length,
+    npcRegular.length,
     sharedLocationEmployees.length,
     sharedLocationVisitors.length,
     locationsData.length,
@@ -975,9 +980,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       color = status === 'home' ? 'text-green-400' : 'text-blue-400';
                       status = status === 'sleeping' || status === 'napping' ? 'sleeping' : 'home';
                     }
-                    // Show "working" if resolved_presence_status is at_work from schedule source
-                    if (!isHome && status === 'at_work' &&
-                        (entity.resolved_source_reason === 'work_schedule' || entity.resolved_source_reason === 'work_schedule_enforced')) {
+                    // ON SHIFT is shown as working whatever produced it — a plain schedule,
+                    // the work authority's shift lock, or a shift at a workplace inside a
+                    // larger property. One rule, no source-string exceptions.
+                    if (status === 'at_work') {
                       status = 'working';
                       color = 'text-purple-400';
                     }
