@@ -2064,9 +2064,12 @@ export default function Scene() {
     setArrestTransition({ character: person, facility: { ...facility, name: data.facility_name || facility.name }, unitId: data.unit_id || null, unitName: data.unit_name || null });
   };
 
-  const handleNextSceneConfirm = async ({ destination, zoneName, unitId, travelerIds, mode }) => {
+  const handleNextSceneConfirm = async ({ destination, zoneName, unitId, environmentId, spaceLabel, travelerIds, mode }) => {
     setShowNextScene(false);
     if (!destination?.id) return;
+    // A chosen workspace or on-site residence is a space of this same property: the
+    // property stays the destination, and the space is what the scene opens in.
+    const placeName = spaceLabel || destination.name;
     const travelers = nextSceneParticipants.filter((p) => travelerIds.includes(p.id));
     const moving = mode === "watch" ? [] : travelers;
     // Each chosen person moves through the same teleportation call the app already
@@ -2084,23 +2087,26 @@ export default function Scene() {
     const arrived = results.filter((r) => r.moved);
     const refused = results.filter((r) => !r.moved);
     if (moving.length > 0 && arrived.length === 0) {
-      setMessages((prev) => [...prev, { id: `next_scene_err_${Date.now()}`, sender: "narrative", content: `Nobody could get to ${destination.name}. The scene stays here.`, timestamp: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `next_scene_err_${Date.now()}`, sender: "narrative", content: `Nobody could get to ${placeName}. The scene stays here.`, timestamp: new Date().toISOString() }]);
       return;
     }
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     const refusedNote = refused.length > 0 ? ` ${refused.map((r) => r.name).join(", ")} ${refused.length === 1 ? "stays" : "stay"} behind.` : "";
     // Sending them ahead from a scene you are in leaves you here — nobody moves you.
     if (mode === "send" && !observeMode) {
-      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${arrived.map((t) => t.name).join(", ")} head to ${destination.name}.${refusedNote}`, timestamp: new Date().toISOString() }]);
+      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${arrived.map((t) => t.name).join(", ")} head to ${placeName}.${refusedNote}`, timestamp: new Date().toISOString() }]);
       return;
     }
     // The scene being left is recorded before the next one begins.
-    _completeSceneBeforeTransition(destination.name);
+    _completeSceneBeforeTransition(placeName);
     const params = new URLSearchParams({ locationId: destination.id });
     const ids = arrived.map((t) => t.id).join(",");
     if (ids) params.set("characterIds", ids);
     if (zoneName) params.set("zoneName", zoneName);
     if (unitId) params.set("unitId", unitId);
+    // The residence environment is carried so its own access rules apply — a property's
+    // business hours never close the living space inside it.
+    if (environmentId) params.set("environmentId", environmentId);
     if (observeMode || mode === "watch") params.set("observe", "1");
     // Marks this as a scene of its own even when it happens to share the same place and
     // cast — a confirmed transition always starts the destination scene.
@@ -2358,7 +2364,7 @@ export default function Scene() {
             ? (observeMode
               ? "Pick one person or several — they take part together. Only people who are here can be chosen."
               : "Whoever you pick does it — nobody is assumed. Only people in this scene can be chosen.")
-            : "Only people who are here can do it — you are not in the scene."}
+            : "Only people in this scene can be chosen — you included, whenever you are here."}
       />
       <SceneTargetPicker action={directedAction} targets={directedPartnersFor(directedAction, directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
       {/* Pickpocket names two people: who attempts it, then whose pocket. Never assumed. */}

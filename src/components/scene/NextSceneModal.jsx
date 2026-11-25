@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { X, MapPin, Search, Check } from "lucide-react";
+import { X, MapPin, Search, Check, CornerDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { buildNextSceneDestinations, filterNextSceneDestinations } from "@/lib/nextSceneDestinations";
 
 /**
  * NextSceneModal — a scene-transition control, not an in-world action.
@@ -27,18 +28,31 @@ export default function NextSceneModal({
 }) {
   const [query, setQuery] = useState("");
   const [destinationId, setDestinationId] = useState("");
+  const [spaceKey, setSpaceKey] = useState("");
   const [zoneName, setZoneName] = useState("");
   const [unitId, setUnitId] = useState("");
   const [travelerIds, setTravelerIds] = useState(participants.map((p) => p.id));
   const [mode, setMode] = useState(userPresent ? "go" : "send");
   if (!open) return null;
 
+  // A property and the spaces already established inside it — its businesses, and its
+  // on-site residence when it has one. Choosing a space resolves to that same property.
+  const sections = buildNextSceneDestinations(locations);
+  const filtered = filterNextSceneDestinations(sections, query);
   const destination = locations.find((l) => l.id === destinationId) || null;
-  const zones = (destination?.zones || []).map((z) => z.zone_name).filter(Boolean);
-  const units = destination?.residential_units || [];
-  const filtered = locations
-    .filter((l) => (l.name || "").toLowerCase().includes(query.trim().toLowerCase()))
-    .slice(0, 40);
+  const selectedSpace = sections.find((s) => s.location.id === destinationId)?.children.find((c) => c.key === spaceKey) || null;
+  // A chosen space narrows the room choices to its own; the property itself keeps all of
+  // its rooms and units exactly as before.
+  const zones = selectedSpace
+    ? selectedSpace.zoneNames
+    : (destination?.zones || []).map((z) => z.zone_name).filter(Boolean);
+  const units = selectedSpace ? [] : (destination?.residential_units || []);
+  const selectDestination = (loc, space) => {
+    setDestinationId(loc.id);
+    setSpaceKey(space?.key || "");
+    setZoneName(space?.zoneName || "");
+    setUnitId(space?.unitId || "");
+  };
 
   const modes = userPresent
     ? [
@@ -79,20 +93,40 @@ export default function NextSceneModal({
             <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-2.5" />
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search your locations" className="h-8 pl-8 text-xs rounded-lg" />
           </div>
-          <div className="max-h-40 overflow-y-auto rounded-xl border border-border divide-y divide-border">
+          <div className="max-h-52 overflow-y-auto rounded-xl border border-border divide-y divide-border">
             {filtered.length === 0 ? (
               <p className="px-3 py-3 text-[11px] text-muted-foreground">No location matches that.</p>
-            ) : filtered.map((loc) => (
-              <button
-                key={loc.id}
-                onClick={() => { setDestinationId(loc.id); setZoneName(""); setUnitId(""); }}
-                className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${destinationId === loc.id ? "bg-primary/10" : "hover:bg-secondary"}`}
-              >
-                <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${destinationId === loc.id ? "text-primary" : "text-muted-foreground"}`} />
-                <span className={`flex-1 min-w-0 text-xs truncate ${destinationId === loc.id ? "text-primary font-medium" : "text-foreground"}`}>{loc.name}</span>
-                {destinationId === loc.id && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-              </button>
-            ))}
+            ) : filtered.map(({ location: loc, children }) => {
+              const parentPicked = destinationId === loc.id && !spaceKey;
+              return (
+                <div key={loc.id}>
+                  <button
+                    onClick={() => selectDestination(loc, null)}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${parentPicked ? "bg-primary/10" : "hover:bg-secondary"}`}
+                  >
+                    <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${parentPicked ? "text-primary" : "text-muted-foreground"}`} />
+                    <span className={`flex-1 min-w-0 text-xs truncate ${parentPicked ? "text-primary font-medium" : "text-foreground"}`}>{loc.name}</span>
+                    {parentPicked && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                  </button>
+                  {/* The spaces already inside this property, directly beneath it. */}
+                  {children.map((space) => {
+                    const spacePicked = destinationId === loc.id && spaceKey === space.key;
+                    return (
+                      <button
+                        key={space.key}
+                        onClick={() => selectDestination(loc, space)}
+                        className={`w-full flex items-center gap-2 pl-7 pr-3 py-1.5 text-left transition-colors ${spacePicked ? "bg-primary/10" : "hover:bg-secondary"}`}
+                      >
+                        <CornerDownRight className={`w-3 h-3 flex-shrink-0 ${spacePicked ? "text-primary" : "text-muted-foreground/70"}`} />
+                        <span className={`flex-1 min-w-0 text-xs truncate ${spacePicked ? "text-primary font-medium" : "text-foreground/90"}`}>{space.name}</span>
+                        <span className="text-[9px] uppercase tracking-wide text-muted-foreground flex-shrink-0">{space.kindLabel}</span>
+                        {spacePicked && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
 
           {zones.length > 1 && (
@@ -157,7 +191,15 @@ export default function NextSceneModal({
           <Button variant="ghost" onClick={onClose} className="flex-1 rounded-xl">Cancel</Button>
           <Button
             disabled={!canConfirm}
-            onClick={() => onConfirm({ destination, zoneName, unitId, travelerIds, mode })}
+            onClick={() => onConfirm({
+              destination,
+              zoneName,
+              unitId,
+              environmentId: selectedSpace?.environmentId || "",
+              spaceLabel: selectedSpace?.name || null,
+              travelerIds,
+              mode,
+            })}
             className="flex-1 rounded-xl"
           >
             Confirm
