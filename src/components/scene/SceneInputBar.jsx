@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, memo } from "react";
-import { Send, BookOpen } from "lucide-react";
+import { Send, BookOpen, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 
@@ -13,7 +13,7 @@ import { motion } from "framer-motion";
  * - No onTouchStart/onTouchEnd on send (prevents double-fire on mobile)
  * - Draft text owned by parent via props; no remount on parent state changes
  */
-function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode, onSend }) {
+function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode, onSend, onContinue, isGenerating }) {
   const inputRef = useRef(null);
   const inputTextRef = useRef(inputText);
   inputTextRef.current = inputText;
@@ -55,6 +55,18 @@ function SceneInputBar({ inputText, setInputText, narratorMode, setNarratorMode,
           className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${narratorMode ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
         >
           <BookOpen className="w-3 h-3" /> Narrate
+        </button>
+        {/* LET THEM CONTINUE — the people here carry the moment on by themselves instead
+            of stopping and waiting for the user's next line. Same control as a watched
+            scene, available while the user is actually at the location. */}
+        <button
+          onMouseDown={(e) => { e.preventDefault(); if (!isGenerating) onContinue?.(); }}
+          onClick={(e) => e.preventDefault()}
+          disabled={isGenerating}
+          title="Let the characters keep talking on their own"
+          className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-secondary text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors"
+        >
+          <Play className="w-3 h-3" /> {isGenerating ? "Talking..." : "Let them continue"}
         </button>
       </div>
 

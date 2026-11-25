@@ -1444,12 +1444,19 @@ export default function Scene() {
   // the user said. It is shown as a centered scene activity — never as an outgoing
   // message — and it tells the scene whether the moment has already happened (immediate)
   // or is behavior being carried out now (direct).
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null, purchaseMerchandise = null) => {
-    if (!text.trim() || !location) return; setInputText("");
-    const userMsg = activity
-      ? { id: Date.now().toString(), sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: activity.behavior === "immediate", timestamp: new Date().toISOString() }
-      : { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
-    setMessages((prev) => [...prev, userMsg]);
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null, purchaseMerchandise = null, { continuation = false } = {}) => {
+    if (!location) return;
+    // LET THEM CONTINUE — nobody said anything new. The people here carry the moment on
+    // by themselves instead of stopping and waiting for the user's next line.
+    if (!continuation && !text.trim()) return;
+    setInputText("");
+    // A continuation is not a user turn: nothing is put in the user's mouth.
+    if (!continuation) {
+      const userMsg = activity
+        ? { id: Date.now().toString(), sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: activity.behavior === "immediate", timestamp: new Date().toISOString() }
+        : { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
+      setMessages((prev) => [...prev, userMsg]);
+    }
 
     const wpIntent = detectWorldPhoneIntent(text);
     if (wpIntent && wpIntent.recipient && (privateTarget || (broughtCharacters.filter(c => !c.isNpc).length === 1))) {
@@ -1518,7 +1525,9 @@ export default function Scene() {
       // What the scene is responding to this turn. A strip activity is never phrased as
       // something the user said: it is either an event that has happened or a moment being
       // played out, and in both cases it replaces whatever they were doing before it.
-      const momentLine = activity
+      const momentLine = continuation
+        ? `Nobody has said anything new. The moment at ${location.name} carries on by itself: the people here keep talking and doing things among themselves, they do not wait for ${displayName}, and they may start something of their own. Never write words, actions, or thoughts for ${displayName}, and never treat them as having just spoken.`
+        : activity
         ? (activity.behavior === "immediate"
           ? `This has ALREADY HAPPENED, from the moment it was chosen: ${activity.direction || activity.content}\nIt is a lived event — not a proposal, not a question, not an instruction. Nobody asks whether it should happen, nobody agrees to it, and nobody plays it out again. It is the situation they are in now and it replaces whatever they were doing before it. What they say and do is the consequence of it.`
           : `This is being played out right now: ${activity.direction || activity.content}\nCarry it out through what they actually say and do — never merely acknowledge that it was asked for, and never announce it as a plan.`)
@@ -1558,7 +1567,7 @@ export default function Scene() {
         if (char) { try { const wpResult = await handleCharacterWorldPhoneAction({ responseText: cleanedContent, character: char, characterId: char.id, conversationId: null, ownerEmail: currentUser?.email, recentMessages: messages.slice(-15) }); cleanedContent = wpResult.responseText || cleanedContent; } catch {} }
         const msg = { id: Date.now().toString() + resp.character_name, sender: "character", senderName: resp.character_name, characterId: char?.id, avatarUrl: char?.avatar_url, content: cleanedContent, timestamp: new Date().toISOString() };
         setMessages((prev) => [...prev, msg]);
-        if (char) { const realBrought = broughtCharacters.filter((c) => !c.isNpc && c.id !== char.id); base44.functions.invoke("extractMemoriesFromTurn", { characterId: char.id, userMessage: text, characterReply: cleanedContent, playingAsCharacterId: realBrought[0]?.id || null, witnessCharacterIds: realBrought.slice(1).map((c) => c.id) }).catch(() => {}); }
+        if (char) { const realBrought = broughtCharacters.filter((c) => !c.isNpc && c.id !== char.id); base44.functions.invoke("extractMemoriesFromTurn", { characterId: char.id, userMessage: continuation ? "(no new line — the scene carried on by itself)" : text, characterReply: cleanedContent, playingAsCharacterId: realBrought[0]?.id || null, witnessCharacterIds: realBrought.slice(1).map((c) => c.id) }).catch(() => {}); }
         await new Promise((r) => setTimeout(r, 400));
       }
       if (responseList.length === 0) { const hasAnyone = dialogueEligible.length > 0; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: hasAnyone ? `The atmosphere at ${location.name} hums quietly. No one responds right away.` : `You take in the surroundings at ${location.name}. Use the "Who's here" button to start talking to someone.`, timestamp: new Date().toISOString() }]); }
@@ -1651,6 +1660,9 @@ export default function Scene() {
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
   useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
   const stableOnSend = useRef((text) => { if (narratorModeRef.current) sendNarrationRef.current?.(text); else sendMessageRef.current?.(text); }).current;
+  // LET THEM CONTINUE — available here too, not only while watching: at a location the
+  // people keep the conversation going on their own instead of waiting for the user.
+  const stableOnContinue = useRef(() => sendMessageRef.current?.("", false, undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, { continuation: true })).current;
 
   const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName, destinationUnitId = null }) => {
     if (!location) return; setIsMoveInLoading(true);
@@ -2309,7 +2321,7 @@ export default function Scene() {
           blockedSpeakIds={[...onDutyCaregiverIds, ...observeCast.filter((c) => isInfantCharacter(c)).map((c) => c.id)]}
         />
       ) : (
-        <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} />
+        <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} onContinue={stableOnContinue} isGenerating={isTyping} />
       )}
 
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
