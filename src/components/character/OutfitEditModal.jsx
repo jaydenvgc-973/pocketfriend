@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
+import { analyzeClosetImage, mergePrefill } from "@/lib/closetImageAutofill";
+
+// The fields that describe what the outfit actually looks like.
+const DESCRIPTIVE_FIELDS = ["top", "bottom", "shoes", "outerwear", "accessories", "hair_state", "full_description"];
 
 // Canonical approved categories only — no travel, cold_weather, hot_weather, or medical
 const OUTFIT_CATEGORIES = [
@@ -57,6 +61,8 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
   const [generatingImg, setGeneratingImg] = useState(false);
   const [saving, setSaving]             = useState(false);
   const [previewModal, setPreviewModal] = useState(false);
+  const [fillingFromImage, setFillingFromImage] = useState(false);
+  const [fillNote, setFillNote]         = useState(null);
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
@@ -67,6 +73,36 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
     const res = await base44.integrations.Core.UploadFile({ file });
     if (res?.file_url) setImageUrl(res.file_url);
     setUploading(false);
+  };
+
+  // Read the outfit's own image and turn what is visible into its description fields.
+  // Empty fields are filled in; when every field is already written the descriptions are
+  // replaced with what the photo shows, because pressing the button is that request.
+  const handleAiFill = async () => {
+    if (!imageUrl || fillingFromImage) return;
+    setFillingFromImage(true);
+    setFillNote(null);
+    try {
+      const result = await analyzeClosetImage({ imageUrl, isOutfit: true });
+      const prefill = {};
+      DESCRIPTIVE_FIELDS.forEach((key) => {
+        if (typeof result?.[key] === "string" && result[key].trim()) prefill[key] = result[key].trim();
+      });
+      if (Object.keys(prefill).length === 0) {
+        setFillNote("Nothing readable in this photo — nothing was changed.");
+        return;
+      }
+      const hasEmptyField = DESCRIPTIVE_FIELDS.some((key) => !String(form[key] || "").trim());
+      setForm(prev => (hasEmptyField ? mergePrefill(prev, prefill) : { ...prev, ...prefill }));
+      setFillNote(hasEmptyField
+        ? "Filled the empty fields from the photo — review before saving."
+        : "Replaced the descriptions with what the photo shows — review before saving.");
+    } catch (e) {
+      console.error("AI fill failed:", e);
+      setFillNote("The photo could not be read — nothing was changed.");
+    } finally {
+      setFillingFromImage(false);
+    }
   };
 
   const handleGenerateImage = async () => {
@@ -181,6 +217,23 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 rounded-xl transition-colors flex items-center justify-center">
                     <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                   </div>
+                </div>
+              )}
+
+              {/* Fill the description fields from the outfit's own photo */}
+              {imageUrl && (
+                <div className="space-y-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleAiFill}
+                    disabled={fillingFromImage || uploading}
+                    className="w-full rounded-xl gap-1.5"
+                  >
+                    {fillingFromImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                    {fillingFromImage ? "Reading outfit from photo…" : "AI Fill from Photo"}
+                  </Button>
+                  {fillNote && <p className="text-[10px] text-muted-foreground">{fillNote}</p>}
                 </div>
               )}
 
