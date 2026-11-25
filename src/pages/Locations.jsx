@@ -587,10 +587,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
-  // Sections collapse to a heading so a property with many zone images can be worked on one
-  // part at a time. This is display only — nothing is cleared, removed or re-saved.
-  const [zonesExpanded, setZonesExpanded] = useState(true);
-  const [apartmentsExpanded, setApartmentsExpanded] = useState(true);
+  // Sections collapse to a heading so a property with many zone images, units or residents can
+  // be worked on one part at a time. They all start closed when the editor opens, and each one
+  // opens on its own. This is display only — nothing is cleared, removed or re-saved.
+  const [zonesExpanded, setZonesExpanded] = useState(false);
+  const [apartmentsExpanded, setApartmentsExpanded] = useState(false);
+  const [residentsExpanded, setResidentsExpanded] = useState(false);
   const [residentSearch, setResidentSearch] = useState("");
   // Names for every saved resident, including people whose record this account does not
   // load directly (shared residency) — a saved resident is never shown as missing.
@@ -971,18 +973,36 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {/* ── RESIDENTS ── */}
       {(form.category === 'home' || form.category === 'hotel' || form.category === 'shelter' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && (
         <div className="space-y-3">
-          <div>
-            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives/stays here?</label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-              {form.category === 'hotel' ? 'Add characters staying in this hotel temporarily. Not a permanent home.' : form.category === 'shelter' ? 'Add characters using this shelter. Not a permanent home.' : form.category === 'home' || form.category === 'generic' ? 'Add resident characters. Rent and utilities will be split among them.' : 'Add characters using this location for shelter or as a home base.'}
+          {/* The whole section — saved residents, split costs, the search field and the
+              character list beneath it — folds together under one heading. Collapsing is
+              display only: nobody is deselected and no unsaved edit is dropped. */}
+          <button
+            type="button"
+            onClick={() => setResidentsExpanded(v => !v)}
+            className="w-full flex items-start gap-2 text-left"
+          >
+            <span className="mt-0.5 text-muted-foreground flex-shrink-0">
+              {residentsExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives/stays here?</span>
+              <span className="text-xs text-muted-foreground mt-0.5 block">
+                {form.category === 'hotel' ? 'Add characters staying in this hotel temporarily. Not a permanent home.' : form.category === 'shelter' ? 'Add characters using this shelter. Not a permanent home.' : form.category === 'home' || form.category === 'generic' ? 'Add resident characters. Rent and utilities will be split among them.' : 'Add characters using this location for shelter or as a home base.'}
+              </span>
+              {!residentsExpanded && (
+                <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">
+                  {(form.resident_character_ids?.length || 0) + (form.resident_family_members?.length || 0)}{' '}
+                  {((form.resident_character_ids?.length || 0) + (form.resident_family_members?.length || 0)) === 1 ? 'resident' : 'residents'} · tap to open
+                </span>
+              )}
+            </span>
+          </button>
+          {residentsExpanded && (form.category === 'hotel' || form.category === 'shelter') && (
+            <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2">
+              ⚠️ {form.category === 'hotel' ? 'Hotel is temporary paid lodging. Min $150/night. Characters assigned here will NOT be treated as permanently housed.' : 'Shelter is temporary low-cost or free lodging ($0–$10/night). Characters assigned here will NOT be treated as permanently housed.'}
             </p>
-            {(form.category === 'hotel' || form.category === 'shelter') && (
-              <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-2">
-                ⚠️ {form.category === 'hotel' ? 'Hotel is temporary paid lodging. Min $150/night. Characters assigned here will NOT be treated as permanently housed.' : 'Shelter is temporary low-cost or free lodging ($0–$10/night). Characters assigned here will NOT be treated as permanently housed.'}
-              </p>
-            )}
-          </div>
-          <div className="space-y-2">
+          )}
+          <div className={`space-y-2 ${residentsExpanded ? "" : "hidden"}`}>
             {form.resident_character_ids?.length > 0 || form.resident_family_members?.length > 0 ? (
               <>
                 <div className="space-y-2 max-h-56 overflow-y-auto">
@@ -1087,7 +1107,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             );
 
             return (
-              <div className="space-y-1">
+              <div className={`space-y-1 ${residentsExpanded ? "" : "hidden"}`}>
                 {/* Search input */}
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -1254,7 +1274,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             ...allAssignableCharacters.filter(c => c.is_jailed === true && (!c.incarceration_facility_id || c.incarceration_facility_id === editingLocation?.id)).map(c => c.id),
             ...alreadyAssigned,
           ])];
-          labels = { sectionLabel: "Cells", unitSingular: "cell", occupantNoun: "inmate", contextNoun: "facility", addPlaceholder: "e.g. B2, Cellblock C...", emptyHint: "Incarcerated characters at this facility can be assigned to a cell." };
+          labels = { sectionLabel: "Inmate Cells", unitSingular: "cell", occupantNoun: "inmate", contextNoun: "facility", addPlaceholder: "e.g. B2, Cellblock C...", emptyHint: "Incarcerated characters at this facility can be assigned to a cell." };
         } else if (form.category === 'hotel') {
           labels = { sectionLabel: "Rooms / Units", unitSingular: "room", contextNoun: "hotel", addPlaceholder: "e.g. Room 101, Unit 4B...", emptyHint: "Add residents to the hotel first, then create rooms to organize them." };
         } else if (form.category === 'school') {
