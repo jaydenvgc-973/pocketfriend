@@ -81,6 +81,15 @@ export function isEmployedAtLocation(character, location) {
   // worker_character_ids establishes employment at this location; it does NOT
   // establish that the character is currently on shift. On-shift determination
   // still requires isCharacterAtWork (the existing authoritative check).
+  //
+  // RESIDENCE IS NOT EMPLOYMENT. A property that keeps businesses inside it is a
+  // building, not an employer: the property-level roster is the union of those
+  // businesses' staff, so on such a property only a business that actually claims
+  // this character establishes employment here. Living in the building never does.
+  const workplaces = Array.isArray(location.workplaces) ? location.workplaces : [];
+  if (workplaces.some((w) => w?.workplace_id || w?.name)) {
+    return workplaces.some((w) => (w?.worker_character_ids || []).includes(character.id));
+  }
   if (location.worker_character_ids?.includes(character.id)) return true;
 
   return false;

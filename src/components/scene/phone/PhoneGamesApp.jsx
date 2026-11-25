@@ -1,23 +1,47 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Search } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import GameLauncher from "@/components/games/GameLauncher";
 import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 
 /**
  * PhoneGamesApp — the phone's games app.
  *
- * The games are the app's existing ones (the same GameLauncher the Chat page opens, with
- * its existing GameContainer / ChemistryGame and their existing records). Choosing who to
- * play with only picks the partner from the people already in this scene; nothing is added
- * to the scene and nobody is moved. The partner's existing conversation is reused so a
- * finished game is remembered exactly as it is from Chat.
+ * A phone is a communication and entertainment device, so its games are not limited to
+ * whoever is standing in the current scene. The opponent list is the account's own
+ * character directory (the same records and eligibility rules Pocket Message uses),
+ * alphabetically sorted and searchable. Playing with someone who is elsewhere does not
+ * move them, does not add them to the scene, and does not invent a meeting: the game
+ * runs through the existing GameLauncher / GameContainer and its existing records, and
+ * the partner's existing conversation carries the result and the memory exactly as it
+ * does from Chat.
  */
-export default function PhoneGamesApp({ characters = [], currentUser, onBack }) {
+export default function PhoneGamesApp({ currentUser, onBack }) {
   const queryClient = useQueryClient();
+  const [characters, setCharacters] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const [active, setActive] = useState(null);
   const [conversationId, setConversationId] = useState(null);
   const [isOpening, setIsOpening] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!currentUser?.email) { setIsLoading(false); return; }
+    base44.entities.Character.filter({ owner_email: currentUser.email }, "name", 300)
+      .then((rows) => {
+        if (cancelled) return;
+        setCharacters((rows || [])
+          .filter((c) => c.id && !c.is_user
+            && !["deleted", "soft_deleted", "merged"].includes(c.status)
+            && c.life_status !== "deceased")
+          .sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsLoading(false); });
+    return () => { cancelled = true; };
+  }, [currentUser?.email]);
 
   const openWith = async (character) => {
     setIsOpening(character.id);
@@ -52,6 +76,10 @@ export default function PhoneGamesApp({ characters = [], currentUser, onBack }) 
     );
   }
 
+  const visible = search.trim()
+    ? characters.filter((c) => (c.name || "").toLowerCase().includes(search.trim().toLowerCase()))
+    : characters;
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 px-2 py-2 border-b border-white/10">
@@ -61,12 +89,30 @@ export default function PhoneGamesApp({ characters = [], currentUser, onBack }) 
         <p className="text-[11px] font-semibold text-white">Games</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2 py-2 space-y-1">
-        <p className="text-[9px] text-white/50 px-1 pb-1">Play with someone here</p>
-        {characters.length === 0 && (
-          <p className="text-[10px] text-white/50 py-3 text-center">No one is in this scene to play with.</p>
+      <div className="px-2 py-2">
+        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/10 border border-white/15">
+          <Search className="w-3 h-3 text-white/50" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Play with anyone you know"
+            className="flex-1 bg-transparent text-[11px] text-white placeholder:text-white/40 outline-none"
+          />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
+        {isLoading && (
+          <p className="text-[10px] text-white/60 flex items-center gap-1.5 py-2">
+            <Loader2 className="w-3 h-3 animate-spin" /> Loading people…
+          </p>
         )}
-        {characters.map((c) => (
+        {!isLoading && visible.length === 0 && (
+          <p className="text-[10px] text-white/50 py-3 text-center">
+            {search.trim() ? "No one by that name." : "No one to play with yet."}
+          </p>
+        )}
+        {visible.map((c) => (
           <button
             key={c.id}
             onClick={() => openWith(c)}

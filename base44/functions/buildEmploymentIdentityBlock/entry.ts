@@ -11,6 +11,11 @@
  * property's workplaces[].worker_character_ids. The property is only the building that
  * business operates inside.
  *
+ * RESIDENCE IS NOT EMPLOYMENT. A property that contains businesses never employs the
+ * people who live in it. When no business inside the property claims this character,
+ * the building is NOT their employer and the block says so, rather than falling back
+ * to the property's name.
+ *
  * READ-ONLY. It never creates, moves, or reassigns employment, and changes no title,
  * rate, schedule, shift, location, or residence.
  */
@@ -24,10 +29,13 @@ async function resolveEmploymentLink(sr, locationId, characterId) {
   const workplace = workplaces.find((w) => (w?.worker_character_ids || []).includes(characterId)) || null;
   return {
     location_name: loc.name || null,
-    employer_name: workplace?.name || loc.name || null,
+    employer_name: workplace?.name || null,
     workplace_name: workplace?.name || null,
     business_type: workplace?.business_type || null,
     job_title: loc.worker_job_titles?.[characterId] || null,
+    // A property that keeps businesses inside it is never itself an employer.
+    has_workplaces: workplaces.some((w) => w?.workplace_id || w?.name),
+    other_businesses: workplaces.filter((w) => w?.name && w.name !== workplace?.name).map((w) => w.name),
   };
 }
 
@@ -56,20 +64,27 @@ Deno.serve(async (req) => {
       if (link) resolved.push(link);
     }
 
-    // Only a business operating inside another location needs this clarification.
-    // A standalone business whose name is also its location is already stated once.
-    const split = resolved.filter((r) => r.workplace_name && r.employer_name && r.employer_name !== r.location_name);
+    // Only a property that keeps businesses inside it needs this clarification: either the
+    // character is employed by one of those businesses, or by none of them. A standalone
+    // business whose name is also its location is already stated once.
+    const split = resolved.filter((r) => r.has_workplaces);
     if (split.length === 0) return Response.json({ employmentBlock: '', employers: [] });
 
     const lines = split.map((r) => {
       const title = (r.job_title || '').trim();
-      return `- Employer: ${r.employer_name} — the business or organization that employs you and pays you.${title ? ` Your position: ${title}.` : ''}\n  Physical workplace: ${r.location_name} — the building ${r.employer_name} operates inside. You go there to work, but ${r.location_name} itself does not employ you.`;
+      if (r.employer_name) {
+        return `- Employer: ${r.employer_name} — the business that employs you and pays you.${title ? ` Your position: ${title}.` : ''}\n  Physical workplace: ${r.location_name} — the building ${r.employer_name} operates inside. You go there to work, but ${r.location_name} itself does not employ you and living in it would never make it your employer.`;
+      }
+      const others = r.other_businesses?.length ? ` (${r.other_businesses.join(', ')})` : '';
+      return `- ${r.location_name} is the building where you live, not an employer. It contains its own businesses${others}, and none of them employs you, so neither ${r.location_name} nor any business inside it is your job. Do not name any of them as your employer, and never treat your residence as employment.`;
     });
 
-    const employers = [...new Set(split.map((r) => r.employer_name))];
-    const places = [...new Set(split.map((r) => r.location_name))];
+    const employers = [...new Set(split.map((r) => r.employer_name).filter(Boolean))];
+    const places = [...new Set(split.map((r) => r.location_name).filter(Boolean))];
 
-    const employmentBlock = `\n\nEMPLOYMENT IDENTITY — WHO EMPLOYS YOU vs WHERE YOU WORK (authoritative; outranks any assumption taken from a building's name):\n${lines.join('\n')}\nSaying you work at ${places.join(' or ')} is natural and correct. Your employer, your boss, company leadership, your business's own operations, and who pays you are ${employers.join(' or ')} — never the building, and never another business operating inside it. Do not explain this distinction unless the conversation calls for it; simply be accurate when it does.`;
+    const employmentBlock = `\n\nEMPLOYMENT IDENTITY — WHO EMPLOYS YOU vs WHERE YOU WORK (authoritative; outranks any assumption taken from a building's name or from where someone lives):\n${lines.join('\n')}\n${employers.length > 0
+      ? `Your employer, your boss, company leadership, your business's own operations, and who pays you are ${employers.join(' or ')}. ${places.length > 0 ? `${places.join(' or ')} is the building, never the employer.` : ''} Say who you work for by naming ${employers.join(' or ')} — the building is only where that work happens.`
+      : 'You have no employer inside that building. If asked who you work for, say honestly that none of the businesses there employs you — never name the building or one of its businesses as your job.'} Living somewhere is never employment: residence, a residential unit assignment, or simply being present in a building never makes anyone an employee of it or of the businesses inside it. Do not explain this distinction unless the conversation calls for it; simply be accurate when it does.`;
 
     return Response.json({
       employmentBlock,

@@ -187,6 +187,25 @@ Deno.serve(async (req) => {
           ? `Right now you are ${presenceNow === 'at_work' ? 'at work at' : presenceNow === 'at_school' ? 'at school at' : (presenceNow === 'sleeping' || presenceNow === 'napping') ? 'asleep at' : 'at'} ${hereName}. That is your real current location and the only one you may describe; if asked where you are, say this. Never say you are home while you are somewhere else.`
           : `You have no confirmed current location; if asked where you are, say something honest and vague rather than naming a place.`;
 
+        // ── WHO EMPLOYS THEM — RESIDENCE IS NEVER EMPLOYMENT ───────────────
+        // The employer is the business that actually claims this character, never the
+        // building they live in. No employer on record means no job may be invented.
+        const empLocId = recipient.occupation_location_id || null;
+        const empLoc = empLocId
+          ? (empLocId === locationId ? hereLoc : (await sr.entities.LocationReference.filter({ id: empLocId }, null, 1).catch(() => []))[0])
+          : null;
+        const empWorkplace = empLoc
+          ? (empLoc.workplaces || []).find((w) => (w.worker_character_ids || []).includes(recipient.id)) || null
+          : null;
+        const empHasBusinesses = !!empLoc && (empLoc.workplaces || []).some((w) => w?.workplace_id || w?.name);
+        const employerLine = empWorkplace
+          ? `You work for ${empWorkplace.name}${empLoc?.name && empLoc.name !== empWorkplace.name ? `, a business inside ${empLoc.name}. ${empLoc.name} is the building, not your employer` : ''}. Living somewhere is never your job.`
+          : empHasBusinesses
+            ? `${empLoc.name} is a building with businesses inside it; none of them employs you, and the building itself is not your employer. Never treat where you live as a job.`
+            : (recipient.occupation || '').trim()
+              ? `Your work is recorded as ${recipient.occupation.trim()}. Do not invent an employer or a workplace beyond that.`
+              : `You have no job on record. Never claim an employer, a workplace or a shift, and never treat the building you live in as a job.`;
+
         const identity = `${recipient.name}. ${recipient.personality_summary || ''} ${recipient.current_situation || ''}`.trim();
         const arrived = isImage
           ? `${worldName} just sent you a photo${image_description ? ` (${image_description})` : ''} on World Phone.`
@@ -197,6 +216,7 @@ Deno.serve(async (req) => {
 ${relationshipNote ? `\n${worldName} is your ${relationshipNote}.` : ''}
 
 ${whereLine}
+${employerLine}
 
 ${arrived}
 

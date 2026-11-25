@@ -43,9 +43,10 @@ const CATEGORY_FOLDERS = [
  *   1. This Location — the venue's own activities, whatever their Life Need effect.
  *   2. Life Needs    — the everyday activities grouped under the eight established needs.
  *   3. General       — the general interactions in their established order, with Arrest.
- * Each group is a folder card inside that same horizontal strip: selecting it reveals its
- * activities inline, selecting it again hides them, and opening another folder closes it.
- * Next Scene is pinned at the right end of the strip, outside the folders. Nothing is
+ * Open Phone is the strip's first card and Change Clothes follows it, both outside the
+ * folders. Each group is a folder card inside that same horizontal strip: selecting it
+ * reveals its activities inline, selecting it again hides them, and opening another
+ * folder closes it. Next Scene is pinned at the right end of the strip, outside the folders. Nothing is
  * removed: every activity
  * appears exactly once, and no effect, price, availability rule or pipeline changes here —
  * the buttons call the same handlers Scene always passed them.
@@ -153,10 +154,10 @@ export default function SceneActionStrip({
         {open && folder.key === "general" && (
           <React.Fragment>
             {/* Send / Receive Money open the one established financial interaction with
-                who pays and who is paid chosen first. Open Phone opens the scene phone. */}
+                who pays and who is paid chosen first. Open Phone sits at the start of the
+                strip, outside every folder. */}
             <SendMoneyControl onClick={() => onOpenMoney?.("send")} disabled={actionCooldown} />
             <ReceiveMoneyControl onClick={() => onOpenMoney?.("receive")} disabled={actionCooldown} />
-            <OpenPhoneControl onClick={() => onOpenPhone?.()} />
             <ArrestControl
               onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
               arrestDisabled={arrestTargets.length === 0 || actionCooldown}
@@ -214,6 +215,10 @@ export default function SceneActionStrip({
         {/* A fixed strip height: opening or closing a folder only adds or removes cards in
             this one row, it never resizes the strip or the cards already in it. */}
         <div ref={stripRef} className="flex items-stretch gap-1.5 overflow-x-auto snap-x snap-mandatory scrollbar-hide flex-1 min-w-0 min-h-[78px]">
+          {/* Open Phone is the strip's first option: outside every folder, always reachable,
+              and opening the phone changes nothing about the scene. */}
+          <OpenPhoneControl onClick={() => onOpenPhone?.()} />
+          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Change Clothes</span></button>
           {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
           {governmentVenueType && !courtCase && !cityHallPlan && (
             <button onClick={() => setShowVenueSetup(true)} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-primary/10 border-primary/40 hover:border-primary/60" title={governmentVenueType === "courthouse" ? "Set up the court case and who is in the room" : "Set up what you are here for and who is with you"}>
@@ -221,7 +226,6 @@ export default function SceneActionStrip({
               <span className="w-full text-[9px] text-primary font-medium leading-tight whitespace-normal break-words text-center">{governmentVenueType === "courthouse" ? "Begin Court Case" : "Begin City Hall Visit"}</span>
             </button>
           )}
-          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Change Clothes</span></button>
 
           {/* Each folder expands its own activities immediately to its right, before the next
               folder: This Location → its activities → Life Needs → its activities → General →

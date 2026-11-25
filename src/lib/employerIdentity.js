@@ -32,7 +32,11 @@ export function resolveEmployerIdentity(location, characterId) {
     ? workplaces.find((w) => (w?.worker_character_ids || []).includes(characterId)) || null
     : null;
 
-  const employerName = workplace?.name || location.name || null;
+  // RESIDENCE IS NOT EMPLOYMENT. A property that keeps businesses inside it is never
+  // itself the employer: when none of those businesses claims this character, they have
+  // no employer here — living there does not make the building their job.
+  const hasWorkplaces = workplaces.some((w) => w?.workplace_id || w?.name);
+  const employerName = workplace?.name || (hasWorkplaces ? null : location.name) || null;
   // Only show the location as a second line when it is genuinely a different name.
   const showsLocation = !!workplace?.name && workplace.name !== location.name;
 

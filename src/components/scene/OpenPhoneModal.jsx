@@ -20,7 +20,6 @@ const LOADING_SCREEN_IMAGE =
 export default function OpenPhoneModal({
   currentUser,
   worldName = "You",
-  sceneCharacters = [],
   onOpenScenePhoto,
   onClose,
 }) {
@@ -110,7 +109,6 @@ export default function OpenPhoneModal({
 
           {screen === "games" && (
             <PhoneGamesApp
-              characters={sceneCharacters}
               currentUser={currentUser}
               onBack={() => setScreen("home")}
             />
