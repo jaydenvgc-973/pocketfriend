@@ -128,19 +128,20 @@ export async function generateObserveBeat({ participants, responders, location, 
 
   const canonicalCtx = {};
   const memoryCtx = {};
+  // Identity and memory are fetched at the same time — for every person, both at once. They
+  // used to run one after the other, so the reply waited twice for the same context.
   await Promise.all(cast.map(async (c) => {
-    try {
-      const r = await base44.functions.invoke('buildCanonicalCharacterContext', {
+    await Promise.all([
+      base44.functions.invoke('buildCanonicalCharacterContext', {
         characterId: c.id,
         interactionContext: 'scene',
         ownerEmailHint: c.owner_email || ownerEmail || null,
-      });
-      if (r?.data?.systemPrompt) canonicalCtx[c.id] = r.data.systemPrompt;
-    } catch { /* context is additive */ }
-    try {
-      const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: c.id, limitMessages: 12 });
-      if (r?.data?.contextText) memoryCtx[c.id] = r.data.contextText;
-    } catch { /* memory is additive */ }
+      }).then((r) => { if (r?.data?.systemPrompt) canonicalCtx[c.id] = r.data.systemPrompt; })
+        .catch(() => { /* context is additive */ }),
+      base44.functions.invoke('retrieveCrossPageMemory', { characterId: c.id, limitMessages: 12 })
+        .then((r) => { if (r?.data?.contextText) memoryCtx[c.id] = r.data.contextText; })
+        .catch(() => { /* memory is additive */ }),
+    ]);
   }));
 
   // Canon narrative from earlier in this scene stays in the record: those events

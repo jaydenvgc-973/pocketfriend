@@ -59,7 +59,8 @@ export function useSceneSpaceImage({
     if (!imageRequested || !participantsReady) return;
     if (!locationId || isRabbitHole) return;
     if (sceneImage || isGeneratingImage) return;
-    if (observeMode && observeCastCount === 0) return;
+    // A watched space with nobody cast in it still shows the room itself — the empty place is
+    // a picture too. It is never left blank while the user is looking at it.
     drawImage();
   }, [locationId, spaceKey, selectionKey, sceneImage, imageRequested, participantsReady]);
 

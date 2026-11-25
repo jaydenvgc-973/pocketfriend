@@ -2126,13 +2126,14 @@ export default function Scene() {
       const userActs = actingPeople.some((c) => c.isUser || c.id === currentUser?.id);
       // The picture shows the people taking part — never every resident who happens to be home.
       if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
-      else if (zoneChanged) requestSpaceImage();
+      // An activity with no picture of its own that establishes a room (a nap in the bedroom,
+      // a shower in the bathroom) shows that room — one picture, and never beside an action image.
+      else if (zoneChanged || action.suggested_zone_name) requestSpaceImage();
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       // The strip is not a text box: choosing an activity is a scene action, shown as a
       // centered activity naming the people taking part — not as an outgoing message.
       const behavior = activityBehaviorFor(action);
-      const activityNames = actingPeople.map((c) => c.name).filter(Boolean);
-      if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) activityNames.unshift(displayName);
+      const activityNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) activityNames.unshift(displayName);
       await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null, (isProductCardAction || isFreeOfferingAction) ? action.action_category : null, isProductCardAction ? cost : null, isProductCardAction ? (action.purchase_source || 'menu') : (isFreeOfferingAction ? 'complimentary' : null), isFreeOfferingAction, null, {
         content: activityFeedLine({
           actionId: action.id,

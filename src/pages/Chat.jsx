@@ -1173,54 +1173,26 @@ If a QR code is present but cannot be decoded: return exactly the word "QR_UNREA
       // These promises are already running in parallel — we do NOT await them
       // before calling the LLM. Instead, use timeouts to grab them if ready,
       // otherwise proceed with empty context.
-      let memoryResult = null, progressionResult = null, spatialResult = null, liveFamilyGraphBlock = '';
-      // Try to grab optional context if it resolves within 2s, otherwise use fallback
-      try {
-        memoryResult = await Promise.race([
-          optionalContextPromises.memory,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-        ]);
-      } catch {
-        console.log('[Chat] Memory context timeout — using fallback');
-        memoryResult = { data: { memories: [], total: 0, _fallback: true } };
-      }
-
-      try {
-        progressionResult = await Promise.race([
-          optionalContextPromises.progression,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-        ]);
-      } catch {
-        console.log('[Chat] Progression context timeout — using fallback');
-        progressionResult = null;
-      }
-
-      try {
-        spatialResult = await Promise.race([
-          optionalContextPromises.spatial,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
-        ]);
-      } catch {
-        console.log('[Chat] Spatial context timeout — using fallback');
-        spatialResult = null;
-      }
-
-      // ── WORLD PHONE AUTHORITATIVE RETRIEVAL ────────────────────────────────
-      // Extract the retrieved World Phone message records (if any). 3s timeout —
-      // slightly longer than other contexts because it involves 2 DB queries
-      // (Conversation.filter + Message.filter) but is CRITICAL for retrieval-before-
-      // generation. If it times out, the block is empty and the existing post-response
-      // guards (enforceWorldPhoneStateGuard) remain as the safety net.
-      let worldPhoneRetrievalResult = null;
-      try {
-        worldPhoneRetrievalResult = await Promise.race([
-          optionalContextPromises.worldPhoneRetrieval,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000))
-        ]);
-      } catch {
-        console.log('[Chat] World Phone retrieval timeout — using fallback (no authoritative record)');
-        worldPhoneRetrievalResult = null;
-      }
+      let liveFamilyGraphBlock = '';
+      // Every optional block is awaited together, each keeping its own timeout. They were
+      // awaited one after another, so their timeouts added up and a slow block delayed the
+      // others even though they had all started at the same moment. Same blocks, same
+      // timeouts, same fallbacks — the wait is now the longest one instead of the sum.
+      const within = (promise, ms, fallback, label) => Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => {
+          console.log(`[Chat] ${label} timeout — using fallback`);
+          resolve(fallback);
+        }, ms)),
+      ]);
+      const [memoryResult, progressionResult, spatialResult, worldPhoneRetrievalResult] = await Promise.all([
+        within(optionalContextPromises.memory, 2000, { data: { memories: [], total: 0, _fallback: true } }, 'Memory context'),
+        within(optionalContextPromises.progression, 2000, null, 'Progression context'),
+        within(optionalContextPromises.spatial, 2000, null, 'Spatial context'),
+        // World Phone retrieval gets slightly longer: 2 DB queries, and it must be read
+        // before generation so the character quotes real messages instead of inventing them.
+        within(optionalContextPromises.worldPhoneRetrieval, 3000, null, 'World Phone retrieval'),
+      ]);
       const worldPhoneRetrievalBlock = worldPhoneRetrievalResult?.block || '';
       if (worldPhoneRetrievalResult) {
         console.log(

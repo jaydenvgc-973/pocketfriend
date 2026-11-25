@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { buildSealedSubjectBundles } from "@/lib/sceneSubjectBundle";
 import {
@@ -48,6 +48,10 @@ import { isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 export function useSceneImageGenerator() {
   const [sceneImage, setSceneImage] = useState(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  // Every request takes a ticket. Only the newest ticket may put its picture on screen, so a
+  // picture already being drawn can never become the image of a space or cast the user has
+  // since left — it is simply discarded when it arrives.
+  const requestTicketRef = useRef(0);
 
   const generateSceneImage = useCallback(async (opts) => {
     const {
@@ -82,6 +86,10 @@ export function useSceneImageGenerator() {
     } = opts;
 
     if (!location || isGeneratingImage) return;
+    // This request's ticket: anything it produces is only shown while it is still the newest.
+    const ticket = ++requestTicketRef.current;
+    const isCurrent = () => ticket === requestTicketRef.current;
+    const commit = (url) => { if (isCurrent()) setSceneImage(url); };
     setIsGeneratingImage(true);
 
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -235,8 +243,8 @@ export function useSceneImageGenerator() {
           prompt: `${identityPrefix}${finalPrompt} Photorealistic, high quality, authentic.`,
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
-        setSceneImage(result.url);
-      } catch { setSceneImage(zoneFallbackImage); } finally { setIsGeneratingImage(false); }
+        commit(result.url);
+      } catch { commit(zoneFallbackImage); } finally { if (isCurrent()) setIsGeneratingImage(false); }
       return;
     }
 
@@ -262,11 +270,11 @@ export function useSceneImageGenerator() {
           prompt: `${identityPrefix}${prompt}`,
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
-        setSceneImage(result.url);
+        commit(result.url);
       } catch {
-        setSceneImage(zoneFallbackImage);
+        commit(zoneFallbackImage);
       } finally {
-        setIsGeneratingImage(false);
+        if (isCurrent()) setIsGeneratingImage(false);
       }
       return;
     }
@@ -298,11 +306,11 @@ export function useSceneImageGenerator() {
         prompt: `${identityPrefix}${prompt}`,
         existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
       });
-      setSceneImage(result.url);
+      commit(result.url);
     } catch {
-      setSceneImage(zoneFallbackImage);
+      commit(zoneFallbackImage);
     } finally {
-      setIsGeneratingImage(false);
+      if (isCurrent()) setIsGeneratingImage(false);
     }
   }, [isGeneratingImage]);
 
