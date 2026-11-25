@@ -640,6 +640,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   // category — this only makes the existing Workplace-category capabilities (employees,
   // uniforms) available inside it.
   const homeWithWorkplace = form.category === 'home' && (form.venue_types || []).includes('workplace');
+  // A standalone business property carries establishments of its own too, so the same
+  // Workspaces section is reachable there — not only on a Home that opted into it.
+  const canContainWorkplaces = homeWithWorkplace || [
+    'workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'school',
+    'medical', 'grocery', 'religion', 'government', 'community', 'transportation', 'hotel',
+  ].includes(form.category);
 
   const addPresetZone = (name) => {
     if (existingZoneNames.includes(name.toLowerCase())) return;
@@ -1310,7 +1316,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           Several independent businesses can operate in one Home. Each is its own
           establishment; the property keeps its Home category, its residents and its
           units, and its businesses use the existing employment records below. */}
-      {(homeWithWorkplace || (form.workplaces || []).length > 0) && (
+      {(canContainWorkplaces || (form.workplaces || []).length > 0) && (
         <WorkplaceManager
           workplaces={form.workplaces || []}
           onChange={(list) => update('workplaces', list)}

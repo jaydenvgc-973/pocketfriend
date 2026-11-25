@@ -716,11 +716,34 @@
     "workplaces": {
       "type": "array",
       "default": [],
-      "description": "Individual businesses operating inside this location, each its own establishment with its own name, business type, zones and employees. Never a location of its own: the property keeps its category, residents and units, and its employees are the same workers listed in worker_character_ids \u2014 the existing employment records, shifts and schedules remain the single authority.",
+      "description": "Individual businesses operating inside this location, each its own establishment with its own name, business types, zones and employees. Never a location of its own: the property keeps its category, residents and units, and its employees are the same workers listed in worker_character_ids \u2014 the existing employment records, shifts and schedules remain the single authority.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "business_types": {
+            "type": "array",
+            "default": [],
+            "description": "Every business type this establishment carries, in the order the user selected them. The first entry is the business's primary type and is mirrored into business_category and business_type, which stay the single authority everywhere else in the app. Selecting a second type never removes the first.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "category": {
+                  "type": "string",
+                  "description": "The existing location category this type belongs to (e.g. food_drink, business, gym)"
+                },
+                "type": {
+                  "type": "string",
+                  "description": "The business's venue type within that category (e.g. casual_restaurant, shoe_store)"
+                }
+              },
+              "required": [
+                "category",
+                "type"
+              ]
+            }
+          },
           "workplace_id": {
             "type": "string",
             "description": "Stable unique ID for this business (UUID or slug)"
