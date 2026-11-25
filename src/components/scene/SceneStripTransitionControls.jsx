@@ -27,9 +27,9 @@ export function NextSceneControl({ onNextScene }) {
     <button
       onClick={onNextScene}
       title="Move the scene to another location"
-      className="flex items-center gap-1 px-2.5 py-1 rounded-lg border-2 bg-primary/15 border-primary/60 hover:bg-primary/25 transition-all flex-shrink-0"
+      className="flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-primary/15 border-primary/60 hover:bg-primary/25"
     >
-      <Compass className="w-3.5 h-3.5 text-primary" />
+      <Compass className="w-4 h-4 text-primary" />
       <span className="text-[9px] text-primary font-bold leading-tight whitespace-nowrap uppercase tracking-wide">Next Scene</span>
     </button>
   );
