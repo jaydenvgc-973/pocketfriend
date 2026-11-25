@@ -1,9 +1,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { createPortal } from "react-dom";
-import { X, Home, MapPin, LogOut } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { X, MapPin, LogOut, DoorOpen } from "lucide-react";
 
-export default function LeaveLocationModal({ isOpen, onClose, locationName, broughtCharacters, onLeaveWithChars, onLeaveCharactersBehind }) {
+export default function LeaveLocationModal({ isOpen, onClose, locationName, broughtCharacters, onLeaveWithChars, onLeaveCharactersBehind, onStayHere }) {
   if (!isOpen) return null;
 
   return createPortal(
@@ -90,6 +89,23 @@ export default function LeaveLocationModal({ isOpen, onClose, locationName, brou
                   </div>
                 </button>
               )}
+
+              {/* STAY HERE — close the Scenes page without leaving the place.
+                  Nobody's location or presence changes: only the page does. */}
+              <button
+                onClick={onStayHere}
+                className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 transition-all text-left group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 group-hover:bg-primary/10 transition-colors">
+                  <DoorOpen className="w-4 h-4 text-muted-foreground group-hover:text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Stay here</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Leave the Scenes page, but you and the other characters remain at {locationName}.
+                  </p>
+                </div>
+              </button>
             </div>
           </motion.div>
         </motion.div>

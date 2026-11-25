@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import SceneMediaArea from "@/components/scene/SceneMediaArea";
 import { filterDashes } from "@/lib/dashFilter";
-import { isCharacterAtWork, isCharacterOnShift } from "@/lib/workScheduleUtils";
+import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { getPrivateSpaceOccupantIds } from "@/lib/sceneImmediateArea";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -19,7 +19,7 @@ import ConversationTypeSelector from "@/components/scene/ConversationTypeSelecto
 import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
 import WhosHereDropdown from "@/components/scene/WhosHereDropdown";
 import { writeSceneExitMemories } from "@/lib/sceneExitMemory";
-import { writeSceneLifeEvents } from "@/lib/sceneLifeJournal";
+import { useSceneCompletion } from "@/hooks/useSceneCompletion";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
@@ -40,6 +40,8 @@ import { isOnSiteResidenceZone } from "@/lib/onsiteResidence";
 import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS, IN_WORLD_ACTIVITY_TEXT } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
+import { buildTryOnPrompt, resolveTryOnZone } from "@/lib/sceneTryOnPrompt";
+import { createImageParticipantSelector } from "@/lib/sceneImageParticipants";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 import SceneNpcRow from "@/components/scene/SceneNpcRow";
 import ScenePresenceStrip from "@/components/scene/ScenePresenceStrip";
@@ -67,7 +69,6 @@ import { activityBehaviorFor, activityFeedLine } from "@/lib/sceneActivityBehavi
 import { isCaregiverOnDuty, supervisedChildren } from "@/lib/childCaregiver";
 import { buildBackgroundPopulation, isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { findAddressedBackgroundPeople, buildBackgroundResponderRule } from "@/lib/sceneBackgroundResponse";
-import ApartmentSwitcher from "@/components/scene/ApartmentSwitcher";
 import { getAssignableUnits, getUnitPresentOccupantIds, getUnitById, getUnitForCharacter, getUnitLabel, getUnitZoneName, isStudentHousingSpace } from "@/lib/residentialUnits";
 import { getWorkplaceSpaces, getWorkplaceById, getWorkplaceZoneName, getResidentialZoneName } from "@/lib/locationWorkspaces";
 import { getSceneUnitScope, getWorkspaceSceneScope, scopeCanonicalContext, buildUnitBoundaryBlock } from "@/lib/sceneUnitScope";
@@ -137,6 +138,8 @@ export default function Scene() {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [privateTarget, setPrivateTarget] = useState(null);
   const [pendingPurchase, setPendingPurchase] = useState(null);
+  // Try On: the product card's own merchandise, waiting for the user to pick who wears it.
+  const [tryOnRequest, setTryOnRequest] = useState(null);
   // A paid purchase whose closet entry is being completed. The entry already exists in
   // the recipient's real closet — this only finishes its details.
   const [pendingClosetEntry, setPendingClosetEntry] = useState(null);
@@ -1298,40 +1301,16 @@ export default function Scene() {
     });
   }, [participantKey, observeMode]);
 
-  // Only the people who were actually taking part keep a memory of the scene: a character
-  // the user deselected is not a participant, so the exit is not written for them.
-  const _exitMemoryArgs = (outcome, destinationName = null) => ({ broughtCharacters: broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)), alreadyPresentChars: selectedNpcs, allSceneChars: sceneCharacters, location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email, outcome, destinationName, userPresent: !observeMode });
-
-  // Scene journal: what the people here actually lived through belongs in their Life
-  // Journal. Written once per scene — whether it ends through the leave modal or by
-  // leaving the page — for everyone who was really taking part.
-  const sceneJournalArgsRef = useRef(null);
-  const sceneJournalDoneRef = useRef(false);
-  sceneJournalArgsRef.current = {
-    participants: observeMode
-      ? observeCast
-      : [...selectedNpcs, ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id))],
-    location, messages, userDisplayName: displayName, ownerEmail: currentUser?.email,
-    // Each person's own part of the scene, so nobody remembers what they did not witness.
-    presenceWindows: presenceWindowsRef.current,
-    // Watching means the account holder is not in the scene: their journal entry must not
-    // place them there or describe anything as their instruction.
-    userPresent: !observeMode,
-  };
-  const _writeSceneJournal = (outcome) => {
-    if (sceneJournalDoneRef.current || !sceneJournalArgsRef.current) return Promise.resolve();
-    sceneJournalDoneRef.current = true;
-    return writeSceneLifeEvents({ ...sceneJournalArgsRef.current, outcome });
-  };
-  // Moving the scene on is the scene ending: the one being left is completed through the
-  // same process the leave paths use, once, before the next scene begins. The guard above
-  // is the scene's single completion, so a transition can never journal it twice.
-  const _completeSceneBeforeTransition = (destinationName = null) => {
-    if (sceneJournalDoneRef.current) return;
-    _writeSceneJournal("moved_on");
-    writeSceneExitMemories(_exitMemoryArgs("moved_on", destinationName));
-  };
-  useEffect(() => () => { _writeSceneJournal(null); }, []);
+  // The scene's single completion (Life Journal + exit memory), shared by every exit path.
+  const {
+    exitMemoryArgs: _exitMemoryArgs,
+    writeJournal: _writeSceneJournal,
+    completeBeforeTransition: _completeSceneBeforeTransition,
+  } = useSceneCompletion({
+    broughtCharacters, selectedNpcIdList, selectedNpcs, observeCast, observeMode,
+    sceneCharacters, location, messages, displayName,
+    ownerEmail: currentUser?.email, presenceWindows: presenceWindowsRef.current,
+  });
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
@@ -1388,102 +1367,31 @@ export default function Scene() {
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate("/travel");
   };
 
+  // Stay Here — the Scenes page closes, the world does not move. The scene is completed
+  // through the same journal/memory process, but nobody leaves the place: the user's
+  // authoritative presence and every character's location are left exactly as they are.
+  const handleStayHere = async () => {
+    setShowLeaveModal(false);
+    await Promise.all([
+      writeSceneExitMemories(_exitMemoryArgs('stayed_here')),
+      _writeSceneJournal('stayed_here')
+    ]);
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    navigate("/travel");
+  };
+
   useEffect(() => { const el = bottomRef.current; if (!el) return; const container = el.parentElement; if (container) { const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight; if (distFromBottom < 150) el.scrollIntoView({ behavior: "smooth", block: "end" }); } }, [messages.length]);
 
   useEffect(() => { if (!location) return; const interval = setInterval(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 180000); return () => clearInterval(interval); }, [location?.id, activeZone]);
 
   // ── IMAGE PARTICIPANT SELECTION ──
   // Selects a subset of sceneParticipants by stable ID. The user is already a participant.
-  const selectImageParticipants = (focusIds = null) => {
-    const userId = userParticipant?.id;
-    // A directed action names exactly who it involves — those two people are the image,
-    // whichever of them is playing the scene.
-    if (Array.isArray(focusIds) && focusIds.length > 0) {
-      // The focused people are exactly the ones the user chose for this moment — a
-      // directed pair, or everyone taking part in a shared activity. None of them is
-      // dropped from the picture because a fifth person joined in.
-      const focused = sceneParticipants.filter((p) => focusIds.includes(p.id));
-      // Someone who has only just joined from the directory is resolved from their own
-      // record until the participant collection catches up, so a chosen person is never
-      // missing from the picture of the moment they are in.
-      const focusedSeen = new Set(focused.map((p) => p.id));
-      focusIds.forEach((id) => {
-        if (focusedSeen.has(id)) return;
-        const record = characters.find((c) => c.id === id);
-        if (!record) return;
-        focusedSeen.add(id);
-        focused.push({ ...record, isNpc: false });
-      });
-      if (focused.length > 0) return focused;
-    }
-    // Observed scene: the people actually in the moment are the ones in the image.
-    // An chosen character is resolved from the completed participant collection when it
-    // is there, and otherwise from their own character record — a character is never
-    // dropped out of the picture (and so out of the frame entirely) just because the
-    // participant collection lags behind the arrival. Background people of the venue are
-    // never part of this cast.
-    if (observeMode) {
-      const byId = new Map(sceneParticipants.map((p) => [p.id, p]));
-      return observeCast
-        .filter((c) => c?.id && c.isNpc !== true && c.isRemoteParticipant !== true && !String(c.id).startsWith("npc_"))
-        .map((c) => {
-          const resolved = byId.get(c.id);
-          if (resolved) return resolved;
-          const rec = characters.find((x) => x.id === c.id) || {};
-          return {
-            ...rec,
-            ...c,
-            name: c.name || rec.name,
-            avatar_url: c.avatar_url || rec.avatar_url,
-            image_avatar_url: rec.image_avatar_url || c.avatar_url,
-            reference_image_urls: rec.reference_image_urls || [],
-          };
-        })
-        .slice(0, 4);
-    }
-    if (isHomeLocation) {
-      // A supervised household is pictured as it is: the caregiver on duty AND the
-      // children they are looking after. The image never shows the child alone, and never
-      // pulls in a neighbour's child from another unit of the same building.
-      // The Who's Here selection is the authority for who is in the picture. A character
-      // the user deselected is not rendered, even inside their own home — including
-      // someone who traveled here with the user. Only the supervision rule adds anyone:
-      // a child on duty care is never pictured alone.
-      // Only the selection decides the picture. A coworker on shift in this workplace is
-      // physically here, not selected — so they are not in the frame. The same applies to
-      // the property's residents, staff and visitors.
-      const selectedIds = new Set([
-        ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)).map((c) => c.id),
-        ...selectedNpcIdList, ...supervisedChildIds, ...(userId ? [userId] : []),
-      ]);
-      return sceneParticipants.filter((p) => selectedIds.has(p.id));
-    }
-    // At a public venue the chosen cast still decides the picture: whoever the user
-    // brought or picked is who appears. Other people present only fill in when the
-    // user has chosen nobody.
-    const chosenIds = new Set([
-      ...broughtCharacters.filter((c) => selectedNpcIdList.includes(c.id)).map((c) => c.id),
-      ...selectedNpcIdList, ...(userId ? [userId] : []),
-    ]);
-    const chosen = sceneParticipants.filter((p) => chosenIds.has(p.id));
-    // An established character always keeps a place in the frame. A background person of
-    // the venue only ever fills a remaining slot — never a slot ahead of a real character.
-    const isBackgroundPerson = (p) => p.isNpc === true || String(p.id).startsWith("npc_");
-    if (chosen.length > 0) return [...chosen.filter((p) => !isBackgroundPerson(p)), ...chosen.filter(isBackgroundPerson)].slice(0, 4);
-    // Nobody has been chosen yet: the place's own people fill the frame. Once the user has
-    // made a selection — even an empty one — the picture follows that selection and never
-    // re-injects people they removed.
-    if (selectedNpcIds === null) {
-      // Nobody has been chosen yet, so the people actually in this space fill the frame —
-      // the unit's occupants, or the business's people on shift. Never everyone else in
-      // the building. Once the user picks or un-picks anyone, only that selection is
-      // pictured, so the frame always matches the checkmarks in Who's Here.
-      const selectedIds = new Set([...broughtCharacters.map((c) => c.id), ...presentHereIds, ...(userId ? [userId] : [])]);
-      const fallbackCast = sceneParticipants.filter((p) => selectedIds.has(p.id));
-      return [...fallbackCast.filter((p) => !isBackgroundPerson(p)), ...fallbackCast.filter(isBackgroundPerson)].slice(0, 4);
-    }
-    return [];
-  };
+  // (The selection rules themselves live in sceneImageParticipants.js.)
+  const selectImageParticipants = createImageParticipantSelector({
+    sceneParticipants, characters, observeMode, observeCast, isHomeLocation,
+    broughtCharacters, selectedNpcIdList, supervisedChildIds, userParticipant,
+    selectedNpcIds, presentHereIds,
+  });
 
   // Changing who is in the observed moment re-renders the scene with those people.
   // If a picture is already being generated, the refresh waits for it to finish so
@@ -2182,6 +2090,60 @@ export default function Scene() {
     } finally { setActionCooldown(false); }
   };
 
+  // TRY ON — the product card's exact merchandise, worn by one chosen person in this scene.
+  // The picture is drawn by the existing top-Scenes image pathway, with the card's own image
+  // as the merchandise reference. Nothing is charged, no closet entry is created, and the
+  // card stays available so the same item can still be bought.
+  const handleTryOn = (msg, itemImageUrl) => {
+    if (!msg || !itemImageUrl) return;
+    const cast = observeMode ? observeCast : selectedPeopleHere;
+    if (cast.length > 0) {
+      setTryOnRequest({ msg, itemImageUrl, cast });
+      return;
+    }
+    // Nobody else is in the scene: the account holder tries it on themselves.
+    if (userParticipant && !observeMode) {
+      runTryOn({ msg, itemImageUrl }, { id: userParticipant.id, name: displayName });
+    }
+  };
+
+  const handleTryOnConfirm = (person) => {
+    const request = tryOnRequest;
+    setTryOnRequest(null);
+    if (request && person) runTryOn(request, person);
+  };
+
+  const runTryOn = (request, person) => {
+    const { msg, itemImageUrl } = request;
+    const merchandiseFamily = msg.item_merchandise || null;
+    // An existing zone of this store: its fitting rooms for clothing, its sales floor for
+    // footwear. No fitting-room location is ever created for this.
+    const zoneName = resolveTryOnZone(location, merchandiseFamily, activeZone || locationZones[0]?.zone_name);
+    const prompt = buildTryOnPrompt({
+      itemLabel: msg.item_label,
+      itemKind: msg.item_kind,
+      merchandiseFamily,
+      actorName: person.name,
+      locationName: location?.name,
+      zoneName,
+    });
+    generateSceneImage({
+      location, locationZones, activeZone: zoneName, sceneParticipants, userParticipant,
+      isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
+      actionOverridePrompt: prompt,
+      actionFocusIds: [person.id],
+      extraReferenceImages: [itemImageUrl],
+    });
+    // The scene remembers that they tried it on — an ordinary scene activity, not a purchase.
+    setMessages((prev) => [...prev, {
+      id: `try_on_${Date.now()}`,
+      sender: "activity",
+      emoji: "🪞",
+      content: `${person.name} tries on the ${msg.item_label || "item"}${zoneName ? ` in the ${zoneName}` : ""}.`,
+      timestamp: new Date().toISOString(),
+    }]);
+  };
+
   // Location-level closing only blocks when the SELECTED environment is also unavailable.
   // An accessible residential environment remains reachable while business operations are closed.
   // Watching a character-only scene is not entering the place: public hours never block it.
@@ -2263,7 +2225,7 @@ export default function Scene() {
         <AnimatePresence>
           {messages.map((msg) => (
             <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" || msg.sender === "activity" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-              {msg.sender === "activity" ? <span className={`text-[11px] italic px-3 py-1.5 rounded-full max-w-xs text-center border ${msg.is_canon_event ? "text-foreground/80 bg-secondary/60 border-border" : "text-primary/80 bg-primary/5 border-primary/20"}`}><span className="not-italic mr-1">{msg.is_canon_event ? "✓" : "→"}</span>{msg.emoji ? `${msg.emoji} ` : ""}{msg.content}</span> : msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
+              {msg.sender === "activity" ? <span className={`text-[11px] italic px-3 py-1.5 rounded-full max-w-xs text-center border ${msg.is_canon_event ? "text-foreground/80 bg-secondary/60 border-border" : "text-primary/80 bg-primary/5 border-primary/20"}`}><span className="not-italic mr-1">{msg.is_canon_event ? "✓" : "→"}</span>{msg.emoji ? `${msg.emoji} ` : ""}{msg.content}</span> : msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} onTryOn={handleTryOn} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
             </motion.div>
           ))}
         </AnimatePresence>
@@ -2383,6 +2345,15 @@ export default function Scene() {
         heading={recipientAction ? `${recipientAction.emoji} ${recipientAction.label} — who is involved?` : null}
         hint="Only people who are here can be chosen."
       />
+      {/* Try On — who in this scene wears the item from the card. Only people here. */}
+      <SceneTargetPicker
+        action={tryOnRequest ? { emoji: "🪞", label: `Try on the ${tryOnRequest.msg.item_label || "item"}` } : null}
+        targets={tryOnRequest?.cast || []}
+        onSelect={handleTryOnConfirm}
+        onClose={() => setTryOnRequest(null)}
+        heading={tryOnRequest ? `Try on the ${tryOnRequest.msg.item_label || "item"} — who?` : null}
+        hint="Only people in this scene can try it on."
+      />
       {/* Courtroom activities: the role assigned in the setup decides who may act. */}
       <SceneTargetPicker
         action={courtActorAction}
@@ -2402,7 +2373,7 @@ export default function Scene() {
       />
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
-      <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} />
+      <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} onStayHere={handleStayHere} />
       <ProductPurchaseModal isOpen={!!pendingPurchase} price={pendingPurchase?.price} productId={pendingPurchase?.productId} preview_image_url={pendingPurchase?.preview_image_url} userBalance={settings.user_balance ?? 6000} userSettings={settings} currentUser={currentUser} traveledWithChars={shoppingPresent} accountCharacters={shoppingRecipients} onShiftEmployeeIds={shoppingOnShiftIds} userPresent={!observeMode} item_label={pendingPurchase?.item_label} item_category={pendingPurchase?.item_category} item_wearable={pendingPurchase?.item_wearable} action_id={pendingPurchase?.action_id} purchase_source={pendingPurchase?.purchase_source} item_kind={pendingPurchase?.item_kind} location_name={location?.name} onClose={() => setPendingPurchase(null)} onPurchased={(purchase) => { setPendingPurchase(null); if (purchase.entry) setPendingClosetEntry(purchase); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: purchaseConfirmationLine(purchase), timestamp: new Date().toISOString() }]); }} />
 
       {/* The paid purchase opens the recipient's real closet entry interface. */}

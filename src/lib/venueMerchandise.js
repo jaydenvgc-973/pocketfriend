@@ -53,6 +53,42 @@ export const MERCHANDISE_FAMILIES = {
       "Linen Shirt",
     ],
   },
+  // A clothing retailer offers men's and women's apparel as two separate shopping
+  // categories. The chosen category decides the merchandise — never the shopper's gender.
+  mens_clothing: {
+    category: "clothing",
+    wearable: true,
+    pool: [
+      "Men's Button-Down Shirt",
+      "Men's Crewneck Sweater",
+      "Men's Denim Jacket",
+      "Men's Chino Pants",
+      "Men's Wool Coat",
+      "Men's Polo Shirt",
+      "Men's Graphic Tee",
+      "Men's Straight-Leg Jeans",
+      "Men's Zip Hoodie",
+      "Men's Suit Jacket",
+      "Men's Linen Shirt",
+    ],
+  },
+  womens_clothing: {
+    category: "clothing",
+    wearable: true,
+    pool: [
+      "Women's Wrap Dress",
+      "Women's Cardigan",
+      "Women's Pleated Skirt",
+      "Women's Denim Jacket",
+      "Women's Blouse",
+      "Women's Straight-Leg Jeans",
+      "Women's Midi Dress",
+      "Women's Cropped Sweater",
+      "Women's Linen Shirt",
+      "Women's Wool Coat",
+      "Women's Jumpsuit",
+    ],
+  },
   accessories: {
     category: "clothing",
     wearable: true,
@@ -153,6 +189,13 @@ export const VENUE_MERCHANDISE_FAMILY = {
   gift_shop: "gifts",
 };
 
+/**
+ * The families that make up a clothing retailer's apparel. A venue type mapped to
+ * "clothing" carries both: men's and women's are separate shopping categories of the
+ * same store, and the user picks either one regardless of who is shopping.
+ */
+export const CLOTHING_FAMILIES = ["mens_clothing", "womens_clothing"];
+
 function normalizeSubtypes(subtypes) {
   const raw = Array.isArray(subtypes) ? subtypes : [subtypes];
   return raw
@@ -169,8 +212,11 @@ export function merchandiseFamiliesForVenue(subtypes) {
   const families = [];
   for (const subtype of normalizeSubtypes(subtypes)) {
     const family = VENUE_MERCHANDISE_FAMILY[subtype];
-    if (family && MERCHANDISE_FAMILIES[family] && !families.includes(family)) {
-      families.push(family);
+    if (!family) continue;
+    // An apparel venue sells men's and women's clothing as two separate categories.
+    const offered = family === "clothing" ? CLOTHING_FAMILIES : [family];
+    for (const f of offered) {
+      if (MERCHANDISE_FAMILIES[f] && !families.includes(f)) families.push(f);
     }
   }
   return families;

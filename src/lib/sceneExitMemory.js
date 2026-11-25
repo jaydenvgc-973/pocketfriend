@@ -122,6 +122,9 @@ export async function writeSceneExitMemories({
       ? `The scene at ${location.name} ended${destinationName ? `, and the scene moved on to ${destinationName}` : ""}.`
       : outcome === "left_together"
       ? `They left ${location.name} together and returned home.`
+      : outcome === "stayed_here"
+      // The page was closed, not the place: nobody left, and nobody is written as leaving.
+      ? `The scene at ${location.name} ended. Everyone stayed where they were.`
       : `${userDisplayName || "the user"} left — they stayed at ${location.name}.`;
 
   const allParticipantNames = participants.map(c => c.name).join(", ");

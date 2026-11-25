@@ -743,6 +743,9 @@ function resolveActionLibraries(location) {
 const SHOPPING_ACTION_BY_FAMILY = {
   sneakers:    { id: 'shoe_buy',        label: 'Buy Sneakers',    emoji: '👟', cost: 120 },
   clothing:    { id: 'clothing_buy',    label: 'Buy Clothing',    emoji: '🛒', cost: 35 },
+  // Apparel is shopped as men's or women's — the chosen category decides the merchandise.
+  mens_clothing:   { id: 'shop_mens_clothing',   label: "Shop Men's Clothing",   emoji: '👔', cost: 35 },
+  womens_clothing: { id: 'shop_womens_clothing', label: "Shop Women's Clothing", emoji: '👗', cost: 35 },
   accessories: { id: 'accessories_buy', label: 'Buy Accessories', emoji: '👜', cost: 65 },
   home_goods:  { id: 'buy_home_goods',  label: 'Buy Home Goods',  emoji: '🛏️', cost: 35 },
   music:       { id: 'buy_music',       label: 'Buy Music',       emoji: '💿', cost: 25 },
@@ -799,7 +802,7 @@ function buildVenueShoppingActions(venue, libraries) {
   });
 
   // A complete outfit stays its own purchase wherever clothing is sold.
-  if (families.includes('clothing')) {
+  if (families.some((f) => MERCHANDISE_FAMILIES[f]?.category === 'clothing')) {
     const outfit = libraries.flat().find((a) => a.id === 'buy_outfit');
     if (outfit) actions.push(outfit);
   }

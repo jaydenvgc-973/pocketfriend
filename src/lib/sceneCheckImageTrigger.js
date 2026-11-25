@@ -112,6 +112,10 @@ export function checkImageTrigger({
       item_wearable: resolved.wearable !== false,
       item_label: resolved.label,
       item_category: resolved.category,
+      // The shopping category this offer came from, kept on the card so Try On and
+      // Show me something else stay in the same category and try on the same item.
+      item_merchandise: merchandise?.family || null,
+      item_merchandise_families: purchaseMerchandise ? [].concat(purchaseMerchandise) : null,
       timestamp: new Date().toISOString(),
     }]);
     return;

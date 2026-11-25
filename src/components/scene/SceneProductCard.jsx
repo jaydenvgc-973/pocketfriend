@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { RefreshCw, Check, X, ShoppingBag } from "lucide-react";
+import { RefreshCw, Check, X, ShoppingBag, Shirt } from "lucide-react";
+import { pickMerchandise } from "@/lib/venueMerchandise.js";
 
 /**
  * SceneProductCard — venue-aware product card with:
  * 1. Item-specific AI-generated image (never scene/venue photo)
- * 2. Accept / Reject / Ask for another review flow before any transaction
- * 3. Clothing → ProductPurchaseModal for closet save
- * 4. Consumable → direct deduction only after explicit Accept
+ * 2. Pass / Buy / Try On — trying on is free, buying goes through the purchase flow
+ * 3. Show me something else — another item from the same shopping category
+ * 4. Clothing → ProductPurchaseModal for closet save
+ * 5. Consumable → direct deduction only after explicit Accept
  */
 export default function SceneProductCard({
   msg,
@@ -18,6 +20,9 @@ export default function SceneProductCard({
   base44: b44,
   setPendingPurchase,
   setMessages,
+  // Try On runs through the existing top-Scenes image pathway, choosing WHO tries it on
+  // from the people actually in this scene. It never charges and never touches a closet.
+  onTryOn,
 }) {
   // The image this card generated is kept on the message itself, so a re-render or a
   // remount reuses the exact image the user saw instead of generating a different one.
@@ -110,6 +115,11 @@ export default function SceneProductCard({
     return () => { cancelled = true; };
   }, [msg.id]); // only once per card
 
+  // Wearable store merchandise can be tried on. Food, drink and non-wearable goods cannot.
+  const canTryOn = msg.purchase_type === "purchase"
+    && msg.item_category === "clothing"
+    && msg.item_wearable !== false;
+
   const handleAccept = () => {
     if (status !== "pending") return;
     setStatus("accepted");
@@ -162,7 +172,30 @@ export default function SceneProductCard({
   };
 
   const handleAskAnother = () => {
-    // Remove this card and post a user message to re-trigger generation
+    // Another offer from the SAME shopping category this card came from — never unrelated
+    // merchandise, never a charge. The offer is made from the store's own merchandise.
+    const families = msg.item_merchandise_families
+      || (msg.item_merchandise ? [msg.item_merchandise] : null);
+    const next = families ? pickMerchandise(families) : null;
+    if (next) {
+      setMessages(prev => [
+        ...prev.filter(m => m.id !== msg.id),
+        {
+          ...msg,
+          id: `product_${Date.now()}`,
+          item_image_url: null,
+          item_label: next.label,
+          item_category: next.category,
+          item_wearable: next.wearable !== false,
+          item_merchandise: next.family,
+          item_merchandise_families: families,
+          tried_on: false,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
+    // No known merchandise family: keep the established behaviour.
     setMessages(prev => prev.filter(m => m.id !== msg.id));
     setMessages(prev => [...prev, {
       id: `regen_${Date.now()}`,
@@ -199,7 +232,7 @@ export default function SceneProductCard({
 
   return (
     <div className="flex flex-col items-center gap-3 p-3 rounded-2xl bg-card border-2 border-primary/40 max-w-[220px] shadow-lg">
-      {/* Item image */}
+      {/* Item image — the authoritative reference for this merchandise */}
       <div className="w-32 h-32 rounded-xl bg-secondary flex items-center justify-center overflow-hidden relative">
         {isLoadingImage ? (
           <div className="flex flex-col items-center gap-1 text-muted-foreground">
@@ -225,8 +258,8 @@ export default function SceneProductCard({
         )}
       </div>
 
-      {/* Review actions */}
-      <div className="flex gap-2 w-full">
+      {/* Review actions — Pass, Buy, and (for wearables) Try On */}
+      <div className="flex gap-1.5 w-full">
         <button
           onClick={handleReject}
           className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-secondary border border-border text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 transition-all"
@@ -238,8 +271,18 @@ export default function SceneProductCard({
           disabled={isLoadingImage}
           className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
         >
-          <Check className="w-3 h-3" /> {msg.purchase_type === "clothing" ? "Buy" : (msg.is_free ? "Take" : "Order")}
+          <Check className="w-3 h-3" /> {msg.purchase_type === "clothing" || msg.purchase_type === "purchase" ? "Buy" : (msg.is_free ? "Take" : "Order")}
         </button>
+        {canTryOn && (
+          <button
+            onClick={() => onTryOn?.(msg, itemImageUrl)}
+            disabled={isLoadingImage || !itemImageUrl}
+            title="Try it on — no charge"
+            className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground hover:bg-primary/10 hover:text-primary hover:border-primary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            <Shirt className="w-3 h-3" /> Try On
+          </button>
+        )}
       </div>
 
       {/* Ask for another */}
@@ -247,7 +290,7 @@ export default function SceneProductCard({
         onClick={handleAskAnother}
         className="w-full text-[10px] text-primary/70 hover:text-primary underline transition-colors"
       >
-        Show me another {msg.item_label ? msg.item_label.toLowerCase() : "option"}
+        Show me something else
       </button>
     </div>
   );

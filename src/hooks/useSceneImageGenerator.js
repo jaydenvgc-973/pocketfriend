@@ -75,6 +75,10 @@ export function useSceneImageGenerator() {
       // The action being depicted is a shower: everyone under the water is unclothed,
       // and no uniform or clothing is drawn onto them.
       showerState = false,
+      // Extra reference images for this one picture — the merchandise being tried on.
+      // They are supplied alongside the people's own references; the prompt says what
+      // they are, and no identity is ever taken from them.
+      extraReferenceImages = [],
     } = opts;
 
     if (!location || isGeneratingImage) return;
@@ -108,9 +112,14 @@ export function useSceneImageGenerator() {
       || locationZones.find((z) => z.is_primary_category === true)
       || locationZones[0];
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
-    const envRefs = activeZoneImagesForAction.length > 0
+    const zoneEnvRefs = activeZoneImagesForAction.length > 0
       ? activeZoneImagesForAction.slice(0, 4)
       : (location.image_urls || []).slice(0, 4);
+    // Merchandise being tried on is a reference for the item, not a person: it is placed
+    // with the environment references, never among anyone's identity images.
+    const itemRefs = (Array.isArray(extraReferenceImages) ? extraReferenceImages : [])
+      .filter((u) => typeof u === "string" && u.trim().length > 0);
+    const envRefs = [...itemRefs, ...zoneEnvRefs];
     // Fallback display when generation fails must stay the SAME zone, never a first-zone image.
     const zoneFallbackImage = activeZoneImagesForAction[0] || firstImage;
 
