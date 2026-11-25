@@ -149,20 +149,22 @@ export default function SceneActionStrip({
     return (
       <React.Fragment key={`section_${folder.key}`}>
         {renderFolder(folder)}
-        {open && items.map(renderItem)}
-        {/* Arrest is a general activity, so it lives in that folder. */}
+        {/* Send Money and Receive Money lead the General folder, ahead of Flirt With. They
+            open the one established financial interaction with who pays and who is paid
+            chosen first. Open Phone sits at the start of the strip, outside every folder. */}
         {open && folder.key === "general" && (
           <React.Fragment>
-            {/* Send / Receive Money open the one established financial interaction with
-                who pays and who is paid chosen first. Open Phone sits at the start of the
-                strip, outside every folder. */}
             <SendMoneyControl onClick={() => onOpenMoney?.("send")} disabled={actionCooldown} />
             <ReceiveMoneyControl onClick={() => onOpenMoney?.("receive")} disabled={actionCooldown} />
-            <ArrestControl
-              onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
-              arrestDisabled={arrestTargets.length === 0 || actionCooldown}
-            />
           </React.Fragment>
+        )}
+        {open && items.map(renderItem)}
+        {/* Arrest is the last general activity, after Call the Cops. */}
+        {open && folder.key === "general" && (
+          <ArrestControl
+            onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
+            arrestDisabled={arrestTargets.length === 0 || actionCooldown}
+          />
         )}
         {open && folder.key !== "general" && items.length === 0 && (
           <span className="flex items-center justify-center px-2 text-[9px] text-muted-foreground/60 whitespace-nowrap flex-shrink-0">
