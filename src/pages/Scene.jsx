@@ -52,6 +52,7 @@ import { useUserPresence } from "@/hooks/useUserPresence";
 import { useSharedResidenceParticipants } from "@/hooks/useSharedResidencePresence";
 import SharedResidenceConversation from "@/components/scene/SharedResidenceConversation";
 import { useSceneImageGenerator } from "@/hooks/useSceneImageGenerator";
+import { useSceneSpaceImage } from "@/hooks/useSceneSpaceImage";
 import { getVenueNpcDefaults } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useAuth } from "@/lib/AuthContext";
@@ -415,6 +416,9 @@ export default function Scene() {
     // Patient Room / Cell zone — its reference images and dropdown are unchanged.
     const unitZone = unitId ? getUnitZoneName(location, unitId) : null;
     if (unitZone) setActiveZone(unitZone);
+    // A different apartment, workplace or room is a different space, so its own picture is
+    // drawn. Choosing the space already on screen changes nothing and draws nothing.
+    if (unitId !== activeUnitId) requestSpaceImage();
     if (observeMode) {
       // Choosing the whole facility releases the unit cast back to the default selection.
       // Inside one workplace, the people working there now are the ones offered.
@@ -687,10 +691,11 @@ export default function Scene() {
   }, []);
 
   const handleZoneChange = (zoneName) => {
+    // Choosing the room already on screen changes nothing, so nothing is redrawn.
+    if (zoneName === (activeZone || locationZones[0]?.zone_name)) return;
     setActiveZone(zoneName);
     setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You move to the ${zoneName}.`, timestamp: new Date().toISOString() }]);
-    setHasUserRequestedImage(true);
-    setTimeout(() => setSceneImage(null), 50);
+    requestSpaceImage();
   };
 
   // Choosing someone from Who's Here puts them in the conversation. In a watched scene
@@ -1039,7 +1044,9 @@ export default function Scene() {
       return;
     }
 
-    if (zoneName && zoneName !== activeZone) handleZoneChange(zoneName);
+    // An activity that moves the scene into its own space draws that space's picture itself,
+    // so the move changes the space without asking for a second, generic picture.
+    if (zoneName && zoneName !== activeZone) { setActiveZone(zoneName); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You move to the ${zoneName}.`, timestamp: new Date().toISOString() }]); }
     if (actionImageFn) {
       const who = [displayName, target.name].filter(Boolean).join(" and ");
       generateSceneImage({
@@ -1412,38 +1419,26 @@ export default function Scene() {
     selectedNpcIds, presentHereIds,
   });
 
-  // Changing who is in the observed moment re-renders the scene with those people.
-  // If a picture is already being generated, the refresh waits for it to finish so
-  // the new cast is never replaced by the previous one.
-  // The picture follows the selection in BOTH modes — the watched cast, and the people the
-  // user actually picked from Who's Here. A person who is merely in the building never
-  // survives in a picture after the selection changes: the image is remade from whoever is
-  // selected now, and the old frame is never left standing.
-  // If a picture is already being generated, the refresh waits for it to finish so the new
-  // cast is never replaced by the previous one.
-  const pendingObserveImageRef = useRef(false);
+  // The top picture belongs to the selected scene space — the property, the unit inside it,
+  // and the room. A manual change of any of them draws one picture of the new space; the
+  // cast follows the selection in both modes, and an activity that draws its own picture
+  // never comes through here, so no second, generic picture replaces it.
   const selectionImageKey = observeMode ? observeCastIdList.join(',') : selectedNpcIdList.join(',');
-  useEffect(() => {
-    if (!participantsReady) return;
-    if (isGeneratingImage) { pendingObserveImageRef.current = true; return; }
-    setSceneImage(null);
-  }, [selectionImageKey]);
-  useEffect(() => {
-    if (!pendingObserveImageRef.current || isGeneratingImage || !participantsReady) return;
-    pendingObserveImageRef.current = false;
-    setSceneImage(null);
-  }, [isGeneratingImage]);
-
-  // Scene image auto-loads when key data is ready.
-  useEffect(() => {
-    if (!hasUserRequestedImage) return;
-    if (!participantsReady) return;
-    if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      // An empty cast has no picture to compose; the view waits for the observer to pick someone.
-      if (observeMode && observeCast.length === 0) return;
-      generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: sceneAmbientPopulation });
-    }
-  }, [location?.id, sceneImage, activeZone, selectedNpcIds, hasUserRequestedImage, participantsReady, observeCastIdList.join(',')]);
+  const { requestSpaceImage } = useSceneSpaceImage({
+    locationId: location?.id,
+    isRabbitHole: !!location?.is_rabbit_hole,
+    spaceKey: `${location?.id || ''}|${activeUnitId || ''}|${activeZone || ''}`,
+    selectionKey: selectionImageKey,
+    sceneImage,
+    setSceneImage,
+    isGeneratingImage,
+    imageRequested: hasUserRequestedImage,
+    setImageRequested: setHasUserRequestedImage,
+    participantsReady,
+    observeMode,
+    observeCastCount: observeCast.length,
+    drawImage: () => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: observeMode, ambientPopulation: sceneAmbientPopulation }),
+  });
 
   useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
@@ -1750,7 +1745,8 @@ export default function Scene() {
     try {
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
       if (actionImageFn) {
-        generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: sceneAmbientPopulation, actionFocusIds: actors.map((a) => a.id), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: actionImageFn(location?.name || location?.category, whoNames) });
+        // The picture is the activity itself, drawn in the room the activity establishes.
+        generateSceneImage({ location, locationZones, activeZone: action.suggested_zone_name || activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, ambientPopulation: sceneAmbientPopulation, actionFocusIds: actors.map((a) => a.id), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: actionImageFn(location?.name || location?.category, whoNames) });
       }
       if (EATING_ACTION_IDS.includes(action.id)) {
         const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal';
@@ -2133,7 +2129,7 @@ export default function Scene() {
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
       // The action picture shows the people taking part — the Who's Here selection — never
       // every resident who happens to be home.
-      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); const actionZone = action.suggested_zone_name || activeZone; generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       // The strip is not a text box: choosing an activity is a scene action, shown as a
       // centered activity naming the people taking part — not as an outgoing message.
@@ -2259,9 +2255,9 @@ export default function Scene() {
         // Observing the characters does not move the user: the view follows the zone,
         // but no "you move" moment is written into their scene.
         if (!observeMode) return handleZoneChange(zoneName);
+        if (zoneName === (activeZone || locationZones[0]?.zone_name)) return;
         setActiveZone(zoneName);
-        setHasUserRequestedImage(true);
-        setTimeout(() => setSceneImage(null), 50);
+        requestSpaceImage();
       }} sceneImage={sceneImage} isGeneratingImage={isGeneratingImage} onRefresh={() => { setHasUserRequestedImage(true); setSceneImage(null); }} onLightbox={setLightboxSrc}
         watchVideoActive={watchVideoActive} onToggleWatchVideo={() => { setWatchVideoActive(false); setWatchContext(null); }} watchContext={watchContext} displayName={displayName}
         onWatchStarted={(ctx) => { setWatchContext(ctx); const who = observeMode ? (observeCast.map((c) => c.name).join(" and ") || "They") : displayName; setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${who} started watching${ctx.title ? ` "${ctx.title}"` : " a video"} together${observeMode ? "" : " with everyone"}.`, timestamp: new Date().toISOString() }]); }}
