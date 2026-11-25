@@ -103,6 +103,22 @@ Deno.serve(async (req) => {
       // ── BUILD AND VALIDATE LEDGER RECORD FIRST ───────────────────────────────────
       // Build the ledger entry BEFORE any balance change — ensures we know what we're creating
       const now = new Date().toISOString();
+
+      // A purchase made FOR a character is a gift: the row belongs to that character so it
+      // appears in their own statement, and it is goods received — not money they spent.
+      // The account holder's balance still pays for it.
+      const isGift = !!target_character_id;
+      let recipientBalance = null;
+      if (isGift) {
+        const recipientFinancial = await base44.asServiceRole.entities.CharacterFinancial
+          .filter({ character_id: target_character_id })
+          .then((rows) => rows[0])
+          .catch(() => null);
+        recipientBalance = typeof recipientFinancial?.current_balance === 'number'
+          ? recipientFinancial.current_balance
+          : null;
+      }
+
       const ledgerPayload = {
         // Ownership / scope
         // character_id is a REQUIRED string on FinancialTransaction and must never be null.
@@ -115,24 +131,26 @@ Deno.serve(async (req) => {
         sender_id: user.id,
         sender_type: 'user',
         sender_name: user.full_name || user.email,
-        receiver_id: null,
-        receiver_type: 'system',
-        receiver_name: location_name || 'Scene',
+        receiver_id: target_character_id || null,
+        receiver_type: isGift ? 'character' : 'system',
+        receiver_name: isGift ? (target_character_name || 'Character') : (location_name || 'Scene'),
         // Transaction amounts
         amount: numericCost,
-        direction: 'expense',
+        // Goods received by a character are income in their ledger; their own money is untouched.
+        direction: isGift ? 'income' : 'expense',
         // Classification
-        transaction_type: 'scene_purchase',
-        description: [
-          action_label || item_label || 'Scene purchase',
-          location_name ? `at ${location_name}` : null,
-          target_character_id ? `(gift)` : null,
-        ].filter(Boolean).join(' '),
+        transaction_type: isGift ? 'gift' : 'scene_purchase',
+        description: isGift
+          ? `Gift from ${user.full_name || 'the account holder'}: ${action_label || item_label || 'Scene purchase'}${location_name ? ` at ${location_name}` : ''}`
+          : [
+            action_label || item_label || 'Scene purchase',
+            location_name ? `at ${location_name}` : null,
+          ].filter(Boolean).join(' '),
         // Location
         location_id: null,
         location_name: location_name || null,
-        // Balance snapshot
-        balance_after: newBalance,
+        // Balance snapshot — the recipient's own balance, which a gift never changes.
+        balance_after: isGift ? recipientBalance : newBalance,
         // Timestamp
         timestamp: now,
       };
@@ -213,16 +231,50 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'Transaction rejected: insufficient balance', balance: characterBalance, cost: numericCost }, { status: 400 });
       }
 
+      // A character buying FOR another character: the payer's own expense row is written by
+      // the existing expense pipeline, and the recipient gets the matching gift row so the
+      // purchase is visible in their statement too. Their balance is not touched.
+      const giftedTo = target_character_id && target_character_id !== character_id ? target_character_id : null;
+
       const expense = await base44.functions.invoke('recordCharacterExpense', {
         characterId: character_id,
         amount: numericCost,
         transactionType: 'scene_purchase',
-        description: `${action_label || `Scene ${action_class}`}${location_name ? ` at ${location_name}` : ''}`,
+        description: `${action_label || `Scene ${action_class}`}${location_name ? ` at ${location_name}` : ''}${giftedTo ? ` (gift for ${target_character_name || 'another character'})` : ''}`,
         locationName: location_name || null,
       });
 
       if (expense?.data?.success !== true) {
         return Response.json({ error: expense?.data?.error || 'Character transaction failed' }, { status: 500 });
+      }
+
+      if (giftedTo) {
+        const recipientFinancial = await base44.asServiceRole.entities.CharacterFinancial
+          .filter({ character_id: giftedTo })
+          .then((rows) => rows[0])
+          .catch(() => null);
+        await base44.asServiceRole.entities.FinancialTransaction.create({
+          character_id: giftedTo,
+          character_name: target_character_name || recipientFinancial?.character_name || null,
+          sender_id: character_id,
+          sender_type: 'character',
+          sender_name: financial.character_name || null,
+          receiver_id: giftedTo,
+          receiver_type: 'character',
+          receiver_name: target_character_name || null,
+          amount: numericCost,
+          direction: 'income',
+          transaction_type: 'gift',
+          description: `Gift from ${financial.character_name || 'another character'}: ${action_label || item_label || 'Scene purchase'}${location_name ? ` at ${location_name}` : ''}`,
+          location_id: null,
+          location_name: location_name || null,
+          balance_after: typeof recipientFinancial?.current_balance === 'number' ? recipientFinancial.current_balance : null,
+          timestamp: new Date().toISOString(),
+        }).catch((giftErr) => {
+          // The payer was already charged and their ledger row exists; a failed gift row
+          // must not turn a completed purchase into a failure.
+          console.error(`[executeSceneTransaction] Gift ledger row failed for recipient ${giftedTo}: ${giftErr.message}`);
+        });
       }
 
       console.log(`[executeSceneTransaction] CHARACTER transaction approved: ${action_class} "${action_label}" — character ${character_id} charged $${numericCost}`);
