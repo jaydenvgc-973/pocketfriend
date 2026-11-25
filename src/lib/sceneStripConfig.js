@@ -29,6 +29,168 @@ export function stripActions(list) {
   return list.filter((a) => a.id !== MOONWINK_ACTION_ID);
 }
 
+// ── STRIP ORGANIZATION ────────────────────────────────────────────────────────
+// The strip is shown in three groups, in this order:
+//   1. This place   — the venue's own activities (courtroom procedure, jail procedure,
+//                     hotel desk, salon services…). They are the reason the user came
+//                     here, so they come first whatever their Life Need effect.
+//   2. Life Needs   — the everyday activities that address one of the eight established
+//                     needs. Grouping only: no effect, value or calculation changes.
+//   3. General      — the general interactions below, in exactly this relative order.
+// Every activity appears in exactly ONE group.
+export const GENERAL_STRIP_ORDER = [
+  "flirt_with",     // 1
+  "kiss",           // 2
+  "moonwink",       // existing pair activity — keeps its own place beside Kiss
+  "wedding_ceremony", // 3 — the Wedding Ceremony action (gov_marry on a home / church)
+  "smoke",          // 4
+  "argue_with",     // 5
+  "fight_with",     // 6
+  "pickpocket",     // 7
+  "burglarize",     // 8
+  "call_the_cops",  // 9 — Arrest and Next Scene follow, as scene controls
+];
+
+/**
+ * The general-order key of an activity, or null when it is not one of the general
+ * activities. The marriage action is venue-supplied (a home or a church carries it); only
+ * its Wedding Ceremony instance belongs in the general order — a City Hall Civil Marriage
+ * is that venue's own business and stays in the first group.
+ */
+export function generalStripKey(action) {
+  if (!action) return null;
+  if (action.id === "gov_marry") {
+    return String(action.label || "").toLowerCase() === "wedding ceremony" ? "wedding_ceremony" : null;
+  }
+  return GENERAL_STRIP_ORDER.includes(action.id) ? action.id : null;
+}
+
+// The eight established Life Needs, in their established order. These are groupings for
+// finding an activity — never a second set of need rules.
+export const LIFE_NEED_ORDER = ["hunger", "energy", "social", "health", "mental", "financial", "hygiene", "comfort"];
+
+export const LIFE_NEED_LABELS = {
+  hunger: "Hunger",
+  energy: "Energy",
+  social: "Social",
+  health: "Health",
+  mental: "Mental",
+  financial: "Financial",
+  hygiene: "Hygiene",
+  comfort: "Comfort",
+};
+
+// Which need an existing activity is grouped under. Membership says only where the button
+// is found — an activity's established effects are unchanged (shopping spends money
+// rather than satisfying Financial; smoking does not improve Health).
+const NEED_ACTION_IDS = {
+  hunger: [
+    "eat", "cook", "drink", "order", "order_breakfast", "order_coffee", "order_pastry",
+    "order_late_night", "order_takeout", "ask_refill", "dessert", "pie", "milkshake",
+    "drinks", "order_drink", "buy_round", "char_buy_round", "char_pays", "check",
+    "hotel_dining", "hotel_drink", "school_lunch", "workplace_lunch", "workplace_break",
+    "education_break", "buffet_plate", "buffet_water", "grocery_shopping", "sample",
+    "produce", "read_menu", "linger", "sit_booth", "sit_counter", "bottle_service",
+    "picnic", "share_table", "shelter_eat", "jail_eat", "jail_meal_tray",
+  ],
+  energy: [
+    "lay_down", "nap", "relax", "hotel_relax", "shelter_rest", "sleep", "watch_tv",
+  ],
+  social: [
+    "talk", "chat", "chat_bartender", "chat_classmates", "chat_locals", "chat_member",
+    "chat_server", "chat_stranger", "make_friend", "meet_regular", "community_talk",
+    "community_gather", "community_activity", "community_event", "community_volunteer",
+    "education_group", "workplace_chat", "jail_talk", "jail_talk_prisoners",
+    "jail_visitation", "jail_meet_visitor", "jail_social_worker", "salon_chat",
+    "salon_gossip", "buffet_server", "flirt", "flirt_server", "dance",
+    "dance_with_stranger", "joke", "pass_note", "group", "one_on_one", "ask",
+    "ask_question", "ask_help", "ask_aisle", "ask_trainer", "employee",
+    "religion_community", "religion_talk", "shelter_talk", "medical_ask",
+    "hotel_concierge", "retail_ask", "clothing_ask_price", "clothing_ask_size",
+    "shoe_ask_price", "shoe_ask_size", "accessories_ask", "gov_ask", "vip_request",
+    "overhear", "overhead_story", "notice_watching",
+  ],
+  health: [
+    "exercise", "workout", "home_workout", "lift", "cardio", "spot", "challenge",
+    "class", "use_machine", "stretch", "jail_exercise", "school_sports", "hotel_gym",
+    "medical_visit", "medical_intake", "medical_pharmacy", "medical_wait",
+    "medical_phone", "jail_request_medical", "jail_receive_medical", "bathroom",
+    "bathroom_break",
+  ],
+  mental: [
+    "read", "study", "sketch", "observe", "people_watch", "cloud_watch", "watch_sunset",
+    "music", "jukebox", "play", "photo", "check_phone", "religion_pray",
+    "religion_quiet", "religion_study", "religion_service", "shelter_quiet",
+    "education_library", "education_note", "education_class", "education_ask",
+    "school_class", "school_hall", "jail_read_write", "watch_cook", "watch_dj",
+    "watch_kitchen",
+  ],
+  financial: [
+    "business_work", "business_meet", "workplace_email", "workplace_phone",
+    "workplace_checkin", "gov_documents", "gov_forms", "gov_payment", "buy",
+    "buy_outfit", "checkout", "retail_checkout", "clothing_buy", "clothing_register",
+    "shoe_buy", "accessories_buy", "shop_mens_clothing", "shop_womens_clothing",
+    "buy_home_goods", "buy_music", "buy_books", "buy_electronics", "buy_toys",
+    "buy_gifts", "salon_book", "hotel_checkin", "hotel_checkout", "shelter_checkin",
+    "shelter_resources", "jail_paperwork", "jail_phone_call", "list",
+    "clothing_browse", "shoe_browse", "accessories_browse", "retail_browse",
+  ],
+  hygiene: [
+    "home_shower", "home_brush_teeth", "home_clean_up", "home_dishes",
+    "home_make_bed", "jail_shower", "jail_change_clothing", "salon_cut", "salon_color",
+    "salon_nails", "check_mirror", "try_on", "clothing_try_on", "shoe_sit_try",
+    "shoe_walk_fit", "shoe_mirror", "accessories_try", "accessories_mirror",
+    "clothing_accessories", "locker_room",
+  ],
+  comfort: [
+    "sit", "sit_bench", "sit_outside", "sit_work", "find_somewhere_warm", "go_outside",
+    "hotel_room",
+  ],
+};
+
+// Families of established activities that all address the same need.
+const NEED_ACTION_PREFIXES = {
+  hunger: ["sk_", "bar_food_"],
+};
+
+const NEED_BY_ACTION_ID = (() => {
+  const map = {};
+  for (const need of LIFE_NEED_ORDER) {
+    for (const id of NEED_ACTION_IDS[need] || []) if (!map[id]) map[id] = need;
+  }
+  return map;
+})();
+
+/** The Life Need an existing activity is grouped under, or null. */
+export function needForAction(action) {
+  if (!action?.id) return null;
+  if (NEED_BY_ACTION_ID[action.id]) return NEED_BY_ACTION_ID[action.id];
+  for (const need of LIFE_NEED_ORDER) {
+    if ((NEED_ACTION_PREFIXES[need] || []).some((p) => action.id.startsWith(p))) return need;
+  }
+  return null;
+}
+
+/**
+ * Split the strip's activities into the three groups, each activity exactly once.
+ * Order is preserved inside every group; the Life Needs group follows the established
+ * need order, and the General group follows GENERAL_STRIP_ORDER.
+ */
+export function buildActivitySections(list) {
+  const place = [];
+  const needs = [];
+  const general = [];
+  for (const action of list || []) {
+    if (!action?.id) continue;
+    if (generalStripKey(action)) { general.push(action); continue; }
+    const need = needForAction(action);
+    if (need) { needs.push({ action, need }); continue; }
+    place.push(action);
+  }
+  needs.sort((a, b) => LIFE_NEED_ORDER.indexOf(a.need) - LIFE_NEED_ORDER.indexOf(b.need));
+  return { place, needs, general };
+}
+
 export const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
   food_drink: "🍽️", outdoor: "🌳", social: "🍸", medical: "🏨",

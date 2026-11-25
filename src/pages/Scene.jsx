@@ -77,12 +77,13 @@ import MarriageConfirmationModal from "@/components/government/MarriageConfirmat
 import JudicialOutcomeModal from "@/components/government/JudicialOutcomeModal";
 import { isGovernmentActionId } from "@/lib/governmentVenues";
 import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
-import SceneStripTransitionControls from "@/components/scene/SceneStripTransitionControls";
+import SceneChatFeed from "@/components/scene/SceneChatFeed";
+import SceneActionStrip from "@/components/scene/SceneActionStrip";
 import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
 import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
 import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
-import { DIRECTED_SCENE_ACTIONS, stripActions, CATEGORY_EMOJIS, isUserPresenceEntity } from "@/lib/sceneStripConfig";
+import { CATEGORY_EMOJIS, isUserPresenceEntity } from "@/lib/sceneStripConfig";
 
 export default function Scene() {
   const navigate = useNavigate();
@@ -155,6 +156,9 @@ export default function Scene() {
   // In a watched scene an activity belongs to a person IN the scene. When more than one
   // eligible character is here, the observer says who before anything happens.
   const [actorAction, setActorAction] = useState(null);
+  // Pickpocket names TWO people: who attempts it, and whose pocket it is. The actor is
+  // chosen first through the existing selector, then the target through the same one.
+  const [crimeTargetAction, setCrimeTargetAction] = useState(null);
   const [showSharedConversation, setShowSharedConversation] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
@@ -886,6 +890,21 @@ export default function Scene() {
       && !isInfantCharacter(c)),
     [selectedPeopleHere.map((c) => c.id).join(','), currentUser?.id]
   );
+
+  // The user is a person in this scene whenever they are physically here. An activity that
+  // someone performs must be able to be performed by them — watching is not presence, so
+  // the observer is never added. This only feeds the activity selector.
+  const activityActors = useMemo(() => {
+    if (observeMode || !currentUser?.id) return userPresentActors;
+    const alreadyListed = userPresentActors.some((c) => c.id === currentUser.id);
+    if (alreadyListed) return userPresentActors;
+    return [...userPresentActors, {
+      id: currentUser.id,
+      name: displayName,
+      avatar_url: currentUser.avatar_url || null,
+      isUser: true,
+    }];
+  }, [observeMode, currentUser?.id, currentUser?.avatar_url, displayName, userPresentActors.map((c) => c.id).join(',')]);
 
   // ── THE PLACE IS POPULATED ──
   // A public venue keeps its ordinary people while the characters are in it. Private
@@ -1777,6 +1796,9 @@ export default function Scene() {
     const pending = actorAction;
     setActorAction(null);
     if (!pending || !person?.id) return;
+    // Pickpocket is aimed AT someone: the actor is chosen here, the target next. Neither is
+    // assumed, and the two are never the same person.
+    if (pending.action.id === "pickpocket") { setCrimeTargetAction({ action: pending.action, actor: person }); return; }
     if (CRIME_ACTIVITY_IDS.includes(pending.action.id)) { handleCrimeAction(pending.action, [person]); return; }
     if (pending.mode === "directed") setDirectedAction({ ...pending.action, actorId: person.id, actorName: person.name });
     else if (observeMode) performObserveAction(pending.action, person);
@@ -1792,6 +1814,25 @@ export default function Scene() {
     if (CRIME_ACTIVITY_IDS.includes(pending.action.id)) { handleCrimeAction(pending.action, people); return; }
     if (observeMode) performObserveAction(pending.action, people);
     else handleAction(pending.action, people);
+  };
+
+  // The target of a pickpocket attempt — the people actually in this scene, never the
+  // person attempting it, and never someone merely listed in Who's Here.
+  const crimeTargetOptions = useMemo(() => {
+    const actorId = crimeTargetAction?.actor?.id || null;
+    return [...sceneParticipants, ...(observeMode ? observeCast : selectedPeopleHere)]
+      .filter((p) => p?.id && p.id !== actorId && !p.isUser && p.id !== currentUser?.id && p.isNpc !== true
+        && !String(p.id).startsWith("npc_owner_") && !isInfantCharacter(p)
+        && p.life_status !== "deceased" && p.status !== "deceased")
+      .filter((p, i, arr) => arr.findIndex((x) => x.id === p.id) === i)
+      .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+  }, [crimeTargetAction?.actor?.id, sceneParticipants.map((p) => p.id).join(','), observeMode, selectedPeopleHere.map((p) => p.id).join(','), currentUser?.id]);
+
+  const handleCrimeTargetSelect = (target) => {
+    const pending = crimeTargetAction;
+    setCrimeTargetAction(null);
+    if (!pending?.actor?.id || !target?.id) return;
+    handleCrimeAction(pending.action, [pending.actor], target);
   };
 
   const handleDirectedSelect = (directed) => {
@@ -1856,7 +1897,7 @@ export default function Scene() {
 
   const crimeCast = observeMode ? observeCast : selectedPeopleHere;
 
-  const handleCrimeAction = async (action, people = null) => {
+  const handleCrimeAction = async (action, people = null, target = null) => {
     if (actionCooldown || isResolvingCrime) return;
     const chosen = (Array.isArray(people) ? people : people ? [people] : []).filter((p) => p?.id);
     const actors = chosen.length > 0 ? chosen : crimeCast.filter((p) => p?.id);
@@ -1868,6 +1909,8 @@ export default function Scene() {
       const outcome = await resolveCrimeOutcome({
         actionId: action.id,
         actorNames: names,
+        // Whose pocket, whose property — only ever the person the user chose.
+        targetName: target?.name || target?.display_name || null,
         castNames: crimeCast.map((p) => p.name || p.display_name).filter(Boolean),
         locationName: location?.name,
         locationCategory: location?.category,
@@ -1907,7 +1950,10 @@ export default function Scene() {
       if (outcome.arrested) {
         const arrested = actors.find((p) => (p.name || p.display_name) === outcome.arrestedName) || actors[0];
         const facility = pickCustodyFacility(locationsData);
-        const isRealCharacter = arrested?.id && !arrested.isNpc && !String(arrested.id).startsWith("npc_");
+        // The account holder is never taken into custody as a character record — only an
+        // established character of the world is.
+        const isRealCharacter = arrested?.id && !arrested.isNpc && !arrested.isUser
+          && arrested.id !== currentUser?.id && !String(arrested.id).startsWith("npc_");
         if (isRealCharacter && facility?.id) {
           const res = await base44.functions.invoke('arrestCharacter', {
             character_id: arrested.id,
@@ -2221,81 +2267,47 @@ export default function Scene() {
       <ScenePresenceStrip observeMode={observeMode} displayName={displayName} currentUser={currentUser} observeCast={observeCast} traveledWithChars={traveledWithChars} selectedNpcs={selectedNpcs} extraNpcs={extraNpcs} location={location} locationUnits={locationUnits} locationWorkplaces={locationWorkplaces} activeUnitId={activeUnitId} onSelectUnit={handleUnitChange} />
 
       {/* Chat area */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        <div className="text-center space-y-2">
-          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
-            {observeMode
-              ? `Watching ${observeCast.map((c) => c.name).join(", ") || "them"} at ${activeWorkspace ? `${activeWorkspace.name} · ${location.name}` : location.name}${activeZone ? ` · ${activeZone}` : ""} — you are not here`
-              : `You're at ${activeWorkspace ? `${activeWorkspace.name} · ${location.name}` : location.name}${activeZone ? ` · ${activeZone}` : ""}${traveledWithChars.length > 0 ? ` with ${traveledWithChars.map((c) => c.name).join(", ")}` : ""}`}
-          </span>
-          {!isWorkspaceScene && (homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">{[...homeResidentsPresent, ...familyMemberNpcsPresent].map((c) => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home</span></div>}
-          {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">{homeResidentsAway.map((c) => c.name).concat(familyMemberNpcsAway.map((fm) => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away</span></div>}
-          {workerCharacters.length > 0 && <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">{workerCharacters.map((c) => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working</span></div>}
-          {!observeMode && (() => { const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter((e) => !characterIds.includes(e.id)); return presentHere.length > 0 ? <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">{presentHere.map((e) => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact</span></div> : null; })()}
-        </div>
-
-        <AnimatePresence>
-          {messages.map((msg) => (
-            <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" || msg.sender === "stage" || msg.sender === "activity" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}>
-              {msg.sender === "activity" ? <span className={`text-[11px] italic px-3 py-1.5 rounded-full max-w-xs text-center border ${msg.is_canon_event ? "text-foreground/80 bg-secondary/60 border-border" : "text-primary/80 bg-primary/5 border-primary/20"}`}><span className="not-italic mr-1">{msg.is_canon_event ? "✓" : "→"}</span>{msg.emoji ? `${msg.emoji} ` : ""}{msg.content}</span> : msg.sender === "narrative" ? <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.is_canon_event ? `Already happened: ${msg.content}` : msg.content}</span> : msg.sender === "stage" ? <span className="text-[11px] text-primary/70 italic bg-primary/5 border border-primary/20 px-3 py-1.5 rounded-full max-w-xs text-center">Direction: {msg.content}</span> : msg.sender === "product" ? <SceneProductCard msg={msg} settings={settings} location={location} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} onTryOn={handleTryOn} /> : msg.sender === "character" ? <React.Fragment><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">{msg.avatarUrl ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>}</div><div className="max-w-[75%]"><p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p><div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2"><p className="text-sm text-foreground">{msg.content}</p></div></div></React.Fragment> : <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]"><p className="text-sm text-primary-foreground">{msg.content}</p></div>}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-
-        {(isTyping || (observeMode && isObservingTurn)) && <div className="flex gap-2"><div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center"><span className="text-xs">...</span></div><div className="bg-card border border-border rounded-2xl px-3 py-2"><div className="flex gap-1"><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" /><div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" /></div></div></div>}
-        <div ref={bottomRef} />
-      </div>
+      <SceneChatFeed messages={messages} observeMode={observeMode} observeCast={observeCast} activeWorkspace={activeWorkspace} location={location} activeZone={activeZone} traveledWithChars={traveledWithChars} isWorkspaceScene={isWorkspaceScene} homeResidentsPresent={homeResidentsPresent} familyMemberNpcsPresent={familyMemberNpcsPresent} homeResidentsAway={homeResidentsAway} familyMemberNpcsAway={familyMemberNpcsAway} workerCharacters={workerCharacters} unifiedPresenceEntities={unifiedPresenceEntities} characterIds={characterIds} isTyping={isTyping} isObservingTurn={isObservingTurn} settings={settings} currentUser={currentUser} queryClient={queryClient} base44={base44} setPendingPurchase={setPendingPurchase} setMessages={setMessages} onTryOn={handleTryOn} bottomRef={bottomRef} />
 
       {/* Action strip — everything available here. In a watched scene it is what they do. */}
-      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
-        <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
-          {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
-          {governmentVenueType && !courtCase && !cityHallPlan && (
-            <button onClick={() => setShowVenueSetup(true)} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-primary/10 border-primary/40 hover:border-primary/60" title={governmentVenueType === "courthouse" ? "Set up the court case and who is in the room" : "Set up what you are here for and who is with you"}>
-              <span className="text-base leading-none">{governmentVenueType === "courthouse" ? "⚖️" : "🏛️"}</span>
-              <span className="text-[9px] text-primary font-medium leading-tight whitespace-nowrap">{governmentVenueType === "courthouse" ? "Begin Court Case" : "Begin City Hall Visit"}</span>
-            </button>
-          )}
-          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Change Clothes</span></button>
-          {stripActions(courtCase ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0) : [...actions, ...traitCrimeActions]).map((action) => { const needsZone = action.suggested_zone_name && activeZone !== action.suggested_zone_name;
-            // An activity that acts on a chosen character needs someone here to involve.
-            const needsCharacter = action.requires_selected_character === true
-              && recipientTargets.length === 0;
-            // An adults-only activity needs an adult here to take part.
-            const needsAdult = action.adults_only === true && observeMode
-              && eligibleForAction(observeActors, action).length === 0;
-            const isDisabled = action.disabled || actionCooldown || needsCharacter || needsAdult; return (
-            <button key={action.scene_instance_id || action.id} onClick={() => { if (isDisabled) return; if (isGovernmentActionId(action.id)) { handleGovernmentAction(action); return; } if (courtCase && getCourtActionAuthority(action.id)) { startCourtAction(action); return; } if (CRIME_ACTIVITY_IDS.includes(action.id)) { const pool = observeMode ? observeActors : userPresentActors; if (pool.length > 1) { setActorAction({ action, mode: "activity" }); return; } handleCrimeAction(action, pool.length === 1 ? [pool[0]] : null); return; } if (action.requires_selected_character) { setRecipientAction(action); return; } if (action.requires_actor && !observeMode && userPresentActors.length > 0) { if (needsZone) handleZoneChange(action.suggested_zone_name); setActorAction({ action, mode: "activity" }); return; } if (observeMode) { if (needsZone) setActiveZone(action.suggested_zone_name); handleObserveAction(action); return; } if (needsZone) { handleZoneChange(action.suggested_zone_name); setTimeout(() => handleAction(action), 400); } else handleAction(action); }} disabled={isDisabled} title={action.disabledReason || (needsAdult ? "Only for adults — no adult is here" : needsCharacter ? "No one here to involve" : action.requires_selected_character ? `${action.label} — choose who` : needsZone ? `Go to ${action.suggested_zone_name}` : undefined)} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${isDisabled ? "opacity-40 cursor-not-allowed" : action.type === "negative" ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20" : action.cost > 0 ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20" : needsZone ? "bg-primary/5 border-primary/20 hover:border-primary/40" : "bg-secondary border-border hover:border-primary/30"}`}>
-              <span className="text-base leading-none">{action.emoji}</span><span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
-              {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}{action.no_staff_warning && <span className="text-[8px] text-amber-500 leading-tight">no staff</span>}
-            </button>); })}
-          {directedPickableTargets.length > 0 && DIRECTED_SCENE_ACTIONS.map((directed) => {
-            const canPair = directedAvailable(directed);
-            // An adults-only activity stays reachable so its picker can open; whether the
-            // interaction can actually happen is decided by who is here, never by
-            // graying the button out or by offering someone from outside the scene.
-            const blocked = actionCooldown || (!canPair && !directed.adults_only);
-            return (
-            <button key={directed.id} onClick={() => handleDirectedSelect(directed)} disabled={blocked} title={canPair ? `${directed.label} — choose who` : directed.adults_only ? "Only for adults — two adults need to be here" : "No one else is here to choose"} className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center ${blocked ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`}>
-              <span className="text-base leading-none">{directed.emoji}</span>
-              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{directed.label}</span>
-            </button>
-            );
-          })}
-          {characterInviter && (
-            <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
-              <span className="text-base leading-none">🙋</span>
-              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">Invite Character</span>
-            </button>
-          )}
-          {/* Arrest and Next Scene are scene controls, not character activities — they close the strip. */}
-          <SceneStripTransitionControls
-            onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
-            onNextScene={() => setShowNextScene(true)}
-            arrestDisabled={arrestTargets.length === 0 || actionCooldown}
-          />
-        </div>
-      </div>
+      <SceneActionStrip
+        actions={actions}
+        traitCrimeActions={traitCrimeActions}
+        courtCase={courtCase}
+        getCourtActionAuthority={getCourtActionAuthority}
+        courtActors={courtActors}
+        activeZone={activeZone}
+        recipientTargets={recipientTargets}
+        observeMode={observeMode}
+        observeActors={observeActors}
+        activityActors={activityActors}
+        eligibleForAction={eligibleForAction}
+        isGovernmentActionId={isGovernmentActionId}
+        handleGovernmentAction={handleGovernmentAction}
+        startCourtAction={startCourtAction}
+        CRIME_ACTIVITY_IDS={CRIME_ACTIVITY_IDS}
+        handleCrimeAction={handleCrimeAction}
+        setActorAction={setActorAction}
+        setRecipientAction={setRecipientAction}
+        handleZoneChange={handleZoneChange}
+        setActiveZone={setActiveZone}
+        handleObserveAction={handleObserveAction}
+        handleAction={handleAction}
+        directedAvailable={directedAvailable}
+        handleDirectedSelect={handleDirectedSelect}
+        directedPickableTargets={directedPickableTargets}
+        governmentVenueType={governmentVenueType}
+        setShowVenueSetup={setShowVenueSetup}
+        cityHallPlan={cityHallPlan}
+        setShowChangeClothesModal={setShowChangeClothesModal}
+        characterInviter={characterInviter}
+        setShowInviteModal={setShowInviteModal}
+        location={location}
+        arrestTargets={arrestTargets}
+        setArrestPicker={setArrestPicker}
+        setShowNextScene={setShowNextScene}
+        actionCooldown={actionCooldown}
+      />
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
 
@@ -2333,10 +2345,10 @@ export default function Scene() {
         action={actorAction?.action}
         targets={actorAction?.mode === "directed"
           ? directedActorsFor(actorAction?.action)
-          : eligibleForAction(observeMode ? observeActors : userPresentActors, actorAction?.action)}
+          : eligibleForAction(observeMode ? observeActors : activityActors, actorAction?.action)}
         onSelect={handleActorSelect}
         onConfirm={handleActorsConfirm}
-        multiple={actorAction?.mode === "activity"}
+        multiple={actorAction?.mode === "activity" && actorAction?.action?.id !== "pickpocket"}
         confirmLabel="Do it together"
         onClose={() => setActorAction(null)}
         heading={actorAction ? `${actorAction.action.emoji} ${actorAction.action.label} — ${actorAction.mode === "activity" && observeMode ? "who takes part?" : "who does it?"}` : null}
@@ -2349,6 +2361,15 @@ export default function Scene() {
             : "Only people who are here can do it — you are not in the scene."}
       />
       <SceneTargetPicker action={directedAction} targets={directedPartnersFor(directedAction, directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
+      {/* Pickpocket names two people: who attempts it, then whose pocket. Never assumed. */}
+      <SceneTargetPicker
+        action={crimeTargetAction?.action}
+        targets={crimeTargetOptions}
+        onSelect={handleCrimeTargetSelect}
+        onClose={() => setCrimeTargetAction(null)}
+        heading={crimeTargetAction ? crimeTargetAction.action.emoji + " " + (crimeTargetAction.actor?.name || "They") + " — whose pocket?" : null}
+        hint="Only people in this scene can be chosen, and never the person attempting it."
+      />
       <SceneTargetPicker
         action={recipientAction}
         targets={recipientTargets}

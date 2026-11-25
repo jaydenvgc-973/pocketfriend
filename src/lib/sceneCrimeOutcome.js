@@ -60,6 +60,7 @@ const ACTION_BRIEF = {
  * @param {Object} input
  * @param {string} input.actionId        pickpocket | burglarize | call_the_cops
  * @param {string[]} input.actorNames    the people carrying it out
+ * @param {string} input.targetName      who it is aimed at, when the user chose someone
  * @param {string[]} input.castNames     everyone in the scene, as they are known here
  * @param {string} input.locationName    where this is happening
  * @param {string} input.locationCategory the place's own category
@@ -69,6 +70,7 @@ const ACTION_BRIEF = {
 export async function resolveCrimeOutcome({
   actionId,
   actorNames = [],
+  targetName = null,
   castNames = [],
   locationName = 'this place',
   locationCategory = '',
@@ -83,7 +85,7 @@ export async function resolveCrimeOutcome({
 
 PLACE: ${locationName}${locationCategory ? ` (${locationCategory})` : ''}
 TAKING PART: ${actors.join(', ') || 'someone here'}
-EVERYONE IN THE SCENE: ${castNames.filter(Boolean).join(', ') || 'the people here'}
+${targetName ? `AIMED AT: ${targetName} — the attempt is made against this person, not anyone else.\n` : ''}EVERYONE IN THE SCENE: ${castNames.filter(Boolean).join(', ') || 'the people here'}
 ${circumstances ? `\nESTABLISHED CIRCUMSTANCES:\n${circumstances}\n` : ''}${recentContext ? `\nWHAT HAS JUST BEEN HAPPENING:\n${recentContext}\n` : ''}
 WHAT IS BEING ATTEMPTED:
 ${brief}
