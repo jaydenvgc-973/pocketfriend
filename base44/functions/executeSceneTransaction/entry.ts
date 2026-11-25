@@ -159,12 +159,15 @@ Deno.serve(async (req) => {
       // Deduct balance, then immediately create ledger. If ledger fails, restore balance.
       // NO BALANCE CHANGE IS FINAL WITHOUT A LEDGER ENTRY.
 
+      // Declared in this scope: the success response below reports the ledger row's id,
+      // so the reference must survive the block that creates it.
+      let ledgerRecord = null;
+
       try {
         // Step 1: Deduct balance
         await base44.entities.UserSettings.update(settings.id, { user_balance: newBalance });
 
         // Step 2: Create ledger record — REQUIRED for transaction to be valid
-        let ledgerRecord = null;
         try {
           ledgerRecord = await base44.entities.FinancialTransaction.create(ledgerPayload);
         } catch (ledgerErr) {
