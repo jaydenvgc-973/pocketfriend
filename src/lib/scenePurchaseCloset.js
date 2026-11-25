@@ -169,15 +169,19 @@ export async function appendClosetEntry({ recipient, entry }) {
  */
 export async function updateClosetEntry({ recipient, entryId, updates }) {
   const closet = await loadOwnerCloset(recipient);
+  // The product image generated in Scenes is the purchase's own image: a details save
+  // that carries no image must never blank it.
+  const safeUpdates = { ...updates };
+  if (!safeUpdates.image_url) delete safeUpdates.image_url;
   let found = false;
   const next = closet.map((item) => {
     const id = item.piece_id || item.outfit_id;
     if (id !== entryId) return item;
     found = true;
-    return { ...item, ...updates, pending_details: false };
+    return { ...item, ...safeUpdates, pending_details: false };
   });
   // The entry itself is gone (older wipe): the paid entry is put back rather than lost.
-  if (!found && updates) next.push({ ...updates, pending_details: false });
+  if (!found && safeUpdates) next.push({ ...safeUpdates, pending_details: false });
   if (recipient.kind === "character") {
     await base44.entities.Character.update(recipient.id, { character_closet: next });
   } else {

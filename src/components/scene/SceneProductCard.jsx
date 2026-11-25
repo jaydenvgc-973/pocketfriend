@@ -19,8 +19,10 @@ export default function SceneProductCard({
   setPendingPurchase,
   setMessages,
 }) {
-  const [itemImageUrl, setItemImageUrl] = useState(null);
-  const [isLoadingImage, setIsLoadingImage] = useState(true);
+  // The image this card generated is kept on the message itself, so a re-render or a
+  // remount reuses the exact image the user saw instead of generating a different one.
+  const [itemImageUrl, setItemImageUrl] = useState(msg.item_image_url || null);
+  const [isLoadingImage, setIsLoadingImage] = useState(!msg.item_image_url);
   const [status, setStatus] = useState("pending"); // pending | accepted | rejected
 
   // Build a focused product image prompt — item-specific, never scene/venue background.
@@ -88,10 +90,21 @@ export default function SceneProductCard({
 
   // Generate item-specific image on mount
   useEffect(() => {
+    // Already generated for this card: keep it, never generate a second one.
+    if (msg.item_image_url) {
+      setItemImageUrl(msg.item_image_url);
+      setIsLoadingImage(false);
+      return;
+    }
     let cancelled = false;
     setIsLoadingImage(true);
     base44.integrations.Core.GenerateImage({ prompt: buildItemPrompt() })
-      .then(r => { if (!cancelled) setItemImageUrl(r.url); })
+      .then(r => {
+        if (cancelled) return;
+        setItemImageUrl(r.url);
+        // Stored on the message so the purchased entry carries this exact image.
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, item_image_url: r.url } : m));
+      })
       .catch(() => { if (!cancelled) setItemImageUrl(null); })
       .finally(() => { if (!cancelled) setIsLoadingImage(false); });
     return () => { cancelled = true; };
