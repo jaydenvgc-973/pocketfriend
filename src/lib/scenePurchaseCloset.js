@@ -146,6 +146,7 @@ export async function appendClosetEntry({ recipient, entry }) {
     if (alreadyThere(closet)) return closet;
     const next = [...closet, entry];
     await base44.entities.Character.update(recipient.id, { character_closet: next });
+    recipient.closet = next;
     return next;
   }
   if (!recipient.id) throw new Error("No user settings record to save the purchase to");
@@ -154,23 +155,46 @@ export async function appendClosetEntry({ recipient, entry }) {
   if (alreadyThere(closet)) return closet;
   const next = [...closet, entry];
   await base44.entities.UserSettings.update(recipient.id, { user_closet: next });
+  recipient.closet = next;
   return next;
 }
 
-/** Complete the details of an entry that already exists — never creates a second entry. */
+/**
+ * Complete the details of an entry that already exists — never creates a second entry
+ * and never drops any other entry.
+ *
+ * The closet is read fresh here, never from the snapshot taken before the purchase:
+ * that snapshot does not contain the entry just appended, so writing it back would
+ * erase the purchase from the closet.
+ */
 export async function updateClosetEntry({ recipient, entryId, updates }) {
-  const closet = recipient.closet || [];
+  const closet = await loadOwnerCloset(recipient);
+  let found = false;
   const next = closet.map((item) => {
     const id = item.piece_id || item.outfit_id;
     if (id !== entryId) return item;
+    found = true;
     return { ...item, ...updates, pending_details: false };
   });
+  // The entry itself is gone (older wipe): the paid entry is put back rather than lost.
+  if (!found && updates) next.push({ ...updates, pending_details: false });
   if (recipient.kind === "character") {
     await base44.entities.Character.update(recipient.id, { character_closet: next });
   } else {
     await base44.entities.UserSettings.update(recipient.id, { user_closet: next });
   }
+  recipient.closet = next;
   return next;
+}
+
+/** The owner's closet exactly as stored now. */
+async function loadOwnerCloset(recipient) {
+  if (recipient.kind === "character") {
+    const fresh = await base44.entities.Character.get(recipient.id);
+    return fresh?.character_closet || [];
+  }
+  const freshSettings = await base44.entities.UserSettings.get(recipient.id);
+  return freshSettings?.user_closet || [];
 }
 
 /**
