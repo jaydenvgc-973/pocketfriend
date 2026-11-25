@@ -8,6 +8,7 @@ import {
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import RotationSchedulePreview from "@/components/character/RotationSchedulePreview";
+import { generateClosetImage } from "@/lib/closetImageGeneration";
 import { useCharacterActiveOutfit, applyManualCategoryOverride, clearCharacterCategoryOverride, getTodayCharacterOverrides } from "@/lib/activeOutfitResolver";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -424,6 +425,7 @@ export function AddOutfitForm({ character, onSave, onCancel, initialValues = nul
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
+  const [genError, setGenError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
   // A purchased outfit arrives with the image generated in Scenes — it is the outfit's
@@ -523,17 +525,19 @@ Return JSON:
     const description = form.full_description || [form.top, form.bottom, form.shoes, form.outerwear, form.accessories].filter(Boolean).join(", ");
     if (!description) return;
     setGeneratingImage(true);
+    setGenError(null);
     try {
-      const appearanceBase = character.appearance_lock
-        ? `${character.appearance_lock.skin_tone || ''} ${character.appearance_lock.hairstyle || ''} ${character.appearance_lock.overall_aesthetic || ''}`.trim()
-        : '';
-      const res = await base44.integrations.Core.GenerateImage({
-        prompt: `Full body fashion photo of ${character.name}, ${character.gender || 'person'}, ${character.age || ''} years old${appearanceBase ? `, ${appearanceBase}` : ''}. Wearing: ${description}. Standing pose, clean background, lifestyle photography style.`,
-        existing_image_urls: character.avatar_url ? [character.avatar_url] : undefined,
+      // This closet belongs to this character — the image shows them wearing it.
+      const url = await generateClosetImage({
+        ownerKind: "character",
+        characterId: character.id,
+        ownerName: character.name,
+        description,
       });
-      if (res?.url) setGeneratedImageUrl(res.url);
+      setGeneratedImageUrl(url);
     } catch (e) {
       console.error("Outfit image generation failed:", e);
+      setGenError(e?.message || "The image could not be generated. Try again.");
     }
     setGeneratingImage(false);
   };
@@ -641,6 +645,7 @@ Return JSON:
           {generatingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
           {generatingImage ? "Generating outfit preview..." : "Generate Outfit Image"}
         </Button>
+        {genError && <p className="text-[10px] text-amber-400">{genError}</p>}
         {generatedImageUrl && (
           <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: generatedImageUrl, type: "generated_preview" })}>
             <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
@@ -1099,6 +1104,7 @@ export default function CharacterClosetPanel({ character }) {
       {editingOutfit && (
         <OutfitEditModal
           outfit={editingOutfit}
+          owner={{ kind: "character", characterId: character.id, name: character.name }}
           onSave={handleEditOutfit}
           onCancel={() => setEditingOutfit(null)}
         />

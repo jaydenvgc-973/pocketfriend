@@ -4,6 +4,7 @@ import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, P
 import { useUserActiveOutfit, applyUserManualCategoryOverride, clearUserCategoryOverride, getTodayUserOverrides } from "@/lib/activeOutfitResolver";
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
+import { generateClosetImage } from "@/lib/closetImageGeneration";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -136,7 +137,7 @@ function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActi
   );
 }
 
-function AddOutfitForm({ displayName, gender, onSave, onCancel }) {
+function AddOutfitForm({ displayName, gender, userEmail, onSave, onCancel }) {
   const [form, setForm] = useState({
     label: "", category: "daily_casual", rotation_number: "", top: "", bottom: "", shoes: "",
     outerwear: "", accessories: "", hair_state: "", full_description: "", is_favorite: false,
@@ -144,6 +145,7 @@ function AddOutfitForm({ displayName, gender, onSave, onCancel }) {
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
+  const [genError, setGenError] = useState(null);
   const [saving, setSaving] = useState(false);
   const [generatedImageUrl, setGeneratedImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -238,13 +240,19 @@ Return JSON:
     const description = form.full_description || [form.top, form.bottom, form.shoes, form.outerwear, form.accessories].filter(Boolean).join(", ");
     if (!description) return;
     setGeneratingImage(true);
+    setGenError(null);
     try {
-      const res = await base44.integrations.Core.GenerateImage({
-        prompt: `Full body fashion photo of ${displayName || "a person"}, ${gender || ''} wearing: ${description}. Standing pose, clean background, lifestyle photography style, photorealistic.`,
+      // This closet belongs to the account holder — the image shows them wearing it.
+      const url = await generateClosetImage({
+        ownerKind: "user",
+        userEmail,
+        ownerName: displayName,
+        description,
       });
-      if (res?.url) setGeneratedImageUrl(res.url);
+      setGeneratedImageUrl(url);
     } catch (e) {
       console.error("Image generation failed:", e);
+      setGenError(e?.message || "The image could not be generated. Try again.");
     }
     setGeneratingImage(false);
   };
@@ -342,6 +350,7 @@ Return JSON:
         {generatingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
         {generatingImage ? "Generating preview..." : "Generate Outfit Preview"}
       </Button>
+      {genError && <p className="text-[10px] text-amber-400">{genError}</p>}
       {generatedImageUrl && (
         <div className="relative group cursor-pointer" onClick={() => setPreviewModal({ url: generatedImageUrl, type: "generated_preview" })}>
           <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
@@ -639,6 +648,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
         <AddOutfitForm
           displayName={displayName}
           gender={gender}
+          userEmail={settings?.owner_email}
           onSave={handleSaveOutfit}
           onCancel={() => setShowAddForm(false)}
         />
@@ -682,6 +692,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
       {editingOutfit && (
         <OutfitEditModal
           outfit={editingOutfit}
+          owner={{ kind: "user", name: displayName, userEmail: settings?.owner_email }}
           onSave={handleEditOutfit}
           onCancel={() => setEditingOutfit(null)}
         />

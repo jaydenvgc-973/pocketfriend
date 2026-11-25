@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { analyzeClosetImage, mergePrefill } from "@/lib/closetImageAutofill";
+import { generateClosetImage } from "@/lib/closetImageGeneration";
 
 // The fields that describe what the outfit actually looks like.
 const DESCRIPTIVE_FIELDS = ["top", "bottom", "shoes", "outerwear", "accessories", "hair_state", "full_description"];
@@ -39,10 +40,12 @@ const OUTFIT_CATEGORIES = [
  *
  * Props:
  *   outfit      — the existing outfit object (must have outfit_id)
+ *   owner       — whose closet this is: { kind: "character"|"user", characterId, name, userEmail }
+ *                 A generated image must depict this owner, never a generic person.
  *   onSave      — async (updatedOutfit) => void  — caller patches the closet array
  *   onCancel    — () => void
  */
-export default function OutfitEditModal({ outfit, onSave, onCancel }) {
+export default function OutfitEditModal({ outfit, owner = null, onSave, onCancel }) {
   const [form, setForm] = useState({
     label:            outfit.label            || "",
     category:         outfit.category         || "daily_casual",
@@ -63,6 +66,7 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
   const [previewModal, setPreviewModal] = useState(false);
   const [fillingFromImage, setFillingFromImage] = useState(false);
   const [fillNote, setFillNote]         = useState(null);
+  const [genError, setGenError]         = useState(null);
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
@@ -109,13 +113,20 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
     const desc = form.full_description || [form.top, form.bottom, form.shoes, form.outerwear, form.accessories].filter(Boolean).join(", ");
     if (!desc) return;
     setGeneratingImg(true);
+    setGenError(null);
     try {
-      const res = await base44.integrations.Core.GenerateImage({
-        prompt: `Full body fashion photo of a person wearing: ${desc}. Standing pose, clean background, lifestyle photography, photorealistic.`,
+      // The closet's owner wears it — the identity is already known from the closet itself.
+      const url = await generateClosetImage({
+        ownerKind: owner?.kind,
+        characterId: owner?.characterId,
+        userEmail: owner?.userEmail,
+        ownerName: owner?.name,
+        description: desc,
       });
-      if (res?.url) setImageUrl(res.url);
+      setImageUrl(url);
     } catch (e) {
       console.error("Image generation failed:", e);
+      setGenError(e?.message || "The image could not be generated. Try again.");
     }
     setGeneratingImg(false);
   };
@@ -249,6 +260,7 @@ export default function OutfitEditModal({ outfit, onSave, onCancel }) {
                   {uploading ? "Uploading..." : "Upload Photo"}
                 </label>
               </div>
+              {genError && <p className="text-[10px] text-amber-400">{genError}</p>}
 
               <div className="flex gap-2 pt-1">
                 <Button variant="outline" size="sm" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
