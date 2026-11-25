@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -11,6 +11,7 @@ import {
   buildUserPurchaseEntry,
   appendClosetEntry,
 } from "@/lib/scenePurchaseCloset";
+import { generateWornPreview } from "@/lib/scenePurchasePreview";
 
 /**
  * ProductPurchaseModal — the Buy step of the existing Scenes product card.
@@ -98,6 +99,35 @@ export default function ProductPurchaseModal({
     ? recipientOptions.filter((c) => c.name?.toLowerCase().includes(recipientQuery.trim().toLowerCase()))
     : recipientOptions;
 
+  // The preview shows the recipient wearing what is being bought — not a flat product
+  // shot. Regenerated whenever the recipient changes, before anything is charged.
+  const [wornImageUrl, setWornImageUrl] = useState(null);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+
+  useEffect(() => {
+    if (!chosenRecipientId || paidPurchase || !producesClosetEntry) return;
+    let cancelled = false;
+    setWornImageUrl(null);
+    setPreviewError(null);
+    setIsGeneratingPreview(true);
+    generateWornPreview({
+      itemLabel: item_label || "the item",
+      itemKind: item_kind || "item",
+      wearerKind: recipientIsUser || !chosenCharacter ? "user" : "character",
+      characterId: chosenCharacter?.id || null,
+      wearerName: recipientIsUser || !chosenCharacter ? (currentUser?.full_name || "the account holder") : chosenCharacter?.name,
+      userEmail: currentUser?.email,
+    })
+      .then((url) => { if (!cancelled) setWornImageUrl(url); })
+      .catch(() => { if (!cancelled) setPreviewError("The preview of the item being worn could not be generated — the product image is shown instead."); })
+      .finally(() => { if (!cancelled) setIsGeneratingPreview(false); });
+    return () => { cancelled = true; };
+  }, [chosenRecipientId, item_label, item_kind, paidPurchase]);
+
+  // The image saved to the closet is the one showing the recipient wearing it.
+  const entryImageUrl = wornImageUrl || preview_image_url;
+
   const reset = () => {
     setError(null);
     setRecipientId(null);
@@ -168,9 +198,9 @@ export default function ProductPurchaseModal({
         ? null
         : recipient.kind === "character"
           ? (isOutfit
-            ? buildPurchasedOutfit({ label: item_label, imageUrl: preview_image_url, price, transactionId })
-            : buildPurchasedPiece({ label: item_label, imageUrl: preview_image_url, price, transactionId }))
-          : buildUserPurchaseEntry({ label: item_label, imageUrl: preview_image_url, price, transactionId });
+            ? buildPurchasedOutfit({ label: item_label, imageUrl: entryImageUrl, price, transactionId })
+            : buildPurchasedPiece({ label: item_label, imageUrl: entryImageUrl, price, transactionId }))
+          : buildUserPurchaseEntry({ label: item_label, imageUrl: entryImageUrl, price, transactionId });
 
       const paid = {
         recipient,
@@ -238,22 +268,33 @@ export default function ProductPurchaseModal({
             </div>
 
             <div className="space-y-3">
-              {/* Product preview — the same image shown on the product card */}
-              <div className="flex items-center gap-3 bg-secondary/50 rounded-xl p-3">
-                <div className="w-16 h-16 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden flex-shrink-0">
-                  {preview_image_url
-                    ? <img src={preview_image_url} alt="Item" className="w-full h-full object-cover rounded-lg" />
-                    : <span className="text-3xl">🛍️</span>
+              {/* Preview — the recipient wearing what is being bought */}
+              <div className="bg-secondary/50 rounded-xl p-3 space-y-2">
+                <div className="w-full h-56 rounded-lg bg-primary/10 flex items-center justify-center overflow-hidden relative">
+                  {entryImageUrl
+                    ? <img src={entryImageUrl} alt={item_label || "Purchase"} className="w-full h-full object-cover" />
+                    : <span className="text-4xl">🛍️</span>
                   }
+                  {isGeneratingPreview && (
+                    <div className="absolute inset-0 bg-background/75 flex flex-col items-center justify-center gap-2">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                      <span className="text-[10px] text-muted-foreground">
+                        Showing {recipientIsUser || !chosenCharacter ? "you" : chosenCharacter.name} wearing this…
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">{item_label || "Scene purchase"}</p>
-                  <p className="text-2xl font-bold text-foreground">${price}</p>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground truncate">{item_label || "Scene purchase"}</p>
+                    <p className="text-xl font-bold text-foreground">${price}</p>
+                  </div>
                   <p className="text-[10px] text-muted-foreground">
                     {producesClosetEntry
-                      ? `Goes to the ${isOutfit ? "Outfits" : "Items"} section of the recipient's closet`
+                      ? `Worn by ${recipientIsUser || !chosenCharacter ? "you" : chosenCharacter.name} — goes to the ${isOutfit ? "Outfits" : "Items"} section of their closet`
                       : "Kept as a purchase — not added to a closet"}
                   </p>
+                  {previewError && <p className="text-[10px] text-amber-400 mt-1">{previewError}</p>}
                 </div>
               </div>
 
@@ -346,14 +387,16 @@ export default function ProductPurchaseModal({
 
               <button
                 onClick={handleBuy}
-                disabled={blocked || isProcessing}
+                disabled={blocked || isProcessing || isGeneratingPreview}
                 className="w-full py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
               >
                 {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 {chosenRecipientId
                   ? (paidPurchase
                     ? "Finish saving — no charge"
-                    : `Pay $${price}${payerIsCharacter ? ` · ${payerCharacter.name} pays` : ""}`)
+                    : isGeneratingPreview
+                      ? "Preparing preview…"
+                      : `Pay $${price}${payerIsCharacter ? ` · ${payerCharacter.name} pays` : ""}`)
                   : "Choose a recipient"}
               </button>
 
