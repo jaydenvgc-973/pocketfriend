@@ -1,4 +1,39 @@
-import { Siren, Compass } from "lucide-react";
+import { Siren, Compass, DollarSign, HandCoins, Smartphone } from "lucide-react";
+
+/**
+ * The scene's financial and phone entries. Both money controls open the ONE established
+ * financial interaction (who pays, who is paid, then the Chat page's own modal); Open Phone
+ * opens the scene phone. None of them changes an activity, a balance or the scene itself.
+ */
+const extraCardClass =
+  "flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30";
+
+export function SendMoneyControl({ onClick, disabled = false }) {
+  return (
+    <button onClick={onClick} disabled={disabled} title="Send money to someone here" className={`${extraCardClass} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
+      <DollarSign className="w-4 h-4 text-primary" />
+      <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Send Money</span>
+    </button>
+  );
+}
+
+export function ReceiveMoneyControl({ onClick, disabled = false }) {
+  return (
+    <button onClick={onClick} disabled={disabled} title="Request or take money from someone here" className={`${extraCardClass} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
+      <HandCoins className="w-4 h-4 text-green-500" />
+      <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Receive Money</span>
+    </button>
+  );
+}
+
+export function OpenPhoneControl({ onClick }) {
+  return (
+    <button onClick={onClick} title="Open your phone" className={extraCardClass}>
+      <Smartphone className="w-4 h-4 text-primary" />
+      <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Open Phone</span>
+    </button>
+  );
+}
 
 /**
  * The two scene controls that are NOT things a character does.

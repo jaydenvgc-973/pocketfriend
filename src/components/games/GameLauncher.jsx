@@ -13,7 +13,13 @@ const GAMES = [
   { id: "gemduel",      label: "Gem Duel",       emoji: "💎", desc: "Match gems, chain combos, score big",      color: "from-purple-500/20 to-violet-700/10" },
 ];
 
-export default function GameLauncher({ character, conversationId, onGameEnd, externalTrigger, onExternalClose }) {
+/**
+ * GameLauncher — the app's existing games picker and launcher.
+ *
+ * `embedded` renders the same picker in place (used inside the scene phone) instead of as
+ * its own overlay. The games themselves and every record they write are unchanged.
+ */
+export default function GameLauncher({ character, conversationId, onGameEnd, externalTrigger, onExternalClose, embedded = false }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -30,69 +36,81 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
     onGameEnd?.(outcome);
   };
 
+  const closePicker = () => {
+    setPickerOpen(false);
+    onExternalClose?.();
+  };
+
+  const pickerCard = (
+    <motion.div
+      initial={{ y: 40, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 40, opacity: 0 }}
+      transition={{ type: "spring", damping: 26, stiffness: 300 }}
+      onClick={e => e.stopPropagation()}
+      className={`w-full bg-card border border-border overflow-hidden shadow-2xl ${embedded ? "rounded-2xl" : "max-w-sm rounded-3xl"}`}
+    >
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <div>
+          <h3 className="text-base font-bold text-foreground">🎮 Play a Game</h3>
+          <p className="text-xs text-muted-foreground">with {character?.name} · they'll remember the result</p>
+        </div>
+        <button
+          onClick={closePicker}
+          className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-secondary transition-colors"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="p-3 space-y-2">
+        {GAMES.map((game, i) => (
+          <motion.button
+            key={game.id}
+            initial={{ opacity: 0, x: -10 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.05 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => launchGame(game.id)}
+            className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-gradient-to-r ${game.color} border border-border/60 hover:border-primary/40 hover:shadow-md transition-all text-left group`}
+          >
+            <span className="text-3xl group-hover:scale-110 transition-transform">{game.emoji}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-foreground">{game.label}</p>
+              <p className="text-xs text-muted-foreground">{game.desc}</p>
+            </div>
+            <span className="text-muted-foreground/50 group-hover:text-primary transition-colors text-lg">›</span>
+          </motion.button>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-muted-foreground/50 text-center pb-4 px-4">
+        🧠 {character?.name} reacts emotionally and remembers every game outcome
+      </p>
+    </motion.div>
+  );
+
   return (
     <>
-
-      {createPortal(
-        <AnimatePresence>
-          {pickerOpen && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[75] flex items-end justify-center bg-black/65 p-4"
-              onClick={() => { setPickerOpen(false); onExternalClose?.(); }}
-            >
+      {embedded ? (
+        <AnimatePresence>{pickerOpen && pickerCard}</AnimatePresence>
+      ) : (
+        createPortal(
+          <AnimatePresence>
+            {pickerOpen && (
               <motion.div
-                initial={{ y: 60, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 60, opacity: 0 }}
-                transition={{ type: "spring", damping: 26, stiffness: 300 }}
-                onClick={e => e.stopPropagation()}
-                className="w-full max-w-sm bg-card border border-border rounded-3xl overflow-hidden shadow-2xl"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[75] flex items-end justify-center bg-black/65 p-4"
+                onClick={closePicker}
               >
-                <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                  <div>
-                    <h3 className="text-base font-bold text-foreground">🎮 Play a Game</h3>
-                    <p className="text-xs text-muted-foreground">with {character?.name} · they'll remember the result</p>
-                  </div>
-                  <button
-                    onClick={() => { setPickerOpen(false); onExternalClose?.(); }}
-                    className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-secondary transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="p-3 space-y-2">
-                  {GAMES.map((game, i) => (
-                    <motion.button
-                      key={game.id}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => launchGame(game.id)}
-                      className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-gradient-to-r ${game.color} border border-border/60 hover:border-primary/40 hover:shadow-md transition-all text-left group`}
-                    >
-                      <span className="text-3xl group-hover:scale-110 transition-transform">{game.emoji}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-foreground">{game.label}</p>
-                        <p className="text-xs text-muted-foreground">{game.desc}</p>
-                      </div>
-                      <span className="text-muted-foreground/50 group-hover:text-primary transition-colors text-lg">›</span>
-                    </motion.button>
-                  ))}
-                </div>
-
-                <p className="text-[10px] text-muted-foreground/50 text-center pb-4 px-4">
-                  🧠 {character?.name} reacts emotionally and remembers every game outcome
-                </p>
+                {pickerCard}
               </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body
+            )}
+          </AnimatePresence>,
+          document.body
+        )
       )}
 
       {activeGame === 'chemistry' && (

@@ -167,6 +167,26 @@ Deno.serve(async (req) => {
           .map((r) => r.relationship_type || r.label_from_source_perspective)
           .filter(Boolean)[0] || null;
 
+        // ── AUTHORITATIVE CURRENT LOCATION ─────────────────────────────────
+        // The reply is grounded in where the character actually is: the resolved
+        // location is the authority, never their home address. A workplace inside a
+        // multi-purpose property is named as that business.
+        const presenceNow = recipient.resolved_presence_status || recipient.location_status;
+        const locationId = presenceNow === 'at_work'
+          ? (recipient.resolved_current_location_id || recipient.occupation_location_id)
+          : recipient.resolved_current_location_id;
+        const hereLoc = locationId
+          ? (await sr.entities.LocationReference.filter({ id: locationId }, null, 1).catch(() => []))[0]
+          : null;
+        const hereWorkplace = (hereLoc?.workplaces || [])
+          .find((w) => (w.worker_character_ids || []).includes(recipient.id));
+        const hereName = hereWorkplace?.name
+          ? `${hereWorkplace.name} (inside ${hereLoc.name})`
+          : (hereLoc?.name || null);
+        const whereLine = hereName
+          ? `Right now you are ${presenceNow === 'at_work' ? 'at work at' : presenceNow === 'at_school' ? 'at school at' : (presenceNow === 'sleeping' || presenceNow === 'napping') ? 'asleep at' : 'at'} ${hereName}. That is your real current location and the only one you may describe; if asked where you are, say this. Never say you are home while you are somewhere else.`
+          : `You have no confirmed current location; if asked where you are, say something honest and vague rather than naming a place.`;
+
         const identity = `${recipient.name}. ${recipient.personality_summary || ''} ${recipient.current_situation || ''}`.trim();
         const arrived = isImage
           ? `${worldName} just sent you a photo${image_description ? ` (${image_description})` : ''} on World Phone.`
@@ -175,6 +195,8 @@ Deno.serve(async (req) => {
         const raw = await sr.integrations.Core.InvokeLLM({
           prompt: `You are ${identity}
 ${relationshipNote ? `\n${worldName} is your ${relationshipNote}.` : ''}
+
+${whereLine}
 
 ${arrived}
 

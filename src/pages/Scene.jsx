@@ -82,6 +82,8 @@ import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
 import SceneChatFeed from "@/components/scene/SceneChatFeed";
 import SceneActionStrip from "@/components/scene/SceneActionStrip";
 import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
+import SceneMoneyModal from "@/components/scene/SceneMoneyModal";
+import OpenPhoneModal from "@/components/scene/OpenPhoneModal";
 import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
 import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
@@ -121,6 +123,10 @@ export default function Scene() {
   const [hasUserRequestedImage, setHasUserRequestedImage] = useState(false);
   const [actions, setActions] = useState([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
+  // Send / Receive Money — which side of the established financial interaction was chosen.
+  const [moneyMode, setMoneyMode] = useState(null);
+  // The scene's phone. A presentation layer over existing messaging, games and Scene Photo.
+  const [showPhone, setShowPhone] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
   // Court participants taking part by remote link (in custody or hospitalized): in the
@@ -2294,6 +2300,8 @@ export default function Scene() {
         setArrestPicker={setArrestPicker}
         setShowNextScene={setShowNextScene}
         actionCooldown={actionCooldown}
+        onOpenMoney={(mode) => setMoneyMode(mode)}
+        onOpenPhone={() => setShowPhone(true)}
       />
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
@@ -2323,6 +2331,8 @@ export default function Scene() {
         <SceneInputBar inputText={inputText} setInputText={setInputText} narratorMode={narratorMode} setNarratorMode={setNarratorMode} onSend={stableOnSend} onContinue={stableOnContinue} isGenerating={isTyping} />
       )}
 
+      <AnimatePresence>{moneyMode && <SceneMoneyModal mode={moneyMode} actors={activityActors} userBalance={settings.user_balance ?? 0} currentUser={currentUser} onClose={() => setMoneyMode(null)} onCompleted={(line) => { setMessages((prev) => [...prev, { id: `${Date.now()}_money`, sender: "narrative", content: line, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["userSettings"] }); }} />}</AnimatePresence>
+      <AnimatePresence>{showPhone && <OpenPhoneModal currentUser={currentUser} worldName={displayName} sceneCharacters={(observeMode ? observeCast : allSceneChars).filter((c) => c?.id && !c.isUser && !String(c.id).startsWith("npc_"))} onOpenScenePhoto={() => { setShowPhone(false); setShowPhotoModal(true); }} onClose={() => setShowPhone(false)} />}</AnimatePresence>
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>

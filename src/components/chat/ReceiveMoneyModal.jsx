@@ -14,7 +14,7 @@ const STEP_RESULT = 'result';
 
 const BALANCE_UNAVAILABLE = 'UNAVAILABLE';
 
-export default function ReceiveMoneyModal({ character, onClose, conversationCharacterId }) {
+export default function ReceiveMoneyModal({ character, onClose, conversationCharacterId, onResult }) {
   const [step, setStep] = useState(conversationCharacterId ? STEP_MODE : STEP_CHARACTER);
   const [selectedCharacter, setSelectedCharacter] = useState(() => {
     if (conversationCharacterId) return null;
@@ -128,6 +128,9 @@ export default function ReceiveMoneyModal({ character, onClose, conversationChar
         payload
       );
       setResult(response.data);
+      // Optional reporter for callers that need to reflect the outcome elsewhere
+      // (the scene). It never changes what the transaction did.
+      onResult?.(response.data, mode, parseFloat(amount));
       setStep(STEP_RESULT);
     } catch (err) {
       setResult({ success: false, error: err.message });

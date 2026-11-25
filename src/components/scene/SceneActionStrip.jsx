@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { ArrestControl, NextSceneControl } from "@/components/scene/SceneStripTransitionControls";
+import { ArrestControl, NextSceneControl, SendMoneyControl, ReceiveMoneyControl, OpenPhoneControl } from "@/components/scene/SceneStripTransitionControls";
 import {
   DIRECTED_SCENE_ACTIONS,
   stripActions,
@@ -87,6 +87,8 @@ export default function SceneActionStrip({
   setArrestPicker,
   setShowNextScene,
   actionCooldown,
+  onOpenMoney,
+  onOpenPhone,
 }) {
   const list = stripActions(courtCase
     ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0)
@@ -149,10 +151,17 @@ export default function SceneActionStrip({
         {open && items.map(renderItem)}
         {/* Arrest is a general activity, so it lives in that folder. */}
         {open && folder.key === "general" && (
-          <ArrestControl
-            onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
-            arrestDisabled={arrestTargets.length === 0 || actionCooldown}
-          />
+          <React.Fragment>
+            {/* Send / Receive Money open the one established financial interaction with
+                who pays and who is paid chosen first. Open Phone opens the scene phone. */}
+            <SendMoneyControl onClick={() => onOpenMoney?.("send")} disabled={actionCooldown} />
+            <ReceiveMoneyControl onClick={() => onOpenMoney?.("receive")} disabled={actionCooldown} />
+            <OpenPhoneControl onClick={() => onOpenPhone?.()} />
+            <ArrestControl
+              onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
+              arrestDisabled={arrestTargets.length === 0 || actionCooldown}
+            />
+          </React.Fragment>
         )}
         {open && folder.key !== "general" && items.length === 0 && (
           <span className="flex items-center justify-center px-2 text-[9px] text-muted-foreground/60 whitespace-nowrap flex-shrink-0">
