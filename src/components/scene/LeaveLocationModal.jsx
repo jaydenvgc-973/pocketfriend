@@ -72,23 +72,26 @@ export default function LeaveLocationModal({ isOpen, onClose, locationName, brou
                 </div>
               </button>
 
-              {/* Leave characters BEHIND */}
-              {broughtCharacters.length > 0 && (
-                <button
-                  onClick={onLeaveCharactersBehind}
-                  className="w-full flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-amber-500/40 hover:bg-amber-500/5 transition-all text-left group"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 group-hover:bg-amber-500/10 transition-colors">
-                    <MapPin className="w-4 h-4 text-muted-foreground group-hover:text-amber-400" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">Leave them here</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {broughtCharacters.map(c => c.name.split(" ")[0]).join(", ")} stay at {locationName}. Their card will show them here.
-                    </p>
-                  </div>
-                </button>
-              )}
+              {/* Leave characters BEHIND — always present, so leaving always offers
+                  the same three choices. With nobody here with you there is no one to
+                  leave behind, and the option says so instead of disappearing. */}
+              <button
+                onClick={onLeaveCharactersBehind}
+                disabled={broughtCharacters.length === 0}
+                className={`w-full flex items-start gap-3 p-3.5 rounded-xl border border-border transition-all text-left group ${broughtCharacters.length === 0 ? "opacity-45 cursor-not-allowed" : "hover:border-amber-500/40 hover:bg-amber-500/5"}`}
+              >
+                <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0 group-hover:bg-amber-500/10 transition-colors">
+                  <MapPin className="w-4 h-4 text-muted-foreground group-hover:text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Leave them here</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {broughtCharacters.length > 0
+                      ? `${broughtCharacters.map(c => c.name.split(" ")[0]).join(", ")} stay at ${locationName}. Their card will show them here.`
+                      : `Nobody came with you, so there is no one to leave behind at ${locationName}.`}
+                  </p>
+                </div>
+              </button>
 
               {/* STAY HERE — close the Scenes page without leaving the place.
                   Nobody's location or presence changes: only the page does. */}
