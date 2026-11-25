@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import SceneMediaArea from "@/components/scene/SceneMediaArea";
 import { filterDashes } from "@/lib/dashFilter";
-import { isCharacterAtWork } from "@/lib/workScheduleUtils";
+import { isCharacterAtWork, isCharacterOnShift } from "@/lib/workScheduleUtils";
 import { getPrivateSpaceOccupantIds } from "@/lib/sceneImmediateArea";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -41,6 +41,9 @@ import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, 
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
 import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
+import SceneNpcRow from "@/components/scene/SceneNpcRow";
+import ScenePresenceStrip from "@/components/scene/ScenePresenceStrip";
+import { presentShoppingPeople, onShiftEmployeeIds, accountRecipients } from "@/lib/shoppingParticipants";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useUserPresence } from "@/hooks/useUserPresence";
 import { useSharedResidenceParticipants } from "@/hooks/useSharedResidencePresence";
@@ -1521,7 +1524,7 @@ export default function Scene() {
     base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
   };
 
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, location, messages, generateFocusedImage, setMessages }); };
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null, purchaseMerchandise = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, location, messages, generateFocusedImage, setMessages }); };
 
   // A narrative is something that has already happened, dialogue included. It is recorded
   // as canon so character replies treat it as a recent lived experience, never as words
@@ -1532,7 +1535,7 @@ export default function Scene() {
   // the user said. It is shown as a centered scene activity — never as an outgoing
   // message — and it tells the scene whether the moment has already happened (immediate)
   // or is behavior being carried out now (direct).
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null, purchaseMerchandise = null) => {
     if (!text.trim() || !location) return; setInputText("");
     const userMsg = activity
       ? { id: Date.now().toString(), sender: "activity", content: activity.content, emoji: activity.emoji || null, is_canon_event: activity.behavior === "immediate", timestamp: new Date().toISOString() }
@@ -1545,7 +1548,7 @@ export default function Scene() {
       if (wpSender) base44.functions.invoke('sendWorldPhoneMessage', { sender_character_id: wpSender.id, recipient_identifier: wpIntent.recipient, requested_message: wpIntent.message, user_instruction_context: wpIntent.message ? null : text, source: 'user_instruction', owner_email: currentUser?.email }).catch(err => console.warn('[Scene] World Phone send failed:', err?.message));
     }
 
-    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind);
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise);
     setIsTyping(true);
 
     const _memIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
@@ -2173,7 +2176,7 @@ export default function Scene() {
         }),
         emoji: action.emoji,
         behavior,
-      }, isProductCardAction ? (action.item_kind || null) : null);
+      }, isProductCardAction ? (action.item_kind || null) : null, isProductCardAction ? (action.merchandise || null) : null);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
     } finally { setActionCooldown(false); }
   };
@@ -2184,19 +2187,12 @@ export default function Scene() {
   // A dorm room or apartment is where a student lives — the school's hours never close it.
   const locationClosed = isLocationOpen(location) === false && !isEnvironmentAccessibleNow(selectedEnvironment, false) && !isStudentHousingSpace(location, activeUnitId) && !observeMode;
 
-  const renderNpc = (npc) => {
-    // The effective selection is the authority: a caregiver the supervision system has on
-    // duty in this household is selected from the first render, so Who's Here must show it
-    // as selected rather than requiring the user to pick them by hand.
-    const isSelected = selectedNpcIdList.includes(npc.id);
-    return (
-      <button key={npc.id} onClick={() => { if (isSelected) unitManualDeselectRef.current.add(npc.id); else unitManualDeselectRef.current.delete(npc.id); setSelectedNpcIds((prev) => { const current = prev || []; return isSelected ? current.filter((id) => id !== npc.id) : [...current, npc.id]; }); setShowNpcDropdown(false); }} className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-secondary ${isSelected ? "bg-primary/10" : ""}`}>
-        <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">{npc.avatar_url ? <img src={npc.avatar_url} alt={npc.name} className="w-full h-full object-cover" /> : <span className="text-[9px] font-bold text-foreground">{npc.name?.[0]}</span>}</div>
-        <div className="flex-1 min-w-0"><p className={`text-xs font-medium truncate ${isSelected ? "text-primary" : "text-foreground"}`}>{npc.name}</p>{(npc.mood || npc.unit_name) && <p className="text-[10px] text-muted-foreground truncate">{npc.mood || npc.unit_name}</p>}</div>
-        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
-      </button>
-    );
-  };
+  // The effective selection is the authority: a caregiver the supervision system has on
+  // duty in this household is selected from the first render, so Who's Here must show it
+  // as selected rather than requiring the user to pick them by hand.
+  const renderNpc = (npc) => (
+    <SceneNpcRow npc={npc} isSelected={selectedNpcIdList.includes(npc.id)} onToggle={() => { const isSelected = selectedNpcIdList.includes(npc.id); if (isSelected) unitManualDeselectRef.current.add(npc.id); else unitManualDeselectRef.current.delete(npc.id); setSelectedNpcIds((prev) => { const current = prev || []; return isSelected ? current.filter((id) => id !== npc.id) : [...current, npc.id]; }); setShowNpcDropdown(false); }} />
+  );
 
   if (!location) {
     if (isLocationsFetching || isDirectLoading) return (<div className="min-h-screen bg-background flex items-center justify-center"><div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div></div>);
@@ -2205,6 +2201,13 @@ export default function Scene() {
   if (locationClosed) {
     return (<div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 space-y-4"><div className="text-center space-y-3"><span className="text-4xl">🚫</span><h2 className="text-lg font-bold text-foreground">{location.name} is currently closed</h2><p className="text-sm text-muted-foreground max-w-xs">This location is not open at the moment. Come back during operating hours.</p></div><Link to="/travel" className="w-full max-w-xs"><Button variant="outline" size="lg" className="w-full rounded-xl">Back to Travel</Button></Link></div>);
   }
+
+  // ── RETAIL SHOPPING ROLES ─────────────────────────────────────────────────────
+  // The payer is someone actually here shopping; the recipient may be any character on
+  // the account, present or not. A cashier or manager on shift is working, not shopping.
+  const shoppingPresent = presentShoppingPeople({ observeMode, observeCast, traveledWithChars, selectedNpcs });
+  const shoppingOnShiftIds = onShiftEmployeeIds(shoppingPresent, location);
+  const shoppingRecipients = accountRecipients(characters, currentUser?.email);
 
   return (
     <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
@@ -2240,17 +2243,7 @@ export default function Scene() {
       />
 
       {/* Character presence strip */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0 overflow-x-auto scrollbar-hide">
-        {(locationUnits.length > 0 || locationWorkplaces.length > 0) && (
-          <>
-            <ApartmentSwitcher units={locationUnits} workspaces={locationWorkplaces} activeUnitId={activeUnitId} onSelect={handleUnitChange} location={location} allowNone />
-            <div className="w-px h-6 bg-border flex-shrink-0" />
-          </>
-        )}
-        {!observeMode && <div className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">{currentUser?.generated_avatar_urls?.[0] ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>}</div><span className="text-[9px] text-primary font-medium">{displayName}</span></div>}
-        {(observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs, ...extraNpcs]).filter((c, i, arr) => arr.findIndex((x) => x.id === c.id) === i).map((char) => (<div key={char.id} className="flex flex-col items-center gap-1"><div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">{char.avatar_url ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" /> : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>}</div><span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span></div>))}
-        {observeMode ? (observeCast.length === 0 && <span className="text-xs text-muted-foreground ml-1">Pick who to watch</span>) : (traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && <span className="text-xs text-muted-foreground ml-1">You're here alone</span>)}
-      </div>
+      <ScenePresenceStrip observeMode={observeMode} displayName={displayName} currentUser={currentUser} observeCast={observeCast} traveledWithChars={traveledWithChars} selectedNpcs={selectedNpcs} extraNpcs={extraNpcs} location={location} locationUnits={locationUnits} locationWorkplaces={locationWorkplaces} activeUnitId={activeUnitId} onSelectUnit={handleUnitChange} />
 
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">

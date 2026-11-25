@@ -20,6 +20,7 @@
 import { isPrivateResidentialZone } from './sceneBackgroundPopulation.js';
 import { HOUSEHOLD_ACTION_IDS } from './sceneActionConfig.js';
 import { isOnSiteResidenceZone } from './onsiteResidence.js';
+import { MERCHANDISE_FAMILIES, merchandiseFamiliesForVenue } from './venueMerchandise.js';
 
 // ── ACTION CLASSIFICATION HELPER ─────────────────────────────────────────────
 // Adds explicit action_class and is_paid to every action definition.
@@ -720,6 +721,92 @@ function resolveActionLibrary(location) {
   return ACTION_LIBRARY_BY_CATEGORY[category] || DEFAULT_ACTIONS;
 }
 
+/**
+ * Every action library this venue's assigned types resolve to, primary first.
+ * A business may carry several venue types (a sneaker, clothing and accessories store);
+ * each one is an established classification of the same business, so none is dropped.
+ */
+function resolveActionLibraries(location) {
+  const libraries = [];
+  for (const subtype of normalizeSubtypes(location)) {
+    const library = ACTION_LIBRARY_BY_SUBTYPE[subtype];
+    if (library && !libraries.includes(library)) libraries.push(library);
+  }
+  if (libraries.length === 0) libraries.push(resolveActionLibrary(location));
+  return libraries;
+}
+
+// ── STORE MERCHANDISE → SHOPPING ACTIONS ─────────────────────────────────────
+// The store determines what can be shopped for. Each merchandise family the business
+// carries gets its own purchase action, and Buy Something draws from all of them.
+// Established ids, prices, the product card and the transaction pathway are unchanged.
+const SHOPPING_ACTION_BY_FAMILY = {
+  sneakers:    { id: 'shoe_buy',        label: 'Buy Sneakers',    emoji: '👟', cost: 120 },
+  clothing:    { id: 'clothing_buy',    label: 'Buy Clothing',    emoji: '🛒', cost: 35 },
+  accessories: { id: 'accessories_buy', label: 'Buy Accessories', emoji: '👜', cost: 65 },
+  home_goods:  { id: 'buy_home_goods',  label: 'Buy Home Goods',  emoji: '🛏️', cost: 35 },
+  music:       { id: 'buy_music',       label: 'Buy Music',       emoji: '💿', cost: 25 },
+  books:       { id: 'buy_books',       label: 'Buy Books',       emoji: '📚', cost: 20 },
+  electronics: { id: 'buy_electronics', label: 'Buy Electronics', emoji: '🎧', cost: 60 },
+  toys:        { id: 'buy_toys',        label: 'Buy Toys',        emoji: '🧸', cost: 25 },
+  gifts:       { id: 'buy_gifts',       label: 'Buy Gifts',       emoji: '🎁', cost: 30 },
+};
+
+/** A retail purchase action (a complete outfit keeps its own established action). */
+const isStorePurchaseAction = (action) =>
+  action.action_class === 'purchase' && action.purchase_source === 'store' && action.item_kind !== 'outfit';
+
+function buildVenueShoppingActions(venue, libraries) {
+  const families = merchandiseFamiliesForVenue(normalizeSubtypes(venue));
+  if (families.length === 0) return null;
+
+  const actions = families
+    .map((family) => {
+      const def = SHOPPING_ACTION_BY_FAMILY[family];
+      const meta = MERCHANDISE_FAMILIES[family];
+      if (!def || !meta) return null;
+      return {
+        id: def.id,
+        label: def.label,
+        emoji: def.emoji,
+        cost: def.cost,
+        type: 'functional',
+        payer: 'user',
+        action_category: meta.category,
+        purchase_source: 'store',
+        // The category this action sells. Buy Something carries every family instead.
+        merchandise: family,
+        suggested_zone: 'Register',
+        requires_staff: true,
+      };
+    })
+    .filter(Boolean);
+
+  // Buy Something is the general retail action: any category this business actually sells.
+  const primary = SHOPPING_ACTION_BY_FAMILY[families[0]];
+  actions.push({
+    id: 'buy',
+    label: 'Buy something',
+    emoji: '🛒',
+    cost: primary?.cost ?? 35,
+    type: 'functional',
+    payer: 'user',
+    action_category: MERCHANDISE_FAMILIES[families[0]].category,
+    purchase_source: 'store',
+    merchandise: families,
+    suggested_zone: 'Register',
+    requires_staff: true,
+  });
+
+  // A complete outfit stays its own purchase wherever clothing is sold.
+  if (families.includes('clothing')) {
+    const outfit = libraries.flat().find((a) => a.id === 'buy_outfit');
+    if (outfit) actions.push(outfit);
+  }
+
+  return classifyAll(actions);
+}
+
 // ── VENUE-SPECIFIC FOOD ADDITIONS ────────────────────────────────────────────
 // Restaurant type informs which dishes the venue actually serves. These actions
 // are ADDED to the venue's existing actions; no existing action or price changes.
@@ -800,17 +887,30 @@ export function resolveWorkplaceVenue(location, activeZone) {
   ) || null;
 }
 
+/**
+ * Every venue type this business carries — its primary type plus each additional type
+ * assigned to it. The same business is never split into separate stores.
+ */
+export function workplaceVenueSubtypes(workplace) {
+  const types = [
+    workplace?.business_type,
+    ...(Array.isArray(workplace?.business_types) ? workplace.business_types.map((t) => t?.type) : []),
+  ].filter(Boolean);
+  return [...new Set(types)];
+}
+
 export function generateLocationActions(location, activeZone = null, hour = 12, options = {}) {
   if (!location) return DEFAULT_ACTIONS;
   if (options.isCharacterAsleep) return [];
 
   // Venue identity: the business this zone belongs to, or the location itself.
   const workplace = resolveWorkplaceVenue(location, activeZone);
+  // The business keeps every venue type assigned to it — never only the primary one.
   const venue = workplace
     ? {
         ...location,
         category: workplace.business_category || location.category,
-        subtype: [workplace.business_type],
+        subtype: workplaceVenueSubtypes(workplace),
         name: workplace.name || location.name,
         venue_identity: workplace.name || location.venue_identity,
       }
@@ -825,9 +925,24 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   // shows — and the business's own activities stay in the business's zones. A zone the
   // user never assigned to the residence is untouched.
   const inOnSiteResidence = !isConfinementVenue && isOnSiteResidenceZone(location, activeZone);
-  let actions = isConfinementVenue
-    ? JAIL_ACTIONS
-    : inOnSiteResidence ? HOME_ACTIONS : resolveActionLibrary(venue);
+  // Every assigned venue type contributes its library; the primary type's library is the
+  // venue's own strip, and the shopping actions below are built from all of them.
+  const libraries = isConfinementVenue
+    ? [JAIL_ACTIONS]
+    : inOnSiteResidence ? [HOME_ACTIONS] : resolveActionLibraries(venue);
+  let actions = libraries[0];
+
+  // The store determines what can be shopped for. Every venue type the business carries
+  // gets its own purchase action, and Buy Something draws from all of them. A venue that
+  // sells no retail merchandise is untouched.
+  if (!isConfinementVenue && !inOnSiteResidence) {
+    const shopping = buildVenueShoppingActions(venue, libraries);
+    if (shopping) {
+      const kept = actions.filter((a) => !isStorePurchaseAction(a));
+      const ids = new Set(kept.map((a) => a.id));
+      actions = [...kept, ...shopping.filter((a) => !ids.has(a.id))];
+    }
+  }
 
   // Venue food additions — additive only. Existing actions and prices are untouched.
   // Bars offer food only when the user enabled food service on that location.

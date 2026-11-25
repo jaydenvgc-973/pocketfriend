@@ -173,6 +173,21 @@ export async function updateClosetEntry({ recipient, entryId, updates }) {
   return next;
 }
 
+/**
+ * The feed line confirming a completed purchase. A closet entry says where it went;
+ * merchandise that is not wearable is confirmed as owned, never as closeted.
+ */
+export function purchaseConfirmationLine({ recipient, entry, kind, price, itemLabel }) {
+  const who = recipient?.kind === "character" ? recipient.name : null;
+  if (!entry) {
+    const what = itemLabel || "The item";
+    return who ? `✓ Purchased for $${price} — ${what} is ${who}'s.` : `✓ Purchased for $${price} — ${what} is yours.`;
+  }
+  return who
+    ? `✓ Purchased for $${price} — added to ${who}'s ${kind === "outfit" ? "Outfits" : "Items"}.`
+    : `✓ Purchased for $${price} — added to your closet.`;
+}
+
 /** Find the closet entry a purchase produced, so it can be finished later. */
 export function findClosetEntry(closet, entryId) {
   return (closet || []).find((item) => (item.piece_id || item.outfit_id) === entryId) || null;

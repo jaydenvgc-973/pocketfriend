@@ -21,6 +21,7 @@
  */
 
 import { extractSceneItemLabel } from './sceneItemResolver.js';
+import { pickMerchandise } from './venueMerchandise.js';
 
 /**
  * checkImageTrigger
@@ -31,6 +32,9 @@ import { extractSceneItemLabel } from './sceneItemResolver.js';
  * @param {string|null} params.actionCategory       — ONLY set for paid 'purchase' strip actions
  * @param {number|null} params.explicitPrice        — action.cost from paid strip button; must be > 0 for purchase card
  * @param {string|null} params.purchaseSource       — source context (e.g. 'menu', 'inventory', 'store')
+ * @param {string|string[]|null} params.purchaseMerchandise — the merchandise family (or families) the
+ *   selected shopping action sells. When present the offered item comes from the store's own
+ *   categories, never from unrelated conversation text.
  * @param {Object} params.location
  * @param {Array}  params.messages
  * @param {Function} params.generateFocusedImage
@@ -44,6 +48,7 @@ export function checkImageTrigger({
   purchaseSource = null,
   isFreeOffering = false,
   purchaseItemKind = null,
+  purchaseMerchandise = null,
   location,
   messages,
   generateFocusedImage,
@@ -73,10 +78,21 @@ export function checkImageTrigger({
   // bar snack). The card appears with no price and no transaction.
   const isPaidPurchase = actionCategory && explicitPrice != null && Number(explicitPrice) > 0;
   if (isPaidPurchase || (isFreeOffering && actionCategory)) {
-    const resolved = extractSceneItemLabel(text, messages, actionCategory, location);
-    const purchaseType = ['clothing', 'home_goods', 'hardware', 'electronics'].includes(actionCategory)
+    // A store purchase offers something the store actually sells. The action carries the
+    // merchandise family (or families, for Buy Something); only a venue that sells no
+    // known merchandise falls back to the established conversation resolution.
+    const merchandise = purchaseMerchandise ? pickMerchandise(purchaseMerchandise) : null;
+    const resolved = merchandise
+      ? { label: merchandise.label, category: merchandise.category, wearable: merchandise.wearable }
+      : extractSceneItemLabel(text, messages, actionCategory, location);
+    // Store merchandise always goes through the existing purchase modal, so the payer and
+    // the recipient are chosen and a gift never has to be present. Only consumables
+    // (food, drink, groceries) keep the direct deduction.
+    const purchaseType = purchaseMerchandise
       ? 'purchase'
-      : 'consumable';
+      : ['clothing', 'home_goods', 'hardware', 'electronics'].includes(actionCategory)
+        ? 'purchase'
+        : 'consumable';
 
     setMessages(prev => [...prev, {
       id: `product_${Date.now()}`,
@@ -91,6 +107,9 @@ export function checkImageTrigger({
       // 'outfit' only for an explicit complete-outfit purchase (Buy Outfit); otherwise a
       // single item, which belongs in the closet's Items section.
       item_kind: purchaseItemKind === 'outfit' ? 'outfit' : 'item',
+      // Non-wearable merchandise (home goods, records, books…) is purchased, never forced
+      // into a closet.
+      item_wearable: resolved.wearable !== false,
       item_label: resolved.label,
       item_category: resolved.category,
       timestamp: new Date().toISOString(),
