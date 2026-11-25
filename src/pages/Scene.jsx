@@ -53,6 +53,7 @@ import { useSharedResidenceParticipants } from "@/hooks/useSharedResidencePresen
 import SharedResidenceConversation from "@/components/scene/SharedResidenceConversation";
 import { useSceneImageGenerator } from "@/hooks/useSceneImageGenerator";
 import { useSceneSpaceImage } from "@/hooks/useSceneSpaceImage";
+import { loadSceneResponseContext } from "@/lib/sceneResponseContext";
 import { getVenueNpcDefaults } from "@/lib/sceneVenueNPCs";
 import { usePageContext } from "@/hooks/usePageContext";
 import { useAuth } from "@/lib/AuthContext";
@@ -681,12 +682,15 @@ export default function Scene() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleZoneChange = (zoneName) => {
+  // `requestImage` is false when an activity is moving the scene into that room: the
+  // activity draws its own picture in the room it establishes, so asking for a generic
+  // picture of the room as well would replace it a moment later.
+  const handleZoneChange = (zoneName, requestImage = true) => {
     // Choosing the room already on screen changes nothing, so nothing is redrawn.
     if (zoneName === (activeZone || locationZones[0]?.zone_name)) return;
     setActiveZone(zoneName);
     setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You move to the ${zoneName}.`, timestamp: new Date().toISOString() }]);
-    requestSpaceImage();
+    if (requestImage) requestSpaceImage();
   };
 
   // Choosing someone from Who's Here puts them in the conversation. In a watched scene
@@ -1472,13 +1476,9 @@ export default function Scene() {
     checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise);
     setIsTyping(true);
 
-    const _memIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
-    const crossMem = {};
-    await Promise.all(_memIds.map(async (id) => { try { const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: id, limitMessages: 12 }); if (r?.data?.contextText) crossMem[id] = r.data.contextText; } catch {} }));
-
-    const _canonicalCharIds = [...broughtCharacters, ...selectedNpcs].filter((c) => !c.isNpc && c.id).map((c) => c.id);
-    const canonicalCtx = {};
-    await Promise.all(_canonicalCharIds.map(async (id) => { try { const charRecord = characters.find((c) => c.id === id); const r = await base44.functions.invoke('buildCanonicalCharacterContext', { characterId: id, interactionContext: 'scene', ownerEmailHint: charRecord?.owner_email || currentUser?.email || null }); if (r?.data?.systemPrompt) canonicalCtx[id] = r.data.systemPrompt; } catch {} }));
+    // Identity and memory for everyone here, fetched together rather than one group after
+    // the other — the same context as before, without the reply waiting twice.
+    const { crossMem, canonicalCtx } = await loadSceneResponseContext({ cast: [...broughtCharacters, ...selectedNpcs], characters, ownerEmail: currentUser?.email });
 
     try {
       // Established events stay canon: a narrative line is something that has ALREADY
@@ -2118,9 +2118,15 @@ export default function Scene() {
       if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) { const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal'; const eatingChars = broughtCharacters.filter((c) => !isVickServicioCharacter(c)); eatingChars.forEach((char) => { base44.functions.invoke('recordEatingEvent', { characterId: char.id, mealSize, foodDescription: action.label, locationName: location?.name }).catch(() => {}); }); queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }); }
       if (isPaidClass && cost > 0 && !isProductCardAction) { base44.functions.invoke('executeSceneTransaction', { action_class: actionClass, is_paid: true, cost, payer_type: payer, action_id: action.id, purchase_source: action.purchase_source || null, service_source: actionClass === 'service' ? location?.name : null, fee_source: actionClass === 'fee' ? location?.name : null, action_label: action.label, location_name: location?.name, character_id: payer === 'character' ? broughtCharacters[0]?.id : null }).then(() => { queryClient.invalidateQueries({ queryKey: ['userSettings'] }); }).catch(() => {}); }
       const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-      // The action picture shows the people taking part — the Who's Here selection — never
-      // every resident who happens to be home.
-      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); const actionZone = action.suggested_zone_name || activeZone; generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      // The room the activity establishes is the room the scene is now in — set here without
+      // a generic picture of it, because the activity's own picture, drawn in that room, IS
+      // this moment's visual update. Only an activity with no picture asks for the room one.
+      const actionZone = action.suggested_zone_name || activeZone; const zoneChanged = !!action.suggested_zone_name && action.suggested_zone_name !== activeZone;
+      if (zoneChanged) setActiveZone(action.suggested_zone_name);
+      const userActs = actingPeople.some((c) => c.isUser || c.id === currentUser?.id);
+      // The picture shows the people taking part — never every resident who happens to be home.
+      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      else if (zoneChanged) requestSpaceImage();
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       // The strip is not a text box: choosing an activity is a scene action, shown as a
       // centered activity naming the people taking part — not as an outgoing message.

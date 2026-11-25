@@ -209,25 +209,28 @@ const BAR_FOOD_ACTIONS = classifyAll([
 // ALL home actions are free. eat/drink at home use household resources, not a purchase.
 const HOME_ACTIONS = classifyAll([
   { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "functional", suggested_zone: "Living Room" },
-  { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "functional", suggested_zone: "Kitchen" },
-  { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "functional", suggested_zone: "Kitchen" },
+  // requires_actor: a person performs it, so with more than one person here the scene
+  // asks WHO does it instead of assuming everyone in the room is doing it.
+  { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "functional", suggested_zone: "Kitchen", requires_actor: true },
+  { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "functional", suggested_zone: "Kitchen", requires_actor: true },
   { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "observational" },
   { id: "talk", label: "Talk", emoji: "💬", cost: 0, type: "social" },
   { id: "watch_tv", label: "Watch TV", emoji: "📺", cost: 0, type: "functional", suggested_zone: "Living Room" },
   { id: "music", label: "Listen to music", emoji: "🎵", cost: 0, type: "observational" },
   { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "functional", payer: "user", action_category: "food", purchase_source: "delivery" },
-  { id: "cook", label: "Cook something", emoji: "👨‍🍳", cost: 0, type: "functional", suggested_zone: "Kitchen" },
+  // Cooking has no recipient: one person, or several people cooking together.
+  { id: "cook", label: "Cook something", emoji: "👨‍🍳", cost: 0, type: "functional", suggested_zone: "Kitchen", requires_actor: true },
   { id: "nap", label: "Nap on couch", emoji: "😴", cost: 0, type: "observational", suggested_zone: "Living Room" },
   { id: "lay_down", label: "Lie down", emoji: "🛌", cost: 0, type: "observational", suggested_zone: "Bedroom" },
   // Household activities — available because this is a home.
   // zone_hints are matched against the real zones on the location by the adapter:
   // a zone that does not exist simply leaves the activity unlocked, never redirects.
-  { id: "home_workout", label: "Workout", emoji: "💪", cost: 0, type: "functional", zone_hints: ["living room", "bedroom", "garage", "den"] },
-  { id: "home_clean_up", label: "Clean Up", emoji: "🧹", cost: 0, type: "functional" },
-  { id: "home_dishes", label: "Wash Dishes", emoji: "🍽️", cost: 0, type: "functional", zone_hints: ["kitchen", "sink", "scullery"] },
-  { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"] },
-  { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"] },
-  { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"] },
+  { id: "home_workout", label: "Workout", emoji: "💪", cost: 0, type: "functional", zone_hints: ["living room", "bedroom", "garage", "den"], requires_actor: true },
+  { id: "home_clean_up", label: "Clean Up", emoji: "🧹", cost: 0, type: "functional", requires_actor: true },
+  { id: "home_dishes", label: "Wash Dishes", emoji: "🍽️", cost: 0, type: "functional", zone_hints: ["kitchen", "sink", "scullery"], requires_actor: true },
+  { id: "home_brush_teeth", label: "Brush Teeth", emoji: "🪥", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "powder room"], requires_actor: true },
+  { id: "home_shower", label: "Shower", emoji: "🚿", cost: 0, type: "functional", zone_hints: ["bathroom", "bath", "shower room", "en suite", "ensuite"], requires_actor: true },
+  { id: "home_make_bed", label: "Make Bed", emoji: "🛏️", cost: 0, type: "functional", zone_hints: ["bedroom", "bed room"], requires_actor: true },
   // Moonwink — the strip's title only. The label is never spoken, written, or remembered
   // by a character; the interaction is played out in ordinary language. Adults only.
   { id: "moonwink", label: "Moonwink", emoji: "🌙", cost: 0, type: "social", suggested_zone: "Bedroom", adults_only: true },
