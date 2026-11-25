@@ -14,6 +14,7 @@ import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor
 import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import UserWorldPhonePanel from "@/components/user/UserWorldPhonePanel";
+import UserTransactionHistory from "@/components/finance/UserTransactionHistory";
 import BottomNav from "@/components/BottomNav";
 import ProfileSectionHeader from "@/components/profile/ProfileSectionHeader";
 import LocationImage from "@/components/profile/LocationImage";
@@ -279,6 +280,9 @@ export default function MyProfile() {
             </div>
           </div>
         </section>
+
+        {/* Your own ledger — every purchase paid from your balance, in Eastern time */}
+        <UserTransactionHistory />
 
         {/* ═══ MODULE 2: HOW THE WORLD SEES YOU — full width, highlighted ═══ */}
         <section className="bg-gradient-to-br from-primary/10 via-card to-card border border-primary/20 rounded-2xl p-5 relative overflow-hidden">
