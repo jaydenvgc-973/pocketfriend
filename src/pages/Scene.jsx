@@ -395,7 +395,7 @@ export default function Scene() {
         .filter((e) => {
           if (!workspaceEmployeeIds.has(e.id)) return false;
           const c = characters.find((x) => x.id === e.id) || e;
-          return isEmployedAtLocation(c, location) && isCharacterAtWork(c, location) && !isCharacterAsleep(c);
+          return isEmployedAtLocation(c, location) && (isCharacterAtWork(c, location) || (c.resolved_presence_status === 'at_work' && c.resolved_current_location_id === locationId)) && !isCharacterAsleep(c);
         })
         .map((e) => e.id);
     }
@@ -490,7 +490,9 @@ export default function Scene() {
       if (c.resolved_presence_status === 'hospitalized') return false;
       if (['incarcerated', 'confined', 'house_arrest'].includes(c.resolved_presence_status)) return false;
       if (!isEmployedAtLocation(c, location)) return false;
-      if (!isCharacterAtWork(c, location)) return false;
+      // Authoritative presence outranks a descriptive activity line: records that place them
+      // at work HERE mean they are on shift here, even if an earlier activity string says home.
+      if (!isCharacterAtWork(c, location) && !(c.resolved_presence_status === 'at_work' && (canonicalLocById[c.id] || c.resolved_current_location_id) === locationId)) return false;
       const canonicalLocId = canonicalLocById[c.id] || c.resolved_current_location_id;
       if (canonicalLocId && canonicalLocId !== locationId) return false;
       return true;
