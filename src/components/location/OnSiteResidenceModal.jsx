@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import { getOnSiteResidence } from "@/lib/onsiteResidence";
+import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
 const MAX_IMAGES = 5;
 
@@ -45,6 +46,7 @@ export default function OnSiteResidenceModal({
 
   const [name, setName] = useState(existing?.name || "");
   const [zoneNames, setZoneNames] = useState(existing?.zone_names || []);
+  const [physicalSetting, setPhysicalSetting] = useState(existing?.physical_setting || "");
   const [residents, setResidents] = useState(residentIds);
   const [newZone, setNewZone] = useState("");
   const [search, setSearch] = useState("");
@@ -107,6 +109,7 @@ export default function OnSiteResidenceModal({
       type: "residential",
       follows_business_hours: false,
       zone_names: zoneNames,
+      physical_setting: physicalSetting || "",
     };
     onSave?.({ environment, residentIds: residents });
   };
@@ -350,6 +353,13 @@ export default function OnSiteResidenceModal({
               )}
             </div>
           </div>
+
+          {/* A residence attached to this property is not automatically inside it. */}
+          <PhysicalSettingToggle
+            value={physicalSetting}
+            onChange={(value) => setPhysicalSetting(value || "")}
+            hint="Independent of the property: a residence attached to it can sit outdoors."
+          />
 
           <p className="text-[10px] text-muted-foreground">
             {existingLocation

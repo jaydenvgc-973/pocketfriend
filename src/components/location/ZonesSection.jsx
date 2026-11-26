@@ -25,6 +25,8 @@ export default function ZonesSection({
   onUpdateZoneImages,
   onTogglePrimaryCategory,
   onRemoveZone,
+  onRenameZone,
+  onMoveZone,
   isZoneReadOnly,
   isGenericHome = false,
   lockedNotice = null,
@@ -68,7 +70,9 @@ export default function ZonesSection({
             Rooms / Zones <span className="text-destructive">*</span>
           </span>
           <span className="text-xs text-muted-foreground mt-0.5 block">
-            Each uploaded set of images must be assigned to a specific room or zone.
+            Each uploaded set of images must be assigned to a specific room or zone. Rename a
+            zone with the pencil, and move it with the arrows — the first zone here is the one
+            Scenes opens when no other space is chosen.
           </span>
           {!expanded && (
             <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">
@@ -104,6 +108,11 @@ export default function ZonesSection({
                 zone={zone}
                 onUpdateImages={(urls) => onUpdateZoneImages?.(i, urls)}
                 onTogglePrimaryCategory={(value) => onTogglePrimaryCategory?.(i, value)}
+                onRename={(newName) => onRenameZone?.(i, newName)}
+                onMoveUp={() => onMoveZone?.(i, -1)}
+                onMoveDown={() => onMoveZone?.(i, 1)}
+                canMoveUp={i > 0}
+                canMoveDown={i < zones.length - 1}
                 onDelete={() => onRemoveZone?.(i)}
                 readOnly={isZoneReadOnly ? isZoneReadOnly(zone.zone_name) : false}
                 locationName={locationName}

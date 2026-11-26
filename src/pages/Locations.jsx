@@ -47,6 +47,9 @@ import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } 
 import { groupLocationReferences } from "@/lib/locationReferenceGroups";
 import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 import { zoneOptionsForVenueTypes } from "@/lib/venueZoneOptions";
+import { isUnhousedLivingSpace, UNHOUSED_ZONE_PRESETS } from "@/lib/unhousedLivingSpace";
+import { renameZoneInForm, moveZoneInForm } from "@/lib/zoneOrder";
+import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
 
@@ -577,6 +580,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     residential_units: editingLocation?.residential_units || [],
     venue_types: editingLocation?.venue_types || [],
     workplaces: editingLocation?.workplaces || [],
+    physical_setting: editingLocation?.physical_setting || "",
   });
   const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
@@ -638,12 +642,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     }
   }, [allCharacters, editingLocation?.id]);
 
+  // An established place to stay that is not housing. Always outdoors, and never a home.
+  const isUnhoused = isUnhousedLivingSpace(form);
   // A Generic property may carry several venue types, so every selected venue type adds the
   // zone options of the space it describes. These stay options only: a zone exists once the
   // user adds it, and every already-configured zone is untouched.
-  const presets = form.category === 'generic'
+  const categoryPresets = form.category === 'generic'
     ? zoneOptionsForVenueTypes(form.subtype)
     : (ZONE_PRESETS[form.category] || ZONE_PRESETS.other);
+  // An Unhoused Living Space offers its own spaces — a tent, a bridge, a sidewalk, a fire
+  // barrel — alongside whatever its category already offers. Still options, never created.
+  const presets = isUnhoused
+    ? [...new Set([...UNHOUSED_ZONE_PRESETS, ...categoryPresets])]
+    : categoryPresets;
   const existingZoneNames = form.zones.map(z => z.zone_name.toLowerCase());
   // A Home with the Workplace venue capability enabled. The property keeps its Home
   // category — this only makes the existing Workplace-category capabilities (employees,
@@ -675,6 +686,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const removeZone = (i) => {
     update("zones", form.zones.filter((_, idx) => idx !== i));
   };
+
+  // Rename changes the name only; reorder changes the order only. Both live in zoneOrder.js
+  // so the cascade is one tested rule, not logic buried in this form.
+  const renameZone = (i, rawName) => setForm(p => renameZoneInForm(p, i, rawName));
+  const moveZone = (i, direction) => setForm(p => moveZoneInForm(p, i, direction));
 
   const updateZoneImages = (i, newUrls) => {
     setForm(p => {
@@ -778,6 +794,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       ...formRest,
       ...(shouldWriteLocationType ? { location_type: effectiveType } : {}),
       venue_types: source.venue_types || [],
+      // An Unhoused Living Space is always outdoors, whichever category it was created
+      // under. Every other place keeps exactly the setting the user chose, or none.
+      physical_setting: isUnhousedLivingSpace(source) ? 'outdoor' : (source.physical_setting || ""),
       // Each business keeps its own name, type, zones and employees. Its employee list is
       // always a subset of the property's workers — employment stays a single record.
       workplaces: (source.workplaces || [])
@@ -879,6 +898,26 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       <VenueTypeSelector category={form.category} subtype={form.subtype} onChange={(next) => update("subtype", next)} />
 
+      {/* ── PHYSICAL SETTING ──
+          Indoors or outdoors — independent of category, venue type and Environment.
+          An Unhoused Living Space is always outdoors: shelter from the weather never
+          turns an encampment, a tent or a sidewalk into an indoor residence. */}
+      {isUnhoused ? (
+        <div className="rounded-xl border border-border bg-secondary/30 px-3 py-2.5">
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Physical Setting: Outdoor</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            An Unhoused Living Space is always outdoors. A tent or makeshift shelter gives some
+            cover — it does not make this an indoor residence, and no indoor facilities exist here.
+          </p>
+        </div>
+      ) : (
+        <PhysicalSettingToggle
+          value={form.physical_setting}
+          onChange={(value) => update("physical_setting", value || "")}
+          hint="Where this place physically is — not what it is. Leave unset if it is not established."
+        />
+      )}
+
       {/* ── ADDITIONAL VENUE TYPES (Home only) ──
           A Home can also carry the Workplace capability without becoming a workplace
           property: its category, venue types, residents and units are untouched. */}
@@ -950,6 +989,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         onCustomZoneNameChange={setNewZoneName}
         onAddCustomZone={addCustomZone}
         onUpdateZoneImages={updateZoneImages}
+        onRenameZone={renameZone}
+        onMoveZone={moveZone}
         onTogglePrimaryCategory={updateZonePrimaryCategory}
         onRemoveZone={removeZone}
         isZoneReadOnly={(zoneName) => isLockedRecoveryYardZone(editingLocation, zoneName, currentUser?.role === 'admin')}
@@ -1053,6 +1094,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                               </button>
                             ))}
                           </div>
+                        )}
+                        {isUnhoused && (
+                          <p className="text-[10px] text-muted-foreground">
+                            🌙 Homeless — this is an established place to stay, not housing.
+                          </p>
                         )}
                       </div>
                     );
@@ -1306,7 +1352,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         } else if (form.category === 'generic') {
           // A Generic property may contain several distinct residences. Each unit keeps its
           // own occupants, so nobody in one apartment or house is treated as living in another.
-          labels = { sectionLabel: "Apartments & Homes", unitSingular: "residence", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Studio 3, Lakeview House...", emptyHint: "Add residents to this location first, then create each apartment or house they live in." };
+          // In an Unhoused Living Space the same mechanism organizes sleeping areas — never
+          // apartments, and never a household.
+          labels = isUnhoused
+            ? { sectionLabel: "Sleeping Areas", unitSingular: "area", contextNoun: "encampment", addPlaceholder: "e.g. Tent 2, Under the Bridge...", emptyHint: "Add residents to this living space first, then create the areas they stay in." }
+            : { sectionLabel: "Apartments & Homes", unitSingular: "residence", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Studio 3, Lakeview House...", emptyHint: "Add residents to this location first, then create each apartment or house they live in." };
         }
 
         // The section folds to its heading, the same way a business does in Workspaces, so
@@ -1640,7 +1690,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         />
       </div>
 
-      {(form.category === 'home' || form.category === 'generic') && (
+      {(form.category === 'home' || form.category === 'generic') && !isUnhoused && (
         <div className="space-y-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Rent</label>
@@ -1959,11 +2009,14 @@ export default function Locations() {
     // ── HOMELESS / SHELTER PERSISTENCE ─────────────────────────────────────────
     // Write housing context from the location form back to each affected Character record.
     // This ensures the character's own entity reflects their housing truth, not just the location.
+    // An Unhoused Living Space is somewhere a character stays, not housing. Everyone
+    // assigned to one keeps their homeless status, whatever the category says.
+    const unhousedSpace = isUnhousedLivingSpace(formData);
     const housingContext = formData.resident_housing_context || {};
     const residentIds = formData.resident_character_ids || [];
     for (const charId of residentIds) {
       if (!charId || charId === currentUser?.id) continue; // skip user player slot
-      const ctx = housingContext[charId];
+      const ctx = unhousedSpace ? 'homeless' : housingContext[charId];
       if (ctx === 'homeless') {
         console.log(`[HOUSING] Writing homeless status to character ${charId} at location ${locationId}`);
         base44.entities.Character.update(charId, {
@@ -1995,7 +2048,8 @@ export default function Locations() {
     // their Character record must reflect this location as their home.
     // A business that contains an On-Site Residence houses its residents the same way a
     // home does. Employment is untouched: workers and residents stay independent lists.
-    if (formData.category === 'home' || formData.category === 'generic' || (formData.category === 'business' && hasOnSiteResidence(formData))) {
+    // An encampment writes the tracked place to stay above, and never claims a home.
+    if (!unhousedSpace && (formData.category === 'home' || formData.category === 'generic' || (formData.category === 'business' && hasOnSiteResidence(formData)))) {
       const residentIds = formData.resident_character_ids || [];
       for (const charId of residentIds) {
         if (!charId || charId === currentUser?.id) continue; // skip user player slot

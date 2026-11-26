@@ -579,6 +579,14 @@
             "default": true,
             "description": "When true, this environment respects the location operating_hours. When false (residential), travel is never blocked by hours."
           },
+          "physical_setting": {
+            "type": "string",
+            "enum": [
+              "indoor",
+              "outdoor"
+            ],
+            "description": "Whether this environment is physically indoors or outdoors. Independent of the parent property, its category and its Environment type. Empty when the user has not designated it \u2014 never inferred."
+          },
           "zone_names": {
             "type": "array",
             "items": {
@@ -697,6 +705,14 @@
           "zone_name": {
             "type": "string",
             "description": "The existing location zone this space is shown as \u2014 chosen by the user per space (a dormitory zone for a dorm room, an apartment zone for an apartment). Never inferred from the unit name. When empty, the property's default zone applies."
+          },
+          "physical_setting": {
+            "type": "string",
+            "enum": [
+              "indoor",
+              "outdoor"
+            ],
+            "description": "Whether this residence is physically indoors or outdoors. Independent of the property it belongs to. Empty when the user has not designated it \u2014 never inferred."
           }
         },
         "required": [
@@ -712,6 +728,14 @@
       "items": {
         "type": "string"
       }
+    },
+    "physical_setting": {
+      "type": "string",
+      "enum": [
+        "indoor",
+        "outdoor"
+      ],
+      "description": "Whether this place is physically indoors or outdoors. Independent of category, venue type, Environment and any parent location. Empty on records that predate the field \u2014 never inferred."
     },
     "workplaces": {
       "type": "array",
@@ -763,6 +787,14 @@
           "business_type": {
             "type": "string",
             "description": "The business's existing venue type within that category (e.g. casual_restaurant, yoga_studio, clothing_store)"
+          },
+          "physical_setting": {
+            "type": "string",
+            "enum": [
+              "indoor",
+              "outdoor"
+            ],
+            "description": "Whether this business or workspace is physically indoors or outdoors. Independent of the parent property: an outdoor patio or loading yard stays connected to its property while operating outdoors. Empty when the user has not designated it \u2014 never inferred."
           },
           "zone_names": {
             "type": "array",

@@ -9,6 +9,7 @@
  */
 
 import { ZONE_PRESETS } from "./locationFormConfig.js";
+import { UNHOUSED_ZONE_PRESETS } from "./unhousedLivingSpace.js";
 
 const Z = ZONE_PRESETS;
 
@@ -28,6 +29,9 @@ const COURTROOM = [
 
 export const VENUE_ZONE_OPTIONS = {
   // Settlement and outdoor spaces
+  // An encampment's spaces are its own: a tent, a bridge, a sidewalk, a fire barrel.
+  // They are options only, and its structure stays the property's existing zones.
+  unhoused_living_space: UNHOUSED_ZONE_PRESETS,
   city: Z.outdoor,
   district: Z.outdoor,
   neighborhood: Z.outdoor,

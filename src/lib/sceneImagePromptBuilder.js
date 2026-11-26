@@ -121,6 +121,23 @@ export function resolveExistingObjectCueForZone(zoneName) {
  * The environment note for a property viewed as a whole — no single private room is
  * asserted. Used when the selected space is the facility itself.
  */
+/**
+ * PHYSICAL SETTING — the one thing a parent property must never override.
+ *
+ * An outdoor workspace stays outdoors even though its employer occupies a building; an
+ * outdoor residence or an encampment stays outdoors. The picture shows the space that
+ * actually exists, never an invented interior of the property it belongs to.
+ */
+export function buildPhysicalSettingNote(physicalSetting) {
+  if (physicalSetting === 'outdoor') {
+    return `PHYSICAL SETTING: This space is OUTDOORS — open to the sky and the weather even where it is attached to a larger property or building. Never place anyone inside an invented indoor interior (office, hallway, warehouse, lobby, living room, kitchen, bedroom); only the elements the chosen zone itself establishes may appear. `;
+  }
+  if (physicalSetting === 'indoor') {
+    return `PHYSICAL SETTING: This space is INDOORS, inside a building. `;
+  }
+  return '';
+}
+
 export function buildFacilityEnvNote(locationName, hasRefImages, lightingDesc) {
   const layout = hasRefImages
     ? `The reference images show this property as a whole — preserve its architecture, materials and shared surroundings. `

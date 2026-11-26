@@ -22,6 +22,7 @@ import { HOUSEHOLD_ACTION_IDS } from './sceneActionConfig.js';
 import { isOnSiteResidenceZone } from './onsiteResidence.js';
 import { MERCHANDISE_FAMILIES, merchandiseFamiliesForVenue } from './venueMerchandise.js';
 import { resolveZoneVenue } from './venueZoneOptions.js';
+import { zoneHasFireBarrel, zoneHasPortableToilet } from './unhousedLivingSpace.js';
 
 // ── ACTION CLASSIFICATION HELPER ─────────────────────────────────────────────
 // Adds explicit action_class and is_paid to every action definition.
@@ -152,6 +153,28 @@ const PARK_ACTIONS = classifyAll([
   // Marriage is not City Hall's alone: an open-air ceremony uses the same pipeline.
   { id: "gov_marry", label: "Wedding Ceremony", emoji: "💍", cost: 0, type: "functional" },
 ]);
+
+// ── UNHOUSED LIVING SPACE ─────────────────────────────────────────────────────
+// Somewhere a character stays, not a home. Only what the place actually has: there is no
+// shower, no kitchen, no indoor bathroom and no running water here, so none of those
+// activities exist. Resting, sleeping, eating what they already have, drinking water,
+// keeping their things in order, cleaning the immediate area and keeping warm do.
+const UNHOUSED_ACTIONS = classifyAll([
+  { id: "unhoused_rest", label: "Sit and rest", emoji: "🪑", cost: 0, type: "observational" },
+  { id: "unhoused_sleep", label: "Sleep here", emoji: "😴", cost: 0, type: "functional" },
+  { id: "unhoused_eat", label: "Eat what you have", emoji: "🍞", cost: 0, type: "functional", action_category: "food", free_offering: true },
+  { id: "unhoused_water", label: "Drink water", emoji: "💧", cost: 0, type: "functional" },
+  { id: "unhoused_organize", label: "Organize belongings", emoji: "🎒", cost: 0, type: "functional" },
+  { id: "unhoused_clean", label: "Clean the area", emoji: "🧹", cost: 0, type: "functional" },
+  { id: "unhoused_socialize", label: "Talk with others", emoji: "💬", cost: 0, type: "social" },
+  { id: "unhoused_tent", label: "Set up / fix the tent", emoji: "⛺", cost: 0, type: "functional" },
+  { id: "unhoused_layer_up", label: "Layer up against the cold", emoji: "🧥", cost: 0, type: "functional" },
+  { id: "unhoused_check_belongings", label: "Check your belongings", emoji: "🔎", cost: 0, type: "observational" },
+]);
+
+// The two facilities an encampment may actually have. Neither is assumed to exist.
+const UNHOUSED_FIRE_ACTION = { id: "unhoused_fire", label: "Warm up by the fire", emoji: "🔥", cost: 0, type: "observational" };
+const UNHOUSED_TOILET_ACTION = { id: "unhoused_portable_toilet", label: "Use the portable toilet", emoji: "🚻", cost: 0, type: "functional" };
 
 // ── RESTAURANT ────────────────────────────────────────────────────────────────
 const RESTAURANT_ACTIONS = classifyAll([
@@ -696,6 +719,9 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
   street:              PARK_ACTIONS,
   public_square_plaza: PARK_ACTIONS,
   courtyard:           PARK_ACTIONS,
+  // An established place to stay that is not housing. Offered under Outdoor and Generic
+  // only; it never inherits a home's amenities, because it is not a home.
+  unhoused_living_space: UNHOUSED_ACTIONS,
 };
 
 // Name hints for when subtype/identity fields aren't set (checked against location.name)
@@ -1000,6 +1026,18 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
     if (actions === BAR_CLUB_ACTIONS && offersFoodService(zoneVenue)) venueExtras.push(...BAR_FOOD_ACTIONS);
     venueExtras.push(...buildVenueDishActions(zoneVenue));
     if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
+  }
+
+  // An unhoused living space offers only what is actually there. A fire barrel and a
+  // portable toilet exist when the user configured a zone for them — never invented, and
+  // never a household kitchen, shower or indoor bathroom.
+  if (!inOnSiteResidence && libraries[0] === UNHOUSED_ACTIONS) {
+    const facilities = [];
+    if (zoneHasFireBarrel(activeZone)) facilities.push(UNHOUSED_FIRE_ACTION);
+    if (zoneHasPortableToilet(activeZone)) facilities.push(UNHOUSED_TOILET_ACTION);
+    const presentIds = new Set(actions.map((a) => a.id));
+    const additions = classifyAll(facilities).filter((a) => !presentIds.has(a.id));
+    if (additions.length > 0) actions = [...actions, ...additions];
   }
 
   // A school's private student living spaces — a dorm room, a studio apartment, an

@@ -65,7 +65,7 @@ export const SUBTYPE_OPTIONS = {
   food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub", "all_you_can_eat_buffet", "free_food_soup_kitchen"],
   social: ["cocktail_bar", "dive_bar", "sports_bar", "beer_hall", "gay_bar", "lesbian_bar", "queer_bar", "upscale_lounge", "neighborhood_bar", "wine_bar", "tiki_bar", "house_music_club", "hip_hop_club", "electronic_club", "punk_venue", "rock_venue", "latin_dance_club", "country_bar", "jazz_club", "karaoke_bar", "nightclub", "dance_club", "rave_venue", "rooftop_bar", "lounge_club"],
   gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
-  outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza", "slums", "city", "neighborhood"],
+  outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza", "slums", "city", "neighborhood", "unhoused_living_space"],
   grocery: ["grocery_store", "supermarket", "farmers_market", "convenience_store"],
   business: ["clothing_store", "shoe_store", "sneaker_store", "accessories_store", "bookstore", "record_store", "electronics_store", "home_goods_store", "thrift_store", "warehouse", "mall", "shopping_district", "salon", "barbershop"],
   workplace: ["office", "corporate_office", "startup_office", "factory", "warehouse", "retail_store"],
@@ -81,7 +81,7 @@ export const SUBTYPE_OPTIONS = {
   // are the ones the matching categories already use, and no existing choice is removed.
   generic: [
     // Settlement
-    "city", "district", "neighborhood", "slums", "campus",
+    "city", "district", "neighborhood", "slums", "campus", "unhoused_living_space",
     // Residential and buildings
     "building", "residential_building", "apartment_building", "mixed_use",
     "residential_complex", "apartment", "studio_apartment", "house", "condo", "dormitory",
@@ -103,7 +103,7 @@ export const SUBTYPE_OPTIONS = {
 // Display order for the Generic venue type picker. Every entry is one of the identifiers in
 // SUBTYPE_OPTIONS.generic — this groups them for scanning only and adds no option of its own.
 export const GENERIC_VENUE_GROUPS = [
-  { label: "Settlement & Outdoor", types: ["city", "district", "neighborhood", "slums", "campus", "park", "street", "public_square_plaza", "courtyard"] },
+  { label: "Settlement & Outdoor", types: ["city", "district", "neighborhood", "slums", "campus", "unhoused_living_space", "park", "street", "public_square_plaza", "courtyard"] },
   { label: "Residential & Buildings", types: ["building", "residential_building", "apartment_building", "residential_complex", "mixed_use", "apartment", "studio_apartment", "house", "condo", "dormitory"] },
   { label: "Commercial & Employment", types: ["business", "commercial_building", "store_retail", "office", "restaurant", "cafe"] },
   { label: "Medical", types: ["hospital", "medical_facility", "clinic", "health_center"] },
@@ -118,6 +118,7 @@ export const SUBTYPE_LABELS = {
   mixed_use: "Mixed-Use Building",
   store_retail: "Store / Retail",
   house: "House / Home",
+  unhoused_living_space: "Unhoused Living Space",
   public_square_plaza: "Public Square / Plaza",
   restaurant: "Restaurant / Food Service",
 };

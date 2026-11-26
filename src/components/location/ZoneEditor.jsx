@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { X, Upload } from "lucide-react";
+import { X, Upload, Pencil, ChevronUp, ChevronDown } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 
@@ -10,9 +10,42 @@ import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
  * Unchanged behaviour: up to 5 images, uploaded or generated, each attached to this zone's
  * own image list. A picture that belongs to one of the property's businesses is labelled
  * with that business's name so the master list can name whose room it is.
+ *
+ * The name is editable in place and the zone can be moved within the list. Renaming is a
+ * name change only — the zone keeps its position in the record, its images, and every
+ * business, residence and character recorded against it.
  */
-export default function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePrimaryCategory, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "", workplaceByImageUrl = {} }) {
+export default function ZoneEditor({
+  zone,
+  onUpdateImages,
+  onDelete,
+  onTogglePrimaryCategory,
+  onRename,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp = false,
+  canMoveDown = false,
+  readOnly = false,
+  locationName = "",
+  category = "",
+  subtype = [],
+  locationDescription = "",
+  workplaceByImageUrl = {},
+}) {
   const [uploading, setUploading] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState(zone.zone_name || "");
+
+  const startRename = () => {
+    setNameValue(zone.zone_name || "");
+    setEditingName(true);
+  };
+
+  const commitRename = () => {
+    const trimmed = nameValue.trim();
+    if (trimmed && trimmed !== zone.zone_name) onRename?.(trimmed);
+    setEditingName(false);
+  };
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -55,11 +88,50 @@ export default function ZoneEditor({ zone, onUpdateImages, onDelete, onTogglePri
 
   return (
     <div className="border border-border rounded-xl p-3 space-y-3 bg-secondary/30">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-foreground">{zone.zone_name}</p>
-        {!readOnly && <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
-        <X className="w-3.5 h-3.5" />
-        </button>}
+      <div className="flex items-center justify-between gap-1">
+        {editingName ? (
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <input
+              value={nameValue}
+              onChange={e => setNameValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") setEditingName(false);
+              }}
+              autoFocus
+              className="flex-1 min-w-0 h-7 px-2 rounded-lg bg-secondary border border-border text-xs text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+            />
+            <button onClick={commitRename} className="text-[11px] px-2 py-1 rounded-lg bg-primary text-primary-foreground flex-shrink-0">Save</button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <p className="text-sm font-medium text-foreground truncate">{zone.zone_name}</p>
+            {!readOnly && (
+              <button onClick={startRename} title="Rename this zone" className="p-1 text-muted-foreground hover:text-primary transition-colors rounded-lg flex-shrink-0">
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          {!readOnly && onMoveUp && (
+            <button onClick={onMoveUp} disabled={!canMoveUp} title="Move up"
+              className={`p-1 rounded-lg transition-colors ${canMoveUp ? "text-muted-foreground hover:text-foreground" : "text-muted-foreground/30 cursor-default"}`}>
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!readOnly && onMoveDown && (
+            <button onClick={onMoveDown} disabled={!canMoveDown} title="Move down"
+              className={`p-1 rounded-lg transition-colors ${canMoveDown ? "text-muted-foreground hover:text-foreground" : "text-muted-foreground/30 cursor-default"}`}>
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!readOnly && (
+            <button onClick={onDelete} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
       {!readOnly && (
         <label className="flex items-center gap-2 cursor-pointer select-none -mt-1">

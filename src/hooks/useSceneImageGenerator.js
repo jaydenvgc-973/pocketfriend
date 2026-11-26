@@ -12,7 +12,9 @@ import { prioritizeAvatarReferences } from "@/lib/characterIdentityLock";
 import { buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
-import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
+import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone, buildPhysicalSettingNote } from "@/lib/sceneImagePromptBuilder";
+import { physicalSettingFor } from "@/lib/physicalSetting";
+import { isUnhousedLivingSpace } from "@/lib/unhousedLivingSpace";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
@@ -268,7 +270,9 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no coworkers, no employees, no residents, no background figures under any circumstances.`;
         // A home's residential constraint belongs to a home. Inside a vehicle the picture is
         // composed as a car cabin, never as a furnished living space.
-        if (isHomeLocation && !environmentRefsOverride) {
+        // An encampment is not a home interior: no furnished living space is ever composed
+        // around people sleeping in a tent or under a bridge.
+        if (isHomeLocation && !environmentRefsOverride && !isUnhousedLivingSpace(location)) {
           finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
         }
       }
@@ -279,7 +283,7 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         // "preserve this room's layout" note.
         finalPrompt += ` ` + environmentNote;
       } else if (envRefs.length > 0) {
-        finalPrompt += ` ` + (currentZoneForAction
+        finalPrompt += ` ` + buildPhysicalSettingNote(physicalSettingFor(location, currentZoneForAction?.zone_name)) + (currentZoneForAction
           ? buildActionEnvNote(currentZoneForAction.zone_name, true, lightingDesc)
           : buildFacilityEnvNote(location.name, true, lightingDesc));
       }
@@ -311,9 +315,10 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
     const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
     // No single room is the scene (the property as a whole): the note describes the
     // property itself instead of asserting a room nobody selected.
-    const envNote = currentZoneForAction
+    // The designated setting outranks assumptions about the parent property.
+    const envNote = buildPhysicalSettingNote(physicalSettingFor(location, activeZoneName)) + (currentZoneForAction
       ? buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue)
-      : buildFacilityEnvNote(location.name, authoratativeEnvRefs.length > 0, lightingDesc);
+      : buildFacilityEnvNote(location.name, authoratativeEnvRefs.length > 0, lightingDesc));
 
     let prompt;
     if (isHomeLocation) {

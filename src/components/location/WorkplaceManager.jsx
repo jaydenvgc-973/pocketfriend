@@ -7,6 +7,7 @@ import WorkplaceZoneImages from "@/components/location/WorkplaceZoneImages";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import { Input } from "@/components/ui/input";
 import { ZONE_PRESETS } from "@/lib/locationFormConfig";
+import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
 /**
  * WorkplaceManager — the individual businesses inside ONE location.
@@ -266,6 +267,15 @@ export default function WorkplaceManager({
                       className="w-full px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 resize-y"
                     />
                   </div>
+
+                  {/* Where this business physically is — independent of the property it
+                      belongs to. An outdoor patio or yard stays connected to its property
+                      while operating outdoors. */}
+                  <PhysicalSettingToggle
+                    value={workplace.physical_setting}
+                    onChange={(value) => updateWorkplace(workplace.workplace_id, { physical_setting: value || "" })}
+                    hint="Independent of the property: an outdoor patio, yard or stand stays connected to it."
+                  />
 
                   <div className="space-y-1">
                     <label className="text-[10px] text-muted-foreground uppercase tracking-wider">

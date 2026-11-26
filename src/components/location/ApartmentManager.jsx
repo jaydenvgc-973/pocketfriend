@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X, Pencil, Trash2, UserPlus, ArrowRight } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
 const UNKNOWN_NAME = "Unknown resident";
 
@@ -68,6 +69,7 @@ export default function ApartmentManager({
       unit_name: name,
       occupant_character_ids: [],
       zone_name: "",
+      physical_setting: "",
     };
     onChange([...units, newUnit]);
     setNewUnitName("");
@@ -95,6 +97,11 @@ export default function ApartmentManager({
   // image: the zone is chosen per space from the property's own zones, never inferred.
   const handleSetUnitZone = (unitId, zoneName) => {
     onChange(units.map(u => u.unit_id === unitId ? { ...u, zone_name: zoneName } : u));
+  };
+
+  // Where this residence physically is — independent of the property it belongs to.
+  const handleSetUnitPhysicalSetting = (unitId, value) => {
+    onChange(units.map(u => u.unit_id === unitId ? { ...u, physical_setting: value } : u));
   };
 
   const handleAssignResident = (unitId, charId) => {
@@ -223,6 +230,11 @@ export default function ApartmentManager({
                     </select>
                   </div>
                 )}
+
+                <PhysicalSettingToggle
+                  value={unit.physical_setting}
+                  onChange={(value) => handleSetUnitPhysicalSetting(unit.unit_id, value || "")}
+                />
 
                 {/* Occupants */}
                 {occupants.length > 0 && (
