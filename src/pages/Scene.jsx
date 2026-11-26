@@ -39,7 +39,7 @@ import { getEnvironmentTypeForZone, getLocationEnvironments, isEnvironmentAccess
 import { isOnSiteResidenceZone } from "@/lib/onsiteResidence";
 import { ACTION_IMAGE_PROMPTS, buildDirectedActionPrompt, HOUSEHOLD_ACTION_IDS, EATING_ACTION_IDS, SHOWER_ACTION_IDS, IN_WORLD_ACTIVITY_TEXT } from "@/lib/sceneActionConfig";
 import { getSceneInteractions, getTemporarySceneStaff } from "@/lib/sceneInteractionEngine";
-import { checkImageTrigger as _checkImageTrigger } from "@/lib/sceneCheckImageTrigger";
+import { checkImageTrigger as _checkImageTrigger, isPurchaseOfferAction, presentOfferInWatchedScene } from "@/lib/sceneCheckImageTrigger";
 import { buildTryOnPrompt, resolveTryOnZone } from "@/lib/sceneTryOnPrompt";
 import { createImageParticipantSelector } from "@/lib/sceneImageParticipants";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
@@ -1486,7 +1486,7 @@ export default function Scene() {
 
   // Inside the car the picture stays the car: a text-triggered room or item picture would
   // replace the vehicle the scene is actually happening in.
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null, purchaseMerchandise = null) => { if (ride) return; _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, location, messages, generateFocusedImage, setMessages }); };
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null, purchaseMerchandise = null, payerType = null, payerCharacterId = null) => { if (ride) return; _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, payerType, payerCharacterId, location, messages, generateFocusedImage, setMessages }); };
 
   // A narrative is something that has already happened, dialogue included. It is recorded
   // as canon so character replies treat it as a recent lived experience, never as words
@@ -1497,7 +1497,7 @@ export default function Scene() {
   // the user said. It is shown as a centered scene activity — never as an outgoing
   // message — and it tells the scene whether the moment has already happened (immediate)
   // or is behavior being carried out now (direct).
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null, purchaseMerchandise = null, { continuation = false } = {}) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, directedTarget = null, activity = null, purchaseItemKind = null, purchaseMerchandise = null, { continuation = false, payerType = null, payerCharacterId = null } = {}) => {
     if (!location) return;
     // LET THEM CONTINUE — nobody said anything new. The people here carry the moment on
     // by themselves instead of stopping and waiting for the user's next line.
@@ -1517,7 +1517,7 @@ export default function Scene() {
       if (wpSender) base44.functions.invoke('sendWorldPhoneMessage', { sender_character_id: wpSender.id, recipient_identifier: wpIntent.recipient, requested_message: wpIntent.message, user_instruction_context: wpIntent.message ? null : text, source: 'user_instruction', owner_email: currentUser?.email }).catch(err => console.warn('[Scene] World Phone send failed:', err?.message));
     }
 
-    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise);
+    checkImageTrigger(text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, payerType, payerCharacterId);
     setIsTyping(true);
 
     // Identity and memory for everyone here, fetched together rather than one group after
@@ -1779,6 +1779,8 @@ export default function Scene() {
     }
     const names = actors.map((a) => a.name).filter(Boolean);
     const whoNames = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+    // A watched offer opens the same product card — nothing is charged or eaten until it is accepted.
+    if (isPurchaseOfferAction(action)) { presentOfferInWatchedScene({ action, names, actorId: actors[0].id, locationName: location?.name, setMessages, checkImageTrigger, activityBehaviorFor, activityFeedLine }); return; }
     // An interface-only label never becomes character vocabulary: the scene is given what
     // is actually happening instead of the button's name.
     const inWorld = IN_WORLD_ACTIVITY_TEXT[action.id] || null;
@@ -2124,7 +2126,19 @@ export default function Scene() {
       const actionClass = action.action_class;
       const payer = action.payer || "user"; const cost = Number(action.cost) || 0;
       const isPaidClass = actionClass && ['purchase', 'service', 'fee'].includes(actionClass);
-      const isProductCardAction = actionClass === 'purchase' && cost > 0 && payer === 'user' && !!action.action_category && action.purchase_source != null;
+      // An explicitly paid purchase offers its product card whoever is paying. A character
+      // paying for the item is not a reason to skip the interactive offer and charge at
+      // once — the card, the Try On and the purchase step stay available either way.
+      const isProductCardAction = actionClass === 'purchase' && cost > 0 && !!action.action_category && action.purchase_source != null;
+      // WHO PAYS: a character-paid action by that character, and when the user is only
+      // viewing, the character present buys with their own funds — never the absent user's.
+      const actingCharacter = actingPeople.find((p) => p && p.id && !p.isUser && p.id !== currentUser?.id && !p.isNpc)
+        || actingPeople.find((p) => p && p.id && !p.isUser && p.id !== currentUser?.id) || null;
+      const payerCharacter = payer === 'character'
+        ? (broughtCharacters[0] || actingCharacter || null)
+        : (observeMode ? actingCharacter : null);
+      const payerType = payer === 'character' || !!payerCharacter ? 'character' : 'user';
+      const payerCharacterId = payerType === 'character' ? (payerCharacter?.id || null) : null;
       // Explicitly free food (soup kitchen meal, complimentary bar snack) — shown in the
       // Shopfeed card at no charge, never through the purchase path.
       const isFreeOfferingAction = !!action.free_offering && !!action.action_category;
@@ -2163,6 +2177,8 @@ export default function Scene() {
         }),
         emoji: action.emoji,
         behavior,
+        payerType,
+        payerCharacterId,
       }, isProductCardAction ? (action.item_kind || null) : null, isProductCardAction ? (action.merchandise || null) : null);
       setTimeout(() => { setActions(getSceneInteractions(location, activeZone || locationZones[0]?.zone_name, null)); }, 1000);
     } finally { setActionCooldown(false); }

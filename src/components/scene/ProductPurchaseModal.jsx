@@ -58,7 +58,14 @@ export default function ProductPurchaseModal({
   const [error, setError] = useState(null);
   const [recipientId, setRecipientId] = useState(null);
   const [recipientQuery, setRecipientQuery] = useState("");
-  const [payerId, setPayerId] = useState("user");
+  // The payer starts as the User when they are here shopping. When the user is only
+  // viewing, the User is not at the store: the character present is the one buying, so
+  // their own funds are offered first and the absent User is never charged by default.
+  const [payerId, setPayerId] = useState(() => {
+    if (userPresent) return "user";
+    const candidate = (traveledWithChars || []).find((c) => c?.id && !onShiftEmployeeIds.includes(c.id));
+    return candidate?.id || "user";
+  });
   // A purchase whose payment already succeeded but whose closet handoff did not.
   // While this is set, Buy finishes that step only — it never charges again.
   // The ref is the synchronous authority (the catch below must know, in the same tick,

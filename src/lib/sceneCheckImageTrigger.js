@@ -20,8 +20,10 @@
  * - Category-based auto-purchase — gone
  */
 
+import { base44 } from '@/api/base44Client';
 import { extractSceneItemLabel } from './sceneItemResolver.js';
 import { pickMerchandise } from './venueMerchandise.js';
+import { EATING_ACTION_IDS } from './sceneActionConfig.js';
 
 /**
  * checkImageTrigger
@@ -40,6 +42,47 @@ import { pickMerchandise } from './venueMerchandise.js';
  * @param {Function} params.generateFocusedImage
  * @param {Function} params.setMessages
  */
+/**
+ * Whether choosing this activity makes an OFFER rather than describing something done:
+ * an explicitly priced purchase, or an explicitly free item. These are the activities that
+ * must present their product card — whoever is paying, and whether or not the user is
+ * physically in the scene.
+ */
+export function isPurchaseOfferAction(action) {
+  if (!action) return false;
+  const cost = Number(action.cost) || 0;
+  const paid = action.action_class === 'purchase' && cost > 0 && !!action.action_category && action.purchase_source != null;
+  const free = !!action.free_offering && !!action.action_category;
+  return paid || free;
+}
+
+/**
+ * An offer chosen while the user is only watching: the activity line, then the same
+ * product card the person standing here sees. Nothing is charged, eaten or owned until
+ * the card is accepted. The character present is the buyer — their own funds, not the
+ * absent user's.
+ */
+export function presentOfferInWatchedScene({ action, names, actorId, locationName, setMessages, checkImageTrigger, activityBehaviorFor, activityFeedLine }) {
+  const cost = Number(action.cost) || 0;
+  const isPaid = action.action_class === 'purchase' && cost > 0;
+  const behavior = activityBehaviorFor(action);
+  // A meal the character actually takes is recognised exactly as it is when the user is
+  // present — the same established eating record, never a charge.
+  if (EATING_ACTION_IDS.includes(action.id) && actorId) {
+    const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack' : 'meal';
+    base44.functions.invoke('recordEatingEvent', { characterId: actorId, mealSize, foodDescription: action.label, locationName }).catch(() => {});
+  }
+  setMessages((prev) => [...prev, {
+    id: `obs_act_${Date.now()}`,
+    sender: "activity",
+    content: activityFeedLine({ actionId: action.id, label: action.label, verb: behavior === "immediate" ? (action.past_verb || action.verb) : action.verb, participants: names }),
+    emoji: action.emoji,
+    is_canon_event: false,
+    timestamp: new Date().toISOString(),
+  }]);
+  checkImageTrigger(`[${action.emoji} ${action.label}]`, null, action.action_category, isPaid ? cost : null, isPaid ? (action.purchase_source || 'menu') : 'complimentary', !isPaid, action.item_kind || null, action.merchandise || null, 'character', actorId);
+}
+
 export function checkImageTrigger({
   text,
   actionImagePrompt = null,
@@ -49,6 +92,11 @@ export function checkImageTrigger({
   isFreeOffering = false,
   purchaseItemKind = null,
   purchaseMerchandise = null,
+  // WHO PAYS this offer. The person clicking the interface is not automatically the payer:
+  // a character buying their own food pays with their own funds, and a character-paid offer
+  // is charged to that character. Carried on the card so Accept charges the right person.
+  payerType = null,
+  payerCharacterId = null,
   location,
   messages,
   generateFocusedImage,
@@ -116,6 +164,8 @@ export function checkImageTrigger({
       // Show me something else stay in the same category and try on the same item.
       item_merchandise: merchandise?.family || null,
       item_merchandise_families: purchaseMerchandise ? [].concat(purchaseMerchandise) : null,
+      payer_type: payerType || 'user',
+      payer_character_id: payerType === 'character' ? (payerCharacterId || null) : null,
       timestamp: new Date().toISOString(),
     }]);
     return;

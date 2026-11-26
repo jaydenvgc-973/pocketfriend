@@ -143,18 +143,23 @@ export default function SceneProductCard({
       // Consumable — route through transaction authority.
       // RULE: No direct UserSettings.update here. Balance changes must pass through executeSceneTransaction.
       const cost = msg.price;
+      // The offer knows who is paying. A character buying their own food pays with their
+      // own funds; the person clicking the card is not turned into the payer.
+      const payerIsCharacter = msg.payer_type === 'character' && !!msg.payer_character_id;
       if (cost > 0) {
         base44.functions.invoke('executeSceneTransaction', {
           action_class: 'purchase',
           is_paid: true,
           cost,
-          payer_type: 'user',
+          payer_type: payerIsCharacter ? 'character' : 'user',
+          character_id: payerIsCharacter ? msg.payer_character_id : null,
           action_id: msg.id,
           purchase_source: msg.purchase_source || 'menu',
           action_label: msg.item_label,
           location_name: msg.locationName,
         }).then(() => {
           queryClient.invalidateQueries({ queryKey: ['userSettings'] });
+          if (payerIsCharacter) queryClient.invalidateQueries({ queryKey: ['characters'] });
         }).catch(() => {});
       }
       setMessages(prev => prev.map(m =>
