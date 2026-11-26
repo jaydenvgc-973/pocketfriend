@@ -22,6 +22,9 @@ export default function OnSiteResidenceSection({
   residentNames = {},
   lockedZoneNames = [],
   onPersist,
+  // What the parent property is called in this section's copy. A business property is a
+  // business; a Generic location that contains a living space is a property.
+  contextLabel = "business",
 }) {
   const [open, setOpen] = useState(false);
   const residence = getOnSiteResidence(form);
@@ -45,7 +48,7 @@ export default function OnSiteResidenceSection({
             <p className="text-[11px] text-muted-foreground mt-0.5">
               {residence
                 ? `${residence.name} · ${(residence.zone_names || []).length} room${(residence.zone_names || []).length === 1 ? "" : "s"} · ${residentCount} resident${residentCount === 1 ? "" : "s"}`
-                : "A living space inside this business. The business keeps its category, hours and staff."}
+                : `A living space inside this ${contextLabel}. The ${contextLabel} keeps its category, hours and staff.`}
             </p>
           </div>
           <Button size="sm" variant="outline" onClick={() => setOpen(true)} className="rounded-xl flex-shrink-0">
@@ -78,6 +81,7 @@ export default function OnSiteResidenceSection({
           }))}
           onSave={handleSave}
           onClose={() => setOpen(false)}
+          contextLabel={contextLabel}
         />
       )}
     </>

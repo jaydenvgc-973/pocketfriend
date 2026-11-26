@@ -119,8 +119,7 @@ export const VENUE_NPCS = {
 // only: they are never staff on shift, never permanent character records, and never
 // selected into the scene by themselves. Who is around still follows the existing
 // venue, zone, time-of-day and scene-context behavior.
-export const VENUE_NPCS_BY_SUBTYPE = {
-  outdoor: {
+const SETTLEMENT_NPCS = {
     slums: [
       { id: "npc_person_walking", name: "Person walking", role: "Passerby", npcType: "customer" },
       { id: "npc_person_on_corner", name: "Person standing on a corner", role: "Passerby", npcType: "customer" },
@@ -144,7 +143,14 @@ export const VENUE_NPCS_BY_SUBTYPE = {
       { id: "npc_delivery_worker", name: "Delivery worker", role: "Delivery worker", npcType: "customer" },
       { id: "npc_jogger", name: "Jogger", role: "Neighbor", npcType: "customer" },
     ],
-  },
+};
+
+// A Generic location that is a city, a neighborhood or slums is that kind of settlement, so
+// it has the same ambient people an outdoor venue of that type has. Ambient only: never
+// staff on shift, never permanent residents, never selected into a scene by themselves.
+export const VENUE_NPCS_BY_SUBTYPE = {
+  outdoor: SETTLEMENT_NPCS,
+  generic: SETTLEMENT_NPCS,
 };
 
 // The ambient people for a location: its venue type when that venue type defines them,

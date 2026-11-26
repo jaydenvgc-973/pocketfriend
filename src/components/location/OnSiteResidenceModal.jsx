@@ -36,6 +36,7 @@ export default function OnSiteResidenceModal({
   onUpdateZoneImages,
   onSave,
   onClose,
+  contextLabel = "business",
 }) {
   const existing = useMemo(
     () => getOnSiteResidence({ environments, category: "business" }),
@@ -146,7 +147,7 @@ export default function OnSiteResidenceModal({
             <div>
               <h3 className="text-sm font-semibold text-foreground">On-Site Residence</h3>
               <p className="text-[10px] text-muted-foreground">
-                A living space inside {locationName || "this business"} — the business stays a business.
+                A living space inside {locationName || `this ${contextLabel}`} — the {contextLabel} keeps its own category and spaces.
               </p>
             </div>
           </div>
@@ -272,7 +273,7 @@ export default function OnSiteResidenceModal({
                           locationName={name.trim() || locationName}
                           category="home"
                           subtype={[]}
-                          locationDescription="Residential living space inside a business property"
+                          locationDescription={`Residential living space inside this ${contextLabel}`}
                           hasExistingImage={images.length > 0}
                           existingZoneImageUrls={images}
                           onGenerate={(url) => onUpdateZoneImages?.(zoneName, [...images, url])}
@@ -352,7 +353,7 @@ export default function OnSiteResidenceModal({
 
           <p className="text-[10px] text-muted-foreground">
             {existingLocation
-              ? "Saved on this property — the business's own settings are untouched."
+              ? `Saved on this property — the ${contextLabel}'s own settings are untouched.`
               : "Applied to this new location — kept when you add the location."}
           </p>
         </div>

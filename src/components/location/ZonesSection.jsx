@@ -13,6 +13,10 @@ import ZoneEditor from "@/components/location/ZoneEditor";
 export default function ZonesSection({
   zones = [],
   presets = [],
+  // Optional labelled groups of presets. A Generic location can hold dozens of different
+  // space types, so its picker is grouped by kind; every other category keeps the plain
+  // chip row it already had.
+  presetGroups = null,
   existingZoneNames = [],
   expanded = true,
   onToggle = null,
@@ -35,6 +39,23 @@ export default function ZonesSection({
   workplaceByImageUrl = {},
 }) {
   const imageCount = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
+
+  const presetChip = (name) => {
+    const already = existingZoneNames.includes(name.toLowerCase());
+    return (
+      <button key={name} onClick={() => onAddPreset?.(name)} disabled={already}
+        className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${already ? "bg-primary/10 border-primary/30 text-primary cursor-default" : "bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
+        {already ? "✓ " : "+ "}{name}
+      </button>
+    );
+  };
+
+  const customZoneButton = (
+    <button onClick={onToggleCustomInput}
+      className="px-3 py-1.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors">
+      + Custom zone
+    </button>
+  );
 
   return (
     <div className="space-y-3">
@@ -65,21 +86,22 @@ export default function ZonesSection({
       {expanded && (
         <>
           {lockedNotice}
-          <div className="flex flex-wrap gap-2">
-            {presets.map(name => {
-              const already = existingZoneNames.includes(name.toLowerCase());
-              return (
-                <button key={name} onClick={() => onAddPreset?.(name)} disabled={already}
-                  className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${already ? "bg-primary/10 border-primary/30 text-primary cursor-default" : "bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
-                  {already ? "✓ " : "+ "}{name}
-                </button>
-              );
-            })}
-            <button onClick={onToggleCustomInput}
-              className="px-3 py-1.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors">
-              + Custom zone
-            </button>
-          </div>
+          {presetGroups?.length ? (
+            <div className="space-y-3">
+              {presetGroups.map(group => (
+                <div key={group.label}>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">{group.label}</p>
+                  <div className="flex flex-wrap gap-2">{group.zones.map(presetChip)}</div>
+                </div>
+              ))}
+              {customZoneButton}
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {presets.map(presetChip)}
+              {customZoneButton}
+            </div>
+          )}
           {showCustomInput && (
             <div className="flex gap-2">
               <Input value={customZoneName} onChange={e => onCustomZoneNameChange?.(e.target.value)} placeholder="e.g. Rooftop, Garage, Studio..." className="h-9 rounded-xl text-sm" onKeyDown={e => e.key === "Enter" && onAddCustomZone?.()} />

@@ -44,7 +44,7 @@ import { useStableLocationReferences } from "@/hooks/useStableLocationReferences
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 import { usePageContext } from "@/hooks/usePageContext";
 import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
-import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
+import { ZONE_PRESETS, GENERIC_ZONE_GROUPS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
 
@@ -644,9 +644,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const homeWithWorkplace = form.category === 'home' && (form.venue_types || []).includes('workplace');
   // A standalone business property carries establishments of its own too, so the same
   // Workspaces section is reachable there — not only on a Home that opted into it.
+  // A Generic location can be a whole mixed-use property or city, so the businesses inside
+  // it are the same establishments, each keeping its own venue category, staff and hours.
   const canContainWorkplaces = homeWithWorkplace || [
     'workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'school',
     'medical', 'grocery', 'religion', 'government', 'community', 'transportation', 'hotel',
+    'generic',
   ].includes(form.category);
 
   const addPresetZone = (name) => {
@@ -930,6 +933,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       <ZonesSection
         zones={form.zones}
         presets={presets}
+        presetGroups={form.category === 'generic' ? GENERIC_ZONE_GROUPS : null}
         existingZoneNames={existingZoneNames}
         expanded={zonesExpanded}
         onToggle={() => setZonesExpanded(v => !v)}
@@ -956,8 +960,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         workplaceByImageUrl={workplaceNameByImageUrl}
       />
 
-      {/* ── ON-SITE RESIDENCE (business properties) ── */}
-      {form.category === 'business' && (
+      {/* ── ON-SITE RESIDENCE (business and Generic properties) ──
+          The same existing residence: a residential environment on the property itself,
+          its rooms the property's own zones, its people the property's own residents. A
+          Generic property may house people this way without becoming a Home. */}
+      {(form.category === 'business' || form.category === 'generic') && (
         <OnSiteResidenceSection
           form={form}
           setForm={setForm}
@@ -967,6 +974,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           residentNames={residentNameById}
           lockedZoneNames={lockedRecoveryYardZoneNames(editingLocation, currentUser?.role === 'admin')}
           onPersist={handleSave}
+          contextLabel={form.category === 'generic' ? 'property' : 'business'}
         />
       )}
 
@@ -1241,7 +1249,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       {(() => {
         const isHomeBuilding = form.category === 'home' && form.subtype.includes('building');
         // A school can house students in dorm rooms or apartments, using the same units.
-        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison', 'school'].includes(form.category)) return null;
+        // A Generic property can hold its own residences — apartments, studios and houses —
+        // each an existing residential unit with its own residents.
+        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison', 'school', 'generic'].includes(form.category)) return null;
 
         // A patient room and a prison cell are temporary: once the stay ends the occupant is
         // no longer assigned, so the space is free for someone else. Apartments, hotel rooms
@@ -1287,6 +1297,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             ...alreadyAssigned,
           ])];
           labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Residential students of this school and characters whose home is this school can be assigned to a dorm room or apartment." };
+        } else if (form.category === 'generic') {
+          // A Generic property may contain several distinct residences. Each unit keeps its
+          // own occupants, so nobody in one apartment or house is treated as living in another.
+          labels = { sectionLabel: "Residential Units", unitSingular: "unit", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Lakeview House...", emptyHint: "Add residents to this location first, then create the units or houses they live in." };
         }
 
         // The section folds to its heading, the same way a business does in Workspaces, so
@@ -1323,7 +1337,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 allCharacters={allCharacters}
                 nameById={characterNameById}
                 maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
-                zoneOptions={form.category === 'school' ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
+                zoneOptions={['school', 'generic'].includes(form.category) ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
                 onChange={(units) => update("residential_units", units)}
                 {...labels}
               />
