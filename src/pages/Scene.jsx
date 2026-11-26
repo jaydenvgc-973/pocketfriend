@@ -31,7 +31,7 @@ import ChangeClothesModal from "@/components/scene/ChangeClothesModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import ObserveStageControls from "@/components/scene/ObserveStageControls";
-import SceneTargetPicker from "@/components/scene/SceneTargetPicker";
+import SceneTargetPickers from "@/components/scene/SceneTargetPickers";
 import { getCourtActionAuthority, courtActors, courtSubjects, courtActionLine } from "@/lib/courtroomActions";
 import { generateObserveBeat, recordObserveBeatMemories, recordVoicedLineMemory, recordNarrativeMemories } from "@/lib/observeInteraction";
 import NPCEvolutionTracker from "@/components/scene/NPCEvolutionTracker";
@@ -677,7 +677,10 @@ export default function Scene() {
   //   + Appearance Lock reinforcement → participant binding → Closet → composition
   // The avatar is the main established image — always included, NOT a fallback.
   // reference_image_urls supplement the avatar with more angles/detail.
-  const { sceneImage, setSceneImage, isGeneratingImage, generateSceneImage } = useSceneImageGenerator();
+  // The scene's own transcript goes to the picture: what its people have already said, and
+  // what has been narrated, is the record of their current physical state — so an image can
+  // never contradict an action the scene has already established.
+  const { sceneImage, setSceneImage, isGeneratingImage, generateSceneImage } = useSceneImageGenerator({ transcript: messages });
 
   useEffect(() => {
     if (broughtCharacters.length === 0) return;
@@ -2341,70 +2344,9 @@ export default function Scene() {
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
 
-      {/* Who performs it — asked only when more than one eligible character is here. */}
-      <SceneTargetPicker
-        action={actorAction?.action}
-        targets={actorAction?.mode === "directed"
-          ? directedActorsFor(actorAction?.action)
-          : eligibleForAction(observeMode ? observeActors : activityActors, actorAction?.action)}
-        onSelect={handleActorSelect}
-        onConfirm={handleActorsConfirm}
-        multiple={actorAction?.mode === "activity" && actorAction?.action?.id !== "pickpocket"}
-        confirmLabel="Do it together"
-        onClose={() => setActorAction(null)}
-        heading={actorAction ? `${actorAction.action.emoji} ${actorAction.action.label} — ${actorAction.mode === "activity" && observeMode ? "who takes part?" : "who does it?"}` : null}
-        hint={actorAction?.mode === "directed"
-          ? "The person who starts it. Only people who are here can be chosen."
-          : actorAction?.mode === "activity"
-            ? (observeMode
-              ? "Pick one person or several — they take part together. Only people who are here can be chosen."
-              : "Whoever you pick does it — nobody is assumed. Only people in this scene can be chosen.")
-            : "Only people in this scene can be chosen — you included, whenever you are here."}
-      />
-      <SceneTargetPicker action={directedAction} targets={directedPartnersFor(directedAction, directedAction?.actorId)} onSelect={handleDirectedTarget} onClose={() => setDirectedAction(null)} />
-      {/* Pickpocket names two people: who attempts it, then whose pocket. Never assumed. */}
-      <SceneTargetPicker
-        action={crimeTargetAction?.action}
-        targets={crimeTargetOptions}
-        onSelect={handleCrimeTargetSelect}
-        onClose={() => setCrimeTargetAction(null)}
-        heading={crimeTargetAction ? crimeTargetAction.action.emoji + " " + (crimeTargetAction.actor?.name || "They") + " — whose pocket?" : null}
-        hint="Only people in this scene can be chosen, and never the person attempting it."
-      />
-      <SceneTargetPicker
-        action={recipientAction}
-        targets={recipientTargets}
-        onSelect={(person) => { const pending = recipientAction; setRecipientAction(null); performRecipientAction(pending, person); }}
-        onClose={() => setRecipientAction(null)}
-        heading={recipientAction ? `${recipientAction.emoji} ${recipientAction.label} — who is involved?` : null}
-        hint="Only people who are here can be chosen."
-      />
-      {/* Try On — who in this scene wears the item from the card. Only people here. */}
-      <SceneTargetPicker
-        action={tryOnRequest ? { emoji: "🪞", label: `Try on the ${tryOnRequest.msg.item_label || "item"}` } : null}
-        targets={tryOnRequest?.cast || []}
-        onSelect={handleTryOnConfirm}
-        onClose={() => setTryOnRequest(null)}
-        heading={tryOnRequest ? `Try on the ${tryOnRequest.msg.item_label || "item"} — who?` : null}
-        hint="Only people in this scene can try it on."
-      />
-      {/* Courtroom activities: the role assigned in the setup decides who may act. */}
-      <SceneTargetPicker
-        action={courtActorAction}
-        targets={courtActors(courtCase, courtActorAction?.id)}
-        onSelect={(person) => { const pending = courtActorAction; setCourtActorAction(null); runCourtAction(pending, person); }}
-        onClose={() => setCourtActorAction(null)}
-        heading={courtActorAction ? `${courtActorAction.emoji} ${courtActorAction.label} — who does it?` : null}
-        hint="The role assigned in the court setup decides who may do this."
-      />
-      <SceneTargetPicker
-        action={courtSubjectAction?.action}
-        targets={courtSubjects(courtCase, courtSubjectAction?.action?.id).filter((p) => p.id !== courtSubjectAction?.actor?.id)}
-        onSelect={(person) => { const pending = courtSubjectAction; setCourtSubjectAction(null); runCourtAction(pending.action, pending.actor, person); }}
-        onClose={() => setCourtSubjectAction(null)}
-        heading={courtSubjectAction ? `${courtSubjectAction.action.emoji} ${courtSubjectAction.action.label} — who is it directed at?` : null}
-        hint="Only people in this proceeding can be chosen."
-      />
+      {/* Every "who" picker in this scene — who does it, who it is aimed at, whose pocket,
+          who is involved, who tries the item on, and who holds each courtroom role. */}
+      <SceneTargetPickers v={{ actorAction, directedActorsFor, eligibleForAction, observeMode, observeActors, activityActors, handleActorSelect, handleActorsConfirm, setActorAction, directedAction, directedPartnersFor, handleDirectedTarget, setDirectedAction, crimeTargetAction, crimeTargetOptions, handleCrimeTargetSelect, setCrimeTargetAction, recipientAction, recipientTargets, performRecipientAction, setRecipientAction, tryOnRequest, handleTryOnConfirm, setTryOnRequest, courtActorAction, courtCase, courtActors, runCourtAction, setCourtActorAction, courtSubjectAction, courtSubjects, setCourtSubjectAction }} />
       <InviteToSceneModal isOpen={showInviteModal} onClose={() => setShowInviteModal(false)} location={location} characters={characters} userDisplayName={displayName} initiator={characterInviter} onCharacterArrived={(char) => { setExtraNpcs((prev) => prev.find((n) => n.id === char.id) ? prev : [...prev, char]); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `${char.name} arrives at ${location.name}.`, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["activeCharacters", currentUser?.email] }); queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); }} />
       <ConversationTypeSelector isOpen={!!conversationModal} onClose={() => setConversationModal(null)} onSelect={(conversationType) => { if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) { setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName }); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You pull ${conversationModal.npcName} aside for a private conversation.`, timestamp: new Date().toISOString() }]); } else setPrivateTarget(null); }} npcName={conversationModal?.npcName || "them"} hasEmployees={conversationModal?.hasEmployees || false} isGroup={conversationModal?.isGroup || false} />
       <LeaveLocationModal isOpen={showLeaveModal} onClose={() => setShowLeaveModal(false)} locationName={location.name} broughtCharacters={broughtCharacters} onLeaveWithChars={handleLeaveWithCharacters} onLeaveCharactersBehind={handleLeaveCharactersBehind} onStayHere={handleStayHere} />

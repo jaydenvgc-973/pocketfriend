@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { buildSealedSubjectBundles } from "@/lib/sceneSubjectBundle";
+import { deriveScenePhysicalState, buildPhysicalContinuityBlock } from "@/lib/scenePhysicalState";
 import {
   buildSceneNameReferenceKey,
   buildSceneParticipantReferenceKey,
@@ -46,9 +47,14 @@ import { resolveSceneZone } from "@/lib/sceneSpaceZone";
  * Initial generation, Refresh, and action-triggered generation all use this same
  * function — they all derive their cast from the exact Scene participant IDs.
  */
-export function useSceneImageGenerator() {
+export function useSceneImageGenerator({ transcript = [] } = {}) {
   const [sceneImage, setSceneImage] = useState(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  // The scene's transcript exactly as it stands now. Read when a picture is generated, so
+  // every path — first image, refresh, activity, ride, photo — sees the same established
+  // state, and a picture request never becomes a clothing-change event.
+  const transcriptRef = useRef([]);
+  transcriptRef.current = transcript;
   // Every request takes a ticket. Only the newest ticket may put its picture on screen, so a
   // picture already being drawn can never become the image of a space or cast the user has
   // since left — it is simply discarded when it arrives.
@@ -167,7 +173,12 @@ export function useSceneImageGenerator() {
     // The sealed subject bundle adds face-only extraction instructions so the avatar
     // is used for identity while its background/pose/clothing/props are ignored.
     const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs, { maxPerPerson: maxRefsPerPerson });
-    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
+    // What this scene has already established about these people — a shirt already taken
+    // off, a jacket already removed — is stated AFTER their outfit locks, so a new picture
+    // never dresses them again from the avatar, the saved outfit or an earlier image.
+    const physicalState = deriveScenePhysicalState(transcriptRef.current, finalParticipants);
+    const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location)
+      + buildPhysicalContinuityBlock(physicalState, finalParticipants);
 
     // ── NAME REFERENCE KEY — maps each prompt name → Character ID / User ID ──
     // This is the proven identity-binding mechanism from regenerateImageWithReason.
