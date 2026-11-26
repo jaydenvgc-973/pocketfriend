@@ -15,6 +15,7 @@ import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityC
 import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone, buildPhysicalSettingNote } from "@/lib/sceneImagePromptBuilder";
 import { physicalSettingFor } from "@/lib/physicalSetting";
 import { isUnhousedLivingSpace, buildUnhousedSpaceRule } from "@/lib/unhousedLivingSpace";
+import { resolveEstablishedAccommodations, buildSleepAccommodationRule } from "@/lib/sceneAccommodations";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
@@ -202,13 +203,19 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         else if (status === 'napping') napping.push(p.name);
         else if (status === 'sleeping' || isCharacterAsleep(rec, locationMap)) asleep.push(p.name);
       }
-      const parts = [];
-      // Where someone is asleep decides what they are asleep ON. A bed exists only where
-      // one actually exists — never added to a place someone stays without housing.
-      if (asleep.length) parts.push(`${asleep.join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep — depict sleeping with eyes closed, ${isUnhousedLivingSpace(location) ? 'lying on what is actually there (the ground, cardboard, a blanket, inside a tent, on a bench) and never in a bed or a bedroom' : 'in bed or wherever they fell asleep'}, NOT awake, NOT active, NOT talking`);
-      if (napping.length) parts.push(`${napping.join(', ')} ${napping.length === 1 ? 'is' : 'are'} napping — drowsy, eyes closed, resting`);
-      if (passedOut.length) parts.push(`${passedOut.join(', ')} ${passedOut.length === 1 ? 'is' : 'are'} passed out unconscious from exhaustion — slumped, unresponsive`);
-      return parts.length ? ` SLEEP/REST STATE (authoritative — do not contradict): ${parts.join('. ')}.` : '';
+      const sentences = [];
+      // Where someone is asleep decides what they are asleep ON — read from what this place
+      // actually establishes. A bed is used where a bed exists, a couch where the room has
+      // one, and the ground where there is nothing else. Nothing is invented either way.
+      if (asleep.length) {
+        sentences.push(buildSleepAccommodationRule({
+          names: asleep,
+          accommodations: resolveEstablishedAccommodations(location, currentZoneForAction?.zone_name || activeZone),
+        }));
+      }
+      if (napping.length) sentences.push(`${napping.join(', ')} ${napping.length === 1 ? 'is' : 'are'} napping — drowsy, eyes closed, resting.`);
+      if (passedOut.length) sentences.push(`${passedOut.join(', ')} ${passedOut.length === 1 ? 'is' : 'are'} passed out unconscious from exhaustion — slumped, unresponsive.`);
+      return sentences.length ? ` ${sentences.filter(Boolean).join(' ')}` : '';
     };
 
     // ── IDENTITY PREFIX — declaration + prohibition + name key ──
