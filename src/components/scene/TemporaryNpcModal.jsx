@@ -26,15 +26,12 @@ export default function TemporaryNpcModal({ isOpen, status, npcName, error, onCl
         </div>
 
         <p className="text-sm text-muted-foreground leading-relaxed">
-          This NPC will remain in your world for 24 hours. During that time, they can interact with
-          characters, establish connections, and be contacted through the existing phone functionality.
+          This NPC will remain in your world for 24 hours from the time of creation. You can make them
+          permanent through NPC Connect at the bottom of the Home page. If they are not made permanent
+          before their expiration date and time, they will automatically be removed.
         </p>
         <p className="text-sm text-muted-foreground leading-relaxed">
-          If you would like this NPC to remain in your world permanently, you can make them permanent
-          through NPC Connect at the bottom of the Home page.
-        </p>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          If they are not made permanent within 24 hours, they will automatically be removed.
+          Their creation and expiration date and time are shown in their NPC Connect entry.
         </p>
 
         {status === "spawning" && (
