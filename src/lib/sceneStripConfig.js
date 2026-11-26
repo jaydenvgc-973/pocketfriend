@@ -102,9 +102,11 @@ const NEED_ACTION_IDS = {
     "education_break", "buffet_plate", "buffet_water", "grocery_shopping", "sample",
     "produce", "read_menu", "linger", "sit_booth", "sit_counter", "bottle_service",
     "picnic", "share_table", "shelter_eat", "jail_eat", "jail_meal_tray",
+    "unhoused_eat", "unhoused_water",
   ],
   energy: [
     "lay_down", "nap", "relax", "hotel_relax", "shelter_rest", "sleep", "watch_tv",
+    "unhoused_sleep", "unhoused_rest",
   ],
   social: [
     "talk", "chat", "chat_bartender", "chat_classmates", "chat_locals", "chat_member",
@@ -118,7 +120,7 @@ const NEED_ACTION_IDS = {
     "religion_community", "religion_talk", "shelter_talk", "medical_ask",
     "hotel_concierge", "retail_ask", "clothing_ask_price", "clothing_ask_size",
     "shoe_ask_price", "shoe_ask_size", "accessories_ask", "gov_ask", "vip_request",
-    "overhear", "overhead_story", "notice_watching",
+    "overhear", "overhead_story", "notice_watching", "unhoused_socialize",
   ],
   health: [
     "exercise", "workout", "home_workout", "lift", "cardio", "spot", "challenge",

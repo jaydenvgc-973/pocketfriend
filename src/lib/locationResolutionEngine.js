@@ -18,6 +18,7 @@ import { resolveHousingLocationForCharacter } from '@/lib/resolveHousingLocation
 import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } from '@/lib/sleepUtils';
 import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
+import { isUnhousedLivingSpace } from '@/lib/unhousedLivingSpace';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -965,6 +966,9 @@ function isValidSleepCategory(location) {
   if (!location) return false;
   // Category-based eligibility
   if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  // An Unhoused Living Space is a real place to sleep, whatever its category. Sleeping
+  // there is not housing and never changes the character's housing status.
+  if (isUnhousedLivingSpace(location)) return true;
   // Environment-based eligibility (multi-use locations with residential/community env)
   if (Array.isArray(location.environments)) {
     for (const env of location.environments) {
@@ -1351,6 +1355,12 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
 
   // ── SLEEPING ──────────────────────────────────────────────────────────────
   if (presence === 'sleeping' || presence === 'napping') {
+    // Somewhere a character stays without housing is not a bedroom. They sleep on what is
+    // actually there — a tent floor, cardboard, a blanket, a bench, the ground.
+    if (isUnhousedLivingSpace(locId ? locationMap?.[locId] : null)) {
+      if (imageMode) return `[LOCATION LOCKED: character is asleep at ${locName || 'their spot'} — an outdoor place they stay, NOT a bed or bedroom; depict them asleep on what is actually there]`;
+      return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently ASLEEP at ${locName || 'your spot'}. It is an outdoor place you stay, not a house or an apartment. Do NOT describe a bed, a bedroom, a kitchen or any indoor room.`;
+    }
     if (imageMode) return `[LOCATION LOCKED: character is at home sleeping — use residential bedroom/bed context]`;
     return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently ASLEEP at home${locName ? ` (${locName})` : ''}. Do NOT speak as if you are at any venue, work, or public place.`;
   }

@@ -14,7 +14,7 @@ import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
 import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone, buildPhysicalSettingNote } from "@/lib/sceneImagePromptBuilder";
 import { physicalSettingFor } from "@/lib/physicalSetting";
-import { isUnhousedLivingSpace } from "@/lib/unhousedLivingSpace";
+import { isUnhousedLivingSpace, buildUnhousedSpaceRule } from "@/lib/unhousedLivingSpace";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
@@ -203,7 +203,9 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         else if (status === 'sleeping' || isCharacterAsleep(rec, locationMap)) asleep.push(p.name);
       }
       const parts = [];
-      if (asleep.length) parts.push(`${asleep.join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep — depict sleeping with eyes closed, in bed or wherever they fell asleep, NOT awake, NOT active, NOT talking`);
+      // Where someone is asleep decides what they are asleep ON. A bed exists only where
+      // one actually exists — never added to a place someone stays without housing.
+      if (asleep.length) parts.push(`${asleep.join(', ')} ${asleep.length === 1 ? 'is' : 'are'} asleep — depict sleeping with eyes closed, ${isUnhousedLivingSpace(location) ? 'lying on what is actually there (the ground, cardboard, a blanket, inside a tent, on a bench) and never in a bed or a bedroom' : 'in bed or wherever they fell asleep'}, NOT awake, NOT active, NOT talking`);
       if (napping.length) parts.push(`${napping.join(', ')} ${napping.length === 1 ? 'is' : 'are'} napping — drowsy, eyes closed, resting`);
       if (passedOut.length) parts.push(`${passedOut.join(', ')} ${passedOut.length === 1 ? 'is' : 'are'} passed out unconscious from exhaustion — slumped, unresponsive`);
       return parts.length ? ` SLEEP/REST STATE (authoritative — do not contradict): ${parts.join('. ')}.` : '';
@@ -275,6 +277,10 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         if (isHomeLocation && !environmentRefsOverride && !isUnhousedLivingSpace(location)) {
           finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
         }
+        // The same picture is never furnished into a home. Only what the place has.
+        if (isUnhousedLivingSpace(location)) {
+          finalPrompt += buildUnhousedSpaceRule({ zoneName: currentZoneForAction?.zone_name });
+        }
       }
       // The people the action involves are the picture, whatever else is in the place.
       finalPrompt += primaryFocusRule;
@@ -326,10 +332,14 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
       const strictPeopleRule = visibleNames.length > 0 ?
         `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.` :
         `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
-      const atmosphereSuffix = finalParticipants.length > 0 ?
+      // A place someone stays without housing is never rendered as a furnished home.
+      const unhousedHome = isUnhousedLivingSpace(location);
+      const atmosphereSuffix = finalParticipants.length > 0 && !unhousedHome ?
         " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
         "";
-      const residentialConstraint = buildResidentialImageConstraint(location, finalParticipants);
+      const residentialConstraint = unhousedHome
+        ? buildUnhousedSpaceRule({ zoneName: currentZoneForAction?.zone_name })
+        : buildResidentialImageConstraint(location, finalParticipants);
       prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${primaryFocusRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
       try {
         const result = await base44.integrations.Core.GenerateImage({

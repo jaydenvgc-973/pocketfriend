@@ -7,29 +7,31 @@
  * gives some cover from the weather, it does not turn the arrangement into an indoor
  * residence.
  *
- * Nothing here creates a zone, assigns anyone, or changes a housing flag. It only reads
- * what Places already stores.
+ * Nothing here creates a zone, assigns anyone, furnishes anything, or changes a housing
+ * flag. It only reads what Places already stores.
  */
 
 export const UNHOUSED_LIVING_SPACE = 'unhoused_living_space';
 
 // Zone OPTIONS for an encampment. Every one is a name the user can also type by hand —
-// these are never created automatically, and a location may use none of them.
+// these are never created automatically, and a location may use none of them. A Portable
+// Toilet or Portable Restroom is a unit standing on its own: it is never a bathroom with
+// running water, a shower, a bathtub or plumbing.
 export const UNHOUSED_ZONE_PRESETS = [
-  "Encampment Entrance",
   "Tent",
-  "Tent 2",
-  "Tent 3",
   "Under the Bridge",
+  "Encampment",
+  "Makeshift Shelter",
   "Sidewalk",
+  "Street",
   "Alley",
+  "Park Bench",
   "Vacant Lot",
   "Abandoned Parking Lot",
-  "Market Street",
-  "Fire Barrel",
   "Outdoor Gathering Area",
-  "Makeshift Shelter",
-  "Porta Potty",
+  "Fire Barrel Area",
+  "Portable Toilet",
+  "Portable Restroom",
 ];
 
 /** True when this location is an Unhoused Living Space. Never inferred from its name. */
@@ -50,4 +52,21 @@ export function zoneHasFireBarrel(zoneName) {
 
 export function zoneHasPortableToilet(zoneName) {
   return /porta|toilet|latrine|outhouse|restroom/i.test(String(zoneName || ''));
+}
+
+/**
+ * The image rule for a space someone stays in without housing.
+ *
+ * The picture holds only what the place actually has. Sleeping happens on the ground, on
+ * cardboard or a blanket, in a sleeping bag, inside a tent, on a bench, or in a chair —
+ * whatever the zone and its reference images establish. A bed, a bedroom, a kitchen or a
+ * living room is never added, and the conditions are never improved for the picture.
+ */
+export function buildUnhousedSpaceRule({ zoneName = '', sleeping = false } = {}) {
+  const zone = String(zoneName || '').trim();
+  const where = zone ? ` The space is ${zone}.` : '';
+  const sleep = sleeping
+    ? ' A person sleeping here sleeps on what this place actually has: the ground, cardboard, a blanket, a sleeping bag, a mattress, inside a tent, on a bench, or in a chair.'
+    : '';
+  return ` ⛔ THIS IS AN OUTDOOR PLACE SOMEONE STAYS, NOT A HOME INTERIOR.${where}${sleep} ⛔ Never a bed, never a bedroom, kitchen, living room, bathroom, hallway or upstairs, and never furniture or plumbing that is not in the reference images. Do not improve, furnish or tidy the conditions.`;
 }

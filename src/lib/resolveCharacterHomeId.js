@@ -4,6 +4,8 @@
  * A location is sleep-eligible if its category is inherently sleep-permitting
  * OR it contains a residential/community environment.
  */
+import { isUnhousedLivingSpace } from '@/lib/unhousedLivingSpace';
+
 const SLEEP_ELIGIBLE_CATEGORIES = new Set([
   'home', 'hotel', 'shelter', 'generic',
   'jail_prison', 'transportation',
@@ -13,6 +15,9 @@ const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 export function isSleepEligibleLocation(loc) {
   if (!loc) return false;
   if (SLEEP_ELIGIBLE_CATEGORIES.has(loc.category)) return true;
+  // An Unhoused Living Space is where someone actually sleeps, whatever its category.
+  // Sleeping there is not housing and never changes the character's housing status.
+  if (isUnhousedLivingSpace(loc)) return true;
   if (Array.isArray(loc.environments)) {
     return loc.environments.some(env => SLEEP_PERMITTING_ENV_TYPES.has(env.type));
   }

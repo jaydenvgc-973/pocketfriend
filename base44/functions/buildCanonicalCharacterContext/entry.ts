@@ -30,6 +30,7 @@
  */
 
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
+import { buildInternalFamilyTruth, buildFamilySection } from './promptBlocks.ts';
 
 // ── INLINE HELPERS ────────────────────────────────────────────────────────────
 // Deno functions cannot import local lib files — all helpers are inlined.
@@ -63,55 +64,6 @@ function buildAgeCommunicationBlock(character) {
   if (age <= 3) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} year${age === 1 ? '' : 's'} old — a TODDLER.\nSingle words only: "Mama", "No!", "Up!", "More". No full sentences. No explanations. No reasoning.\n`;
   if (age <= 5) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} years old. Very short sentences only (max 6-8 words). Literal thinking. No adult reasoning.\n`;
   if (age <= 10) return `\nAGE-BASED COMMUNICATION RULES — ABSOLUTE:\nThis character is ${age} years old. Full simple sentences. Basic reasoning. No adult emotional complexity.\n`;
-  return '';
-}
-
-// ── INTERNAL NPC FAMILY TRUTH BLOCK ─────────────────────────────────────────
-// NPC family members stored on the character record are canonical hard facts —
-// NOT memories to be retrieved, NOT deducible information.
-// If an age field exists, the character KNOWS their family member's age.
-// DOB is NOT required. Age alone is sufficient.
-function buildInternalFamilyTruth(character) {
-  const members = character.family_members || [];
-  if (members.length === 0) return '';
-  const lines = members
-    .filter(m => m.age != null || m.name)
-    .map(m => {
-      let line = `- ${m.name || 'unnamed'} (${m.relationship_type || 'family member'})`;
-      if (m.age != null) line += `: currently ${m.age} years old`;
-      if (m.isNPC === false || m.is_user_relative) line += ' — lives in your household';
-      return line;
-    });
-  if (lines.length === 0) return '';
-  return `\n════════════════════════════════════\nINTERNAL FAMILY HARD FACTS — ABSOLUTE TRUTH\nThese facts are embedded in your own family records. You KNOW this information without being told.\nDo NOT estimate, guess, or act uncertain about these facts.\n════════════════════════════════════\n${lines.join('\n')}\nCRITICAL: These are FACTS you already know. Never say "I'm not sure how old they are" or invent ages that contradict this list.\n════════════════════════════════════\n`;
-}
-
-function buildFamilySection(character) {
-  const members = character.family_members || [];
-  const familialTermMap = {
-    mother: "Mom", mom: "Mom", "birth mother": "Mom",
-    father: "Dad", dad: "Dad", "birth father": "Dad",
-    grandmother: "Grandma", grandma: "Grandma",
-    "paternal grandmother": "Grandma", "maternal grandmother": "Grandma",
-    grandfather: "Grandpa", grandpa: "Grandpa",
-    "paternal grandfather": "Grandpa", "maternal grandfather": "Grandpa",
-    "older sister": "my older sister", sister: "my sister", "younger sister": "my younger sister",
-    "older brother": "my older brother", brother: "my brother", "younger brother": "my younger brother",
-    aunt: "my aunt", uncle: "my uncle", cousin: "my cousin",
-    stepmother: "my stepmom", stepfather: "my stepdad",
-    "half sister": "my half-sister", "half brother": "my half-brother",
-  };
-  if (members.length > 0) {
-    const lines = members.map(m => {
-      const term = familialTermMap[m.relationship_type?.toLowerCase()] || `my ${m.relationship_type}`;
-      return `- ${m.name} — your ${m.relationship_type}. When talking about them, call them "${term}" (e.g. "Mom told me..." or "I talked to my sister Vanessa"). Use their actual name only for context.`;
-    }).join('\n');
-    return `\nYOUR FAMILY MEMBERS (known relationships):\n${lines}\nIMPORTANT: Always use familiar terms (Mom, Dad, Grandma, my sister, etc.) in natural conversation.\nNOTE: Additional siblings or children may be listed in the AUTHORITATIVE FAMILY KNOWLEDGE block below — always consult that block before claiming you have no family.\n`;
-  }
-  // CRITICAL: Do NOT say "you are alone" or "you have no family" here.
-  // The resolveCharacterFamilyGraph function derives siblings from shared parents and
-  // children from reverse parent lookup. Family may exist even when family_members[] is empty.
-  // The AUTHORITATIVE FAMILY KNOWLEDGE block (injected separately) is the final word.
   return '';
 }
 
@@ -543,6 +495,21 @@ function getWorkScheduleState(character, now = new Date()) {
   return { status, dateKey: `${get('year')}-${get('month')}-${get('day')}`, statusLine, promptLine };
 }
 
+// ── WHERE SOMEONE STAYS IS NOT ALWAYS A HOUSE ────────────────────────────────
+// A place under a bridge, a tent, an encampment or a park is real and it is theirs,
+// but it is not a building. These two checks decide only how it may be described.
+function isUnhousedPlace(loc) {
+  const t = loc?.subtype, list = Array.isArray(t) ? t : [t];
+  return list.filter(Boolean).some(v => String(v).toLowerCase() === 'unhoused_living_space');
+}
+function homeIsStructuralPlace(loc) {
+  if (!loc || isUnhousedPlace(loc)) return false;
+  if (['home', 'hotel', 'shelter'].includes(loc.category || '')) return true;
+  if ((loc.residential_units || []).length > 0) return true;
+  const types = [...(loc.venue_types || []), ...(Array.isArray(loc.subtype) ? loc.subtype : [loc.subtype])].join(' ').toLowerCase().replace(/_/g, ' ');
+  return /(^|\s)(house|apartment|condo|building|residence|dorm|townhouse|duplex|mobile home|trailer)(\s|$)/.test(types);
+}
+
 function buildHardFacts(character, hasActiveStoryEvent = false) {
   const lines = [];
 
@@ -575,6 +542,32 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
   } else if (!character.current_home_location_id && !character.temporary_housing_location_id && !character.is_homeless) {
     // No home ID on record — legacy record or unset
     lines.push("HOUSING: Home not yet confirmed in system records.");
+  }
+
+  // ── ESTABLISHED PLACE TO STAY ─────────────────────────────────────────────
+  // Having somewhere to sleep, having a regular spot, and being housed are three
+  // different things. An established place to stay is stated as what it is.
+  const homePlace = character.home_place || null;
+  if (isUnhousedPlace(homePlace) && homePlace?.name) {
+    lines.push(`YOUR PLACE TO STAY — ${homePlace.name}: this is where you sleep, keep your things and return to. You may call it your spot, your area, your corner, your camp, where you stay, where you sleep, or home, and you may use its name. You are still without stable housing: having somewhere to sleep is not having a house.`);
+  }
+  // Several people can stay in the same place and still have their own separate spot.
+  if (homePlace) {
+    const ownUnit = (homePlace.residential_units || []).find(u => (u.occupant_character_ids || []).includes(character.id));
+    if (ownUnit?.unit_name) {
+      lines.push(`YOUR OWN SPACE THERE: ${ownUnit.unit_name}${ownUnit.zone_name ? ` (${ownUnit.zone_name})` : ''}. That is your spot, separate from anyone else staying at ${homePlace.name}. Do not assume you share another person's tent, sleeping place or belongings.`);
+    }
+  }
+  if (homePlace && !homeIsStructuralPlace(homePlace)) {
+    lines.push(`HOME IS A PLACE, NOT A BUILDING — ${homePlace.name} has no house, apartment, bedroom, living room, kitchen, bathroom or upstairs unless the zone you are in actually establishes one. ⛔ Never say "my house", "my apartment", "my bedroom", "I'm upstairs", "my living room" or "my kitchen" about it. Say your spot, where you stay, where you sleep, your camp, or its name. Going home is always allowed and never implies a building.`);
+  }
+  // Another person's living arrangement is described only as what is actually established.
+  const knowsUnhousedPerson = (character.fictional_relationships || []).some(r =>
+    /homeless|unhoused|under the bridge|encampment|tent|street|shelter|sleeps? outside|no fixed address/i
+      .test(`${r.current_situation || ''} ${r.description || ''} ${r.last_interaction_summary || ''}`)
+  );
+  if (knowsUnhousedPerson) {
+    lines.push(`OTHER PEOPLE'S HOMES: where someone else stays is stated as what is established between you — a spot, a tent, under a bridge, an encampment, a shelter. ⛔ Never upgrade it to their house, apartment, bedroom or kitchen, and never assume a bed. If you have not established where someone stays, do not claim to know.`);
   }
 
   // Current location / presence — TRAVELING IS NOT A PRESENCE.
@@ -616,7 +609,11 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
 
   if (dbIsSleeping) {
     // Read committed canonical state — no independent schedule override.
-    lines.push("SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
+    // Where they are asleep decides what they are asleep ON. Nothing is added for them.
+    const sleepPlace = character.current_place || character.home_place || null;
+    lines.push(isUnhousedPlace(sleepPlace)
+      ? "SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation. You are asleep on what is actually there — the ground, cardboard, a blanket, a sleeping bag, a mattress, inside a tent, on a bench, or in a chair. ⛔ There is no bed, no bedroom and no indoor room here: never describe waking in a bed, getting out of bed, or walking into a kitchen."
+      : "SLEEP STATE: CURRENTLY ASLEEP. Do not generate awake behavior, movement, or conversation.");
   }
 
   // Confirm committed at_school / at_work presence — read from canonical state.
@@ -1315,6 +1312,10 @@ Deno.serve(async (req) => {
     // The place record itself — what this location IS (its category, residency, employment,
     // enrollment, rabbit-hole identity). Loaded once so every prompt block describes the same place.
     try { const _pl = character.resolved_current_location_id ? await base44.asServiceRole.entities.LocationReference.filter({ id: character.resolved_current_location_id }, null, 1).catch(() => []) : []; if (_pl?.[0]) character = { ...character, current_place: _pl[0] }; } catch (_) {}
+
+    // The place the character actually stays — loaded so a place that is not a building
+    // (an encampment, a spot under a bridge, a park) is never described as one.
+    try { const _hid = character.temporary_housing_location_id || character.current_home_location_id || character.home_location_id; const _hp = !_hid ? [] : (_hid === character.resolved_current_location_id && character.current_place ? [character.current_place] : await base44.asServiceRole.entities.LocationReference.filter({ id: _hid }, null, 1).catch(() => [])); if (_hp?.[0]) character = { ...character, home_place: _hp[0] }; } catch (_) {}
 
     // ── Step 2: Fetch user settings (world name, weather, USER PRESENCE) ────────
     const settingsList = resolvedEmail

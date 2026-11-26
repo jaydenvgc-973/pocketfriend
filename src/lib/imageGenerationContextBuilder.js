@@ -3,6 +3,7 @@ import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEng
 import { resolveUserParticipantInPrompt } from './chatImageSubjectResolver.js';
 import { adaptOutfitForWeather } from './weatherOutfitAdapter.js';
 import { resolveUniform, buildUniformOutfitContext } from './uniformResolver.js';
+import { isUnhousedLivingSpace } from './unhousedLivingSpace.js';
 
 /**
  * Unified Image Generation Context Builder
@@ -299,7 +300,13 @@ export async function buildImageGenerationContext({
   const sleepWakeKeywords = ['sleeping', 'asleep', 'in bed', 'woke up', 'waking up', 'just woke', 'napping', 'nap', 'lying in bed'];
   const isSleepContext = sleepWakeKeywords.some(kw => promptLowerForOutfit.includes(kw));
 
-  if (isSleepContext && effectiveCharacterRecord) {
+  // A place someone stays without housing is not a bedroom. They sleep in the layers they
+  // already have — a pajama set is never invented for them.
+  if (isSleepContext && isUnhousedLivingSpace(locationRecord) && effectiveCharacterRecord) {
+    outfitText = 'the layered clothing they are already wearing, unchanged for sleep';
+    outfitSource = 'unhoused_sleep_layers';
+    outfitPrecedenceReason = 'sleep_context_place_without_housing';
+  } else if (isSleepContext && effectiveCharacterRecord) {
     // Sleep context: prioritize sleepwear from closet, then current_outfit if it's sleepwear, then default
     const closet = (effectiveCharacterRecord.character_closet || []).filter(o => o.outfit_id);
     const sleepItem = closet.find(o => o.category === 'sleepwear' || o.category === 'lounge');

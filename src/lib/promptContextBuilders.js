@@ -383,7 +383,7 @@ ZONE NAME SELECTION — CRITICAL:
 Choose the zone name that matches WHERE THE ACTION IS HAPPENING in the character's current location.
 Do NOT default to "living room zone". Use the zone that logically contains the activity:
   • desk / writing / computer / studying / working at home / homework / paperwork → "office zone"
-  • sleeping / waking up / in bed / lying down / napping → "bedroom zone"
+  • sleeping / waking up / lying down / napping → the zone they actually sleep in. Use "bedroom zone" ONLY if the place has a bedroom — never invent one.
   • cooking / fridge / stove / oven / making food / kitchen → "kitchen zone"
   • eating at table / dinner / dining → "dining room zone"
   • watching TV / couch / sofa / relaxing → "living room zone"

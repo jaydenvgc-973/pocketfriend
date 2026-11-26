@@ -217,9 +217,18 @@ const VALID_SLEEP_CATEGORIES = new Set([
 ]);
 const SLEEP_PERMITTING_ENV_TYPES = new Set(['residential', 'community']);
 
+// An Unhoused Living Space is a real place to sleep whatever its category. Sleeping
+// there is not housing and never changes the character's housing status.
+function isUnhousedLivingSpace(loc) {
+  const t = loc?.subtype;
+  const list = Array.isArray(t) ? t : [t];
+  return list.filter(Boolean).some(v => String(v).toLowerCase() === 'unhoused_living_space');
+}
+
 function isValidSleepLocation(location) {
   if (!location) return false;
   if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  if (isUnhousedLivingSpace(location)) return true;
   if (Array.isArray(location.environments)) {
     for (const env of location.environments) {
       if (SLEEP_PERMITTING_ENV_TYPES.has(env.type)) return true;

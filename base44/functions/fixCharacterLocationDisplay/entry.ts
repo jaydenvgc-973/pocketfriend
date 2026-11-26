@@ -53,10 +53,19 @@ const HOMELESS_SLEEP_CATEGORIES = new Set(['outdoor', 'public', 'park', 'communi
 // All confinement facility categories — these are LOCKED states, never corrected
 const CONFINEMENT_CATEGORIES = new Set(['jail_prison']);
 
+// An Unhoused Living Space is a real place to sleep whatever its category. Sleeping
+// there is not housing and never changes the character's housing status.
+function isUnhousedLivingSpace(loc) {
+  const t = loc?.subtype;
+  const list = Array.isArray(t) ? t : [t];
+  return list.filter(Boolean).some(v => String(v).toLowerCase() === 'unhoused_living_space');
+}
+
 function isValidSleepLocation(loc) {
   if (!loc) return false;
   // Category-based eligibility
   if (VALID_SLEEP_CATEGORIES.has(loc.category || '')) return true;
+  if (isUnhousedLivingSpace(loc)) return true;
   // Environment-based eligibility (multi-use locations with residential/community env)
   if (Array.isArray(loc.environments)) {
     for (const env of loc.environments) {

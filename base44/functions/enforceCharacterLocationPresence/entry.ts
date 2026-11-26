@@ -248,10 +248,22 @@ const VALID_SLEEP_CATEGORIES = new Set([
 
 const SLEEP_PERMITTING_ENVIRONMENT_TYPES = new Set(['residential', 'community']);
 
+// An Unhoused Living Space — a tent, a bridge, a bench, a vacant lot — is a place a
+// character really sleeps. It is not housing, and being able to sleep there never
+// changes the character's housing status.
+function isUnhousedLivingSpace(loc) {
+  const t = loc?.subtype;
+  const list = Array.isArray(t) ? t : [t];
+  return list.filter(Boolean).some(v => String(v).toLowerCase() === 'unhoused_living_space');
+}
+
 function isValidSleepLocation(location) {
   if (!location) return false;
   // 1. Category-based eligibility — inherently sleep-permitting categories
   if (VALID_SLEEP_CATEGORIES.has(location.category || '')) return true;
+  // 1b. An established place to stay without housing is sleep-eligible whatever its
+  // category. The absence of a bed or a residence is not a disqualification.
+  if (isUnhousedLivingSpace(location)) return true;
   // 2. Environment-based eligibility — multi-use locations with a sleep-permitting environment
   if (Array.isArray(location.environments)) {
     for (const env of location.environments) {
