@@ -52,11 +52,46 @@ async function clearWorldOccupancy(base44, characterId) {
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
+  // Runs from the deletion workflow with no end user, or from an admin. A signed-in
+  // non-admin may not trigger deletions.
   const user = await base44.auth.me().catch(() => null);
-  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'admin') return Response.json({ error: 'Forbidden' }, { status: 403 });
+  if (user && user.role !== 'admin') return Response.json({ error: 'Forbidden' }, { status: 403 });
 
   const nowIso = new Date().toISOString();
+
+  // ── TEMPORARY NPCs SPAWNED FROM SCENES ────────────────────────────────────
+  // Their 24-hour lifespan is the same kind of scheduled removal: once it passes, they
+  // are removed from the world with the same occupancy cleanup, then hard deleted so no
+  // inaccessible record stays behind. A character the user made permanent no longer has
+  // is_temporary_npc = true, so a scheduled removal can never take them.
+  const temporary = await base44.asServiceRole.entities.Character
+    .filter({ is_temporary_npc: true }, null, 200)
+    .catch(() => []);
+  const expired = temporary.filter((c) =>
+    c.temporary_npc_expires_at &&
+    c.temporary_npc_expires_at <= nowIso &&
+    c.status !== 'deleted' &&
+    c.status !== 'merged' &&
+    c.is_world_service !== true
+  );
+
+  const expiredDeleted = [];
+  const expiredFailed = [];
+  for (const c of expired) {
+    try {
+      await clearWorldOccupancy(base44, c.id);
+      // Hard delete: the record itself is removed, so they cannot remain as an
+      // inaccessible character in any directory.
+      await base44.asServiceRole.entities.Character.delete(c.id);
+      await base44.asServiceRole.entities.CharacterDeletionAudit.create({
+        character_id: c.id,
+        deletion_type: 'hard_delete',
+      }).catch(() => null);
+      expiredDeleted.push({ character_id: c.id, character_name: c.name });
+    } catch (err) {
+      expiredFailed.push({ character_id: c.id, character_name: c.name, error: err?.message });
+    }
+  }
 
   const deceased = await base44.asServiceRole.entities.Character
     .filter({ life_status: 'deceased' }, null, 200)
@@ -107,5 +142,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  return Response.json({ success: true, processed: deleted.length, deleted, failed });
+  return Response.json({
+    success: true,
+    processed: deleted.length,
+    deleted,
+    failed,
+    temporary_npcs_removed: expiredDeleted.length,
+    temporary_npcs: expiredDeleted,
+    temporary_npc_failures: expiredFailed,
+  });
 });

@@ -3,7 +3,8 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, BookMarked, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull, Car } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, BookMarked, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull, Car, Star } from "lucide-react";
+import CharacterFavoritesSection from "@/components/character/CharacterFavoritesSection";
 import BelongingsPanel from "@/components/property/BelongingsPanel";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
@@ -874,6 +875,10 @@ export default function CharacterProfile() {
               <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
               <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
             </div>
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection icon={Star} title="Favorites">
+            <CharacterFavoritesSection character={character} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={Heart} title="Religion & Faith">

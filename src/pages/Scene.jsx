@@ -93,6 +93,7 @@ import { useSceneArrest } from "@/hooks/useSceneArrest";
 import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
 import SceneMoneyModal from "@/components/scene/SceneMoneyModal";
 import OpenPhoneModal from "@/components/scene/OpenPhoneModal";
+import useSpawnNpc from "@/hooks/useSpawnNpc";
 import { TRAIT_GATED_CRIME_ACTIONS } from "@/lib/actionGenerator";
 import { resolveCrimeOutcome, CRIME_ACTIVITY_IDS, buildRespondingOfficer, officerAlreadyHere, pickCustodyFacility, castHasCrimeTrait } from "@/lib/sceneCrimeOutcome";
 
@@ -1083,7 +1084,7 @@ export default function Scene() {
   const characterInviter = observeMode
     ? (observeCast.find((c) => !c.isNpc && c.id && !String(c.id).startsWith("npc_")) || null)
     : null;
-
+  const { spawnNpc, spawnNpcModal } = useSpawnNpc({ location, activeZone, sceneParticipants, setExtraNpcs, setMessages, queryClient, currentUser });
   const handleDirectedTarget = (target) => {
     const action = directedAction;
     setDirectedAction(null);
@@ -2340,6 +2341,7 @@ export default function Scene() {
         setShowChangeClothesModal={setShowChangeClothesModal}
         characterInviter={characterInviter}
         setShowInviteModal={setShowInviteModal}
+        onSpawnNpc={spawnNpc}
         location={location}
         arrestTargets={arrestTargets}
         setArrestPicker={setArrestPicker}
@@ -2353,7 +2355,7 @@ export default function Scene() {
         rideDestinationName={ride?.spaceLabel || ride?.destination?.name || null}
       />
 
-      {ride && <SceneRideBar ride={ride} />}
+      {ride && <SceneRideBar ride={ride} />}{spawnNpcModal}
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
 

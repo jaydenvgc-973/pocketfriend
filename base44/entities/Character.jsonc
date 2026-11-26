@@ -278,6 +278,21 @@
       "type": "string",
       "description": "Creation-history marker. Written only by a Base44 test/Proof function at the moment it creates the character itself as a temporary fixture (e.g. 'proof_commitment_system', 'autonomous_travel_harness', 'proactive_comms_fixture_test'). Empty on any character that existed before the test. Test cleanup requires BOTH this marker AND is_disposable=true, so a name, an alias or Test Character status can never make an existing character deletable."
     },
+    "is_temporary_npc": {
+      "type": "boolean",
+      "default": false,
+      "description": "Lifecycle designation ONLY. True only on an NPC spawned through Scenes > Spawn NPC whose 24-hour lifespan is still running. False on every other character. It never changes classification, visibility, communication or participation."
+    },
+    "temporary_npc_spawned_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Authoritative moment this temporary NPC entered the world. Written once at spawn and never reset by opening the app, entering Scenes, meeting someone, messaging, or changing contact lists."
+    },
+    "temporary_npc_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Authoritative end of this temporary NPC's 24-hour lifespan (spawned_at + 24 hours). Cleared when the user makes the NPC permanent. Only characters with is_temporary_npc = true are ever removed at this time."
+    },
     "diagnostic_only": {
       "type": "boolean",
       "default": false
@@ -499,6 +514,56 @@
         "type": "object"
       },
       "default": []
+    },
+    "favorites": {
+      "type": "object",
+      "description": "This character's own established preferences, reflected in their profile and known to them in conversation. They are preferences, never restrictions, and they change only through the character's own experiences.",
+      "properties": {
+        "favorite_food": {
+          "type": "string"
+        },
+        "favorite_restaurant": {
+          "type": "string",
+          "description": "Name of a restaurant that actually exists in this character's world. Empty when none is established."
+        },
+        "favorite_restaurant_location_id": {
+          "type": "string",
+          "description": "The LocationReference record of that restaurant. Empty when no restaurant favorite is established."
+        },
+        "favorite_song": {
+          "type": "string"
+        },
+        "favorite_music_genre": {
+          "type": "string"
+        },
+        "favorite_music_artist": {
+          "type": "string"
+        },
+        "favorite_color": {
+          "type": "string"
+        },
+        "favorite_hobby": {
+          "type": "string"
+        },
+        "favorite_season": {
+          "type": "string"
+        },
+        "favorite_animal": {
+          "type": "string"
+        },
+        "favorite_place": {
+          "type": "string",
+          "description": "Name of a place that actually exists in this character's world. Empty when none is established."
+        },
+        "favorite_place_location_id": {
+          "type": "string",
+          "description": "The LocationReference record of that place. Empty when no place favorite is established."
+        },
+        "established_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     },
     "city": {
       "type": "string"

@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWorldContactsUnread } from '@/hooks/useWorldContactsUnread';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import AddNPCContactModal from '@/components/home/AddNPCContactModal';
+import TemporaryNpcStatus from '@/components/home/TemporaryNpcStatus';
 
 export default function NPCContactPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -143,6 +144,24 @@ export default function NPCContactPanel() {
     navigate(`/profile/${npc.id}`);
   };
 
+  // Make Permanent — the NPC stays exactly the same character: same record, same name,
+  // avatar, personality, conversations, relationships and memories. Only the lifespan ends,
+  // so the scheduled removal no longer applies to them.
+  const handleMakePermanent = async (npc) => {
+    try {
+      await base44.entities.Character.update(npc.id, {
+        is_temporary_npc: false,
+        temporary_npc_expires_at: null,
+      });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+      queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser?.id] });
+      queryClient.invalidateQueries({ queryKey: ['npcFictitiousRls', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+    } catch (err) {
+      alert('Failed to make permanent: ' + err.message);
+    }
+  };
+
   const handleAddContact = (npc) => {
     setShowAddContact(false);
     updateSettings({
@@ -229,7 +248,7 @@ export default function NPCContactPanel() {
                   <motion.button
                     key={npc.id}
                     onClick={() => handleContactNPC(npc)}
-                    className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0 relative"
+                    className={`w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0 relative ${npc.is_temporary_npc ? 'bg-amber-500/10 border-l-2 border-l-amber-500' : ''}`}
                     whileHover={{ x: 2 }}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -242,9 +261,15 @@ export default function NPCContactPanel() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {npc.character_type === 'npc_world_service' ? 'Service & Support' : 'NPC'}
-                        </p>
+                        {npc.is_temporary_npc ? (
+                          <div className="mt-0.5">
+                            <TemporaryNpcStatus npc={npc} onMakePermanent={handleMakePermanent} />
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {npc.character_type === 'npc_world_service' ? 'Service & Support' : 'NPC'}
+                          </p>
+                        )}
                       </div>
                     </div>
                     {unreadByContact[npc.name] > 0 && (

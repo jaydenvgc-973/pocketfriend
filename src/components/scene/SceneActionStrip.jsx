@@ -84,6 +84,9 @@ export default function SceneActionStrip({
   setShowChangeClothesModal,
   characterInviter,
   setShowInviteModal,
+  // Someone new walks into this scene. They are a real character from the moment they
+  // arrive, with a 24-hour lifespan until the user makes them permanent in Contacts.
+  onSpawnNpc,
   location,
   arrestTargets,
   setArrestPicker,
@@ -176,6 +179,14 @@ export default function SceneActionStrip({
               <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
                 <span className="text-base leading-none">🙋</span>
                 <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Invite Character</span>
+              </button>
+            )}
+            {/* Someone who isn't on anyone's list — they just walk in. Same scene, same
+                presence rules, same communication: only their lifespan differs. */}
+            {onSpawnNpc && !inRide && (
+              <button onClick={onSpawnNpc} title={`Someone new walks into ${location.name}`} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
+                <span className="text-base leading-none">👤</span>
+                <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Spawn NPC</span>
               </button>
             )}
           </React.Fragment>
