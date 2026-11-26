@@ -8,6 +8,11 @@
  */
 export const DIRECTED_SCENE_ACTIONS = [
   { id: "kiss", label: "Kiss", emoji: "💋", verb: "kisses", past_verb: "kissed" },
+  // Friendship interactions. The chosen person starts them in their own words or through a
+  // real gesture, and the other answers however they actually would.
+  { id: "goof_around", label: "Goof Around", emoji: "😄", verb: "goofs around with", past_verb: "goofed around with" },
+  { id: "show_appreciation", label: "Show Appreciation", emoji: "🙏", verb: "shows appreciation to", past_verb: "showed appreciation to" },
+  { id: "bond_with", label: "Bond With", emoji: "🤝", verb: "shares a real moment with", past_verb: "shared a real moment with" },
   { id: "flirt_with", label: "Flirt With", emoji: "😘", verb: "flirts with", past_verb: "flirted with" },
   { id: "argue_with", label: "Argue With", emoji: "💢", verb: "argues with", past_verb: "argued with" },
   // A physical confrontation, not a louder argument. Same who-and-who selector as Argue
@@ -38,17 +43,22 @@ export function stripActions(list) {
 //                     needs. Grouping only: no effect, value or calculation changes.
 //   3. General      — the general interactions below, in exactly this relative order.
 // Every activity appears in exactly ONE group.
+// Send Money, Receive Money, Invite Character and Arrest are scene controls drawn inside
+// this same folder; the list below is the activities between them.
 export const GENERAL_STRIP_ORDER = [
-  "flirt_with",     // 1
-  "kiss",           // 2
-  "moonwink",       // existing pair activity — keeps its own place beside Kiss
-  "wedding_ceremony", // 3 — the Wedding Ceremony action (gov_marry on a home / church)
-  "smoke",          // 4
-  "argue_with",     // 5
-  "fight_with",     // 6
-  "pickpocket",     // 7
-  "burglarize",     // 8
-  "call_the_cops",  // 9 — Arrest and Next Scene follow, as scene controls
+  "goof_around",      // friendship — the actor starts the joking themselves
+  "show_appreciation", // friendship — the actor actually says or does it
+  "bond_with",        // friendship — a real shared moment, not an announcement
+  "flirt_with",
+  "kiss",
+  "moonwink",         // existing pair activity — keeps its own place beside Kiss
+  "wedding_ceremony", // the Wedding Ceremony action (gov_marry on a home / church)
+  "smoke",
+  "argue_with",
+  "fight_with",
+  "pickpocket",
+  "burglarize",
+  "call_the_cops",    // Arrest and Next Scene follow, as scene controls
 ];
 
 /**

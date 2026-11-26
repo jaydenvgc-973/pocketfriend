@@ -192,6 +192,24 @@ export const EATING_ACTION_IDS = ['eat', 'order', 'drinks', 'char_pays', 'check'
 //   direction — what happens, played out now
 //   past      — the same thing already happening, for a plain narrative line
 export const IN_WORLD_ACTIVITY_TEXT = {
+  // The three friendship interactions are started by one person and answered by the other.
+  // The direction says what the initiating person actually does, so the scene is given the
+  // behaviour itself rather than a button's name.
+  goof_around: {
+    direction: "the person starting this is joking around with the other — affectionate teasing, silliness, or a bit of clowning, in their own kind of humour and genuinely playful",
+    past: "is goofing around with",
+    pair: "is goofing around with",
+  },
+  show_appreciation: {
+    direction: "the person starting this genuinely expresses appreciation to the other — thanking them, naming what they did or mean to them, or giving a real appreciative gesture, in their own words and never as a generic thank-you",
+    past: "shows appreciation to",
+    pair: "shows appreciation to",
+  },
+  bond_with: {
+    direction: "the person starting this opens up to the other — sharing something real about themselves, a memory, a trust, or an experience — so that the moment between them actually deepens through what is said and done, never through an announcement that they grew closer",
+    past: "shares a real moment with",
+    pair: "shares a real moment with",
+  },
   moonwink: {
     // Unclothed and clearly willing, told without graphic detail: the moment is theirs,
     // both of them chose it, and nothing explicit is written.
@@ -218,6 +236,13 @@ export function buildDirectedActionPrompt({ actionId, actorName, targetName, loc
       return `${actor} kissing ${target} at ${loc}, their lips meeting, close romantic embrace, hands on a cheek and around a waist, eyes closed, intimate and tasteful, non-explicit, photorealistic. ${together}No other people.`;
     case "flirt_with":
       return `${actor} flirting with ${target} at ${loc}, leaning in close, playful smile, teasing eye contact, a light touch on the arm, warm chemistry between them, photorealistic. ${together}No other people.`;
+    // Friendship moments: warm and real, never romantic body language.
+    case "goof_around":
+      return `${actor} goofing around with ${target} at ${loc}, both laughing, ${actor} mid-joke with a playful exaggerated gesture, easy relaxed body language, affectionate teasing between friends, clearly friendly and not romantic, warm natural light, photorealistic. ${together}No other people.`;
+    case "show_appreciation":
+      return `${actor} sincerely thanking ${target} at ${loc}, warm genuine expression, a hand on the shoulder and steady eye contact, ${target} listening, the moment of real gratitude between two people, clearly friendly and not romantic, soft natural light, photorealistic. ${together}No other people.`;
+    case "bond_with":
+      return `${actor} and ${target} sharing a sincere, open moment at ${loc}, turned toward each other in undivided attention, ${actor} speaking honestly and ${target} listening closely, comfortable trust between them, close but clearly not romantic, quiet warm light, photorealistic. ${together}No other people.`;
     case "argue_with":
       return `${actor} arguing with ${target} at ${loc}, standing face to face in a tense confrontation, hard expressions, raised hands mid-gesture, defensive posture, clearly NOT affectionate, dramatic lighting, photorealistic. ${together}No other people.`;
     case "fight_with":

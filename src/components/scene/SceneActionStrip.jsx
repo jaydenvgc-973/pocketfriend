@@ -156,6 +156,14 @@ export default function SceneActionStrip({
           <React.Fragment>
             <SendMoneyControl onClick={() => onOpenMoney?.("send")} disabled={actionCooldown} />
             <ReceiveMoneyControl onClick={() => onOpenMoney?.("receive")} disabled={actionCooldown} />
+            {/* Invite Character sits third, before the friendship interactions. In a
+                character-only scene the invitation comes from the character who is here. */}
+            {characterInviter && (
+              <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
+                <span className="text-base leading-none">🙋</span>
+                <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Invite Character</span>
+              </button>
+            )}
           </React.Fragment>
         )}
         {open && items.map(renderItem)}
@@ -233,13 +241,6 @@ export default function SceneActionStrip({
               folder: This Location → its activities → Life Needs → its activities → General →
               its activities. Next Scene is the scene control pinned outside every folder. */}
           {CATEGORY_FOLDERS.map(renderSection)}
-
-          {characterInviter && (
-            <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
-              <span className="text-base leading-none">🙋</span>
-              <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Invite Character</span>
-            </button>
-          )}
         </div>
         <NextSceneControl onNextScene={() => setShowNextScene(true)} />
       </div>

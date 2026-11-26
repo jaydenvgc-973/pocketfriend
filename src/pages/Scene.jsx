@@ -1127,11 +1127,10 @@ export default function Scene() {
       // as a moment between them — the person spoken to is the one standing there. A kiss
       // is already done; a flirt is played out now.
       const pairNames = [actorName, target.name].filter(Boolean);
-      if (behavior === "immediate") {
-        runObserveBeat({ narrative: `${activity.content}.`, actorName, actorNames: pairNames, activity });
-      } else {
-        runObserveBeat({ direction: label, actorName, actorNames: pairNames, activity });
-      }
+      // One person starts it and the other answers: only the actor acts here, never both as
+      // a mutual moment, so nobody reacts to what the actor has not yet said or done.
+      if (behavior === "immediate") runObserveBeat({ narrative: `${activity.content}.`, actorName, actorNames: pairNames, activity });
+      else runObserveBeat({ direction: label, actorName, initiatorName: actorName, activity });
       return;
     }
     sendMessage(label, true, null, null, null, null, null, false, {
@@ -1167,7 +1166,7 @@ export default function Scene() {
     return line;
   };
 
-  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null, actorNames = null, activity = null } = {}) => {
+  const runObserveBeat = async ({ direction = null, voiceAs = null, narrative = null, actorName = null, actorNames = null, initiatorName = null, activity = null } = {}) => {
     if (!observeMode || !location) return;
     const speaker = voiceAs?.character;
     const spoken = (voiceAs?.content || "").trim();
@@ -1240,6 +1239,8 @@ export default function Scene() {
         actorName: actorName || null,
         // Several people taking part in the same activity at once.
         actorNames: Array.isArray(actorNames) && actorNames.length > 1 ? actorNames : null,
+        // A directed interaction: this person starts it, and only then does anyone answer.
+        initiatorName: initiatorName || null,
         // Inside one unit of a multi-unit property, the scene stays in that space and the
         // speaker the observer chose keeps their own name.
         unitScope: sceneUnitScope,

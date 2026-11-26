@@ -63,6 +63,17 @@ ${actorName} is the one who does this, themselves, as part of their own ordinary
 - ${actorName} does not say their own name out loud.
 ===`;
 
+// ONE PERSON STARTS IT — the moment exists only once they have actually done it. Nobody
+// answers a joke, a compliment, a thanks or a flirtation that has not been said or done.
+const INITIATOR_ACTS_FIRST = (initiatorName) => `
+=== ${initiatorName.toUpperCase()} STARTS THIS, AND IT HAS NOT HAPPENED YET ===
+${initiatorName} is the one who begins this. Nothing has been said or done until ${initiatorName} says or does it here.
+- Write ${initiatorName}'s own initiation FIRST: their words out loud, or a described action of theirs, or both. Only after that exists may anyone else react.
+- Nobody reacts to, answers, agrees with, laughs at, thanks anyone for, or comments on this before ${initiatorName} has actually done it.
+- The other person may answer however they genuinely would — warmly, awkwardly, with surprise, with a joke of their own, or not warmly at all. Their reaction is not decided here.
+- Never have the other person say what ${initiatorName} is feeling, intend, or is about to do.
+===`;
+
 // SEVERAL ACT — one shared moment, and every chosen person is in it. Nobody is left
 // standing aside while the first name does everything, and nobody joins who was not chosen.
 const WHO_DOES_IT_TOGETHER = (names) => {
@@ -91,7 +102,7 @@ function backgroundCast(list) {
 
 // `spokenBy` is the character the observer spoke as, resolved from the existing Speak As
 // selection: { id, name, content }. The words are that character's own, not the observer's.
-export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, observerName = null, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, actorNames = null, unitScope = null, spokenBy = null, venueContext = null }) {
+export async function generateObserveBeat({ participants, responders, location, activeZone, messages, direction, narrative, ownerEmail, observerName = null, watchNote = null, ambient = [], npcSpeakers = [], actorName = null, actorNames = null, initiatorName = null, unitScope = null, spokenBy = null, venueContext = null }) {
   // One chosen person, or several taking part in the same activity. `actorName` is kept
   // for every existing caller; an activity performed by a group passes `actorNames`.
   const actionNames = (Array.isArray(actorNames) ? actorNames : []).filter(Boolean);
@@ -304,12 +315,14 @@ ${watchNote ? `=== WHAT THEY ARE DOING TOGETHER RIGHT NOW ===\n${watchNote}\nThe
 ${narrative ? ESTABLISHED_NARRATIVE(narrative) : ''}
 ${direction ? DIRECTION_TO_PLAY_OUT(direction) : ''}
 ${direction ? actorBlock : ''}
+${direction && initiatorName && actionNames.length <= 1 ? INITIATOR_ACTS_FIRST(initiatorName) : ''}
 
 WRITE THE NEXT MOMENT:
 ${narrative ? `- These people have ALREADY lived the events above, its dialogue included. Continue from the situation those events left behind: what is said and done now is the consequence of them.
 - The events are their own recent experience, never words just spoken to them: nobody answers that dialogue, replies to it, or treats it as something another person said to them now.
 - Never reenact, re-announce, or question them. Anything quoted above was already said and must not be spoken again.` : ''}
 ${direction ? `- Now play out the directed moment above: the people named take those actions, say any attributed words out loud in their own voice, and it happens as real scene beats — never as agreement or commentary about the direction.${actorSummary ? `\n- ${actorSummary}` : ''}` : ''}
+${direction && initiatorName && actionNames.length <= 1 ? `- ${initiatorName} initiates it in this beat, before anyone reacts. Anyone who answers is answering what ${initiatorName} actually just said or did, never an action that has not happened.` : ''}
 - ${nameList} interact with each other directly: they speak to one another and react to what the other just said or did.${spokenBy?.name ? `\n- The line just spoken belongs to ${spokenBy.name}. The others answer ${spokenBy.name} as the person who said it.` : ''}
 - Their established personalities, relationship, history and current circumstances drive how they behave.
 - Move the moment forward. Do not restate or replay the transcript. Nobody repeats a line already spoken.
@@ -377,6 +390,18 @@ Return JSON only.`;
       };
     })
     .filter(Boolean);
+
+  // The person who starts an interaction speaks first, so a reply always follows something
+  // they actually said or did rather than arriving before it. Everyone else keeps their order.
+  const starterName = actionNames.length <= 1 ? (initiatorName || null) : null;
+  if (starterName) {
+    const isStarter = (l) => String(l.senderName || '').trim().toLowerCase() === starterName.trim().toLowerCase();
+    const starterLines = lines.filter(isStarter);
+    if (starterLines.length > 0) {
+      const rest = lines.filter((l) => !isStarter(l));
+      lines.splice(0, lines.length, ...starterLines, ...rest);
+    }
+  }
 
   // An action these people take on their own is the SAME scene activity the strip
   // produces, so it is shown, remembered and continued from exactly as one the observer
