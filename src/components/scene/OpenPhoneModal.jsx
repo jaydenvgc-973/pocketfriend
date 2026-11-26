@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { MessageCircle, Gamepad2, Camera, MapPin, CalendarDays, Images, X, Wifi, BatteryFull } from "lucide-react";
+import { MessageCircle, Gamepad2, Camera, MapPin, CalendarDays, Images, Newspaper, X, Wifi, BatteryFull } from "lucide-react";
 import PocketMessageApp from "@/components/scene/phone/PocketMessageApp";
 import PhoneGamesApp from "@/components/scene/phone/PhoneGamesApp";
 import PhoneMapApp from "@/components/scene/phone/PhoneMapApp";
 import PhoneCalendarApp from "@/components/scene/phone/PhoneCalendarApp";
 import PhoneMediaGalleryApp from "@/components/scene/phone/PhoneMediaGalleryApp";
+import PhoneNewsApp from "@/components/scene/phone/PhoneNewsApp";
 
 // Pocketfriend's existing loading-screen image — the same asset the app's readiness
 // screen (Onboarding) uses as its background. Never a generated replacement.
@@ -48,6 +49,9 @@ export default function OpenPhoneModal({
     { id: "map", label: "Map", Icon: MapPin, tint: "from-amber-400 to-orange-700" },
     { id: "calendar", label: "Calendar", Icon: CalendarDays, tint: "from-rose-400 to-rose-700" },
     { id: "gallery", label: "Media Gallery", Icon: Images, tint: "from-fuchsia-400 to-purple-700" },
+    // News reads the existing The Weekly edition inside the phone — the same publication the
+    // Home page shows, never a second feed and never a new edition.
+    { id: "news", label: "News", Icon: Newspaper, tint: "from-stone-300 to-stone-600" },
   ];
 
   const openApp = (id) => {
@@ -152,6 +156,10 @@ export default function OpenPhoneModal({
               onCancel={() => setScreen("home")}
               onOkay={() => onOpenMediaGallery?.()}
             />
+          )}
+
+          {screen === "news" && (
+            <PhoneNewsApp onBack={() => setScreen("home")} />
           )}
         </div>
       </motion.div>
