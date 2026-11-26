@@ -2339,7 +2339,18 @@ export default function Scene() {
           reason it cannot happen. Cancelling changes nothing about the scene. */}
       <SceneRideFlow open={showRidePicker} onClose={() => setShowRidePicker(false)} currentUser={currentUser} displayName={displayName} userPresent={!observeMode} participants={nextSceneParticipants} locations={locationsData} onConfirm={handleRideConfirm} />
       <MissingBelongingModal open={!!missingBelonging} kind={missingBelonging?.kind} ownerName={missingBelonging?.ownerName} isUser={!!missingBelonging?.isUser} onClose={() => setMissingBelonging(null)} />
-      <AnimatePresence>{showPhone && <OpenPhoneModal currentUser={currentUser} worldName={displayName} onOpenScenePhoto={() => { setShowPhone(false); setShowPhotoModal(true); }} onClose={() => setShowPhone(false)} />}</AnimatePresence>
+      {/* The phone's Map is the Travel page's own map, fed the same account-wide data: the
+          same authoritative locations, the same resolved presence, and the same characters.
+          It is never limited to the people in this scene. */}
+      <AnimatePresence>{showPhone && <OpenPhoneModal
+        currentUser={currentUser}
+        worldName={displayName}
+        locations={locationsData}
+        characters={unifiedPresenceEntities}
+        allCharacters={characters}
+        onOpenScenePhoto={() => { setShowPhone(false); setShowPhotoModal(true); }}
+        onClose={() => setShowPhone(false)}
+      />}</AnimatePresence>
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>
       <AnimatePresence>{showMoveInPopup && (!isSharedLocation || isGatewayHouse) && <MoveInPopup isOpen={showMoveInPopup} character={broughtCharacters[0]} sourceHome={locationsData.find((l) => l.id === broughtCharacters[0]?.current_home_location_id)} destinationHome={location} allCharacters={characters} broughtCharacters={broughtCharacters} onApprove={handleMoveIn} onReject={() => setShowMoveInPopup(false)} onClose={() => setShowMoveInPopup(false)} isLoading={isMoveInLoading} />}</AnimatePresence>
