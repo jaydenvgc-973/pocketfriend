@@ -51,7 +51,8 @@ export function buildTimeOfDayLock(lightingDesc) {
  */
 export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc, existingObjectCue = null) {
   if (!hasRefImages) {
-    return `Apply ${lightingDesc} to the scene. Keep the environment consistent with the location type. ` +
+    return `ZONE: "${activeZoneName}" — the selected zone is the actual surroundings of this moment; everything happens inside it, and only what this zone actually is may appear. ⛔ Never invent an indoor interior or borrow a room from another zone or location. ` +
+      `Apply ${lightingDesc} to the scene. Keep the environment consistent with the location type. ` +
       `What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
   }
 
@@ -150,8 +151,11 @@ export function buildFacilityEnvNote(locationName, hasRefImages, lightingDesc) {
  * Builds the action-override environment note (shorter, used when an action triggers regen).
  */
 export function buildActionEnvNote(activeZoneName, hasRefImages, lightingDesc) {
-  if (!hasRefImages) return `${lightingDesc}. What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
-  return `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. The reference images are LAYOUT authority only: if they were photographed in daylight, relight the same room for the authoritative hour below. ` +
+  // The selected zone IS the environment, whatever the activity is. An activity changes what
+  // the people are doing, never where they are: a kiss on a street happens on that street.
+  const zoneAuthority = `THIS MOMENT HAPPENS IN THE SELECTED ZONE "${activeZoneName}" — the activity is performed HERE, in these actual surroundings, and nowhere else. ⛔ NEVER relocate anyone into a house, apartment, bedroom, living room, kitchen or any invented indoor interior, and never substitute a room from another zone or location. The activity never chooses the surroundings. `;
+  if (!hasRefImages) return zoneAuthority + `Only what this zone actually is may appear. Apply ${lightingDesc}. What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
+  return zoneAuthority + `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. The reference images are LAYOUT authority only: if they were photographed in daylight, relight the same room for the authoritative hour below. ` +
     `CAMERA DYNAMICS: Use varied camera angles, distances, and framing — doorway view, close-ups, wide shots, different heights, different positions. ` +
     `Do not repeat the same static angle. Framing must change. Distance must vary. ` +
     `Apply ${lightingDesc}. ⛔ The view outside every window MUST agree with this hour: at night it is dark outside — never daylight, never bright sunshine, never a bright blue sky. ` +

@@ -288,10 +288,13 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         // The environment is stated outright (the car's own cabin) instead of the zone's
         // "preserve this room's layout" note.
         finalPrompt += ` ` + environmentNote;
-      } else if (envRefs.length > 0) {
+      } else {
+        // The selected zone is stated on EVERY activity picture, with or without its own
+        // reference images — an activity never moves anyone indoors, and a zone that has
+        // no images yet is still the place this moment happens in.
         finalPrompt += ` ` + buildPhysicalSettingNote(physicalSettingFor(location, currentZoneForAction?.zone_name)) + (currentZoneForAction
-          ? buildActionEnvNote(currentZoneForAction.zone_name, true, lightingDesc)
-          : buildFacilityEnvNote(location.name, true, lightingDesc));
+          ? buildActionEnvNote(currentZoneForAction.zone_name, envRefs.length > 0, lightingDesc)
+          : buildFacilityEnvNote(location.name, envRefs.length > 0, lightingDesc));
       }
       // The hour is stated on every activity picture too — the same hour as the scene,
       // including a picture taken inside a car.
@@ -334,7 +337,10 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
         `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
       // A place someone stays without housing is never rendered as a furnished home.
       const unhousedHome = isUnhousedLivingSpace(location);
-      const atmosphereSuffix = finalParticipants.length > 0 && !unhousedHome ?
+      // An outdoor zone of a property (a yard, a street front, a lot) is not a furnished interior:
+      // the designated setting outranks the assumption that a home is always rooms.
+      const outdoorZone = physicalSettingFor(location, currentZoneForAction?.zone_name) === 'outdoor';
+      const atmosphereSuffix = finalParticipants.length > 0 && !unhousedHome && !outdoorZone ?
         " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
         "";
       const residentialConstraint = unhousedHome

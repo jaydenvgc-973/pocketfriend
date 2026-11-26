@@ -2083,7 +2083,12 @@ All reference images (if any) are environment/location refs only — do NOT trea
           outfitText.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lines.push(`  • ${item}`));
           lines.push(`  ⛔ This outfit belongs EXCLUSIVELY to "${name}". Do NOT apply to any other subject.`);
         } else {
-          lines.push(`OUTFIT: No outfit on file for "${name}". Use contextually neutral attire.`);
+          // No closet outfit: this person's own photographs ARE the clothing authority —
+          // including a bare torso, which is information, never a gap for an invented shirt.
+          lines.push(`CLOTHING — NO OUTFIT ON FILE for "${name}": their own reference photos ARE their established clothing.`);
+          lines.push(`  ✅ Render exactly the clothing shown in those photos — same garments, colors, layers — and the same absence of them.`);
+          lines.push(`  ⛔ If their avatar shows a bare torso they stay bare-chested. NEVER add a tank top, undershirt, T-shirt, hoodie, jacket or robe.`);
+          lines.push(`  ⛔ The selected activity is NOT a clothing change — it never dresses them. A previous picture that added a garment was wrong; never repeat it.`);
         }
 
         lines.push(``);

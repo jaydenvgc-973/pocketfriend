@@ -14,13 +14,15 @@
 // Called by handleAction in Scene.jsx when an action should trigger an image update.
 // Functions accept (locationName, presentNames) and return a prompt string.
 export const ACTION_IMAGE_PROMPTS = {
-  sit:             (loc, who) => who.includes("empty") ? `Empty couch in a ${loc} living room, warm lighting, photorealistic. No people.` : `${who} sitting comfortably on the couch in a ${loc} interior, relaxed posture, photorealistic. No other people.`,
-  relax:           (loc, who) => who.includes("empty") ? `Cozy ${loc} living room, soft lighting, empty and peaceful, photorealistic. No people.` : `${who} relaxing casually in a ${loc} living room, laid-back atmosphere, photorealistic. No other people.`,
-  eat:             (loc, who) => who.includes("empty") ? `Homemade meal on a table in a cozy kitchen, no people, photorealistic.` : `${who} eating a meal at the kitchen table in a ${loc}, photorealistic. No strangers.`,
-  drink:           (loc, who) => who.includes("empty") ? `Glass of water or juice on a kitchen counter, cozy home, no people, photorealistic.` : `${who} holding a refreshing drink in a ${loc} kitchen, close-up, photorealistic. No other people.`,
-  order_takeout:   (loc, who) => who.includes("empty") ? `Takeout food containers on a coffee table in a cozy home, no people, photorealistic.` : `Takeout food containers being opened on a coffee table, ${who} present, cozy home, photorealistic. No strangers.`,
-  lay_down:        (loc, who) => who.includes("empty") ? `Empty couch or bed in a ${loc}, cozy and peaceful, no people, photorealistic.` : `${who} lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic. No other people.`,
-  talk:            (loc, who) => who.includes("empty") ? `Quiet ${loc} living room, empty, warm lighting, photorealistic. No people.` : `${who} having a conversation in a ${loc} living room, natural and warm, photorealistic. No strangers or extra people.`,
+  // The surroundings come from the selected zone — never from the activity. None of these
+  // may assume a living room, kitchen, couch or bed; that is the zone's job, not theirs.
+  sit:             (loc, who) => who.includes("empty") ? `An empty place to sit at ${loc}, warm lighting, photorealistic. No people.` : `${who} sitting comfortably at ${loc}, relaxed posture, photorealistic. No other people.`,
+  relax:           (loc, who) => who.includes("empty") ? `A quiet corner of ${loc}, soft lighting, empty and peaceful, photorealistic. No people.` : `${who} relaxing casually at ${loc}, laid-back atmosphere, photorealistic. No other people.`,
+  eat:             (loc, who) => who.includes("empty") ? `A meal on a table at ${loc}, no people, photorealistic.` : `${who} eating a meal at ${loc}, photorealistic. No strangers.`,
+  drink:           (loc, who) => who.includes("empty") ? `A glass of water or juice at ${loc}, no people, photorealistic.` : `${who} holding a refreshing drink at ${loc}, close-up, photorealistic. No other people.`,
+  order_takeout:   (loc, who) => who.includes("empty") ? `Takeout food containers on a table at ${loc}, no people, photorealistic.` : `Takeout food containers being opened on a table at ${loc}, ${who} present, photorealistic. No strangers.`,
+  lay_down:        (loc, who) => who.includes("empty") ? `An empty place to lie down at ${loc}, peaceful, no people, photorealistic.` : `${who} lying down resting at ${loc}, comfortable, photorealistic. No other people.`,
+  talk:            (loc, who) => who.includes("empty") ? `A quiet spot at ${loc}, empty, warm lighting, photorealistic. No people.` : `${who} having a conversation at ${loc}, natural and warm, photorealistic. No strangers or extra people.`,
   dance:           (loc, who) => `${who} dancing on a nightclub dance floor, energetic, bokeh lights, photorealistic`,
   dance_with_stranger: (loc, who) => `People dancing on a club dance floor, energetic lights, diverse crowd, photorealistic`,
   buy_round:       (loc, who) => `Glasses of beer and cocktails on a bar counter, bokeh lights, photorealistic`,
@@ -77,7 +79,7 @@ export const ACTION_IMAGE_PROMPTS = {
   // Each one depicts the activity actually in progress — never a passive standing pose.
   home_workout:    (loc, who) => who.includes("empty")
     ? `Home workout area with a yoga mat, dumbbells and a resistance band laid out, no people, photorealistic.`
-    : `${who} actively working out in the home — mid-rep strength training with dumbbells, bodyweight squats or push-ups on a mat, athletic effort, focused expression, exercise clothing, photorealistic. No other people.`,
+    : `${who} actively working out in the home — mid-rep strength training with dumbbells, bodyweight squats or push-ups on a mat, athletic effort, focused expression, photorealistic. No other people.`,
   home_clean_up:   (loc, who) => who.includes("empty")
     ? `Tidy home interior with cleaning supplies and folded cloths, no people, photorealistic.`
     : `${who} actively cleaning the home — sweeping or vacuuming the floor, wiping down a surface, holding cleaning supplies, mid-motion, sleeves pushed up, photorealistic. No other people.`,

@@ -20,6 +20,7 @@
  */
 import { isInfantCharacter, buildInfantImageDirective } from "@/lib/characterAgeStage";
 import { buildHairstyleFidelityText, resolveHeightProportions } from "@/lib/appearanceLockValidator";
+import { buildNoOutfitClothingAuthority } from "@/lib/avatarClothingAuthority";
 
 function formatRefRange(start, end) {
   if (start === null || start === undefined) return null;
@@ -132,16 +133,15 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
     lines.push(`  ✅ Use for FACE IDENTITY ONLY: face structure, face shape, jaw/chin, eye shape and spacing,`);
     lines.push(`     nose shape, mouth/lip structure, cheek structure, skin color and undertone,`);
     lines.push(`     hair type/texture/hairline, facial hair, body type of "${name}".`);
-    lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, props,`);
-    lines.push(`     and clothing in these reference photos MUST BE COMPLETELY IGNORED.`);
+    lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose and props`);
+    lines.push(`     in these reference photos MUST BE COMPLETELY IGNORED.`);
     lines.push(`  ⛔ Treat as face/identity texture samples ONLY — NOT a scene to replicate.`);
     if (outfitText) {
       lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
     } else {
-      // No outfit is on file for this person. The clothing in their own reference photos IS
-      // their established clothing — it is the only clothing authority there is, and it is
-      // never replaced by an invented outfit.
-      lines.push(`  ✅ CLOTHING: this person has no separate outfit on file — the clothing they wear in their own reference photos IS their established clothing. Render exactly that clothing (same garments, same colors, same layers), never an invented or substituted outfit.`);
+      // No outfit is on file, so the person's own photographs are the clothing authority —
+      // including a bare torso, which is information and never a gap for the picture to fill.
+      lines.push(`  ✅ CLOTHING IS NOT IGNORED for this person: no separate outfit is on file, so the clothing in these photos IS their established clothing — reproduce it exactly.`);
     }
     lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject.`);
   } else {
@@ -178,11 +178,9 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
   } else {
     // No closet outfit and no uniform apply. The avatar's own clothing is the baseline —
     // not a gap to be filled by whatever the model finds fitting for the surroundings.
-    lines.push(`CLOTHING (for "${name}" ONLY): No separate outfit is on file for this person.`);
-    lines.push(`  ✅ They wear EXACTLY the clothing shown in their own reference photographs — the same garments, colors, layers and footwear, in this picture and every other picture of this continuous scene.`);
-    lines.push(`  ⛔ Do NOT invent, upgrade, restyle or substitute clothing. Do NOT dress them in business attire, a uniform, sleepwear or seasonal outfits of your own choosing.`);
-    lines.push(`  ⛔ If their reference photos show them in a plain T-shirt and jeans, that is what they wear here. If a reference shows a bare torso, do NOT add a shirt.`);
-    lines.push(`  ✅ A garment a temporary circumstance genuinely requires (a coat in snow, a towel at the shower) is the ONLY addition — and it must be the same one in every picture of this scene.`);
+    // No closet outfit and no uniform apply. The avatar's own clothing is the baseline —
+    // including a bare torso, which is never filled in with an invented shirt.
+    lines.push(buildNoOutfitClothingAuthority(name));
   }
   lines.push('');
   lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);

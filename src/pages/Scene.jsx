@@ -1116,7 +1116,14 @@ export default function Scene() {
         strictCastOnly: observeMode || !!inCarShot,
         ambientPopulation: inCarShot ? undefined : sceneAmbientPopulation,
         actionFocusIds: inCarShot ? inCarShot.visibleIds : [actor.id, target.id],
-        actionOverridePrompt: inCarShot ? null : buildDirectedActionPrompt({ actionId: action.id, actorName, targetName: target.name, locationName: location?.name }),
+        // The sentence names the selected zone, not only the property: "at Street — Riverside"
+        // is where the moment happens, and the activity never moves it somewhere else.
+        actionOverridePrompt: inCarShot ? null : buildDirectedActionPrompt({
+          actionId: action.id,
+          actorName,
+          targetName: target.name,
+          locationName: [location?.name, typeof activeZone === "string" ? activeZone : null].filter(Boolean).join(" — ") || location?.name,
+        }),
         ...(inCarShot ? rideImageRequest(ride, inCarShot) : {}),
       });
     }

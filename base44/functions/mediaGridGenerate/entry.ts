@@ -514,9 +514,12 @@ Deno.serve(async (req) => {
           if (hasBottoms) lines.push(`  ✅ BOTTOMS VISIBLE — frame mid-thigh or lower for this subject.`);
           if (hasShoes) lines.push(`  ✅ SHOES VISIBLE — full or 3/4-body framing for this subject.`);
         } else {
-          lines.push(`CLOSET OUTFIT: No outfit on file for "${nameDisplay}".`);
-          lines.push(`  ⛔ Do NOT invent clothing from the event name or theme.`);
-          lines.push(`  Use contextually neutral attire appropriate to the scene.`);
+          // No closet outfit: this person's own photographs ARE the clothing authority — including
+          // a bare torso, which is information, never a gap for an invented tank top or T-shirt.
+          lines.push(`CLOTHING — NO OUTFIT ON FILE for "${nameDisplay}": their own reference photos ARE their established clothing.`);
+          lines.push(`  ✅ Render exactly the clothing shown in those photos — same garments, colors, layers — and the same absence of them.`);
+          lines.push(`  ⛔ If their avatar shows a bare torso they stay bare-chested. NEVER add a tank top, undershirt, T-shirt, hoodie, jacket or robe.`);
+          lines.push(`  ⛔ The selected activity is NOT a clothing change — it never dresses them. A previous picture that added a garment was wrong; never repeat it.`);
         }
 
         lines.push(``);
