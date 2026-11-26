@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { buildRideNarrative, rideSeating, rideViewForAction, rideImageRequest, RIDE_STOPPED_ACTION_IDS } from "@/lib/sceneRide";
+import { buildRideNarrative, rideSeating, rideViewForAction, rideImageRequest, RIDE_STOPPED_ACTION_IDS, RIDE_SOLO_ACTION_IDS } from "@/lib/sceneRide";
+import { activityBehaviorFor } from "@/lib/sceneActivityBehavior";
 
 /**
  * useSceneRide — Take a Ride as a scene that happens inside the car.
@@ -27,14 +28,30 @@ export function useSceneRide({
 
   // The picture for a moment inside the car: only the camera moves, and only the people
   // doing the thing are in frame. Their seats never change with the view.
-  const buildRideShot = (currentRide, actionId, actorIds) => {
+  const buildRideShot = (currentRide, action, actorIds, recipientIds = []) => {
     if (!currentRide) return null;
     const ids = (actorIds || []).filter(Boolean);
-    const view = rideViewForAction({ actionId, actorIds: ids, seating: currentRide.seating });
-    const visibleIds = ids.length > 0 ? ids : [currentRide.seating?.driver?.id].filter(Boolean);
+    const recipients = (recipientIds || []).filter(Boolean);
+    const actionId = action?.id || null;
+    // One person doing something is framed on that person; a moment between two people is
+    // framed as that moment. Either way the camera follows what is actually being done.
+    const framedActors = RIDE_SOLO_ACTION_IDS.has(actionId) && recipients.length === 0 ? ids.slice(0, 1) : ids;
+    const visibleIds = [...framedActors, ...recipients];
+    const view = rideViewForAction({ actionId, actorIds: visibleIds, seating: currentRide.seating });
     // A moment that takes the driver's hands off the wheel pulls the car over first.
     const stopped = RIDE_STOPPED_ACTION_IDS.has(actionId);
-    return { view, visibleIds, stopped };
+    // The activity itself travels with the request: it is the subject of the picture.
+    const actionDetail = action ? {
+      id: action.id,
+      label: action.label,
+      emoji: action.emoji,
+      behavior: activityBehaviorFor(action),
+      verb: action.verb,
+      pastVerb: action.past_verb,
+      actorIds: framedActors,
+      recipientIds: recipients,
+    } : null;
+    return { view, visibleIds, stopped, action: actionDetail };
   };
 
   // Every ride picture — the first one and every one after it — comes from the same

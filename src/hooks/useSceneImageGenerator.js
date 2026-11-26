@@ -283,8 +283,9 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
           ? buildActionEnvNote(currentZoneForAction.zone_name, true, lightingDesc)
           : buildFacilityEnvNote(location.name, true, lightingDesc));
       }
-      // The hour is stated on every activity picture too — the same hour as the scene.
-      if (!environmentNote) finalPrompt += timeLock;
+      // The hour is stated on every activity picture too — the same hour as the scene,
+      // including a picture taken inside a car.
+      finalPrompt += timeLock;
       finalPrompt += buildSleepDescriptor(finalParticipants);
       // A shower is never rendered with anyone dressed in it.
       if (showerState) finalPrompt += buildShowerStateRule();

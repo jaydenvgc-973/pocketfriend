@@ -61,16 +61,73 @@ export function rideSeating({ riders = [], driverId = null }) {
 }
 
 /**
- * Which of the four established vehicle views this moment is drawn from. The view is only
- * where the camera stands — the seats, the wheel and the people in them never move.
+ * A moment between two people — framed as that moment, never as two people sitting apart.
  */
-export function rideViewForAction({ actorIds = [], seating = null } = {}) {
+const RIDE_PAIR_ACTION_IDS = new Set([
+  "kiss", "flirt_with", "bond_with", "show_appreciation", "goof_around",
+  "argue_with", "fight_with", "moonwink", "pass_note",
+]);
+
+/** Looking out at the world: the glass, the road and the dashboard are the picture. */
+const RIDE_VIEW_OUT_ACTION_IDS = new Set(["watch_sunset", "cloud_watch", "people_watch", "observe"]);
+
+/** One person doing something to or with something — framed on that person. */
+export const RIDE_SOLO_ACTION_IDS = new Set(["drink", "eat", "relax", "read", "music", "check_phone", "sketch"]);
+
+/** Which established reference belongs to each camera. */
+const VIEW_REFERENCE = {
+  front_seats: "front_seats",
+  driver_seat: "driver_seat",
+  driver_focus: "driver_seat",
+  passenger_seat: "front_seats",
+  interaction: "front_seats",
+  windshield: "front_seats",
+  back_row: "back_row",
+  exterior: "exterior",
+};
+
+/**
+ * The vehicle's own four references, with the one that matches this camera first, so the
+ * picture is built from the view it is actually taken from. The rest stay supplied, so the
+ * model keeps the whole vehicle's geometry — the wheel, the doors, the seat positions.
+ */
+export function orderedCarViewUrls(car, view = "front_seats") {
+  const key = VIEW_REFERENCE[view] || "front_seats";
+  const primary = car?.views?.[key];
+  const urls = carViewUrls(car);
+  if (typeof primary !== "string" || !primary.trim()) return urls;
+  return [primary, ...urls.filter((u) => u !== primary)];
+}
+
+/**
+ * Where the camera stands for this moment. The view is chosen from what is actually being
+ * done and where the person doing it is sitting — never from a single default composition.
+ * The seats, the wheel and the people in them never move: only the camera does.
+ */
+export function rideViewForAction({ actionId = null, actorIds = [], seating = null } = {}) {
   if (!seating?.driver) return "front_seats";
   const ids = (actorIds || []).filter(Boolean);
+  const driverId = seating.driver.id;
+  const passengerId = seating.frontPassenger?.id || null;
   const inBack = (id) => (seating.back || []).some((b) => b.id === id);
-  // Anyone in the back seat is seen from the front of the cabin, looking back at them.
+
+  // A moment between two people is framed as that moment, from the side of the cabin.
+  if (RIDE_PAIR_ACTION_IDS.has(actionId) && ids.length >= 2) {
+    return ids.some(inBack) ? "back_row" : "interaction";
+  }
+  // Watching the world go by: the windshield, the road and the dashboard are the picture.
+  if (RIDE_VIEW_OUT_ACTION_IDS.has(actionId)) return "windshield";
+  // One person doing something is framed on that person, from their own side of the car.
+  if (ids.length === 1) {
+    if (ids[0] === driverId) return "driver_focus";
+    if (ids[0] === passengerId) return "passenger_seat";
+    if (inBack(ids[0])) return "back_row";
+  }
+  // A conversation between people in the same row is seen from inside that row.
   if (ids.some(inBack)) return "back_row";
-  if (ids.length === 1 && ids[0] === seating.driver.id) return "driver_seat";
+  if (ids.includes(driverId) && ids.includes(passengerId)) return "front_seats";
+  if (ids.includes(driverId)) return "driver_focus";
+  if (ids.includes(passengerId)) return "passenger_seat";
   return "front_seats";
 }
 
@@ -140,12 +197,13 @@ export function buildRideContextBlock(ride) {
  * Only the people the chosen view frames are named — being off-camera never means a
  * person has left the car.
  */
-export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], stopped = false, lighting = null } = {}) {
+export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], stopped = false, lighting = null, action = null } = {}) {
   const car = ride?.car || {};
   const label = carLabel(car) || "car";
   const extra = String(car.description || "").trim();
   const owner = ride?.ownerName || "the owner";
   const seating = ride?.seating || {};
+  const hasRefs = carViewUrls(car).length > 0;
   const nameOf = (id) => (ride?.riders || []).find((r) => r.id === id)?.name || null;
   const seatOf = (id) => {
     if (!id) return null;
@@ -170,32 +228,58 @@ export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], s
     ? "The car is pulled over and stationary, engine idling; the driver's hands are off the wheel for this moment."
     : "The car is moving; the driver's hands stay on the wheel and their eyes on the road, and the street beyond the glass is softly blurred.";
 
-  const cameraText = view === "driver_seat"
-    ? `CAMERA (this picture only): just behind and beside the driver's shoulder, looking forward past them toward the windshield — the back of the driver's head and their shoulder in the near foreground, hands on the wheel, dashboard and instrument panel below, the road ahead beyond the glass.`
-    : view === "back_row"
-      ? `CAMERA (this picture only): inside the cabin at the front, turned around to look back into the rear seating area — the back-seat occupants' faces, the rear side windows and the street behind them. The front seats are foreground shapes in the near frame; the windshield is behind the camera, not in the picture.`
-      : view === "exterior"
-        ? `CAMERA (this picture only): outside the vehicle on the street, the whole car in frame with its surroundings.`
-        : `CAMERA (this picture only): inside the cabin behind the front seats, looking forward over the driver's shoulder toward the windshield — the driver's seat, the front passenger seat, the dashboard and steering wheel, and the road ahead beyond the glass.`;
+  // Each camera is a genuinely different place to stand inside (or outside) the same car.
+  // They are not rewordings of one composition.
+  const CAMERA_TEXT = {
+    front_seats: `from between and slightly behind the two front seats, high enough to see both occupants' faces in three-quarter as they look ahead — the wheel and dashboard between them, the windshield and the road beyond.`,
+    driver_seat: `just behind and beside the driver's shoulder, looking forward past them toward the windshield — the back of the driver's head and shoulder in the near foreground, hands on the wheel, the instrument panel below, the road ahead beyond the glass.`,
+    driver_focus: `inside the cabin from the front passenger side, turned three-quarters toward the driver — the driver's face, hands and the wheel, the dashboard, and the driver's own door and window behind them.`,
+    passenger_seat: `inside the cabin from the driver's side, across toward the front passenger — the passenger's face and upper body in three-quarter view, their own door and window behind them, the dashboard and console in the near foreground.`,
+    interaction: `from the front corner of the cabin between the dashboard and the passenger door, framing the two front occupants from the side so they are seen turned toward one another — both faces readable in three-quarter, the space between them at the centre of the frame.`,
+    back_row: `inside the cabin at the front, turned around to look back into the rear seating area — the back-seat occupants, the rear side windows and the street behind them. The front seats are foreground shapes in the near frame; the windshield is behind the camera, not in the picture.`,
+    windshield: `low in the cabin at the dashboard, looking forward through the windshield — the glass, the wipers, the hood, the street and the sky beyond, with the instrument panel along the bottom of the frame. Occupants may be absent, or only at the edge of the frame.`,
+    exterior: `outside the vehicle on the street, the whole car in frame with its surroundings.`,
+  };
+  const cameraText = `CAMERA (this picture only): ${CAMERA_TEXT[view] || CAMERA_TEXT.front_seats}`;
 
   const light = lighting ? ` TIME OF DAY (authoritative): ${lighting}. The street outside, the windows and the dashboard show exactly that light. The reference photographs were taken at their own time of day — use them only for the car's shape and interior, never for its lighting.` : "";
 
-  return `${cameraText}
+  // The activity is the subject of the picture; the car is only where it happens.
+  const actionBlock = (() => {
+    if (!action?.label) return "";
+    const actors = (action.actorIds || []).map(nameOf).filter(Boolean);
+    const recipients = (action.recipientIds || []).map(nameOf).filter(Boolean);
+    const actorText = listNames(actors);
+    const recipientText = listNames(recipients);
+    const done = action.behavior === "immediate";
+    const verb = (done ? action.pastVerb : action.verb) || String(action.label).toLowerCase();
+    const doing = [actorText || "Someone", verb, recipientText].filter(Boolean).join(" ");
+    const onlyActor = actorText && recipients.length === 0 ? ` Only ${actorText} is doing this — nobody else in the car is.` : "";
+    const receives = recipientText ? ` ${actorText || "They"} is the one doing it; ${recipientText} receives it and reacts.` : "";
+    return `
+
+ACTION — THE SUBJECT OF THIS PICTURE (the reason it exists): ${doing}${done ? " — already done; depict it as it stands." : " — happening right now."}
+- The action is what the camera is looking at. The car is only the environment around it. People sitting still is NOT this action.
+- Its physical evidence must be visible in the frame: hands, objects, posture, eyelines and the space between the people must make it unmistakable.${onlyActor}${receives}
+- ⛔ NOBODY LOOKS AT THE CAMERA. Nobody poses for a photograph or turns to face the lens. Each person's attention is on what they are doing, or on the person they are doing it with.`;
+  })();
+
+  return `${cameraText}${actionBlock}
 
 VEHICLE GEOMETRY (absolute — the camera moves, the car does not):
-- The vehicle is ${owner}'s ${label}${extra ? `, ${extra}` : ""}. Its body, paint, seats, dashboard, steering wheel, door panels and trim are exactly the vehicle in the supplied reference photographs — same make, model, colours, materials and proportions.
-- Those photographs are four views of ONE vehicle: the exterior, the driver's position, the front cabin and the rear seating area. They show where the steering wheel, the dashboard, the windshield, the front seats and the back seats actually are. Keep that exact layout.
+- The vehicle is ${owner}'s ${label}${extra ? `, ${extra}` : ""}. ${hasRefs ? `Its body, paint, seats, dashboard, steering wheel, door panels and trim are exactly the vehicle in the supplied reference photographs — same make, model, colours, materials and proportions.` : `Its interior is the ordinary cabin of that exact vehicle, consistent with the written description above.`}
+${hasRefs ? `- The supplied photographs are views of ONE vehicle: the exterior, the driver's position, the front cabin and the rear seating area. The one matching this camera comes first; the rest are beside it so the whole cabin stays consistent. They show where the steering wheel, the dashboard, the windshield, the front seats and the back seats actually are. Keep that exact layout.` : `- Keep one consistent cabin: the same wheel, dashboard, seats and trim in every picture of this ride.`}
 - The steering wheel, dashboard and windshield stay where the references show them. No seat moves, turns around, is swapped, added or removed, and the wheel is never mirrored to the other side of the car.
-- Every occupant faces forward, toward the windshield. In a view taken from behind them you see the backs of their heads and shoulders — the same people facing the same way, never turned seats.
+- Every occupant sits facing forward in their own seat, toward the windshield. A camera placed behind them may still see their faces in three-quarter as they look to the road, the mirrors or each other — but no seat is turned, no body is turned around, and nobody turns to face the lens.
 
 SEATING (fixed for this whole ride):
 ${seatLines.join("\n")}
 
-${inFrame} Anyone not listed is still in the car but outside this camera's frame — never add a person, never move someone to fill a seat.
+${inFrame} Anyone not listed is still in the car but outside this camera's frame — never add a person, never move someone to fill a seat, and never replace anyone with a different-looking person. Each occupant's face, skin tone, hair and build come only from that person's own reference photograph: the driver is ${seating.driver?.name || "the established driver"} and stays ${seating.driver?.name || "the established driver"}, never a substitute, never a stock driver.
 
 ${motion}${light}
 
-CONTINUITY: this is one continuous ride. Each person's face, hair, hairstyle, hair length and texture, skin, build, clothes, shoes and accessories are exactly the same as in the other pictures of this ride — only the camera position and what they are doing change.`;
+CONTINUITY: this is one continuous ride. Each person's face, hair, hairstyle, hair length and texture, skin, build, clothes, shoes and accessories are exactly the same as in the other pictures of this ride — only the camera position and what they are doing change. ⛔ Clothing is their established outfit (or, with none on file, exactly what their own reference photograph shows). No jacket, coat, scarf, hat or accessory is added or removed because the camera moved or because of what they are doing.`;
 }
 
 /**
@@ -215,20 +299,22 @@ export function buildRideContinuityLock(ride, lighting) {
   const seating = ride?.seating || {};
   const riders = (ride?.riders || []).filter((r) => r?.name);
   const who = riders.map((r) => `${r.name} — ${r.id === seating.driver?.id ? "driver's seat" : r.id === seating.frontPassenger?.id ? "front passenger seat" : "back seat"}`).join("; ");
-  return ` RIDE CONTINUITY LOCK (absolute, overrides any other instruction about attire, pose, seating or lighting): this is one unbroken car ride. ${who ? `Seats, fixed: ${who}. ` : ""}Everyone stays in their own seat and faces the windshield. Nobody changes clothes, hairstyle or appearance between pictures of this ride, and no outfit is invented for anyone who already has one on. The steering wheel, dashboard and seats never move. ${lighting ? `The time of day is ${lighting} — the same hour as the rest of this ride.` : ""} The car is the environment; a room, house or living room must never appear.`;
+  return ` RIDE CONTINUITY LOCK (absolute, overrides any other instruction about attire, pose, seating or lighting): this is one unbroken car ride. ${who ? `Seats, fixed: ${who}. ` : ""}Everyone stays in their own seat and faces forward in it — toward the windshield, or toward whoever they are interacting with — and nobody ever turns to look into the camera or poses for a photograph. Nobody changes clothes, hairstyle or appearance between pictures of this ride, and no outfit is invented for anyone who already has one on. The steering wheel, dashboard and seats never move. ${lighting ? `The time of day is ${lighting} — the same hour as the rest of this ride.` : ""} The car is the environment; a room, house or living room must never appear.`;
 }
 
 /**
  * Everything one ride picture needs, from the same place, so the first picture and every
  * picture after it are drawn from the identical vehicle, seating and time.
  */
-export function rideImageRequest(ride, { view = "front_seats", visibleIds = [], stopped = false } = {}) {
+export function rideImageRequest(ride, { view = "front_seats", visibleIds = [], stopped = false, action = null } = {}) {
   const lighting = getEasternLightingDescriptor();
   return {
     strictCastOnly: true,
     actionFocusIds: visibleIds,
-    actionOverridePrompt: buildRidePrompt(ride, { view, visibleIds, stopped, lighting }),
-    environmentRefsOverride: carViewUrls(ride?.car),
+    actionOverridePrompt: buildRidePrompt(ride, { view, visibleIds, stopped, lighting, action }),
+    // The view this picture is taken from comes first, with the rest of the vehicle's own
+    // references beside it — every ride picture keeps all four, never a generic interior.
+    environmentRefsOverride: orderedCarViewUrls(ride?.car, view),
     environmentNote: buildVehicleEnvironmentNote(ride, lighting),
     postPromptLock: buildRideContinuityLock(ride, lighting),
     keepImageOnFailure: true,

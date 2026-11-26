@@ -1103,7 +1103,7 @@ export default function Scene() {
         : `[${action.emoji} ${action.label} — ${target.name}]`;
     // Inside the car the moment stays in the car: the view follows the two people, drawn
     // against the owner's own vehicle references. Off-camera people remain in the ride.
-    const inCarShot = buildRideShot(ride, action.id, [actor?.id, target.id]);
+    const inCarShot = buildRideShot(ride, action, [actor?.id], [target.id]);
     if (actor?.id && actorName) {
       generateSceneImage({
         location, locationZones, activeZone, sceneParticipants, userParticipant,
@@ -2111,7 +2111,7 @@ export default function Scene() {
       // The picture shows the people taking part — never every resident who happens to be home.
       // Only a moment that has its own picture is redrawn — and inside the car that picture is
       // taken from the vehicle's own view. An activity with no picture leaves the car image be.
-      const inCarShot = actionImageFn ? buildRideShot(ride, action.id, actingPeople.map((c) => c.id).filter(Boolean)) : null;
+      const inCarShot = actionImageFn ? buildRideShot(ride, action, actingPeople.map((c) => c.id).filter(Boolean)) : null;
       if (inCarShot) { generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, ...rideImageRequest(ride, inCarShot) }); }
       else if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       // An activity with no picture of its own that establishes a room (a nap in the bedroom,
