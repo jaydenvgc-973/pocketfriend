@@ -15,8 +15,10 @@ export default function MissingBelongingModal({ open, kind, ownerName, isUser = 
   const isCar = kind === "car";
   const Icon = isCar ? Car : PawPrint;
   const what = isCar ? "a car" : "a pet";
-  const who = isUser ? "You do not have" : `${ownerName || "This character"} does not have`;
-  const where = isUser ? "your profile" : "the character's profile";
+  const heading = isCar ? "No Car Available" : "No Pet Available";
+  const body = isUser
+    ? `You do not have ${what}. Please visit your profile to add one — your own ${what} lives in the User Profile.`
+    : `This character does not have ${what}. Please visit the character's profile to add one.`;
 
   return createPortal(
     <div className="fixed inset-0 z-[196] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -30,11 +32,9 @@ export default function MissingBelongingModal({ open, kind, ownerName, isUser = 
           <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
             <Icon className="w-4 h-4 text-primary" />
           </div>
-          <p className="text-sm font-bold text-foreground">Nothing to use here yet</p>
+          <p className="text-sm font-bold text-foreground">{heading}</p>
         </div>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          {who} {what}. Please visit {where} to add one.
-        </p>
+        <p className="text-xs text-muted-foreground leading-relaxed">{body}</p>
         <div className="flex justify-end">
           <Button variant="ghost" onClick={onClose} className="rounded-xl">Cancel</Button>
         </div>

@@ -82,6 +82,11 @@ import { isGovernmentActionId } from "@/lib/governmentVenues";
 import useGovernmentVenueScene from "@/hooks/useGovernmentVenueScene";
 import SceneChatFeed from "@/components/scene/SceneChatFeed";
 import SceneActionStrip from "@/components/scene/SceneActionStrip";
+import SceneRideFlow from "@/components/scene/SceneRideFlow";
+import MissingBelongingModal from "@/components/scene/MissingBelongingModal";
+import { runNextSceneTransition } from "@/lib/sceneNextScene";
+import { useRideSceneImage } from "@/hooks/useRideSceneImage";
+import { loadBelongings, hasPet, carViewUrls, buildRidePrompt, buildWalkPetPrompt } from "@/lib/ownerBelongings";
 import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
 import SceneMoneyModal from "@/components/scene/SceneMoneyModal";
 import OpenPhoneModal from "@/components/scene/OpenPhoneModal";
@@ -682,9 +687,6 @@ export default function Scene() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // `requestImage` is false when an activity is moving the scene into that room: the
-  // activity draws its own picture in the room it establishes, so asking for a generic
-  // picture of the room as well would replace it a moment later.
   const handleZoneChange = (zoneName, requestImage = true) => {
     // Choosing the room already on screen changes nothing, so nothing is redrawn.
     if (zoneName === (activeZone || locationZones[0]?.zone_name)) return;
@@ -1438,6 +1440,10 @@ export default function Scene() {
 
   useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
+  // A scene reached by car opens inside that car: the people who rode, in the owner's own
+  // vehicle, drawn against the vehicle's registered references once the room picture lands.
+  useRideSceneImage({ rideOwnerId: urlParams.get("rideOwnerId"), rideOwnerType: urlParams.get("rideOwnerType"), ownerEmail: currentUser?.email, participantsReady, location, sceneImage, isGeneratingImage, drawRide: (car) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionOverridePrompt: buildRidePrompt(car, sceneParticipants.map((p) => ({ name: p.name }))), extraReferenceImages: carViewUrls(car) }) });
+
   const generateFocusedImage = (prompt) => {
     if (isGeneratingImage) return;
     base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
@@ -1725,9 +1731,14 @@ export default function Scene() {
   // them doing it, the moment is played out between the people here, and an ordinary meal
   // or drink is recorded against each person who actually has it. Several people means one
   // shared moment, not one person acting while the others watch.
-  const performObserveAction = (action, people) => {
+  const performObserveAction = async (action, people) => {
     const actors = (Array.isArray(people) ? people : [people]).filter((p) => p?.id);
     if (actionCooldown || actors.length === 0) return;
+    // A watched walk is walked by the animal on that character's own profile, or not at all.
+    if (action.id === "walk_pet") {
+      const pet = (await loadBelongings(currentUser?.email, "character", actors[0].id))?.pet || null;
+      if (!hasPet(pet)) { setMissingBelonging({ kind: "pet", ownerName: actors[0].name, isUser: false }); return; }
+    }
     const names = actors.map((a) => a.name).filter(Boolean);
     const whoNames = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
     // An interface-only label never becomes character vocabulary: the scene is given what
@@ -2030,6 +2041,9 @@ export default function Scene() {
   // a character activity, and neither adds anyone to the scene.
   const [arrestPicker, setArrestPicker] = useState(null);
   const [showNextScene, setShowNextScene] = useState(false);
+  // Take a Ride and the two missing-property conditions. Both are answers, never silence.
+  const [showRidePicker, setShowRidePicker] = useState(false);
+  const [missingBelonging, setMissingBelonging] = useState(null);
   const arrestTargets = crimeCast.filter((p) => p?.id && !p.isNpc && !String(p.id).startsWith("npc_") && p.id !== currentUser?.id)
     .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
   const nextSceneParticipants = (observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs, ...extraNpcs])
@@ -2052,59 +2066,27 @@ export default function Scene() {
     setArrestTransition({ character: person, facility: { ...facility, name: data.facility_name || facility.name }, unitId: data.unit_id || null, unitName: data.unit_name || null });
   };
 
-  const handleNextSceneConfirm = async ({ destination, zoneName, unitId, environmentId, spaceLabel, travelerIds, mode }) => {
+  // The transition itself lives in sceneNextScene.js — the modal only decides where the
+  // scene goes next; confirming it is what moves people and opens the destination.
+  const handleNextSceneConfirm = (payload) => {
     setShowNextScene(false);
-    if (!destination?.id) return;
-    // A chosen workspace or on-site residence is a space of this same property: the
-    // property stays the destination, and the space is what the scene opens in.
-    const placeName = spaceLabel || destination.name;
-    const travelers = nextSceneParticipants.filter((p) => travelerIds.includes(p.id));
-    const moving = mode === "watch" ? [] : travelers;
-    // Each chosen person moves through the same teleportation call the app already
-    // uses to place a character at a location. Whoever it refuses stays exactly where
-    // they are — and is never shown in the new scene as if they had traveled.
-    const results = await Promise.all(moving.map(async (p) => {
-      try {
-        const res = await base44.functions.invoke('updateCharacterLocation', { characterId: p.id, locationId: destination.id, locationName: destination.name, presenceStatus: 'visiting', locationType: 'visit', sourceReason: 'next_scene' });
-        const data = res?.data || res;
-        return { ...p, moved: data?.success !== false };
-      } catch {
-        return { ...p, moved: false };
-      }
-    }));
-    const arrived = results.filter((r) => r.moved);
-    const refused = results.filter((r) => !r.moved);
-    if (moving.length > 0 && arrived.length === 0) {
-      setMessages((prev) => [...prev, { id: `next_scene_err_${Date.now()}`, sender: "narrative", content: `Nobody could get to ${placeName}. The scene stays here.`, timestamp: new Date().toISOString() }]);
-      return;
-    }
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    const refusedNote = refused.length > 0 ? ` ${refused.map((r) => r.name).join(", ")} ${refused.length === 1 ? "stays" : "stay"} behind.` : "";
-    // Sending them ahead from a scene you are in leaves you here — nobody moves you.
-    if (mode === "send" && !observeMode) {
-      if (moving.length > 0) setMessages((prev) => [...prev, { id: `next_scene_${Date.now()}`, sender: "narrative", content: `${arrived.map((t) => t.name).join(", ")} head to ${placeName}.${refusedNote}`, timestamp: new Date().toISOString() }]);
-      return;
-    }
-    // The scene being left is recorded before the next one begins.
-    _completeSceneBeforeTransition(placeName);
-    const params = new URLSearchParams({ locationId: destination.id });
-    const ids = arrived.map((t) => t.id).join(",");
-    if (ids) params.set("characterIds", ids);
-    if (zoneName) params.set("zoneName", zoneName);
-    if (unitId) params.set("unitId", unitId);
-    // The residence environment is carried so its own access rules apply — a property's
-    // business hours never close the living space inside it.
-    if (environmentId) params.set("environmentId", environmentId);
-    if (observeMode || mode === "watch") params.set("observe", "1");
-    // Marks this as a scene of its own even when it happens to share the same place and
-    // cast — a confirmed transition always starts the destination scene.
-    params.set("started", String(Date.now()));
-    navigate(`/scene?${params.toString()}`);
+    return runNextSceneTransition(payload, { base44, queryClient, currentUser, observeMode, nextSceneParticipants, setMessages, navigate, completeScene: _completeSceneBeforeTransition });
   };
 
   // `actors` is the person or people chosen through the existing selector for an activity
   // that asks who performs it (Work). Without a choice, the selected scene cast takes part.
   const handleAction = async (action, actors = null) => {
+    // WALK A PET walks the animal registered on the walker's own profile. An actor without
+    // one is told exactly that, and the activity does not happen — no invented animal, no
+    // picture, and no effect for something nobody did.
+    let walkPet = null; let walkPetOwner = null;
+    if (action.id === "walk_pet") {
+      const walker = (Array.isArray(actors) && actors.length > 0 ? actors : selectedPeopleHere)[0] || null;
+      const walkerIsUser = !walker || walker.isUser || walker.id === currentUser?.id;
+      walkPet = (await loadBelongings(currentUser?.email, walkerIsUser ? "user" : "character", walkerIsUser ? (currentUser?.id || "user") : walker?.id))?.pet || null;
+      walkPetOwner = walkerIsUser ? displayName : walker?.name;
+      if (!hasPet(walkPet)) { setMissingBelonging({ kind: "pet", ownerName: walkPetOwner, isUser: walkerIsUser }); return; }
+    }
     if (actionCooldown) return; setActionCooldown(true);
     const actingPeople = Array.isArray(actors) && actors.length > 0 ? actors : selectedPeopleHere;
     try {
@@ -2130,6 +2112,8 @@ export default function Scene() {
       // An activity with no picture of its own that establishes a room (a nap in the bedroom,
       // a shower in the bathroom) shows that room — one picture, and never beside an action image.
       else if (zoneChanged || action.suggested_zone_name) requestSpaceImage();
+      // The walk is drawn with the walker's own animal, from that animal's own reference.
+      if (walkPet) generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), actionOverridePrompt: buildWalkPetPrompt(walkPetOwner, walkPet), extraReferenceImages: walkPet.image_url ? [walkPet.image_url] : [] });
       const payerNote = payer === "character" && broughtCharacters[0] && cost > 0 ? ` (${broughtCharacters[0].name} pays)` : cost > 0 ? ` — $${cost}` : "";
       // The strip is not a text box: choosing an activity is a scene action, shown as a
       // centered activity naming the people taking part — not as an outgoing message.
@@ -2310,6 +2294,7 @@ export default function Scene() {
         actionCooldown={actionCooldown}
         onOpenMoney={(mode) => setMoneyMode(mode)}
         onOpenPhone={() => setShowPhone(true)}
+        onTakeARide={() => setShowRidePicker(true)}
       />
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
@@ -2340,6 +2325,10 @@ export default function Scene() {
       )}
 
       <AnimatePresence>{moneyMode && <SceneMoneyModal mode={moneyMode} actors={activityActors} userBalance={settings.user_balance ?? 0} currentUser={currentUser} onClose={() => setMoneyMode(null)} onCompleted={(line) => { setMessages((prev) => [...prev, { id: `${Date.now()}_money`, sender: "narrative", content: line, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["userSettings"] }); }} />}</AnimatePresence>
+      {/* Take a Ride answers every time: the owner selector, then either the ride or the
+          reason it cannot happen. Cancelling changes nothing about the scene. */}
+      <SceneRideFlow open={showRidePicker} onClose={() => setShowRidePicker(false)} currentUser={currentUser} displayName={displayName} userPresent={!observeMode} participants={nextSceneParticipants} locations={locationsData} onConfirm={handleNextSceneConfirm} />
+      <MissingBelongingModal open={!!missingBelonging} kind={missingBelonging?.kind} ownerName={missingBelonging?.ownerName} isUser={!!missingBelonging?.isUser} onClose={() => setMissingBelonging(null)} />
       <AnimatePresence>{showPhone && <OpenPhoneModal currentUser={currentUser} worldName={displayName} onOpenScenePhoto={() => { setShowPhone(false); setShowPhotoModal(true); }} onClose={() => setShowPhone(false)} />}</AnimatePresence>
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>
       <AnimatePresence>{showTourModal && <RealtorTourModal isOpen={showTourModal} location={location} onClose={() => setShowTourModal(false)} onAddRealtor={(realtorNpc) => { setExtraNpcs((prev) => prev.find((n) => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]); if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) setSelectedNpcIds((prev) => [...(prev || []), realtorNpc.id]); }} />}</AnimatePresence>

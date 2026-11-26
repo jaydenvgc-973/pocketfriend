@@ -3,7 +3,8 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, BookMarked, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, BookMarked, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X, BarChart3, Home as HomeIcon, Shirt, AlertCircle, MessageCircle, Activity, Globe, Plane, Baby, Skull, Car } from "lucide-react";
+import BelongingsPanel from "@/components/property/BelongingsPanel";
 import CollapsibleProfileSection from "@/components/character/CollapsibleProfileSection";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -779,6 +780,12 @@ export default function CharacterProfile() {
 
           <CollapsibleProfileSection icon={Baby} title="Pregnancy & Birth">
             <PregnancyPanel character={character} onUpdated={() => refetch()} />
+          </CollapsibleProfileSection>
+
+          {/* The car and pet this character actually owns. A scene reads these records —
+              nothing is ever assigned automatically. */}
+          <CollapsibleProfileSection icon={Car} title="Property / Belongings">
+            <BelongingsPanel ownerType="character" ownerId={character.id} ownerEmail={character.owner_email || currentUser?.email} ownerName={character.name} />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection icon={AlertCircle} title="What They've Been Through">

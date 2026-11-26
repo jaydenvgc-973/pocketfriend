@@ -6,8 +6,9 @@ import { Link } from "react-router-dom";
 import {
   ArrowLeft, Sparkles, RefreshCw, DollarSign, Key, MapPin, Briefcase,
   Home, Phone, Send, User, Eye, Wallet, Shirt, Palette, Users, ChevronRight,
-  TrendingUp, Pencil, Settings as SettingsIcon, ChevronDown, ChevronUp,
+  TrendingUp, Pencil, Settings as SettingsIcon, ChevronDown, ChevronUp, Car,
 } from "lucide-react";
+import BelongingsPanel from "@/components/property/BelongingsPanel";
 import ProfileAnalytics from "@/components/profile/ProfileAnalytics";
 import { Button } from "@/components/ui/button";
 import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
@@ -340,6 +341,12 @@ export default function MyProfile() {
               Edit in Settings →
             </button>
           </Link>
+        </section>
+
+        {/* Your own car and pet. Scenes read these records — nothing is ever assumed. */}
+        <section className="bg-card border border-border rounded-2xl p-5">
+          <ProfileSectionHeader icon={Car} title="Property / Belongings" />
+          <BelongingsPanel ownerType="user" ownerId={user?.id} ownerEmail={user?.email} ownerName={settings.fictional_world_name || user?.full_name || "You"} isUser />
         </section>
 
         {/* ═══ MODULE 4: BUSINESSES & LOCATIONS — horizontal gallery ═══ */}

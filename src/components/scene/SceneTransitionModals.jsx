@@ -27,6 +27,9 @@ export default function SceneTransitionModals({
   nextSceneParticipants,
   userPresent,
   onNextSceneConfirm,
+  // A ride goes through this same modal, with its four seats and its own confirm label.
+  rideMode = false,
+  requiredTravelerIds = [],
 }) {
   return (
     <>
@@ -64,6 +67,8 @@ export default function SceneTransitionModals({
           userPresent={userPresent}
           onClose={onCloseNextScene}
           onConfirm={onNextSceneConfirm}
+          rideMode={rideMode}
+          requiredTravelerIds={requiredTravelerIds}
         />
       )}
     </>
