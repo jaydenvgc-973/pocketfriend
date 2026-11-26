@@ -19,6 +19,7 @@
  * One participant's identity/refs/appearance/outfit must never be applied to another.
  */
 import { isInfantCharacter, buildInfantImageDirective } from "@/lib/characterAgeStage";
+import { buildHairstyleFidelityText, resolveHeightProportions } from "@/lib/appearanceLockValidator";
 
 function formatRefRange(start, end) {
   if (start === null || start === undefined) return null;
@@ -35,9 +36,12 @@ function buildSubjectAppearanceLock(person) {
   const hairstyle = lock.hairstyle || lock.hair_type || null;
   const hairColor = lock.hair_color || null;
   const facialHair = lock.facial_hair || null;
-  const bodyType = lock.body_type || lock.overall_aesthetic || null;
+  // Physique is its OWN established fact. `overall_aesthetic` is a style/vibe phrase
+  // ("dark academia", "NYC streetwear") — it is never a body type and is never printed as one.
+  const bodyType = lock.body_type || null;
   const distinguishing = lock.distinguishing_features || null;
   const gender = person.gender || null;
+  const { heightInches, category: heightClass, isDefault: heightIsDefault } = resolveHeightProportions(lock.height_inches);
 
   const lines = [];
 
@@ -53,10 +57,19 @@ function buildSubjectAppearanceLock(person) {
     lines.push(`  • Ethnicity: ${userRace} — render EXACTLY. ⛔ No Caucasian default.`);
   }
   if (skinTone) lines.push(`  • Skin tone: ${skinTone} — do not alter, lighten, or shift.`);
-  if (hairstyle) lines.push(`  • Hair: ${hairstyle}`);
+  if (hairstyle) lines.push(`  • Hair: ${hairstyle} — this exact hairstyle, unchanged from this person's own reference photos.`);
   if (hairColor) lines.push(`  • Hair color: ${hairColor}`);
+  const hairstyleFidelity = buildHairstyleFidelityText(hairstyle);
+  if (hairstyleFidelity) lines.push(`  • ${hairstyleFidelity}`);
   if (facialHair) lines.push(`  • Facial hair: ${facialHair}`);
-  if (bodyType) lines.push(`  • Body type: ${bodyType} — do not slim, bulk, or alter.`);
+  // Physique is stated for this person alone. When nothing is stored, the person's own
+  // reference photos define it — never another subject's build and never an average.
+  lines.push(bodyType
+    ? `  • Body type: ${bodyType} — this person's own build, do not slim, bulk, average or alter.`
+    : `  • Body type: this person's own build, exactly as in their own reference photos — do not borrow, average, blend or share another subject's physique.`);
+  if (heightInches && !heightIsDefault) {
+    lines.push(`  • Height and proportions: ${heightClass.replace('_', ' ')} — keep this person's own body proportions; do not stretch or compress.`);
+  }
   if (distinguishing) lines.push(`  • Distinguishing features: ${distinguishing} — must be visible.`);
   if (gender) lines.push(`  • Gender: ${gender.toUpperCase()} — established identity. ⛔ DO NOT infer from name.`);
 
@@ -122,7 +135,14 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
     lines.push(`  ⛔ ABSOLUTE PROHIBITION: Background, room, walls, lighting, furniture, pose, props,`);
     lines.push(`     and clothing in these reference photos MUST BE COMPLETELY IGNORED.`);
     lines.push(`  ⛔ Treat as face/identity texture samples ONLY — NOT a scene to replicate.`);
-    lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
+    if (outfitText) {
+      lines.push(`  ⛔ Clothing visible in these photos is IRRELEVANT — the OUTFIT LOCK below is the sole clothing authority.`);
+    } else {
+      // No outfit is on file for this person. The clothing in their own reference photos IS
+      // their established clothing — it is the only clothing authority there is, and it is
+      // never replaced by an invented outfit.
+      lines.push(`  ✅ CLOTHING: this person has no separate outfit on file — the clothing they wear in their own reference photos IS their established clothing. Render exactly that clothing (same garments, same colors, same layers), never an invented or substituted outfit.`);
+    }
     lines.push(`  ⛔ These refs belong EXCLUSIVELY to "${name}" — do NOT apply to any other subject.`);
   } else {
     lines.push(`REFERENCE IMAGES: None — generate "${name}" from appearance lock below only.`);
@@ -154,14 +174,22 @@ function buildSealedSubjectBundle(person, refRange, outfitText, role) {
     lines.push(`OUTFIT LOCK (for "${name}" ONLY — canonical law):`);
     outfitText.split(',').map(s => s.trim()).filter(Boolean).forEach(item => lines.push(`  • ${item}`));
     lines.push(`  ⛔ This outfit belongs EXCLUSIVELY to "${name}". Do NOT apply to any other subject.`);
+    lines.push(`  ✅ This is the same outfit in every picture of this continuous scene — a new angle, activity or camera position never changes it.`);
   } else {
-    lines.push(`OUTFIT: No outfit on file — use contextually appropriate attire.`);
+    // No closet outfit and no uniform apply. The avatar's own clothing is the baseline —
+    // not a gap to be filled by whatever the model finds fitting for the surroundings.
+    lines.push(`CLOTHING (for "${name}" ONLY): No separate outfit is on file for this person.`);
+    lines.push(`  ✅ They wear EXACTLY the clothing shown in their own reference photographs — the same garments, colors, layers and footwear, in this picture and every other picture of this continuous scene.`);
+    lines.push(`  ⛔ Do NOT invent, upgrade, restyle or substitute clothing. Do NOT dress them in business attire, a uniform, sleepwear or seasonal outfits of your own choosing.`);
+    lines.push(`  ⛔ If their reference photos show them in a plain T-shirt and jeans, that is what they wear here. If a reference shows a bare torso, do NOT add a shirt.`);
+    lines.push(`  ✅ A garment a temporary circumstance genuinely requires (a coat in snow, a towel at the shower) is the ONLY addition — and it must be the same one in every picture of this scene.`);
   }
   lines.push('');
   lines.push(`CROSS-ASSIGNMENT PROHIBITION (absolute):`);
   lines.push(`  ⛔ "${name}"'s outfit MUST NOT be rendered on any other subject.`);
   lines.push(`  ⛔ "${name}"'s appearance MUST NOT be applied to any other subject.`);
   lines.push(`  ⛔ "${name}"'s reference images MUST NOT be used to render any other subject.`);
+  lines.push(`  ⛔ "${name}"'s body type, build and proportions are their own — never borrowed by, averaged with, or transferred to another subject.`);
 
   return lines.join('\n');
 }
@@ -211,6 +239,9 @@ export function buildSealedSubjectBundles(people, refKey, location) {
   block += `This scene contains ${subjectCount} distinct named subjects. Each has a sealed bundle above.\n`;
   block += `⛔ NEVER swap outfits between subjects.\n`;
   block += `⛔ NEVER swap appearance between subjects.\n`;
+  block += `⛔ NEVER blend, average or share body types between subjects: a slim person stays slim beside a muscular person, and a muscular person keeps their own build beside a slim one. Each build comes from that person's own references only.\n`;
+  block += `⛔ NEVER change a subject's hairstyle, hair length, hair texture or hair pattern between pictures of this scene.\n`;
+  block += `⛔ NEVER invent clothing for a subject who has no outfit on file — they wear what their own reference photos show.\n`;
   block += `⛔ NEVER apply one subject's reference images to render a different subject.\n`;
   block += `⛔ NEVER replace any named subject with a generic person, the user, or a background person.\n`;
   block += `⛔ NEVER render any named subject more than once.\n`;

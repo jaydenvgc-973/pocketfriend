@@ -11,12 +11,13 @@ import { prioritizeAvatarReferences } from "@/lib/characterIdentityLock";
 import { buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
-import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
+import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, buildFacilityEnvNote, buildTimeOfDayLock, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
 import { buildShowerStateRule } from "@/lib/sceneActionConfig";
 import { isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
+import { resolveSceneZone } from "@/lib/sceneSpaceZone";
 
 /**
  * useSceneImageGenerator
@@ -113,6 +114,8 @@ export function useSceneImageGenerator() {
     setIsGeneratingImage(true);
 
     const lightingDesc = getEasternLightingDescriptor();
+    // The hour is stated on every path, and it is fixed for the whole continuous scene.
+    const timeLock = buildTimeOfDayLock(lightingDesc);
 
     // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──
     // Exactly one subject per person: the same individual reaching the cast twice (their own
@@ -134,9 +137,13 @@ export function useSceneImageGenerator() {
     // is the main-category space of this location, so it is preferred over an arbitrary
     // first zone when the active zone is not one of them. Nothing is reclassified: an
     // unchecked zone simply keeps the existing behavior.
-    const currentZoneForAction = locationZones.find((z) => z.zone_name === activeZone)
-      || locationZones.find((z) => z.is_primary_category === true)
-      || locationZones[0];
+    //
+    // A property organized into private spaces (apartments, studios, dorm rooms, patient
+    // rooms, cells, the businesses inside it) is never rendered as one of those rooms
+    // unless that exact space was chosen. Resolving the zone here means every path — the
+    // first image, a refresh, an activity, a transition — obeys the same rule.
+    const sceneZoneName = resolveSceneZone(location, activeZone);
+    const currentZoneForAction = locationZones.find((z) => z.zone_name === sceneZoneName) || null;
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
     // A picture taken somewhere other than the selected place — inside a car during a ride —
     // is composed from that environment's own references only. The selected zone's room
@@ -261,8 +268,12 @@ export function useSceneImageGenerator() {
         // "preserve this room's layout" note.
         finalPrompt += ` ` + environmentNote;
       } else if (envRefs.length > 0) {
-        finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
+        finalPrompt += ` ` + (currentZoneForAction
+          ? buildActionEnvNote(currentZoneForAction.zone_name, true, lightingDesc)
+          : buildFacilityEnvNote(location.name, true, lightingDesc));
       }
+      // The hour is stated on every activity picture too — the same hour as the scene.
+      if (!environmentNote) finalPrompt += timeLock;
       finalPrompt += buildSleepDescriptor(finalParticipants);
       // A shower is never rendered with anyone dressed in it.
       if (showerState) finalPrompt += buildShowerStateRule();
@@ -286,7 +297,11 @@ export function useSceneImageGenerator() {
     const activeZoneName = currentZoneForAction?.zone_name || "this area";
     const isGlobal = !strictCastOnly && !isHomeLocation && !isRestrictedEnv && !privateLivingSpace && location.location_type === "global";
     const existingObjectCue = resolveExistingObjectCueForZone(activeZoneName);
-    const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue);
+    // No single room is the scene (the property as a whole): the note describes the
+    // property itself instead of asserting a room nobody selected.
+    const envNote = currentZoneForAction
+      ? buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc, existingObjectCue)
+      : buildFacilityEnvNote(location.name, authoratativeEnvRefs.length > 0, lightingDesc);
 
     let prompt;
     if (isHomeLocation) {
@@ -298,7 +313,7 @@ export function useSceneImageGenerator() {
         " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
         "";
       const residentialConstraint = buildResidentialImageConstraint(location, finalParticipants);
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${primaryFocusRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${primaryFocusRule}${residentialConstraint}${sealedBundles}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${identityPrefix}${prompt}`,
@@ -323,9 +338,9 @@ export function useSceneImageGenerator() {
           ? `${charNames} as the clear main subject of the frame${allowBackgroundExtras ? `, with ordinary patrons of this place kept as distant, out-of-focus background` : ""}`
           : "with other people around";
         const _diversityDirective = getBackgroundPopulationDiversityDirective();
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${allowBackgroundExtras ? ambientRule : ''}${userAppearanceBlock}${sealedBundles}${_diversityDirective}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
       } else if (allowBackgroundExtras) {
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${namedSubjectsRule(finalParticipants)}${primaryFocusRule}${ambientRule}${userAppearanceBlock}${sealedBundles}${getBackgroundPopulationDiversityDirective()}${buildSleepDescriptor(finalParticipants)}${timeLock} Photorealistic.`;
       } else {
         const restrictedPrefix = isRestrictedEnv ? ` This is a restricted/private area (e.g. stockroom, backstage, office, break room).` : '';
         const peopleDesc = (finalParticipants.length > 0 ?

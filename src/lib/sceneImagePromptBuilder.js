@@ -32,12 +32,27 @@ export function getLightingDescriptor(hour) {
 }
 
 /**
+ * TIME OF DAY — THE SAME RULE ON EVERY SCENES IMAGE PATH.
+ *
+ * The hour is Pocketfriend's authoritative time (Eastern), never the hour of a reference
+ * photograph and never re-decided per picture. The view through any window must agree with
+ * it, and one continuous scene may not drift between day and night between images.
+ */
+export function buildTimeOfDayLock(lightingDesc) {
+  return ` TIME OF DAY — AUTHORITATIVE (America/New_York, now): ${lightingDesc}. ` +
+    `What is visible through every window, glass door and opening MUST agree with this hour: at night the outside is dark — night sky, distant lit windows, streetlights — ⛔ never daylight, never bright sunshine, never a bright blue sky, never sunlit walls or floors. ` +
+    `Interior lights may be fully on at night; the outside stays night. In daylight the outside is genuinely bright. Dawn and dusk show their own low, warm light. ` +
+    `This hour is fixed for this continuous scene — a later picture of the same moment must not drift to a different time of day.`;
+}
+
+/**
  * Builds the zone-lock + camera-flexibility environment block.
  * This replaces the old generic "CRITICAL ENVIRONMENT RULE" string.
  */
 export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc, existingObjectCue = null) {
   if (!hasRefImages) {
-    return `Apply ${lightingDesc} to the scene. Keep the environment consistent with the location type.`;
+    return `Apply ${lightingDesc} to the scene. Keep the environment consistent with the location type. ` +
+      `What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
   }
 
   const existingObjectBlock = existingObjectCue
@@ -47,7 +62,8 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc,
   return `ZONE LOCK — STRICT: The reference images define the EXACT visual identity of the "${activeZoneName}" zone. ` +
     `These are the canonical rooms currently available to this generation path. Do not invent additional rooms, zones, furniture, or objects unless explicitly confirmed by canonical data. ` +
     `You MUST preserve: the same room layout, same furniture style, same wall colors, same flooring, same architectural features, ` +
-    `same zone-defining structures (bar counter, kitchen, bed, couch, hallway, etc.), same windows and doors, same overall atmosphere. ` +
+    `same zone-defining structures (bar counter, kitchen, bed, couch, hallway, etc.), same windows and doors in the same positions, same materials and finishes. ` +
+    `⛔ REFERENCE LIGHTING IS NOT AUTHORITATIVE: the reference images are LAYOUT authority only. If they were photographed in daylight, keep the room's geometry, furniture and materials EXACTLY and relight it for the authoritative hour below — the time of day is never taken from the photograph. ` +
     existingObjectBlock +
     ` CAMERA DYNAMICS (MANDATORY VARIATION): You MUST use dynamic camera placement and angles. Do NOT reuse the same static viewpoint. ` +
     `Vary significantly: from the doorway looking in, from beside furniture, from across the room, from a corner angle, over-the-shoulder close-ups, ` +
@@ -59,6 +75,7 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc,
     `ZONE EXCLUSIVITY: Only elements visible in the "${activeZoneName}" reference images may appear — ` +
     `no objects, wall art, furniture, or details from other zones. ` +
     `TIME OF DAY: ${lightingDesc}. Adjust lighting to match the actual current time — do not apply wrong-time-of-day lighting. ` +
+    `⛔ The view outside every window MUST agree with this hour: at night the glass reads dark (night sky, distant lit windows, streetlights) — never daylight, never bright sunshine, never a bright blue sky. Interior lamps may be fully on; the outside stays night. ` +
     `Morning light is soft and golden. Afternoon light is bright and direct. Evening light is warm and low-angle. Night uses lamps or moonlight. ` +
     `The lighting changes the atmosphere, not the room identity. ` +
     `CHARACTER INTEGRATION: Any characters must feel physically inside the scene — ` +
@@ -92,13 +109,26 @@ export function resolveExistingObjectCueForZone(zoneName) {
 }
 
 /**
+ * The environment note for a property viewed as a whole — no single private room is
+ * asserted. Used when the selected space is the facility itself.
+ */
+export function buildFacilityEnvNote(locationName, hasRefImages, lightingDesc) {
+  const layout = hasRefImages
+    ? `The reference images show this property as a whole — preserve its architecture, materials and shared surroundings. `
+    : '';
+  return `THIS IS ${locationName} AS A WHOLE — the property and its shared surroundings, not any one private room or residence. ${layout}` +
+    `Apply ${lightingDesc}. ⛔ The view outside every window and beyond every doorway MUST agree with this hour: at night it is dark outside — never daylight, never bright sunshine, never a bright blue sky.`;
+}
+
+/**
  * Builds the action-override environment note (shorter, used when an action triggers regen).
  */
 export function buildActionEnvNote(activeZoneName, hasRefImages, lightingDesc) {
-  if (!hasRefImages) return `${lightingDesc}.`;
-  return `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. ` +
+  if (!hasRefImages) return `${lightingDesc}. What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
+  return `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. The reference images are LAYOUT authority only: if they were photographed in daylight, relight the same room for the authoritative hour below. ` +
     `CAMERA DYNAMICS: Use varied camera angles, distances, and framing — doorway view, close-ups, wide shots, different heights, different positions. ` +
     `Do not repeat the same static angle. Framing must change. Distance must vary. ` +
-    `Apply ${lightingDesc}. Match character lighting to the room. Characters must be visible and clearly identifiable. ` +
+    `Apply ${lightingDesc}. ⛔ The view outside every window MUST agree with this hour: at night it is dark outside — never daylight, never bright sunshine, never a bright blue sky. ` +
+    `Match character lighting to the room. Characters must be visible and clearly identifiable. ` +
     `Do not redesign the space or invent new furniture.`;
 }
