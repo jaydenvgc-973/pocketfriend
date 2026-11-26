@@ -1027,6 +1027,33 @@ function evaluateRequestedTransition(character, locationMap, requested, etTime, 
       return { disposition: 'rejected', canonicalFields: {}, reason: 'no_work_location' };
     }
     const workLoc = locationMap[workLocId];
+    // ── THIS JOB'S OWN SHIFT IS THE AUTHORITY ────────────────────────────────
+    // A character may hold several jobs. Being scheduled at one workplace never places
+    // them at another: the requested workplace must be a job whose own shift is running
+    // right now. Same priority as the rest of the app — the workplace's worker_shifts
+    // entry first, then (primary job only) the character-level schedule, then the job
+    // entry's own times.
+    const _isPrimaryWorkplace = workLocId === (character.occupation_location_id || character.current_work_location_id);
+    const _jobShift = workLoc?.worker_shifts?.[character.id];
+    let _scheduledHereNow = false;
+    if (_jobShift?.start && _jobShift?.end) {
+      _scheduledHereNow = isOnShiftNow(_jobShift, etTime, character.work_days);
+    } else if (_isPrimaryWorkplace) {
+      _scheduledHereNow = isCharacterOnWorkSchedule(character, etTime);
+    } else {
+      const _jobEntry = (character.additional_occupation_locations || []).find((e) => e.location_id === workLocId);
+      if (_jobEntry?.shift_start && _jobEntry?.shift_end) {
+        _scheduledHereNow = isOnShiftNow(
+          { start: _jobEntry.shift_start, end: _jobEntry.shift_end, days: _jobEntry.work_days || null },
+          etTime,
+        );
+      } else {
+        _scheduledHereNow = true; // no schedule recorded for this job — existing behavior
+      }
+    }
+    if (!_scheduledHereNow) {
+      return { disposition: 'rejected', canonicalFields: {}, reason: 'not_scheduled_at_this_workplace' };
+    }
     // A business inside this property governs its own access. Employment there
     // never authorizes a work presence after that business has closed.
     const _requestedEmployerWorkplace = resolveEmployerWorkplace(character, workLoc);

@@ -375,7 +375,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     : (character.occupation_location_id || character.current_work_location_id || null);
   const _orderedWorkJobs = [];
   if (_primaryLocId) {
-    _orderedWorkJobs.push({ type: 'linked', locId: _primaryLocId });
+    _orderedWorkJobs.push({ type: 'linked', locId: _primaryLocId, isPrimary: true });
   } else if (_isPrimaryRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
     _orderedWorkJobs.push({
       type: 'rabbit_hole',
@@ -446,7 +446,9 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         }
         continue;
       }
-      if (isCharacterOnWorkSchedule(character, currentTime)) {
+      // The character-level fields describe ONE job. They are only ever the fallback for
+      // the primary workplace — never a schedule borrowed by a second or third job.
+      if (job.isPrimary && isCharacterOnWorkSchedule(character, currentTime)) {
         return {
           resolved_current_location_id: job.locId,
           resolved_current_location_name: workLocation.name || 'Work',
@@ -1135,6 +1137,73 @@ export function verifyNoFalseHomeFallback(character, locationMap = {}) {
 }
 
 /**
+ * resolveActiveWorkJob — which job, if any, the character is on shift for right now.
+ *
+ * Every job is judged by its OWN schedule, never by another job's:
+ *   1. The workplace's worker_shifts[characterId] — that job's real shift.
+ *   2. For the primary job only, the character-level work_start_time/work_end_time/
+ *      work_days (a workplace that keeps no shift for them).
+ *   3. A rabbit-hole job's own shift_start/shift_end/work_days.
+ * A character with several jobs is therefore at whichever workplace is actually
+ * scheduled now — and at none of them outside every shift.
+ */
+export function resolveActiveWorkJob(character, locationMap = {}, currentTime = new Date()) {
+  if (!character) return null;
+  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const isPrimaryRH = character.work_details?.is_rabbit_hole === true;
+  const primaryLocId = isPrimaryRH
+    ? null
+    : (character.occupation_location_id || character.current_work_location_id || null);
+
+  const jobs = [];
+  if (primaryLocId) jobs.push({ locId: primaryLocId, isPrimary: true });
+  if (isPrimaryRH && character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    jobs.push({
+      rabbitHole: true,
+      locationName: character.occupation_location_name,
+      shift: { start: character.work_start_time, end: character.work_end_time, days: character.work_days },
+    });
+  }
+  for (const entry of (character.additional_occupation_locations || [])) {
+    if (entry.location_id) {
+      jobs.push({ locId: entry.location_id, isPrimary: false });
+    } else if (entry.is_rabbit_hole === true && entry.shift_start && entry.shift_end) {
+      jobs.push({
+        rabbitHole: true,
+        locationName: entry.location_name,
+        shift: { start: entry.shift_start, end: entry.shift_end, days: entry.work_days || null },
+      });
+    }
+  }
+
+  for (const job of jobs) {
+    if (job.rabbitHole) {
+      if (isOnShiftNow(job.shift, etTime)) {
+        return { locationId: 'rabbit_hole', locationName: job.locationName, shift: job.shift };
+      }
+      continue;
+    }
+    const loc = locationMap[job.locId];
+    if (!loc) continue;
+    const locShift = loc.worker_shifts?.[character.id];
+    if (locShift?.start && locShift?.end) {
+      if (isOnShiftNow(locShift, etTime)) {
+        return { locationId: loc.id, locationName: loc.name, shift: locShift };
+      }
+      continue;
+    }
+    if (job.isPrimary && isCharacterOnWorkSchedule(character, currentTime)) {
+      return {
+        locationId: loc.id,
+        locationName: loc.name,
+        shift: { start: character.work_start_time, end: character.work_end_time, days: character.work_days },
+      };
+    }
+  }
+  return null;
+}
+
+/**
  * STRICT SCHEDULE ENFORCEMENT: Check if character is violating schedule
  * Returns { isViolating, violation_type, should_be_at }
  */
@@ -1150,20 +1219,22 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
     character.work_exception_date === todayET;
   if (hasValidCallout) return { isViolating: false };
 
-  // WORK VIOLATION: Character should be at work
-  if (workStatus.onSchedule && character.occupation_location_id) {
-    const isAtWork = resolved.resolved_location_id === character.occupation_location_id;
+  // WORK VIOLATION: Character should be at work — judged by the job whose OWN shift is
+  // running right now. A character may hold several jobs; one job's hours never place
+  // them at another workplace.
+  const activeWorkJob = resolveActiveWorkJob(character, locationMap, currentTime);
+  if (activeWorkJob) {
+    const isAtWork = resolved.resolved_current_location_id === activeWorkJob.locationId;
     const isReadyToTravel = workStatus.inPrepWindow;
-    
+
     if (!isAtWork && !isReadyToTravel) {
-      const workLoc = locationMap[character.occupation_location_id];
       return {
         isViolating: true,
         violation_type: 'work_schedule_violation',
         should_be_at: {
-          location_id: character.occupation_location_id,
-          location_name: workLoc?.name || 'Work',
-          reason: 'Active work schedule'
+          location_id: activeWorkJob.locationId,
+          location_name: activeWorkJob.locationName || 'Work',
+          reason: 'Active work shift'
         }
       };
     }
