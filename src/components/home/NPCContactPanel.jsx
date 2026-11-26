@@ -135,6 +135,14 @@ export default function NPCContactPanel() {
     navigate(`/chat/${npc.id}`);
   };
 
+  // Opens the NPC's own existing Character Profile — the same authoritative record this
+  // contact entry points at. Nothing about the character is copied, changed or reclassified.
+  const handleViewProfile = (e, npc) => {
+    e.stopPropagation();
+    setIsOpen(false);
+    navigate(`/profile/${npc.id}`);
+  };
+
   const handleAddContact = (npc) => {
     setShowAddContact(false);
     updateSettings({
@@ -249,6 +257,13 @@ export default function NPCContactPanel() {
                       </motion.div>
                     )}
                     <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={(e) => handleViewProfile(e, npc)}
+                        className="px-1.5 py-1 rounded text-[10px] font-medium text-purple-400 hover:bg-purple-500/10 transition-colors whitespace-nowrap"
+                        title={`View ${npc.name || 'NPC'}'s profile`}
+                      >
+                        View Profile
+                      </button>
                       <button
                         onClick={(e) => handleRemoveContact(e, npc)}
                         className="p-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
