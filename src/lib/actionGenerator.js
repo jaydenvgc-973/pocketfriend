@@ -144,6 +144,8 @@ const PARK_ACTIONS = classifyAll([
   { id: "watch_sunset", label: "Watch the sunset", emoji: "🌅", cost: 0, type: "observational" },
   { id: "chat_stranger", label: "Chat with stranger", emoji: "💬", cost: 0, type: "social" },
   { id: "bring_dog", label: "Bring / pet a dog", emoji: "🐕", cost: 0, type: "social" },
+  // Walk Pet walks the animal registered on the actor's own profile — never an invented one.
+  { id: "walk_pet", label: "Walk Pet", emoji: "🦮", cost: 0, type: "functional", requires_actor: true },
   { id: "cloud_watch", label: "Cloud watch", emoji: "☁️", cost: 0, type: "observational" },
   { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "observational" },
   // Marriage is not City Hall's alone: an open-air ceremony uses the same pipeline.

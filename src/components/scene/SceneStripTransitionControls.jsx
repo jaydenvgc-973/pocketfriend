@@ -1,4 +1,4 @@
-import { Siren, Compass, DollarSign, HandCoins, Smartphone } from "lucide-react";
+import { Siren, Compass, DollarSign, HandCoins, Smartphone, Car } from "lucide-react";
 
 /**
  * The scene's financial and phone entries. Both money controls open the ONE established
@@ -31,6 +31,25 @@ export function OpenPhoneControl({ onClick }) {
     <button onClick={onClick} title="Open your phone" className={extraCardClass}>
       <Smartphone className="w-4 h-4 text-primary" />
       <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Open Phone</span>
+    </button>
+  );
+}
+
+/**
+ * Take a Ride — a scene transition taken inside the chosen owner's own vehicle. It is a
+ * strip control, outside every folder, because it moves the scene rather than being an
+ * activity someone performs in the room.
+ */
+export function RideControl({ onClick, disabled = false }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title="Take a ride in someone's car"
+      className={`${extraCardClass} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}
+    >
+      <Car className="w-4 h-4 text-primary" />
+      <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Take a Ride</span>
     </button>
   );
 }

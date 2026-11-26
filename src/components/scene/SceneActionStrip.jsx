@@ -1,6 +1,6 @@
 import React, { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { ArrestControl, NextSceneControl, SendMoneyControl, ReceiveMoneyControl, OpenPhoneControl } from "@/components/scene/SceneStripTransitionControls";
+import { ArrestControl, NextSceneControl, SendMoneyControl, ReceiveMoneyControl, OpenPhoneControl, RideControl } from "@/components/scene/SceneStripTransitionControls";
 import {
   DIRECTED_SCENE_ACTIONS,
   stripActions,
@@ -90,6 +90,7 @@ export default function SceneActionStrip({
   actionCooldown,
   onOpenMoney,
   onOpenPhone,
+  onTakeARide,
 }) {
   const list = stripActions(courtCase
     ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0)
@@ -229,6 +230,9 @@ export default function SceneActionStrip({
               and opening the phone changes nothing about the scene. */}
           <OpenPhoneControl onClick={() => onOpenPhone?.()} />
           <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Change Clothes</span></button>
+          {/* Take a Ride is the third strip option, outside every folder: it moves the scene
+              into the chosen owner's vehicle, so it is never one of the room's activities. */}
+          <RideControl onClick={() => onTakeARide?.()} disabled={actionCooldown} />
           {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
           {governmentVenueType && !courtCase && !cityHallPlan && (
             <button onClick={() => setShowVenueSetup(true)} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-primary/10 border-primary/40 hover:border-primary/60" title={governmentVenueType === "courthouse" ? "Set up the court case and who is in the room" : "Set up what you are here for and who is with you"}>

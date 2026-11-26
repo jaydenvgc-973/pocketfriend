@@ -1,0 +1,122 @@
+{
+  "name": "OwnerBelongings",
+  "type": "object",
+  "description": "Property / Belongings for one owner \u2014 the account holder or one character. Holds the owner's car (with its four consistent visual references) and the owner's pet. One record per owner, keyed by owner_type + owner_id, so the car or pet always belongs to the correct identity.",
+  "rls": {
+    "create": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "read": {
+      "$or": [
+        {
+          "data.owner_email": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "data.owner_email": "{{user.email}}"
+    },
+    "delete": {
+      "data.owner_email": "{{user.email}}"
+    }
+  },
+  "properties": {
+    "owner_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character"
+      ],
+      "default": "character",
+      "description": "Whether these belongings belong to the account holder or to a character.",
+      "enumColors": [
+        "blue",
+        "purple"
+      ]
+    },
+    "owner_id": {
+      "type": "string",
+      "description": "The User id or Character id that owns these belongings. Never an alias or a display name."
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Account that owns this record."
+    },
+    "owner_name": {
+      "type": "string",
+      "description": "Display name of the owner at the time of the last edit."
+    },
+    "car": {
+      "type": "object",
+      "description": "The owner's car. Empty when the owner has no car \u2014 a car is never assigned automatically.",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Make and model, e.g. '2019 Honda Accord'."
+        },
+        "color": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "views": {
+          "type": "object",
+          "description": "Four references of the same vehicle. Every view is generated or uploaded against the same car.",
+          "properties": {
+            "exterior": {
+              "type": "string",
+              "description": "Full-body exterior view."
+            },
+            "driver_seat": {
+              "type": "string",
+              "description": "Interior from the driver's position."
+            },
+            "back_row": {
+              "type": "string",
+              "description": "Rear seating area."
+            },
+            "front_seats": {
+              "type": "string",
+              "description": "Front cabin and windshield."
+            }
+          }
+        }
+      }
+    },
+    "pet": {
+      "type": "object",
+      "description": "The owner's pet. Empty when the owner has no pet \u2014 a pet is never assigned automatically.",
+      "properties": {
+        "pet_type": {
+          "type": "string",
+          "description": "Preset pet type, or 'other' when the owner typed their own."
+        },
+        "pet_type_custom": {
+          "type": "string",
+          "description": "Free-text pet type when the preset list does not fit."
+        },
+        "name": {
+          "type": "string"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "The pet's established reference image."
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "owner_type",
+    "owner_id",
+    "owner_email"
+  ]
+}

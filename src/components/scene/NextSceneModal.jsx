@@ -25,15 +25,23 @@ export default function NextSceneModal({
   userPresent = true,
   onClose,
   onConfirm,
+  // Take a Ride uses this same modal. A ride is not a plain transition: it confirms with
+  // "Ride", seats at most four people, and always carries the vehicle's owner.
+  rideMode = false,
+  requiredTravelerIds = [],
 }) {
   const [query, setQuery] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [spaceKey, setSpaceKey] = useState("");
   const [zoneName, setZoneName] = useState("");
   const [unitId, setUnitId] = useState("");
-  const [travelerIds, setTravelerIds] = useState(participants.map((p) => p.id));
+  const [travelerIds, setTravelerIds] = useState(
+    rideMode ? participants.filter((p) => requiredTravelerIds.includes(p.id)).map((p) => p.id) : participants.map((p) => p.id)
+  );
   const [mode, setMode] = useState(userPresent ? "go" : "send");
   if (!open) return null;
+  // Four seats. The account holder takes one of them when they are going along.
+  const seatLimit = rideMode ? (userPresent && mode === "go" ? 3 : 4) : Infinity;
 
   // A property and the spaces already established inside it — its businesses, and its
   // on-site residence when it has one. Choosing a space resolves to that same property.
@@ -56,15 +64,24 @@ export default function NextSceneModal({
 
   const modes = userPresent
     ? [
-      { id: "go", label: "Go with them", hint: "You and the people you chose move there." },
-      { id: "send", label: "Send them ahead", hint: "They go. You stay in this scene." },
+      { id: "go", label: rideMode ? "Ride along" : "Go with them", hint: rideMode ? "You ride with them, in the car." : "You and the people you chose move there." },
+      { id: "send", label: rideMode ? "Send them without you" : "Send them ahead", hint: rideMode ? "They ride. You stay in this scene." : "They go. You stay in this scene." },
     ]
     : [
-      { id: "send", label: "Send them there", hint: "They move; you keep watching, from here." },
-      { id: "watch", label: "Just watch the destination", hint: "Nobody moves. You watch whoever is there." },
+      { id: "send", label: rideMode ? "They ride" : "Send them there", hint: rideMode ? "The car takes them; you keep watching, from here." : "They move; you keep watching, from here." },
+      ...(rideMode ? [] : [{ id: "watch", label: "Just watch the destination", hint: "Nobody moves. You watch whoever is there." }]),
     ];
 
-  const toggle = (id) => setTravelerIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  // The vehicle's owner is always in the car, and a ride never exceeds its four seats.
+  const isRequired = (id) => requiredTravelerIds.includes(id);
+  const toggle = (id) => {
+    if (isRequired(id)) return;
+    setTravelerIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= seatLimit) return prev;
+      return [...prev, id];
+    });
+  };
   // Sending needs someone to send; going alone and watching alone are both valid.
   const needsTravelers = mode === "send";
   const canConfirm = !!destinationId && (!needsTravelers || travelerIds.length > 0);
@@ -79,8 +96,8 @@ export default function NextSceneModal({
       >
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-xs uppercase tracking-wider text-muted-foreground">Next Scene</p>
-            <h3 className="text-sm font-bold text-foreground">Where does this scene go next?</h3>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground">{rideMode ? "Take a Ride" : "Next Scene"}</p>
+            <h3 className="text-sm font-bold text-foreground">{rideMode ? "Where is the car headed?" : "Where does this scene go next?"}</h3>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-secondary rounded-lg transition-colors">
             <X className="w-4 h-4 text-muted-foreground" />
@@ -155,19 +172,25 @@ export default function NextSceneModal({
         </div>
 
         <div className="space-y-2">
-          <p className="text-[11px] font-semibold text-foreground">Who comes along</p>
-          <p className="text-[10px] text-muted-foreground">Only people in this scene. Nobody else moves.</p>
+          <p className="text-[11px] font-semibold text-foreground">{rideMode ? "Who is riding" : "Who comes along"}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {rideMode
+              ? `Only people in this scene. ${userPresent && mode === "go" ? "You take one of the four seats, so up to three ride with you." : "Up to four people fit in the car."} The owner drives.`
+              : "Only people in this scene. Nobody else moves."}
+          </p>
           <div className="rounded-xl border border-border divide-y divide-border max-h-36 overflow-y-auto">
             {participants.length === 0 ? (
               <p className="px-3 py-3 text-[11px] text-muted-foreground">No one else is in this scene.</p>
             ) : participants.map((p) => {
               const picked = travelerIds.includes(p.id);
+              const required = isRequired(p.id);
+              const full = !picked && travelerIds.length >= seatLimit;
               return (
-                <button key={p.id} onClick={() => toggle(p.id)} className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${picked ? "bg-primary/10" : "hover:bg-secondary"}`}>
+                <button key={p.id} onClick={() => toggle(p.id)} disabled={required || full} className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${picked ? "bg-primary/10" : full ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
                   <div className="w-7 h-7 rounded-full bg-secondary overflow-hidden flex-shrink-0">
                     {p.avatar_url ? <img src={p.avatar_url} alt={p.name} className="w-full h-full object-cover" /> : <span className="text-[10px] font-bold text-foreground flex items-center justify-center h-full">{p.name?.[0]}</span>}
                   </div>
-                  <span className={`flex-1 min-w-0 text-xs truncate ${picked ? "text-primary font-medium" : "text-foreground"}`}>{p.name}</span>
+                  <span className={`flex-1 min-w-0 text-xs truncate ${picked ? "text-primary font-medium" : "text-foreground"}`}>{p.name}{required ? " · driving" : ""}</span>
                   <span className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${picked ? "bg-primary" : "border border-border"}`}>
                     {picked && <Check className="w-2.5 h-2.5 text-primary-foreground" />}
                   </span>
@@ -175,6 +198,9 @@ export default function NextSceneModal({
               );
             })}
           </div>
+          {rideMode && (
+            <p className="text-[10px] text-muted-foreground">{travelerIds.length + (userPresent && mode === "go" ? 1 : 0)} of 4 seats taken</p>
+          )}
         </div>
 
         <div className="space-y-1">
@@ -202,11 +228,13 @@ export default function NextSceneModal({
             })}
             className="flex-1 rounded-xl"
           >
-            Confirm
+            {rideMode ? "Ride" : "Confirm"}
           </Button>
         </div>
         <p className="text-[10px] text-muted-foreground leading-relaxed">
-          Nothing changes until you confirm. Cancelling leaves everyone exactly where they are.
+          {rideMode
+            ? "The car stays on screen as its own scene. Nothing changes until you confirm, and cancelling leaves everyone where they are."
+            : "Nothing changes until you confirm. Cancelling leaves everyone exactly where they are."}
         </p>
       </motion.div>
     </div>,

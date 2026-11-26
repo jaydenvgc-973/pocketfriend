@@ -1,9 +1,12 @@
 import React, { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
-import { MessageCircle, Gamepad2, Camera, X, Wifi, BatteryFull } from "lucide-react";
+import { MessageCircle, Gamepad2, Camera, MapPin, CalendarDays, Images, X, Wifi, BatteryFull } from "lucide-react";
 import PocketMessageApp from "@/components/scene/phone/PocketMessageApp";
 import PhoneGamesApp from "@/components/scene/phone/PhoneGamesApp";
+import PhoneMapApp from "@/components/scene/phone/PhoneMapApp";
+import PhoneCalendarApp from "@/components/scene/phone/PhoneCalendarApp";
+import PhoneMediaGalleryApp from "@/components/scene/phone/PhoneMediaGalleryApp";
 
 // Pocketfriend's existing loading-screen image — the same asset the app's readiness
 // screen (Onboarding) uses as its background. Never a generated replacement.
@@ -15,12 +18,19 @@ const LOADING_SCREEN_IMAGE =
  *
  * A presentation layer only: Pocket Message opens the established World Phone messaging,
  * Games opens the app's existing games, and Scene Photo closes the phone and opens the
- * Scene page's own photo modal. Opening or closing it changes nothing about the scene.
+ * Scene page's own photo modal. Map shows the existing Travel map and Calendar the existing
+ * Moments calendar, both inside the phone. Media Gallery asks first, because opening it
+ * leaves Scenes. Opening or closing the phone changes nothing about the scene.
  */
 export default function OpenPhoneModal({
   currentUser,
   worldName = "You",
+  locations = [],
+  characters = [],
+  allCharacters = [],
+  userSettings = null,
   onOpenScenePhoto,
+  onOpenMediaGallery,
   onClose,
 }) {
   const [screen, setScreen] = useState("home");
@@ -35,6 +45,9 @@ export default function OpenPhoneModal({
     { id: "messages", label: "Pocket Message", Icon: MessageCircle, tint: "from-[#9b6af1] to-[#6d3fc0]" },
     { id: "games", label: "Games", Icon: Gamepad2, tint: "from-emerald-400 to-emerald-700" },
     { id: "photo", label: "Scene Photo", Icon: Camera, tint: "from-sky-400 to-indigo-600" },
+    { id: "map", label: "Map", Icon: MapPin, tint: "from-amber-400 to-orange-700" },
+    { id: "calendar", label: "Calendar", Icon: CalendarDays, tint: "from-rose-400 to-rose-700" },
+    { id: "gallery", label: "Media Gallery", Icon: Images, tint: "from-fuchsia-400 to-purple-700" },
   ];
 
   const openApp = (id) => {
@@ -111,6 +124,33 @@ export default function OpenPhoneModal({
             <PhoneGamesApp
               currentUser={currentUser}
               onBack={() => setScreen("home")}
+            />
+          )}
+
+          {screen === "map" && (
+            <PhoneMapApp
+              locations={locations}
+              characters={characters}
+              allCharacters={allCharacters}
+              ownerEmail={currentUser?.email}
+              onBack={() => setScreen("home")}
+            />
+          )}
+
+          {screen === "calendar" && (
+            <PhoneCalendarApp
+              characters={characters}
+              currentUser={currentUser}
+              userSettings={userSettings}
+              onBack={() => setScreen("home")}
+            />
+          )}
+
+          {screen === "gallery" && (
+            <PhoneMediaGalleryApp
+              onBack={() => setScreen("home")}
+              onCancel={() => setScreen("home")}
+              onOkay={() => onOpenMediaGallery?.()}
             />
           )}
         </div>
