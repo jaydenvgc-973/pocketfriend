@@ -19,7 +19,7 @@ const GAMES = [
  * `embedded` renders the same picker in place (used inside the scene phone) instead of as
  * its own overlay. The games themselves and every record they write are unchanged.
  */
-export default function GameLauncher({ character, conversationId, onGameEnd, externalTrigger, onExternalClose, embedded = false }) {
+export default function GameLauncher({ character, conversationId, onGameEnd, externalTrigger, onExternalClose, onGameClosed, embedded = false }) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
@@ -122,6 +122,8 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
             onEnd={() => {
               setActiveGame(null);
               handleGameEnd({ gameId: 'chemistry' });
+              // The game is over: whoever opened it gets control back.
+              onGameClosed?.();
             }}
           />
         </AnimatePresence>
@@ -132,7 +134,7 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
           game={activeGame}
           character={character}
           conversationId={conversationId}
-          onClose={() => setActiveGame(null)}
+          onClose={() => { setActiveGame(null); onGameClosed?.(); }}
           onGameEnd={handleGameEnd}
         />
       )}

@@ -17,7 +17,7 @@ import { resolveOrCreateConversation } from "@/lib/conversationResolver";
  * the partner's existing conversation carries the result and the memory exactly as it
  * does from Chat.
  */
-export default function PhoneGamesApp({ currentUser, onBack }) {
+export default function PhoneGamesApp({ currentUser, onBack, onExit }) {
   const queryClient = useQueryClient();
   const [characters, setCharacters] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,6 +70,9 @@ export default function PhoneGamesApp({ currentUser, onBack }) {
           conversationId={conversationId}
           externalTrigger
           onExternalClose={() => { setActive(null); setConversationId(null); }}
+          // A game that ends or is closed has finished with the phone's Games app: control
+          // goes back to the launcher instead of leaving this app on an empty screen.
+          onGameClosed={() => { setActive(null); setConversationId(null); onExit?.(); }}
           onGameEnd={() => queryClient.invalidateQueries({ queryKey: ["character", active.id] })}
         />
       </div>

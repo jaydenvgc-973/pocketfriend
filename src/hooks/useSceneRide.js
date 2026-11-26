@@ -84,13 +84,10 @@ export function useSceneRide({
     });
     const rideStarted = { id: `ride_start_${Date.now()}`, sender: "narrative", content: narrative, is_canon_event: true, timestamp: new Date().toISOString() };
 
-    if (!userInCar) {
-      // Sending them: the characters ride and arrive through the established transition. The
-      // account holder is never put into a car they did not get into.
-      setMessages((prev) => [...prev, rideStarted]);
-      return handleNextSceneConfirm(payload);
-    }
-
+    // Confirming a ride always establishes the ride. Whether the account holder is riding
+    // along or watching decides only whether they occupy a seat — never whether the car
+    // becomes the scene. The destination is kept for Arrive at Destination, so confirming
+    // a ride can never skip straight to it.
     const nextRide = {
       ...owner, car, destination,
       zoneName: payload.zoneName || "", unitId: payload.unitId || "",
@@ -111,7 +108,10 @@ export function useSceneRide({
     const payload = {
       destination: ride.destination, zoneName: ride.zoneName, unitId: ride.unitId,
       environmentId: ride.environmentId, spaceLabel: ride.spaceLabel,
-      travelerIds: ride.travelerIds, mode: "go",
+      travelerIds: ride.travelerIds,
+      // Only a ride the account holder was actually in takes them to the destination with
+      // the others; a ride they watched leaves them exactly where they are.
+      mode: ride.userInCar ? "go" : "send",
     };
     setRide(null);
     return handleNextSceneConfirm(payload);

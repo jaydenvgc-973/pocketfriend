@@ -128,6 +128,9 @@ export default function OpenPhoneModal({
             <PhoneGamesApp
               currentUser={currentUser}
               onBack={() => setScreen("home")}
+              // A finished or dismissed game returns to this phone's app launcher, so the
+              // apps stay reachable without putting the phone away.
+              onExit={() => setScreen("home")}
             />
           )}
 
