@@ -125,12 +125,15 @@ export default function ProductPurchaseModal({
       characterId: chosenCharacter?.id || null,
       wearerName: recipientIsUser || !chosenCharacter ? (currentUser?.full_name || "the account holder") : chosenCharacter?.name,
       userEmail: currentUser?.email,
+      // The card's own image is the exact merchandise. It is the authority for the clothing
+      // on every recipient, so changing who receives it never changes what is being bought.
+      merchandiseImageUrl: preview_image_url,
     })
       .then((url) => { if (!cancelled) setWornImageUrl(url); })
       .catch(() => { if (!cancelled) setPreviewError("The preview of the item being worn could not be generated — the product image is shown instead."); })
       .finally(() => { if (!cancelled) setIsGeneratingPreview(false); });
     return () => { cancelled = true; };
-  }, [chosenRecipientId, item_label, item_kind, paidPurchase]);
+  }, [chosenRecipientId, item_label, item_kind, paidPurchase, preview_image_url]);
 
   // The image saved to the closet is the one showing the recipient wearing it.
   const entryImageUrl = wornImageUrl || preview_image_url;
