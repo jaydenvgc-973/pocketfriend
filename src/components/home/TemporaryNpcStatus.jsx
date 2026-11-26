@@ -1,44 +1,62 @@
-import React, { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { base44 } from "@/api/base44Client";
+import React from "react";
 
 /**
- * TemporaryNpcStatus — the countdown and Make Permanent action for an NPC spawned from
- * a scene. The remaining time comes from the character's own authoritative
- * temporary_npc_expires_at, so it keeps counting while the app is closed and never
- * restarts when the contact is opened, messaged or re-added.
+ * TemporaryNpcStatus — the temporary designation, the fixed lifespan and the Make
+ * Permanent action for an NPC spawned from a scene.
+ *
+ * Creation and expiration are predetermined facts recorded once on the character
+ * (temporary_npc_spawned_at / temporary_npc_expires_at). They are displayed as they
+ * were written — no countdown, no timer, no refresh, and nothing that needs the app to
+ * stay open. Expiration itself is carried out by the single scheduled event created for
+ * that timestamp, never by this component.
  */
-function remainingLabel(expiresAt) {
-  const ms = new Date(expiresAt).getTime() - Date.now();
-  if (!Number.isFinite(ms) || ms <= 0) return "Expiring…";
-  const minutes = Math.floor(ms / 60000);
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return hours > 0 ? `${hours}h ${mins}m remaining` : `${Math.max(mins, 1)}m remaining`;
+
+const TIME_ZONE = "America/New_York";
+
+function formatMoment(iso) {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = date.toLocaleDateString("en-US", {
+    timeZone: TIME_ZONE,
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+  const time = date.toLocaleTimeString("en-US", {
+    timeZone: TIME_ZONE,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${day} at ${time}`;
 }
 
 export default function TemporaryNpcStatus({ npc, onMakePermanent }) {
-  const [label, setLabel] = useState(() => remainingLabel(npc.temporary_npc_expires_at));
-
-  useEffect(() => {
-    setLabel(remainingLabel(npc.temporary_npc_expires_at));
-    const timer = setInterval(() => setLabel(remainingLabel(npc.temporary_npc_expires_at)), 30000);
-    return () => clearInterval(timer);
-  }, [npc.temporary_npc_expires_at]);
+  const created = formatMoment(npc.temporary_npc_spawned_at);
+  const expires = formatMoment(npc.temporary_npc_expires_at);
 
   return (
-    <span className="flex items-center gap-1.5">
+    <div className="flex flex-col items-start gap-0.5">
       <span className="px-1.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-[9px] font-semibold text-amber-500 whitespace-nowrap">
         Temporary NPC
       </span>
-      <span className="text-[9px] text-amber-500/90 whitespace-nowrap">{label}</span>
+      {created && (
+        <span className="text-[9px] text-amber-500/90 leading-tight">
+          Created: {created}
+        </span>
+      )}
+      {expires && (
+        <span className="text-[9px] text-amber-500/90 leading-tight">
+          Expires: {expires}
+        </span>
+      )}
       <button
         onClick={(e) => { e.stopPropagation(); onMakePermanent(npc); }}
-        className="px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold whitespace-nowrap"
+        className="mt-0.5 px-1.5 py-0.5 rounded-full bg-primary text-primary-foreground text-[9px] font-semibold whitespace-nowrap"
         title="Keep this NPC in your world permanently"
       >
         Make Permanent
       </button>
-    </span>
+    </div>
   );
 }

@@ -1,0 +1,86 @@
+{
+  "name": "Temporary NPC Expiration \u2014 Trigger on temporary_npc_expires_at Set",
+  "description": "Ends the 24-hour lifespan of an NPC spawned from the Scenes activity strip. When a character is created as temporary, or its expiration is set or changed, this waits until that registered instant and then invokes processDueCharacterDeletions, which confirms once at execution that the NPC is still temporary and removes them through the existing character deletion pathway. One creation event, one predetermined expiration timestamp, one scheduled execution. No recurring schedule, no polling and no lifespan recalculation.",
+  "trigger": {
+    "condition": "${ (.trigger.data.is_temporary_npc == true) and ((.trigger.data.temporary_npc_expires_at // \"\") != \"\") and (.trigger.event_type == \"create\" or ((.trigger.changed_fields // []) | index(\"temporary_npc_expires_at\") != null)) }",
+    "config": {
+      "trigger_type": "entity",
+      "events": [
+        "create",
+        "update"
+      ],
+      "entity_name": "Character"
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "temporary_npc_expiration_trigger_on_temporary_npc_expires_at_set",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "compute_wait": {
+          "call": "compute_seconds_until",
+          "with": {
+            "target_iso": "${ .trigger.data.temporary_npc_expires_at // .trigger.old_data.temporary_npc_expires_at // \"2000-01-01T00:00:00Z\" }"
+          },
+          "then": "check_due",
+          "x-base44": {
+            "title": "Time until the expiration",
+            "description": "From the lifespan registered at spawn"
+          }
+        }
+      },
+      {
+        "check_due": {
+          "switch": [
+            {
+              "when": "${ (.compute_wait.seconds // 0) <= 0 }",
+              "then": "run_removal",
+              "x-base44": {
+                "title": "Already expired"
+              }
+            },
+            {
+              "when": "${ true }",
+              "then": "wait_until_due"
+            }
+          ],
+          "x-base44": {
+            "title": "Due already?"
+          }
+        }
+      },
+      {
+        "wait_until_due": {
+          "wait": "PT${ ((.compute_wait.seconds // 0 | floor) + 5) }S",
+          "then": "run_removal",
+          "x-base44": {
+            "title": "Wait for the expiration",
+            "description": "Ends a few seconds after"
+          }
+        }
+      },
+      {
+        "run_removal": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "processDueCharacterDeletions",
+            "args": {
+              "character_ids": [
+                "${ .trigger.entity_id }"
+              ]
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "Remove the temporary NPC",
+            "description": "Confirmed still temporary, then deleted"
+          }
+        }
+      }
+    ]
+  }
+}

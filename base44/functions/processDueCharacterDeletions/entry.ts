@@ -60,13 +60,19 @@ Deno.serve(async (req) => {
   const nowIso = new Date().toISOString();
 
   // ── TEMPORARY NPCs SPAWNED FROM SCENES ────────────────────────────────────
-  // Their 24-hour lifespan is the same kind of scheduled removal: once it passes, they
-  // are removed from the world with the same occupancy cleanup, then hard deleted so no
-  // inaccessible record stays behind. A character the user made permanent no longer has
-  // is_temporary_npc = true, so a scheduled removal can never take them.
-  const temporary = await base44.asServiceRole.entities.Character
-    .filter({ is_temporary_npc: true }, null, 200)
-    .catch(() => []);
+  // The scheduled expiration names the one temporary NPC it was created for, and that
+  // instant is read from the character's own temporary_npc_expires_at. Nothing scans or
+  // polls: this runs once, at the registered time, and confirms then that the NPC is
+  // still temporary. An NPC the user made permanent is no longer temporary, so the
+  // execution leaves them exactly as they are. Expired ones are removed from the world
+  // with the same occupancy cleanup, then hard deleted so no inaccessible record stays.
+  const body = await req.json().catch(() => ({}));
+  const targetIds = Array.isArray(body?.character_ids) ? body.character_ids.filter(Boolean) : [];
+  const temporary = targetIds.length > 0
+    ? await base44.asServiceRole.entities.Character
+      .filter({ id: { $in: targetIds } }, null, 50)
+      .catch(() => [])
+    : [];
   const expired = temporary.filter((c) =>
     c.temporary_npc_expires_at &&
     c.temporary_npc_expires_at <= nowIso &&

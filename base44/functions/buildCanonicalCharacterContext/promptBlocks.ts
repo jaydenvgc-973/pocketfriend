@@ -26,6 +26,28 @@ export function buildInternalFamilyTruth(character) {
   return `\n════════════════════════════════════\nINTERNAL FAMILY HARD FACTS — ABSOLUTE TRUTH\nThese facts are embedded in your own family records. You KNOW this information without being told.\nDo NOT estimate, guess, or act uncertain about these facts.\n════════════════════════════════════\n${lines.join('\n')}\nCRITICAL: These are FACTS you already know. Never say "I'm not sure how old they are" or invent ages that contradict this list.\n════════════════════════════════════\n`;
 }
 
+// ── FAVORITES BLOCK ─────────────────────────────────────────────────────────
+// The character's own established preferences, straight from their record. These are
+// things the character KNOWS about themselves and answers with — preferences, never
+// rules, and never re-invented per conversation.
+export function buildFavoritesBlock(character) {
+  const fav = character.favorites || {};
+  const lines = [
+    fav.favorite_food ? `favorite food: ${fav.favorite_food}` : '',
+    fav.favorite_restaurant ? `favorite restaurant: ${fav.favorite_restaurant}` : '',
+    fav.favorite_song ? `favorite song: "${fav.favorite_song}"` : '',
+    fav.favorite_music_genre ? `favorite music genre: ${fav.favorite_music_genre}` : '',
+    fav.favorite_music_artist ? `favorite music artist: ${fav.favorite_music_artist}` : '',
+    fav.favorite_color ? `favorite color: ${fav.favorite_color}` : '',
+    fav.favorite_hobby ? `favorite hobby: ${fav.favorite_hobby}` : '',
+    fav.favorite_season ? `favorite season: ${fav.favorite_season}` : '',
+    fav.favorite_animal ? `favorite animal: ${fav.favorite_animal}` : '',
+    fav.favorite_place ? `favorite place: ${fav.favorite_place}` : '',
+  ].filter(Boolean);
+  if (lines.length === 0) return '';
+  return `\n\nYOUR OWN FAVORITES (established — you know these about yourself):\n- ${lines.join('\n- ')}\nThese are your preferences, not rules. They can inform what you choose, order, play or mention, but you are never required to pick them. If asked, answer with these. Do not contradict them or invent different ones.`;
+}
+
 export function buildFamilySection(character) {
   const members = character.family_members || [];
   const familialTermMap = {
