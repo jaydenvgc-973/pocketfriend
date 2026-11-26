@@ -202,7 +202,14 @@ export function resolveTargetCategory(character, activityText = '', locationCate
     const isGymActivity = ACTIVITY_CATEGORY_MAP[2].activities.some(a => combined.includes(a));
     if (isGymActivity && locationCategory !== 'workplace') return 'gym';
   }
-  if (ACTIVITY_CATEGORY_MAP[2].activities.some(a => combined.includes(a))) return 'gym';
+  // Authoritative work presence outranks an activity keyword: a character the records place
+  // at work is working, even when the activity line says "running late".
+  if (character?.vacation_mode !== true && presenceStatus === 'at_work' && locationCategory !== 'gym') return 'work';
+  // "Running late", "running errands", "running to work" and "job training" are not workouts.
+  const nonWorkoutText = combined
+    .replace(/\brunning (late|behind|errands|out|to|through|around|by|into|short on)\b/g, '')
+    .replace(/\b(job|on[- ]the[- ]job|work|career|vocational) training\b/g, '');
+  if (ACTIVITY_CATEGORY_MAP[2].activities.some(a => nonWorkoutText.includes(a))) return 'gym';
   if (locationCategory === 'gym') return 'gym';
 
   // ── PRIORITY 5: WORK ─────────────────────────────────────────────────────────
