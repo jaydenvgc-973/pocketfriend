@@ -192,9 +192,25 @@ function _isInWindowSchool(nowMin, startMin, endMin) {
 //   2. School location operating_hours for today (or day-agnostic)
 // If neither provides a valid time window, or the current time is outside it,
 // the character is NOT at school — return false.
+// Enrollment is verified against the school record itself. A home, workplace or business
+// recorded as an "education location" is not a school and makes nobody a student, and a
+// character who also holds a job is only a student when that school's own enrollment log
+// lists them — otherwise their obligation is work.
+// Mirrors src/lib/schoolScheduleResolver.js hasVerifiedSchoolEnrollment().
+function hasVerifiedSchoolEnrollment(character, locationMap) {
+  if (!character || character.student_status !== 'enrolled' || !character.education_location_id) return false;
+  const school = locationMap?.[character.education_location_id] || null;
+  const isSchool = !!school && (school.category === 'school' || school.category === 'education' || !!school.school_type);
+  if (!isSchool) return false;
+  const hasJob = !!(character.current_work_location_id || character.occupation_location_id);
+  if (!hasJob) return true;
+  const log = Array.isArray(school.enrolled_students) ? school.enrolled_students : [];
+  if (log.length === 0) return true;
+  return log.some((s) => s && s.character_id === character.id);
+}
+
 function isCharacterOnSchoolSchedule(character, etTime, locationMap) {
-  if (character.student_status !== 'enrolled') return false;
-  if (!character.education_location_id) return false;
+  if (!hasVerifiedSchoolEnrollment(character, locationMap)) return false;
 
   const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
   const dayOfWeek = etTime.getDay();

@@ -19,6 +19,7 @@ import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } f
 import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 import { isUnhousedLivingSpace } from '@/lib/unhousedLivingSpace';
+import { hasVerifiedSchoolEnrollment } from '@/lib/schoolScheduleResolver';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -465,7 +466,9 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // SLEEP PRE-CHECK: if the character is in their sleep window, school must NOT win.
   // Sleep enforcement (Layer 3.5A) runs after this, but we must not send sleeping characters to school.
   // VACATION MODE: skip school schedule enforcement when vacation_mode is ON.
-  if (character.student_status === 'enrolled' && character.education_location_id && !isCharacterAsleepFromUtils(character, locationMap) && !_vacationMode) {
+  // Enrollment is verified against the school record: a place that is not a school, or a
+  // job held without being on that school's enrollment log, is not school attendance.
+  if (hasVerifiedSchoolEnrollment(character, locationMap) && !isCharacterAsleepFromUtils(character, locationMap) && !_vacationMode) {
     const schoolLocation = locationMap[character.education_location_id];
     if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {
@@ -1101,7 +1104,7 @@ export function verifyNoFalseHomeFallback(character, locationMap = {}) {
   }
 
   // If school schedule, must not be Home
-  if (character.student_status === 'enrolled' && character.education_location_id) {
+  if (hasVerifiedSchoolEnrollment(character, locationMap)) {
     return resolved.resolved_location_type !== 'school';
   }
 
@@ -1143,8 +1146,8 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
     }
   }
 
-  // SCHOOL VIOLATION: Character should be at school
-  if (character.student_status === 'enrolled' && character.education_location_id) {
+  // SCHOOL VIOLATION: Character should be at school — only when the enrollment is real.
+  if (hasVerifiedSchoolEnrollment(character, locationMap)) {
     const isAtSchool = resolved.resolved_current_location_id === character.education_location_id;
     if (!isAtSchool) {
       const schoolLoc = locationMap[character.education_location_id];

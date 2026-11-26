@@ -16,12 +16,38 @@ function toMinutes(timeStr) {
 }
 
 /**
+ * hasVerifiedSchoolEnrollment — is this character actually a student right now?
+ *
+ * Enrollment is verified against the school record itself, never assumed from the
+ * character's fields alone:
+ *   - the education location must genuinely BE a school (a home, workplace or business
+ *     recorded as an "education location" is not a school and makes nobody a student),
+ *   - a character who also has a job is only a student when the school's own enrollment
+ *     log (enrolled_students) lists them. A job plus no enrollment on the school's log
+ *     means their obligation is work, not school.
+ * A school that keeps no enrollment log is left as it was, so existing students whose
+ * school record predates the log are unaffected.
+ */
+export function hasVerifiedSchoolEnrollment(character, locationMap = {}) {
+  if (!character || character.student_status !== 'enrolled' || !character.education_location_id) return false;
+  const school = locationMap?.[character.education_location_id] || null;
+  const isSchool = !!school && (school.category === 'school' || school.category === 'education' || !!school.school_type);
+  if (!isSchool) return false;
+  const hasJob = !!(character.current_work_location_id || character.occupation_location_id);
+  if (!hasJob) return true;
+  const log = Array.isArray(school.enrolled_students) ? school.enrolled_students : [];
+  if (log.length === 0) return true;
+  return log.some((s) => s && s.character_id === character.id);
+}
+
+/**
  * resolveSchoolSchedule(character, dayOfWeek, locationMap)
  * 
  * Returns: { startMin, endMin, source } or { startMin: null, endMin: null, source: 'school_schedule_unresolved' }
  */
 export function resolveSchoolSchedule(character, dayOfWeek, locationMap) {
-  if (!character || character.student_status !== 'enrolled') {
+  // Enrollment is verified against the school record, not assumed from the character.
+  if (!hasVerifiedSchoolEnrollment(character, locationMap)) {
     return { startMin: null, endMin: null, source: 'not_enrolled' };
   }
 

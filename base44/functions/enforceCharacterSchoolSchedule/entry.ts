@@ -28,8 +28,27 @@ function toMinutes(timeStr) {
   return h * 60 + (m || 0);
 }
 
+// ── VERIFIED ENROLLMENT ─────────────────────────────────────────────────────
+// Enrollment is verified against the school record itself, never assumed from the
+// character's fields alone. A home, workplace or business recorded as an "education
+// location" is not a school and makes nobody a student. A character who also has a job
+// is only a student when the school's own enrollment log lists them — a job with no
+// enrollment on that log means their obligation is work, not school.
+// Mirrors src/lib/schoolScheduleResolver.js hasVerifiedSchoolEnrollment().
+function hasVerifiedEnrollment(character, schoolLoc) {
+  if (!character || character.student_status !== 'enrolled') return false;
+  if (!schoolLoc) return false;
+  const isSchool = schoolLoc.category === 'school' || schoolLoc.category === 'education' || !!schoolLoc.school_type;
+  if (!isSchool) return false;
+  const hasJob = !!(character.current_work_location_id || character.occupation_location_id);
+  if (!hasJob) return true;
+  const log = Array.isArray(schoolLoc.enrolled_students) ? schoolLoc.enrolled_students : [];
+  if (log.length === 0) return true;
+  return log.some((s) => s && s.character_id === character.id);
+}
+
 function resolveSchoolSchedule(character, dayOfWeek, schoolLoc) {
-  if (!character || character.student_status !== 'enrolled') {
+  if (!hasVerifiedEnrollment(character, schoolLoc)) {
     return { startMin: null, endMin: null, source: 'not_enrolled' };
   }
 
@@ -144,6 +163,10 @@ Deno.serve(async (req) => {
       if (schoolLocId) {
         const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: schoolLocId }, null, 1);
         schoolLoc = locs?.[0] || null;
+      }
+
+      if (!hasVerifiedEnrollment(char, schoolLoc)) {
+        return Response.json({ updated: false, reason: 'not_enrolled', next_execution_time: null });
       }
 
       const schedule = resolveSchoolSchedule(char, dayOfWeek, schoolLoc);

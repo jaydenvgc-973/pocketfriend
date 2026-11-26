@@ -438,7 +438,14 @@ function resolveTargetCategory(character, locationCategory) {
   }
 
   if (/\b(swim|pool|beach|ocean|water park|sunbath)\b/.test(activity)) return 'swimwear';
-  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(activity)) return 'gym';
+  // AUTHORITATIVE WORK PRESENCE OUTRANKS AN ACTIVITY KEYWORD: a character the records place
+  // at work is working, even when the activity line mentions running or training.
+  if (character?.vacation_mode !== true && presence === 'at_work' && locationCategory !== 'gym') return 'work';
+  // "Running late", "running errands", "running to work" and "job training" are not workouts.
+  const nonWorkout = activity
+    .replace(/\brunning (late|behind|errands|out|to|through|around|by|into|short on)\b/g, '')
+    .replace(/\b(job|on[- ]the[- ]job|work|career|vocational) training\b/g, '');
+  if (/\b(gym|workout|exercise|lifting|cardio|yoga|jogging|running|training)\b/.test(nonWorkout)) return 'gym';
   if (locationCategory === 'gym') return 'gym';
 
   // Vacation Mode suspends employment — work cannot be inferred from presence,
@@ -446,6 +453,13 @@ function resolveTargetCategory(character, locationCategory) {
   // remaining context (activity, location, home, daily casual).
   if (character?.vacation_mode !== true) {
     if (presence === 'at_work') return 'work';
+    // Presence recorded as "at school" at the character's own workplace is work presence:
+    // a workplace is not a school, and the work category applies.
+    if (
+      presence === 'at_school' &&
+      character?.education_location_id &&
+      character.education_location_id === (character.current_work_location_id || character.occupation_location_id)
+    ) return 'work';
     if (/\b(working|at work|work shift|on the clock)\b/.test(activity)) return 'work';
     if (locationCategory === 'workplace' || locationCategory === 'business') return 'work';
   }
