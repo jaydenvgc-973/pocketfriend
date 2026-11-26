@@ -44,6 +44,7 @@ import { useStableLocationReferences } from "@/hooks/useStableLocationReferences
 import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 import { usePageContext } from "@/hooks/usePageContext";
 import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
+import { groupLocationReferences } from "@/lib/locationReferenceGroups";
 import { ZONE_PRESETS, GENERIC_ZONE_GROUPS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
@@ -2203,8 +2204,11 @@ export default function Locations() {
     l.owner_character_id === currentUser?.id ||
     (l.resident_character_ids || []).some(id => characterIds.has(id) || id === currentUser?.id);
 
+  // The page is organized by each reference's own parent-location category. Global and
+  // character sharing still narrows the list when the user asks for it, but it is no
+  // longer a section: every result stays inside its category group.
   const getFilteredAndGrouped = () => {
-    let allFiltered = [...locations].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    let allFiltered = [...locations];
 
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -2216,18 +2220,15 @@ export default function Locations() {
     }
 
     if (filter === "global") {
-      return { all: allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l)) };
+      allFiltered = allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l));
     } else if (filter === "character_specific") {
-      return { all: allFiltered.filter(isCharacterHome) };
+      allFiltered = allFiltered.filter(isCharacterHome);
     }
 
-    return {
-      global: allFiltered.filter(l => !isCharacterHome(l)),
-      characterSpecific: allFiltered.filter(isCharacterHome),
-    };
+    return groupLocationReferences(allFiltered);
   };
 
-  const filtered = getFilteredAndGrouped();
+  const grouped = getFilteredAndGrouped();
 
   const renderLocationCard = (loc) => (
     <React.Fragment key={loc.id}>
@@ -2319,7 +2320,7 @@ export default function Locations() {
             {["all", "global", "character_specific"].map(f => (
               <button key={f} onClick={() => setFilter(f)}
                 className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
+                {f === "all" ? "All" : f === "global" ? "🌐 Global only" : "👤 Character only"}
               </button>
             ))}
           </div>
@@ -2372,22 +2373,16 @@ export default function Locations() {
               )}
             </AnimatePresence>
 
-            <div className="space-y-4">
-              {filter === "all" && filtered.global && filtered.global.length > 0 && (
-                <div className="space-y-3">
-                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">🌐 Global Locations</h2>
-                  <AnimatePresence>{filtered.global.map(renderLocationCard)}</AnimatePresence>
+            <div className="space-y-5">
+              {grouped.map(group => (
+                <div key={group.key} className="space-y-3">
+                  <div className="flex items-baseline gap-2 px-1">
+                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{group.label}</h2>
+                    <span className="text-[10px] text-muted-foreground/60">{group.items.length}</span>
+                  </div>
+                  <AnimatePresence>{group.items.map(renderLocationCard)}</AnimatePresence>
                 </div>
-              )}
-              {filter === "all" && filtered.characterSpecific && filtered.characterSpecific.length > 0 && (
-                <div className="space-y-3">
-                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">👤 Character Locations</h2>
-                  <AnimatePresence>{filtered.characterSpecific.map(renderLocationCard)}</AnimatePresence>
-                </div>
-              )}
-              {filter !== "all" && filtered.all && (
-                <AnimatePresence>{filtered.all.map(renderLocationCard)}</AnimatePresence>
-              )}
+              ))}
             </div>
           </>
         )}
