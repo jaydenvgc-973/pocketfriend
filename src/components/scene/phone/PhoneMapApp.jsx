@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, MapPin } from "lucide-react";
 import { base44 } from "@/api/base44Client";
@@ -11,18 +11,20 @@ import { ensureLocationsMapped } from "@/lib/mapCoordinates";
  * It is the same map component Travel renders, fed the same account locations and the same
  * authoritative character presence. Nothing here is a second map: no separate location data,
  * no separate refresh, and opening it moves nobody.
+ *
+ * The map is shown AT ONCE. Its pins are positioned from the locations it is given
+ * (the map derives each building's position from the location's own category), so it never
+ * waits on anything. Saving coordinates is background housekeeping and must never hold the
+ * map back — a phone that sits blank while that runs is a broken phone.
  */
 export default function PhoneMapApp({ locations = [], characters = [], allCharacters = [], ownerEmail, onBack }) {
   const queryClient = useQueryClient();
-  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    // Coordinates are assigned exactly as the Travel page does when its map opens.
     const saveLocation = async (id, updates) => { await base44.entities.LocationReference.update(id, updates); };
     ensureLocationsMapped(locations, saveLocation)
       .then(() => { if (ownerEmail) queryClient.invalidateQueries({ queryKey: ["locationReferences", ownerEmail] }); })
-      .catch(() => {})
-      .finally(() => setReady(true));
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -34,7 +36,7 @@ export default function PhoneMapApp({ locations = [], characters = [], allCharac
         <span className="text-[11px] font-semibold">Map</span>
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto px-1.5 pb-2 text-foreground">
-        {ready && <LivePresenceMap locations={locations} characters={characters} allCharacters={allCharacters} />}
+        <LivePresenceMap locations={locations} characters={characters} allCharacters={allCharacters} />
       </div>
     </div>
   );
