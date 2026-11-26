@@ -13,10 +13,6 @@ import ZoneEditor from "@/components/location/ZoneEditor";
 export default function ZonesSection({
   zones = [],
   presets = [],
-  // Optional labelled groups of presets. A Generic location can hold dozens of different
-  // space types, so its picker is grouped by kind; every other category keeps the plain
-  // chip row it already had.
-  presetGroups = null,
   existingZoneNames = [],
   expanded = true,
   onToggle = null,
@@ -86,22 +82,10 @@ export default function ZonesSection({
       {expanded && (
         <>
           {lockedNotice}
-          {presetGroups?.length ? (
-            <div className="space-y-3">
-              {presetGroups.map(group => (
-                <div key={group.label}>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">{group.label}</p>
-                  <div className="flex flex-wrap gap-2">{group.zones.map(presetChip)}</div>
-                </div>
-              ))}
-              {customZoneButton}
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {presets.map(presetChip)}
-              {customZoneButton}
-            </div>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {presets.map(presetChip)}
+            {customZoneButton}
+          </div>
           {showCustomInput && (
             <div className="flex gap-2">
               <Input value={customZoneName} onChange={e => onCustomZoneNameChange?.(e.target.value)} placeholder="e.g. Rooftop, Garage, Studio..." className="h-9 rounded-xl text-sm" onKeyDown={e => e.key === "Enter" && onAddCustomZone?.()} />

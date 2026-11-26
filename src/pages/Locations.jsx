@@ -45,7 +45,7 @@ import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDispla
 import { usePageContext } from "@/hooks/usePageContext";
 import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
 import { groupLocationReferences } from "@/lib/locationReferenceGroups";
-import { ZONE_PRESETS, GENERIC_ZONE_GROUPS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
+import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
 
@@ -934,7 +934,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       <ZonesSection
         zones={form.zones}
         presets={presets}
-        presetGroups={form.category === 'generic' ? GENERIC_ZONE_GROUPS : null}
         existingZoneNames={existingZoneNames}
         expanded={zonesExpanded}
         onToggle={() => setZonesExpanded(v => !v)}
@@ -1301,7 +1300,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         } else if (form.category === 'generic') {
           // A Generic property may contain several distinct residences. Each unit keeps its
           // own occupants, so nobody in one apartment or house is treated as living in another.
-          labels = { sectionLabel: "Residential Units", unitSingular: "unit", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Lakeview House...", emptyHint: "Add residents to this location first, then create the units or houses they live in." };
+          labels = { sectionLabel: "Apartments & Homes", unitSingular: "residence", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Studio 3, Lakeview House...", emptyHint: "Add residents to this location first, then create each apartment or house they live in." };
         }
 
         // The section folds to its heading, the same way a business does in Workspaces, so

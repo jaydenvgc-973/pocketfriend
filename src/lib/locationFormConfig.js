@@ -5,49 +5,6 @@ import { MapPin, Home, Briefcase, Coffee, Trees, Wine, GraduationCap, Heart, Dum
  * Pure data used by the Locations page and its form. No behavior lives here.
  */
 
-/**
- * GENERIC ZONE GROUPS — the space types a Generic location can be built from.
- *
- * A Generic location is not limited to generic rooms: it can be a single building, a
- * mixed-use property, a neighborhood, or an entire city. Each group is a set of named
- * spaces the user may add, and every one of them becomes a normal zone with its own name
- * and its own reference images. Nothing here is created automatically — a space exists only
- * because the user added it, and the parent keeps its Generic category either way.
- *
- * The groups are display organization for the zone picker only; ZONE_PRESETS.generic is the
- * same list flattened, so every existing reader of the presets is unchanged.
- */
-export const GENERIC_ZONE_GROUPS = [
-  {
-    label: "Residential",
-    zones: [
-      "Residential Building", "Apartment Building", "Apartment", "Studio Apartment",
-      "House", "Dormitory", "Dorm Room", "Shared Living Space",
-      "Residential Common Area", "On-Site Residence",
-    ],
-  },
-  {
-    label: "Commercial & Employment",
-    zones: ["Business", "Store / Retail Space", "Workspace", "Office", "Restaurant / Food Service", "Cafe"],
-  },
-  {
-    label: "Community & Outdoor",
-    zones: ["Neighborhood", "Slums", "Park", "Public Square / Plaza", "Street", "Courtyard"],
-  },
-  {
-    label: "Medical",
-    zones: ["Hospital", "Medical Facility", "Clinic", "Patient Room", "Waiting Area"],
-  },
-  {
-    label: "Government & Correctional",
-    zones: ["Government Facility", "City Hall", "Courthouse", "Police Station", "Jail", "Prison", "Holding Cell", "Inmate Cell", "Visiting Area"],
-  },
-  {
-    label: "General",
-    zones: ["Main Area", "Entrance", "Back Area", "Bathroom"],
-  },
-];
-
 export const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
   hotel: ["Lobby", "Standard Room", "Suite", "Deluxe Room", "Hallway", "Elevator", "Fitness Center", "Pool Area", "Restaurant", "Parking", "Rooftop"],
@@ -66,7 +23,7 @@ export const ZONE_PRESETS = {
   business: ["Office", "Office 1", "Office 2", "Admin Office", "Manager Office", "Staff Office", "Conference Room", "Break Room", "Reception", "Hallway"],
   government: ["Office", "Admin Office", "Reception", "Hallway", "Meeting Room", "Entrance"],
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
-  generic: GENERIC_ZONE_GROUPS.flatMap((group) => group.zones),
+  generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   jail_prison: ["Entrance", "Exterior", "Cell", "General Population / Day Room", "Exercise Yard", "Cafeteria", "Medical", "Visiting Area", "Holding Area", "Intake / Booking", "Shower Area", "Laundry", "Library / Education Room", "Chapel", "Work Area", "Kitchen", "Guard / Control Room"],
   transportation: ["Main Lobby", "Ticket Booth", "Waiting Area", "Platform", "Concourse", "Boarding Gate", "Transit Shelter", "Information Desk", "Baggage Claim", "Security Checkpoint"],
@@ -117,10 +74,26 @@ export const SUBTYPE_OPTIONS = {
   school: ["university", "college", "high_school", "elementary_school"],
   religion: ["church", "temple", "mosque", "synagogue", "meditation_center"],
   public: ["museum", "art_gallery", "theater", "cinema", "concert_venue", "sports_arena", "stadium", "community_center"],
-  // What a Generic property actually is at the parent level. Only settlement descriptors
-  // live here: the kinds of facility inside it are its zones and its businesses, so the
-  // parent is never reclassified as one of them.
-  generic: ["city", "neighborhood", "slums", "district", "mixed_use", "residential_complex", "building", "campus"],
+  // What a Generic property IS at the parent level — from a single building to an entire
+  // city. These are venue types, not rooms: the spaces inside stay Rooms / Zones and the
+  // businesses inside stay Workspaces. Selecting one never creates a place, a resident, an
+  // employee, a patient or an inmate, and the parent category stays Generic. Identifiers
+  // are the ones the matching categories already use, and no existing choice is removed.
+  generic: [
+    // Settlement
+    "city", "district", "neighborhood", "slums", "campus",
+    // Residential and buildings
+    "building", "residential_building", "apartment_building", "mixed_use",
+    "residential_complex", "apartment", "studio_apartment", "house", "condo", "dormitory",
+    // Commercial and employment
+    "business", "commercial_building", "store_retail", "office", "restaurant", "cafe",
+    // Community and outdoor
+    "park", "public_square_plaza", "street", "courtyard",
+    // Medical
+    "hospital", "medical_facility", "clinic", "health_center",
+    // Government and correctional
+    "government_facility", "city_hall", "courthouse", "police_station", "jail", "prison",
+  ],
   government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
   jail_prison: ["jail", "prison", "detention_center", "holding_cell", "correctional_facility", "juvenile_detention", "halfway_house", "confinement_facility", "pretrial_detention", "adult_detention", "immigration_detention"],
@@ -132,6 +105,10 @@ export const SUBTYPE_LABELS = {
   free_food_soup_kitchen: "Free Food / Soup Kitchen",
   all_you_can_eat_buffet: "All-You-Can-Eat Buffet",
   warehouse: "Warehouse",
+  mixed_use: "Mixed-Use Building",
+  store_retail: "Store / Retail",
+  public_square_plaza: "Public Square / Plaza",
+  restaurant: "Restaurant / Food Service",
 };
 
 export const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community', 'jail_prison', 'transportation'];
