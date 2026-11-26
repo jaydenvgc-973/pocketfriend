@@ -59,9 +59,14 @@ export function useSceneCompletion({
   };
 
   const writeJournal = (outcome) => {
-    if (journalDoneRef.current || !journalArgsRef.current) return Promise.resolve();
+    if (journalDoneRef.current || !journalArgsRef.current) return Promise.resolve(0);
     journalDoneRef.current = true;
-    return writeSceneLifeEvents({ ...journalArgsRef.current, outcome });
+    // The journal is written before the page changes, but a failed write is a failure of the
+    // write — never of the exit. The scene still completes and the chosen page still opens.
+    return writeSceneLifeEvents({ ...journalArgsRef.current, outcome }).catch((err) => {
+      console.error("[sceneCompletion] ✗ Journal write failed:", err?.message || err);
+      return 0;
+    });
   };
 
   // Moving the scene on is the scene ending: the one being left is completed through the

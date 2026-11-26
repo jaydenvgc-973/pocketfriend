@@ -154,6 +154,11 @@ export default function Scene() {
   const [pendingInvitations, setPendingInvitations] = useState(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  // Where an exit of this scene goes once it has been completed. Every exit path writes the
+  // same journal and memories; only the page that opens afterwards differs — the phone's
+  // Media Gallery opens the Gallery instead of Travel. Held in a ref so the destination the
+  // phone chose is the one the exit actually uses, never a value from an earlier render.
+  const exitDestinationRef = useRef("/travel");
   const [privateTarget, setPrivateTarget] = useState(null);
   const [pendingPurchase, setPendingPurchase] = useState(null);
   // Try On: the product card's own merchandise, waiting for the user to pick who wears it.
@@ -1364,14 +1369,14 @@ export default function Scene() {
           requested_source_reason: 'returned_home_with_user', requested_authority: 'SceneExit'
         }).catch(() => {});
       }),
-      writeSceneExitMemories(_exitMemoryArgs('left_together')),
+      writeSceneExitMemories(_exitMemoryArgs('left_together')).catch(() => {}),
       _writeSceneJournal('left_together')
     ]);
     // A government proceeding or ceremony ends with the scene: the participants are
     // released to their own schedules instead of staying anchored to the venue.
     releaseGovernmentAttendance?.();
     if (isSharedResidence) setUserAway().catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate(exitDestination || "/travel");
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate(exitDestinationRef.current || "/travel");
   };
 
   const handleLeaveCharactersBehind = async () => {
@@ -1388,12 +1393,12 @@ export default function Scene() {
           presence_stay_lock_created_by: 'user'
         }).catch(() => {})
       ),
-      writeSceneExitMemories(_exitMemoryArgs('stayed_behind')),
+      writeSceneExitMemories(_exitMemoryArgs('stayed_behind')).catch(() => {}),
       _writeSceneJournal('stayed_behind')
     ]);
     releaseGovernmentAttendance?.();
     if (isSharedResidence) setUserAway().catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate(exitDestination || "/travel");
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }); navigate(exitDestinationRef.current || "/travel");
   };
 
   // Stay Here — the Scenes page closes, the world does not move. The scene is completed
@@ -1402,11 +1407,11 @@ export default function Scene() {
   const handleStayHere = async () => {
     setShowLeaveModal(false);
     await Promise.all([
-      writeSceneExitMemories(_exitMemoryArgs('stayed_here')),
+      writeSceneExitMemories(_exitMemoryArgs('stayed_here')).catch(() => {}),
       _writeSceneJournal('stayed_here')
     ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    navigate(exitDestination || "/travel");
+    navigate(exitDestinationRef.current || "/travel");
   };
 
   // The phone's Media Gallery is a Scenes exit like any other: the same physical exit
@@ -1415,10 +1420,12 @@ export default function Scene() {
   // completed and the Gallery opens.
   const openMediaGalleryFromPhone = async () => {
     setShowPhone(false);
-    setExitDestination("/media-gallery");
+    exitDestinationRef.current = "/media-gallery";
     if (!observeMode) { setShowLeaveModal(true); return; }
     await Promise.all([
-      writeSceneExitMemories(_exitMemoryArgs("stayed_here")),
+      // The scene is completed before the page changes. A failed write is a failure of the
+      // write, never of the exit: the Gallery still opens.
+      writeSceneExitMemories(_exitMemoryArgs("stayed_here")).catch(() => {}),
       _writeSceneJournal("stayed_here")
     ]);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
@@ -2067,10 +2074,6 @@ export default function Scene() {
   const [showNextScene, setShowNextScene] = useState(false);
   // Take a Ride and the two missing-property conditions. Both are answers, never silence.
   const [showRidePicker, setShowRidePicker] = useState(false);
-  // Where an exit of this scene goes once it has been completed. Every exit path writes the
-  // same journal and memories; only the page that opens afterwards differs — the phone's
-  // Media Gallery opens the Gallery instead of Travel.
-  const [exitDestination, setExitDestination] = useState("/travel");
   const [missingBelonging, setMissingBelonging] = useState(null);
   const { arrestTargets: arrestTargetsFor, handleArrest } = useSceneArrest({ base44, queryClient, currentUser, locationsData, setMessages, setArrestPicker, setArrestTransition });
   const arrestTargets = arrestTargetsFor(crimeCast);
