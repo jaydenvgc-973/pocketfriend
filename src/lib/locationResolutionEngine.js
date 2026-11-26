@@ -19,7 +19,7 @@ import { isCharacterAsleep as isCharacterAsleepFromUtils, isNPCCharacterType } f
 import { getCharacterSleepState } from '@/lib/characterSleepState';
 import { detectUnsupportedFormat } from '@/lib/imageFormatValidator';
 import { isUnhousedLivingSpace } from '@/lib/unhousedLivingSpace';
-import { hasVerifiedSchoolEnrollment } from '@/lib/schoolScheduleResolver';
+import { hasVerifiedSchoolEnrollment, resolveSchoolSchedule } from '@/lib/schoolScheduleResolver';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -399,7 +399,17 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       }
     }
   }
-  for (const job of _orderedWorkJobs) {
+  // ACADEMIC PRIORITY: a formally enrolled student's established class hours are their
+  // obligation — work is evaluated only outside them. The existing schedule decides, and
+  // the parent property's category never does.
+  const _workClock = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const _workClassWin = resolveSchoolSchedule(character, _workClock.getDay(), locationMap);
+  const _workNowMin = _workClock.getHours() * 60 + _workClock.getMinutes();
+  const _studentInClassNow = _workClassWin.startMin !== null && _workClassWin.endMin !== null &&
+    (_workClassWin.endMin > _workClassWin.startMin
+      ? _workNowMin >= _workClassWin.startMin && _workNowMin < _workClassWin.endMin
+      : _workNowMin >= _workClassWin.startMin || _workNowMin < _workClassWin.endMin);
+  for (const job of (_studentInClassNow ? [] : _orderedWorkJobs)) {
     if (job.type === 'linked') {
       const workLocation = locationMap[job.locId];
       if (!workLocation) {
@@ -470,7 +480,19 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // job held without being on that school's enrollment log, is not school attendance.
   if (hasVerifiedSchoolEnrollment(character, locationMap) && !isCharacterAsleepFromUtils(character, locationMap) && !_vacationMode) {
     const schoolLocation = locationMap[character.education_location_id];
-    if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
+    // CLASS HOURS ARE THE OBLIGATION — NOT THE BUILDING'S OPENING HOURS.
+    // The school's established schedule (enrollment times, then its own hours) decides
+    // whether the student is attending right now. Outside those hours a student who also
+    // works follows their employment schedule; an employee or a resident with no
+    // enrollment never reaches this layer at all.
+    const _schoolClock = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const _classWin = resolveSchoolSchedule(character, _schoolClock.getDay(), locationMap);
+    const _nowMinSchool = _schoolClock.getHours() * 60 + _schoolClock.getMinutes();
+    const _inClassNow = _classWin.startMin !== null && _classWin.endMin !== null &&
+      (_classWin.endMin > _classWin.startMin
+        ? _nowMinSchool >= _classWin.startMin && _nowMinSchool < _classWin.endMin
+        : _nowMinSchool >= _classWin.startMin || _nowMinSchool < _classWin.endMin);
+    if (_inClassNow && schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {
         resolved_current_location_id: character.education_location_id,
         resolved_current_location_name: schoolLocation.name || 'School',
@@ -482,7 +504,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
     // LAST-KNOWN-GOOD: school location missing from map but character is enrolled.
     // Do NOT fall home — preserve DB state or show school as temporarily unavailable.
-    if (!schoolLocation) {
+    // Only while their class hours are actually running.
+    if (_inClassNow && !schoolLocation) {
       const dbSaysAtSchool =
         character.resolved_presence_status === 'at_school' &&
         character.resolved_current_location_id === character.education_location_id;
@@ -1146,8 +1169,16 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
     }
   }
 
-  // SCHOOL VIOLATION: Character should be at school — only when the enrollment is real.
-  if (hasVerifiedSchoolEnrollment(character, locationMap)) {
+  // SCHOOL VIOLATION: Character should be at school — only when the enrollment is real
+  // AND their established class hours are running right now.
+  const _violClock = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const _violWin = resolveSchoolSchedule(character, _violClock.getDay(), locationMap);
+  const _violNowMin = _violClock.getHours() * 60 + _violClock.getMinutes();
+  const _violInClass = _violWin.startMin !== null && _violWin.endMin !== null &&
+    (_violWin.endMin > _violWin.startMin
+      ? _violNowMin >= _violWin.startMin && _violNowMin < _violWin.endMin
+      : _violNowMin >= _violWin.startMin || _violNowMin < _violWin.endMin);
+  if (_violInClass) {
     const isAtSchool = resolved.resolved_current_location_id === character.education_location_id;
     if (!isAtSchool) {
       const schoolLoc = locationMap[character.education_location_id];

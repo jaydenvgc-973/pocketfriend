@@ -472,9 +472,16 @@ function resolveTargetCategory(character, locationCategory) {
   if (locationCategory === 'social') return 'nightlife';
   if (/\b(date|date night|romantic dinner|anniversary)\b/.test(activity)) return 'date_night';
 
-  if (/\b(school|class|campus|lecture|study|college|university)\b/.test(activity)) return 'school';
-  // School location category suppressed during Vacation Mode (school obligation suspended).
-  if (character?.vacation_mode !== true && (locationCategory === 'school' || locationCategory === 'education')) return 'school';
+  // School clothing follows an academic obligation, never the word "university" in an
+  // employee's activity: only an enrolled student is dressed for class.
+  if (character?.student_status === 'enrolled' && /\b(school|class|lecture)\b/.test(activity)) return 'school';
+  // School clothing follows an academic obligation, not the building. A school employee,
+  // a school resident without enrollment, or a visitor is not dressed for class merely
+  // because the place is a school.
+  if (character?.vacation_mode !== true &&
+      character?.student_status === 'enrolled' &&
+      presence !== 'at_work' &&
+      (locationCategory === 'school' || locationCategory === 'education')) return 'school';
 
   if (/\b(airport|train|travel|hotel check-in|vacation departure)\b/.test(activity)) return 'travel';
 

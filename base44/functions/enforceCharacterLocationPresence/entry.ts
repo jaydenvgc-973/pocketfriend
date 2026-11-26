@@ -202,8 +202,9 @@ function hasVerifiedSchoolEnrollment(character, locationMap) {
   const school = locationMap?.[character.education_location_id] || null;
   const isSchool = !!school && (school.category === 'school' || school.category === 'education' || !!school.school_type);
   if (!isSchool) return false;
-  const hasJob = !!(character.current_work_location_id || character.occupation_location_id);
-  if (!hasJob) return true;
+  // The school's own student log is the authority when it keeps one. A character it does
+  // not list is an employee, a resident with an undeclared major, or a visitor — never a
+  // student. Employment at a school does not enroll anybody.
   const log = Array.isArray(school.enrolled_students) ? school.enrolled_students : [];
   if (log.length === 0) return true;
   return log.some((s) => s && s.character_id === character.id);

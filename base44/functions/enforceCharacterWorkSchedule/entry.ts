@@ -177,6 +177,48 @@ Deno.serve(async (req) => {
       }
       const character = char[0];
 
+      // ACADEMIC PRIORITY: a formally enrolled student's established class hours are their
+      // obligation. Work never pulls them out of class. The school's building category does
+      // not decide this — the school's own enrollment log and established schedule do.
+      const _toMin = (t) => {
+        if (!t) return null;
+        const [h, m] = String(t).split(':').map(Number);
+        return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+      };
+      let _schoolLoc = null;
+      if (character.student_status === 'enrolled' && character.education_location_id) {
+        try {
+          const _s = await base44.asServiceRole.entities.LocationReference.filter({ id: character.education_location_id });
+          _schoolLoc = _s?.[0] || null;
+        } catch { _schoolLoc = null; }
+      }
+      const _isInClassNow = (char) => {
+        if (!_schoolLoc) return false;
+        const isSchool = _schoolLoc.category === 'school' || _schoolLoc.category === 'education' || !!_schoolLoc.school_type;
+        if (!isSchool) return false;
+        const log = Array.isArray(_schoolLoc.enrolled_students) ? _schoolLoc.enrolled_students : [];
+        if (log.length > 0 && !log.some(s => s && s.character_id === char.id)) return false;
+        const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const nowMin = et.getHours() * 60 + et.getMinutes();
+        let s = null;
+        let e = null;
+        const active = (char.education_enrollments || []).find(x => x.status === 'active' && x.start_time && x.end_time);
+        if (active) {
+          s = _toMin(active.start_time);
+          e = _toMin(active.end_time);
+        } else if (Array.isArray(_schoolLoc.operating_hours) && _schoolLoc.operating_hours.length > 0) {
+          const day = et.getDay();
+          const entry = _schoolLoc.operating_hours.find(h => h.day_of_week === day)
+            || _schoolLoc.operating_hours.find(h => h.day_of_week == null);
+          if (entry) {
+            s = _toMin(entry.open_time);
+            e = _toMin(entry.close_time);
+          }
+        }
+        if (s === null || e === null) return false;
+        return e > s ? (nowMin >= s && nowMin < e) : (nowMin >= s || nowMin < e);
+      };
+
       // SYSTEM MODE: internal automations act on one character without a user
       // session — the same work the global (no-id) mode already performs for
       // every character without a session. User calls keep the ownership check.
@@ -205,6 +247,8 @@ Deno.serve(async (req) => {
         // is skipped. The character remains free to travel and participate
         // normally. Switching Vacation Mode OFF resumes normal enforcement.
         if (char.vacation_mode === true) return true;
+        // Enrolled and currently in scheduled class — the academic obligation owns them.
+        if (_isInClassNow(char)) return true;
         // Incarcerated or confined — custody outranks any employment obligation.
         // The existing confinement lock owns their location until release.
         if (char.is_jailed === true || char.house_arrest_active === true) return true;

@@ -16,15 +16,15 @@ function toMinutes(timeStr) {
 }
 
 /**
- * hasVerifiedSchoolEnrollment — is this character actually a student right now?
+ * hasVerifiedSchoolEnrollment — does this character have an academic obligation?
  *
- * Enrollment is verified against the school record itself, never assumed from the
- * character's fields alone:
+ * Academic obligation comes from enrollment records, never from a building:
  *   - the education location must genuinely BE a school (a home, workplace or business
  *     recorded as an "education location" is not a school and makes nobody a student),
- *   - a character who also has a job is only a student when the school's own enrollment
- *     log (enrolled_students) lists them. A job plus no enrollment on the school's log
- *     means their obligation is work, not school.
+ *   - when the school keeps its own student log (enrolled_students), that log is the
+ *     authority. A character the log does not list is not enrolled there — an employee,
+ *     a resident with an undeclared major, or a visitor. Employment at a school and
+ *     living at a school are separate relationships and neither enrolls anybody.
  * A school that keeps no enrollment log is left as it was, so existing students whose
  * school record predates the log are unaffected.
  */
@@ -33,8 +33,6 @@ export function hasVerifiedSchoolEnrollment(character, locationMap = {}) {
   const school = locationMap?.[character.education_location_id] || null;
   const isSchool = !!school && (school.category === 'school' || school.category === 'education' || !!school.school_type);
   if (!isSchool) return false;
-  const hasJob = !!(character.current_work_location_id || character.occupation_location_id);
-  if (!hasJob) return true;
   const log = Array.isArray(school.enrolled_students) ? school.enrolled_students : [];
   if (log.length === 0) return true;
   return log.some((s) => s && s.character_id === character.id);
