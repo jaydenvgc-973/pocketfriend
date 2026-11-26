@@ -9,6 +9,7 @@ import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import RotationSchedulePreview from "@/components/character/RotationSchedulePreview";
 import { generateClosetImage } from "@/lib/closetImageGeneration";
+import { nextOutfitRotationNumber } from "@/lib/closetImageAutofill";
 import { useCharacterActiveOutfit, applyManualCategoryOverride, clearCharacterCategoryOverride, getTodayCharacterOverrides } from "@/lib/activeOutfitResolver";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -412,7 +413,11 @@ export function AddOutfitForm({ character, onSave, onCancel, initialValues = nul
   const [form, setForm] = useState({
     label: initialValues?.label || "",
     category: initialValues?.category || "daily_casual",
-    rotation_number: initialValues?.rotation_number ?? "",
+    // A new outfit continues the closet's rotation sequence: three outfits already in
+    // the closet make this the fourth. Editing keeps whatever the outfit already has.
+    rotation_number: initialValues
+      ? (initialValues.rotation_number ?? "")
+      : nextOutfitRotationNumber(character?.character_closet, null),
     top: initialValues?.top || "",
     bottom: initialValues?.bottom || "",
     shoes: initialValues?.shoes || "",

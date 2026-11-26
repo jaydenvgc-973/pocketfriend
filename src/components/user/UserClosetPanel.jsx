@@ -5,6 +5,7 @@ import { useUserActiveOutfit, applyUserManualCategoryOverride, clearUserCategory
 import OutfitEditModal from "@/components/character/OutfitEditModal";
 import ClosetImagePreviewModal from "@/components/character/ClosetImagePreviewModal";
 import { generateClosetImage } from "@/lib/closetImageGeneration";
+import { nextOutfitRotationNumber } from "@/lib/closetImageAutofill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -137,9 +138,11 @@ function OutfitCard({ outfit, isActive, isSlotSelected, onSetActive, onClearActi
   );
 }
 
-function AddOutfitForm({ displayName, gender, userEmail, onSave, onCancel }) {
+function AddOutfitForm({ displayName, gender, userEmail, closet = [], onSave, onCancel }) {
   const [form, setForm] = useState({
-    label: "", category: "daily_casual", rotation_number: "", top: "", bottom: "", shoes: "",
+    // A new outfit continues the closet's rotation sequence: three outfits already in
+    // the closet make this the fourth.
+    label: "", category: "daily_casual", rotation_number: nextOutfitRotationNumber(closet, null), top: "", bottom: "", shoes: "",
     outerwear: "", accessories: "", hair_state: "", full_description: "", is_favorite: false,
   });
   const [genPrompt, setGenPrompt] = useState("");
@@ -649,6 +652,7 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
           displayName={displayName}
           gender={gender}
           userEmail={settings?.owner_email}
+          closet={closet}
           onSave={handleSaveOutfit}
           onCancel={() => setShowAddForm(false)}
         />
