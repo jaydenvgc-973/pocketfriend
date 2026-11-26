@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { carViewUrls } from "@/lib/ownerBelongings";
-import { buildRideNarrative, buildRidePrompt, rideSeating, rideViewForAction } from "@/lib/sceneRide";
+import { buildRideNarrative, rideSeating, rideViewForAction, rideImageRequest, RIDE_STOPPED_ACTION_IDS } from "@/lib/sceneRide";
 
 /**
  * useSceneRide — Take a Ride as a scene that happens inside the car.
@@ -26,23 +25,21 @@ export function useSceneRide({
 }) {
   const [ride, setRide] = useState(null);
 
-  // The picture for a moment inside the car: the view follows what is happening, and only
-  // the people doing it are in frame.
+  // The picture for a moment inside the car: only the camera moves, and only the people
+  // doing the thing are in frame. Their seats never change with the view.
   const buildRideShot = (currentRide, actionId, actorIds) => {
     if (!currentRide) return null;
     const ids = (actorIds || []).filter(Boolean);
     const view = rideViewForAction({ actionId, actorIds: ids, seating: currentRide.seating });
     const visibleIds = ids.length > 0 ? ids : [currentRide.seating?.driver?.id].filter(Boolean);
-    // A moment happens with the car safely stopped, so nobody is driving while it happens.
-    return { visibleIds, prompt: buildRidePrompt(currentRide, { view, visibleIds, stopped: true }) };
+    // A moment that takes the driver's hands off the wheel pulls the car over first.
+    const stopped = RIDE_STOPPED_ACTION_IDS.has(actionId);
+    return { view, visibleIds, stopped };
   };
 
-  const drawRide = (currentRide, shot) => drawImage({
-    strictCastOnly: true,
-    actionFocusIds: shot.visibleIds,
-    actionOverridePrompt: buildRidePrompt(currentRide, shot),
-    extraReferenceImages: carViewUrls(currentRide.car),
-  });
+  // Every ride picture — the first one and every one after it — comes from the same
+  // vehicle references, the same seating and the same authoritative hour.
+  const drawRide = (currentRide, shot) => drawImage(rideImageRequest(currentRide, shot));
 
   const handleRideConfirm = (payload) => {
     const owner = payload?.ride || null;

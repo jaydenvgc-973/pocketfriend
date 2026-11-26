@@ -11,7 +11,7 @@ import { prioritizeAvatarReferences } from "@/lib/characterIdentityLock";
 import { buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildAppearanceLockBlock } from "@/lib/appearanceLockValidator";
 import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityConstraints";
-import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
+import { getEasternLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote, resolveExistingObjectCueForZone } from "@/lib/sceneImagePromptBuilder";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { dedupeSceneCast } from "@/lib/sceneCastUniqueness";
 import { buildJailAttireBlock } from "@/lib/jailSceneRules";
@@ -83,18 +83,36 @@ export function useSceneImageGenerator() {
       // They are supplied alongside the people's own references; the prompt says what
       // they are, and no identity is ever taken from them.
       extraReferenceImages = [],
+      // The environment for this one picture, when it is not the selected place — the inside
+      // of a car during a ride. These exact references replace the zone/room references, so
+      // no image of a room can be mixed into a picture taken inside a vehicle.
+      environmentRefsOverride = null,
+      // The sentence that stands in for the zone/room note. When present, the picture is
+      // never told to preserve a room's layout.
+      environmentNote = null,
+      // The final word of the prompt, after the identity bundles — used to keep one
+      // continuous ride (same seats, clothes, hour) across pictures.
+      postPromptLock = null,
+      // A picture that fails is never replaced by a place's fallback image: the picture
+      // already on screen stays.
+      keepImageOnFailure = false,
+      // How many of each person's own reference images may be used. A ride spends the
+      // budget on the vehicle's views, so each occupant keeps their avatar only.
+      maxRefsPerPerson = 2,
+      // A picture that must land now (the car when a ride begins) is never skipped because
+      // another picture is still being drawn. The newest ticket wins, so the older picture
+      // is discarded instead of replacing this one.
+      supersede = false,
     } = opts;
 
-    if (!location || isGeneratingImage) return;
+    if (!location || (isGeneratingImage && !supersede)) return;
     // This request's ticket: anything it produces is only shown while it is still the newest.
     const ticket = ++requestTicketRef.current;
     const isCurrent = () => ticket === requestTicketRef.current;
     const commit = (url) => { if (isCurrent()) setSceneImage(url); };
     setIsGeneratingImage(true);
 
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const hour = nowET.getHours();
-    const lightingDesc = getLightingDescriptor(hour);
+    const lightingDesc = getEasternLightingDescriptor();
 
     // ── FINAL PARTICIPANTS — selected by ID from the completed collection ──
     // Exactly one subject per person: the same individual reaching the cast twice (their own
@@ -120,9 +138,14 @@ export function useSceneImageGenerator() {
       || locationZones.find((z) => z.is_primary_category === true)
       || locationZones[0];
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
-    const zoneEnvRefs = activeZoneImagesForAction.length > 0
-      ? activeZoneImagesForAction.slice(0, 4)
-      : (location.image_urls || []).slice(0, 4);
+    // A picture taken somewhere other than the selected place — inside a car during a ride —
+    // is composed from that environment's own references only. The selected zone's room
+    // images are never supplied beside them, which is what put a living room into a car.
+    const zoneEnvRefs = environmentRefsOverride
+      ? (Array.isArray(environmentRefsOverride) ? environmentRefsOverride : []).filter((u) => typeof u === "string" && u.trim().length > 0).slice(0, 4)
+      : activeZoneImagesForAction.length > 0
+        ? activeZoneImagesForAction.slice(0, 4)
+        : (location.image_urls || []).slice(0, 4);
     // Merchandise being tried on is a reference for the item, not a person: it is placed
     // with the environment references, never among anyone's identity images.
     const itemRefs = (Array.isArray(extraReferenceImages) ? extraReferenceImages : [])
@@ -136,7 +159,7 @@ export function useSceneImageGenerator() {
     // Additional reference_image_urls supplement it (up to 2) with more angles/detail.
     // The sealed subject bundle adds face-only extraction instructions so the avatar
     // is used for identity while its background/pose/clothing/props are ignored.
-    const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs);
+    const refKey = buildSceneParticipantReferenceKey(finalParticipants, envRefs, { maxPerPerson: maxRefsPerPerson });
     const sealedBundles = buildSealedSubjectBundles(finalParticipants, refKey, location);
 
     // ── NAME REFERENCE KEY — maps each prompt name → Character ID / User ID ──
@@ -225,26 +248,37 @@ export function useSceneImageGenerator() {
         finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
       } else {
         finalPrompt += ` CRITICAL: Only these people may appear: ${finalParticipants.map((c) => c.name).join(", ")}. No other people, no strangers, no coworkers, no employees, no residents, no background figures under any circumstances.`;
-        if (isHomeLocation) {
+        // A home's residential constraint belongs to a home. Inside a vehicle the picture is
+        // composed as a car cabin, never as a furnished living space.
+        if (isHomeLocation && !environmentRefsOverride) {
           finalPrompt += buildResidentialImageConstraint(location, finalParticipants);
         }
       }
       // The people the action involves are the picture, whatever else is in the place.
       finalPrompt += primaryFocusRule;
-      if (envRefs.length > 0) {
+      if (environmentNote) {
+        // The environment is stated outright (the car's own cabin) instead of the zone's
+        // "preserve this room's layout" note.
+        finalPrompt += ` ` + environmentNote;
+      } else if (envRefs.length > 0) {
         finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
       finalPrompt += buildSleepDescriptor(finalParticipants);
       // A shower is never rendered with anyone dressed in it.
       if (showerState) finalPrompt += buildShowerStateRule();
       finalPrompt += sealedBundles;
+      // The last word: what must not change between pictures of the same moment or ride.
+      if (postPromptLock) finalPrompt += postPromptLock;
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${identityPrefix}${finalPrompt} Photorealistic, high quality, authentic.`,
           existing_image_urls: refKey.visualRefs.length > 0 ? refKey.visualRefs : undefined
         });
         commit(result.url);
-      } catch { commit(zoneFallbackImage); } finally { if (isCurrent()) setIsGeneratingImage(false); }
+      } catch {
+        // A failed picture never becomes a picture of somewhere else: the current image stays.
+        if (!keepImageOnFailure) commit(zoneFallbackImage);
+      } finally { if (isCurrent()) setIsGeneratingImage(false); }
       return;
     }
 

@@ -85,7 +85,8 @@ import SceneActionStrip from "@/components/scene/SceneActionStrip";
 import SceneRideFlow from "@/components/scene/SceneRideFlow";
 import MissingBelongingModal from "@/components/scene/MissingBelongingModal";
 import { runNextSceneTransition } from "@/lib/sceneNextScene";
-import { loadBelongings, hasPet, carViewUrls, buildWalkPetPrompt } from "@/lib/ownerBelongings";
+import { loadBelongings, hasPet, buildWalkPetPrompt } from "@/lib/ownerBelongings";
+import { rideImageRequest } from "@/lib/sceneRide";
 import { useSceneRide } from "@/hooks/useSceneRide";
 import SceneRideBar from "@/components/scene/SceneRideBar";
 import { useSceneArrest } from "@/hooks/useSceneArrest";
@@ -1107,8 +1108,8 @@ export default function Scene() {
         strictCastOnly: observeMode || !!inCarShot,
         ambientPopulation: inCarShot ? undefined : sceneAmbientPopulation,
         actionFocusIds: inCarShot ? inCarShot.visibleIds : [actor.id, target.id],
-        actionOverridePrompt: inCarShot ? inCarShot.prompt : buildDirectedActionPrompt({ actionId: action.id, actorName, targetName: target.name, locationName: location?.name }),
-        extraReferenceImages: inCarShot ? carViewUrls(ride.car) : [],
+        actionOverridePrompt: inCarShot ? null : buildDirectedActionPrompt({ actionId: action.id, actorName, targetName: target.name, locationName: location?.name }),
+        ...(inCarShot ? rideImageRequest(ride, inCarShot) : {}),
       });
     }
     // Whether this action is an established event or behavior being carried out now is
@@ -1423,7 +1424,11 @@ export default function Scene() {
   // cast follows the selection in both modes, and an activity that draws its own picture
   // never comes through here, so no second, generic picture replaces it.
   const selectionImageKey = observeMode ? observeCastIdList.join(',') : selectedNpcIdList.join(',');
+  // The ride, for the space-picture guard below (set from the ride hook further down): while
+  // it is a car, no room picture may be cleared or redrawn over it.
+  const rideActiveRef = useRef(null);
   const { requestSpaceImage } = useSceneSpaceImage({
+    suspendedRef: rideActiveRef,
     locationId: location?.id,
     isRabbitHole: !!location?.is_rabbit_hole,
     spaceKey: `${location?.id || ''}|${activeUnitId || ''}|${activeZone || ''}`,
@@ -2061,14 +2066,10 @@ export default function Scene() {
   // Take a Ride: the car becomes the scene, and the ride ends at the destination already chosen.
   const { ride, handleRideConfirm, handleArriveAtDestination, buildRideShot } = useSceneRide({
     drawImage: (opts) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, ...opts }),
-    location,
-    nextSceneParticipants,
-    currentUser,
-    displayName,
-    observeMode,
-    setMessages,
-    handleNextSceneConfirm,
+    location, nextSceneParticipants, currentUser, displayName, observeMode, setMessages, handleNextSceneConfirm,
   });
+  // The space-picture guard reads this: a ride suspends every room redraw.
+  rideActiveRef.current = ride;
 
   // `actors` is the person or people chosen through the existing selector for an activity
   // that asks who performs it (Work). Without a choice, the selected scene cast takes part.
@@ -2108,7 +2109,7 @@ export default function Scene() {
       // Only a moment that has its own picture is redrawn — and inside the car that picture is
       // taken from the vehicle's own view. An activity with no picture leaves the car image be.
       const inCarShot = actionImageFn ? buildRideShot(ride, action.id, actingPeople.map((c) => c.id).filter(Boolean)) : null;
-      if (inCarShot) { generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: inCarShot.visibleIds, actionOverridePrompt: inCarShot.prompt, extraReferenceImages: carViewUrls(ride.car) }); }
+      if (inCarShot) { generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, ...rideImageRequest(ride, inCarShot) }); }
       else if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       // An activity with no picture of its own that establishes a room (a nap in the bedroom,
       // a shower in the bathroom) shows that room — one picture, and never beside an action image.
@@ -2235,7 +2236,7 @@ export default function Scene() {
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
       {/* Scene media area — extracted component with collapse/expand (no side effects) */}
-      <SceneMediaArea location={location} locationZones={locationZones} activeZone={activeZone} onZoneChange={(zoneName) => {
+      <SceneMediaArea location={location} locationZones={locationZones} activeZone={activeZone} ride={ride} onZoneChange={(zoneName) => {
         // Observing the characters does not move the user: the view follows the zone,
         // but no "you move" moment is written into their scene.
         if (!observeMode) return handleZoneChange(zoneName);

@@ -39,6 +39,13 @@ export function createImageParticipantSelector({
         focusedSeen.add(id);
         focused.push({ ...record, isNpc: false });
       });
+      // The account holder can be one of the focused people — riding in their own car, or
+      // taking part themselves. They are resolved from their own user record, never from a
+      // character, and never replaced by whoever else happens to be in the place.
+      if (userId && focusIds.includes(userId) && !focusedSeen.has(userId) && userParticipant) {
+        focusedSeen.add(userId);
+        focused.push(userParticipant);
+      }
       if (focused.length > 0) return focused;
     }
     // Observed scene: the people actually in the moment are the ones in the image.

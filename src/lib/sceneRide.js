@@ -11,7 +11,8 @@
  * Nothing here invents a vehicle, a passenger, or a seat: every fact comes from the owner's
  * car record and from the people actually riding.
  */
-import { carLabel } from "@/lib/ownerBelongings";
+import { carLabel, carViewUrls } from "@/lib/ownerBelongings";
+import { getEasternLightingDescriptor } from "@/lib/sceneImagePromptBuilder";
 
 /**
  * The established activities that physically make sense inside a car. Everything else the
@@ -25,8 +26,8 @@ export const IN_CAR_ACTION_IDS = new Set([
   "argue_with", "fight_with",
   // eating and drinking something already with them
   "eat", "drink",
-  // rest and quiet
-  "relax", "nap",
+  // resting in a seat — never an action that needs a couch, a bed or a bathroom
+  "relax",
   // conversation and passing the time
   "talk", "chat", "joke", "flirt", "ask", "ask_question", "ask_help", "pass_note",
   "group", "one_on_one", "overhear", "notice_watching",
@@ -59,15 +60,28 @@ export function rideSeating({ riders = [], driverId = null }) {
   return { driver, frontPassenger: rest[0] || null, back: rest.slice(1) };
 }
 
-/** Which of the four established vehicle views this moment is drawn from. */
+/**
+ * Which of the four established vehicle views this moment is drawn from. The view is only
+ * where the camera stands — the seats, the wheel and the people in them never move.
+ */
 export function rideViewForAction({ actorIds = [], seating = null } = {}) {
   if (!seating?.driver) return "front_seats";
   const ids = (actorIds || []).filter(Boolean);
-  const everyoneInBack = ids.length > 0 && ids.every((id) => seating.back.some((b) => b.id === id));
-  if (everyoneInBack) return "back_row";
+  const inBack = (id) => (seating.back || []).some((b) => b.id === id);
+  // Anyone in the back seat is seen from the front of the cabin, looking back at them.
+  if (ids.some(inBack)) return "back_row";
   if (ids.length === 1 && ids[0] === seating.driver.id) return "driver_seat";
   return "front_seats";
 }
+
+/**
+ * The established actions that need the car stopped: they take the driver's hands off the
+ * wheel. Everything else happens while the car is moving, with the driver still driving.
+ */
+export const RIDE_STOPPED_ACTION_IDS = new Set([
+  "goof_around", "show_appreciation", "bond_with", "flirt_with", "kiss", "moonwink",
+  "argue_with", "fight_with", "eat", "drink",
+]);
 
 // ── THE RIDE BEGINS ──────────────────────────────────────────────────────────
 /**
@@ -122,20 +136,22 @@ export function buildRideContextBlock(ride) {
 // ── THE PICTURE ──────────────────────────────────────────────────────────────
 /**
  * The top picture during a ride, drawn from one of the vehicle's four established
- * references. Only the people the chosen view actually frames are named; being off-camera
- * never means a person has left the car.
+ * references. The camera moves; the vehicle and the people in their seats do not.
+ * Only the people the chosen view frames are named — being off-camera never means a
+ * person has left the car.
  */
-export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], stopped = false } = {}) {
+export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], stopped = false, lighting = null } = {}) {
   const car = ride?.car || {};
   const label = carLabel(car) || "car";
   const extra = String(car.description || "").trim();
   const owner = ride?.ownerName || "the owner";
+  const seating = ride?.seating || {};
   const nameOf = (id) => (ride?.riders || []).find((r) => r.id === id)?.name || null;
   const seatOf = (id) => {
     if (!id) return null;
-    if (id === ride?.seating?.driver?.id) return "driver's seat, hands on the wheel";
-    if (id === ride?.seating?.frontPassenger?.id) return "front passenger seat";
-    if ((ride?.seating?.back || []).some((b) => b.id === id)) return "back seat";
+    if (id === seating.driver?.id) return "driver's seat";
+    if (id === seating.frontPassenger?.id) return "front passenger seat";
+    if ((seating.back || []).some((b) => b.id === id)) return "back seat";
     return "seated in the cabin";
   };
   const visible = (visibleIds || []).map((id) => ({ name: nameOf(id), seat: seatOf(id) })).filter((v) => v.name);
@@ -143,19 +159,80 @@ export function buildRidePrompt(ride, { view = "front_seats", visibleIds = [], s
     ? `In frame: ${visible.map((v) => `${v.name} in the ${v.seat}`).join("; ")}.`
     : "No one is in frame — only the vehicle's cabin.";
 
+  // The whole seating plan, stated once so no picture can reshuffle it.
+  const seatLines = [
+    seating.driver ? `- ${seating.driver.name}: driver's seat, behind the steering wheel.` : null,
+    seating.frontPassenger ? `- ${seating.frontPassenger.name}: front passenger seat, beside the driver.` : null,
+    ...(seating.back || []).map((b) => `- ${b.name}: back seat.`),
+  ].filter(Boolean);
+
   const motion = stopped
-    ? "The car is pulled over at the kerb, stationary, engine idling."
-    : "The car is moving; the street beyond the glass is softly blurred.";
+    ? "The car is pulled over and stationary, engine idling; the driver's hands are off the wheel for this moment."
+    : "The car is moving; the driver's hands stay on the wheel and their eyes on the road, and the street beyond the glass is softly blurred.";
 
-  const vehicleTruth = `The vehicle is ${owner}'s ${label}${extra ? `, ${extra}` : ""}. Its body, paint, seats, dashboard, steering wheel, trim and interior are exactly the vehicle in the supplied reference images — same make, model, colours and materials.`;
-
-  const viewText = view === "driver_seat"
-    ? `Photorealistic photograph taken from the driver's position inside this car: steering wheel and dashboard in the foreground, the road ahead through the windshield.`
+  const cameraText = view === "driver_seat"
+    ? `CAMERA (this picture only): just behind and beside the driver's shoulder, looking forward past them toward the windshield — the back of the driver's head and their shoulder in the near foreground, hands on the wheel, dashboard and instrument panel below, the road ahead beyond the glass.`
     : view === "back_row"
-      ? `Photorealistic photograph taken from the front of the cabin looking back at the rear seating area of this car.`
+      ? `CAMERA (this picture only): inside the cabin at the front, turned around to look back into the rear seating area — the back-seat occupants' faces, the rear side windows and the street behind them. The front seats are foreground shapes in the near frame; the windshield is behind the camera, not in the picture.`
       : view === "exterior"
-        ? `Photorealistic photograph of this car seen from outside, the whole vehicle in frame.`
-        : `Photorealistic photograph taken from the rear of the cabin looking forward inside this car: front cabin, driver's seat, passenger seat and the windshield with the street beyond.`;
+        ? `CAMERA (this picture only): outside the vehicle on the street, the whole car in frame with its surroundings.`
+        : `CAMERA (this picture only): inside the cabin behind the front seats, looking forward over the driver's shoulder toward the windshield — the driver's seat, the front passenger seat, the dashboard and steering wheel, and the road ahead beyond the glass.`;
 
-  return `${viewText} ${vehicleTruth} ${inFrame} Nobody else is in the car — no additional passengers, no one outside the vehicle. Everyone in frame is fully dressed in their own clothes, each face, hair and build exactly as in their own reference image. ${motion}`;
+  const light = lighting ? ` TIME OF DAY (authoritative): ${lighting}. The street outside, the windows and the dashboard show exactly that light. The reference photographs were taken at their own time of day — use them only for the car's shape and interior, never for its lighting.` : "";
+
+  return `${cameraText}
+
+VEHICLE GEOMETRY (absolute — the camera moves, the car does not):
+- The vehicle is ${owner}'s ${label}${extra ? `, ${extra}` : ""}. Its body, paint, seats, dashboard, steering wheel, door panels and trim are exactly the vehicle in the supplied reference photographs — same make, model, colours, materials and proportions.
+- Those photographs are four views of ONE vehicle: the exterior, the driver's position, the front cabin and the rear seating area. They show where the steering wheel, the dashboard, the windshield, the front seats and the back seats actually are. Keep that exact layout.
+- The steering wheel, dashboard and windshield stay where the references show them. No seat moves, turns around, is swapped, added or removed, and the wheel is never mirrored to the other side of the car.
+- Every occupant faces forward, toward the windshield. In a view taken from behind them you see the backs of their heads and shoulders — the same people facing the same way, never turned seats.
+
+SEATING (fixed for this whole ride):
+${seatLines.join("\n")}
+
+${inFrame} Anyone not listed is still in the car but outside this camera's frame — never add a person, never move someone to fill a seat.
+
+${motion}${light}
+
+CONTINUITY: this is one continuous ride. Each person's face, hair, hairstyle, hair length and texture, skin, build, clothes, shoes and accessories are exactly the same as in the other pictures of this ride — only the camera position and what they are doing change.`;
+}
+
+/**
+ * The vehicle as the picture's environment — said instead of any room. It replaces the
+ * zone/room note, so a picture taken inside a car can never be composed as a living room.
+ */
+export function buildVehicleEnvironmentNote(ride, lighting) {
+  const label = carLabel(ride?.car) || "car";
+  return `ENVIRONMENT (authoritative): the entire picture is inside the cabin of ${label} — seats, dashboard, windows, trim. No room, no walls, no furniture, no domestic interior, no floor plan of any building. The street is only visible through the car's own glass. Apply ${lighting}; the reference photographs are for the car's geometry only, never for its time of day.`;
+}
+
+/**
+ * The last word in the prompt, after the identity bundles: one continuous ride, the same
+ * people in the same seats, the same clothes, the same hour.
+ */
+export function buildRideContinuityLock(ride, lighting) {
+  const seating = ride?.seating || {};
+  const riders = (ride?.riders || []).filter((r) => r?.name);
+  const who = riders.map((r) => `${r.name} — ${r.id === seating.driver?.id ? "driver's seat" : r.id === seating.frontPassenger?.id ? "front passenger seat" : "back seat"}`).join("; ");
+  return ` RIDE CONTINUITY LOCK (absolute, overrides any other instruction about attire, pose, seating or lighting): this is one unbroken car ride. ${who ? `Seats, fixed: ${who}. ` : ""}Everyone stays in their own seat and faces the windshield. Nobody changes clothes, hairstyle or appearance between pictures of this ride, and no outfit is invented for anyone who already has one on. The steering wheel, dashboard and seats never move. ${lighting ? `The time of day is ${lighting} — the same hour as the rest of this ride.` : ""} The car is the environment; a room, house or living room must never appear.`;
+}
+
+/**
+ * Everything one ride picture needs, from the same place, so the first picture and every
+ * picture after it are drawn from the identical vehicle, seating and time.
+ */
+export function rideImageRequest(ride, { view = "front_seats", visibleIds = [], stopped = false } = {}) {
+  const lighting = getEasternLightingDescriptor();
+  return {
+    strictCastOnly: true,
+    actionFocusIds: visibleIds,
+    actionOverridePrompt: buildRidePrompt(ride, { view, visibleIds, stopped, lighting }),
+    environmentRefsOverride: carViewUrls(ride?.car),
+    environmentNote: buildVehicleEnvironmentNote(ride, lighting),
+    postPromptLock: buildRideContinuityLock(ride, lighting),
+    keepImageOnFailure: true,
+    maxRefsPerPerson: 1,
+    supersede: true,
+  };
 }

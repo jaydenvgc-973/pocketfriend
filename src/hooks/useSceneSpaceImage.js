@@ -28,19 +28,24 @@ export function useSceneSpaceImage({
   participantsReady,
   observeMode,
   observeCastCount,
+  // While the scene is a car, this holds the ride. Nothing here may clear or redraw the
+  // picture then: the room must never replace the car it is parked outside of.
+  suspendedRef = null,
 }) {
   const pendingSelectionRef = useRef(false);
   const pendingSpaceRef = useRef(false);
+  const suspended = () => !!suspendedRef?.current;
 
   // A change of cast re-renders the scene with those people. A picture already being drawn
   // finishes first, so the new cast is never replaced by the previous one.
   useEffect(() => {
-    if (!participantsReady) return;
+    if (!participantsReady || suspended()) return;
     if (isGeneratingImage) { pendingSelectionRef.current = true; return; }
     setSceneImage(null);
   }, [selectionKey]);
 
   useEffect(() => {
+    if (pendingSelectionRef.current && suspended()) { pendingSelectionRef.current = false; return; }
     if (!pendingSelectionRef.current || isGeneratingImage || !participantsReady) return;
     pendingSelectionRef.current = false;
     setSceneImage(null);
@@ -48,6 +53,7 @@ export function useSceneSpaceImage({
 
   // A space chosen while a picture was being drawn is drawn once that picture lands.
   useEffect(() => {
+    if (pendingSpaceRef.current && suspended()) { pendingSpaceRef.current = false; return; }
     if (!pendingSpaceRef.current || isGeneratingImage) return;
     pendingSpaceRef.current = false;
     setSceneImage(null);
@@ -56,6 +62,7 @@ export function useSceneSpaceImage({
   // The picture follows the selected space. Only a change of space reaches this, because a
   // chosen space clears the image — an activity's own picture is never cleared.
   useEffect(() => {
+    if (suspended()) return;
     if (!imageRequested || !participantsReady) return;
     if (!locationId || isRabbitHole) return;
     if (sceneImage || isGeneratingImage) return;
@@ -66,6 +73,7 @@ export function useSceneSpaceImage({
 
   /** A manual space change asks for the new space's picture — once. */
   const requestSpaceImage = () => {
+    if (suspended()) return;
     setImageRequested(true);
     if (isGeneratingImage) { pendingSpaceRef.current = true; return; }
     setSceneImage(null);

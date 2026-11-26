@@ -11,6 +11,15 @@
 /**
  * Returns a descriptive lighting string based on the hour of day.
  */
+/**
+ * The lighting of the app's authoritative time — Eastern — right now. One helper, so every
+ * picture of the same moment describes the same hour.
+ */
+export function getEasternLightingDescriptor(date = new Date()) {
+  const nowET = new Date(date.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return getLightingDescriptor(nowET.getHours());
+}
+
 export function getLightingDescriptor(hour) {
   if (hour < 5)  return "very dark late-night atmosphere, minimal ambient light sources only, near darkness";
   if (hour < 7)  return "pre-dawn dim quiet light, soft and low, dark outside windows";

@@ -2,6 +2,8 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RefreshCw, MapPin, ChevronDown, ChevronUp, Check, ZoomIn, Sparkles } from "lucide-react";
 import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
+import { Car } from "lucide-react";
+import { carLabel } from "@/lib/ownerBelongings";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -48,6 +50,9 @@ export default function SceneMediaArea({
   onWatchStopped,
   // Display name for watch party narratives
   displayName,
+  // The scene is currently a car: the picture is the vehicle's cabin, and the place's rooms
+  // are not what is on screen, so the room picker gives way to the ride itself.
+  ride = null,
 }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showZonePicker, setShowZonePicker] = useState(false);
@@ -111,8 +116,19 @@ export default function SceneMediaArea({
       )}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60 pointer-events-none" />
 
+      {/* The active scene environment: inside a car, that is the car itself — not a room of
+          the property the ride started from. */}
+      {ride ? (
+        <div className="absolute top-2 left-2 z-[200] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/55 text-white text-xs font-medium max-w-[70%]">
+          <Car className="w-3 h-3 flex-shrink-0" />
+          <span className="truncate">
+            {carLabel(ride.car) || "Car"} → {ride.spaceLabel || ride.destination?.name || "destination"}
+          </span>
+        </div>
+      ) : null}
+
       {/* Zone picker */}
-      {locationZones.length > 1 && (
+      {!ride && locationZones.length > 1 && (
         <div className="absolute top-2 left-2 z-[200]">
           <button
             onClick={() => setShowZonePicker((v) => !v)}

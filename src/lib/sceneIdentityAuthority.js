@@ -122,7 +122,7 @@ export function buildSceneNameReferenceKey(participants) {
  * @param {Array} envRefs     - Environment reference image URLs
  * @returns {{ visualRefs: string[], ranges: Array, envStart: number, envEnd: number }}
  */
-export function buildSceneParticipantReferenceKey(participants, envRefs) {
+export function buildSceneParticipantReferenceKey(participants, envRefs, { maxPerPerson = 2 } = {}) {
   const visualRefs = [];
   const ranges = [];
   for (const p of (participants || [])) {
@@ -159,7 +159,7 @@ export function buildSceneParticipantReferenceKey(participants, envRefs) {
       !visualRefs.includes(u) &&
       !personRefs.includes(u)
     );
-    for (const url of refUrls.slice(0, 2)) {
+    for (const url of refUrls.slice(0, maxPerPerson)) {
       personRefs.push(url);
       hasAdditionalRefs = true;
     }
