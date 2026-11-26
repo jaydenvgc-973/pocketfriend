@@ -340,8 +340,10 @@ export function useSceneImageGenerator({ transcript = [] } = {}) {
       // An outdoor zone of a property (a yard, a street front, a lot) is not a furnished interior:
       // the designated setting outranks the assumption that a home is always rooms.
       const outdoorZone = physicalSettingFor(location, currentZoneForAction?.zone_name) === 'outdoor';
+      // Lived-in, never "furnished": the line may not promise furniture a place does not
+      // have, and the zone's own reference images decide what is actually there.
       const atmosphereSuffix = finalParticipants.length > 0 && !unhousedHome && !outdoorZone ?
-        " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings." :
+        " The home shows the signs of daily life — personal belongings and everyday things where the people who live here leave them." :
         "";
       const residentialConstraint = unhousedHome
         ? buildUnhousedSpaceRule({ zoneName: currentZoneForAction?.zone_name })

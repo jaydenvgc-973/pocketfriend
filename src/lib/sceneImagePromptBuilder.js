@@ -57,41 +57,44 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc,
   }
 
   const existingObjectBlock = existingObjectCue
-    ? ` EXISTING OBJECT AUTHORITY — CRITICAL: This zone already contains a canonical ${existingObjectCue}. The reference images show the actual ${existingObjectCue} that exists in this space. YOU MUST compose the scene around THE EXISTING ${existingObjectCue.toUpperCase()}. ⛔ Do NOT create a second ${existingObjectCue}. ⛔ Do NOT replace or redesign the existing ${existingObjectCue}. If framing is difficult — move the camera, adjust character pose, or change distance. Do NOT alter the room.`
+    ? ` EXISTING OBJECT AUTHORITY — CRITICAL: This zone already contains a canonical ${existingObjectCue}. The reference images show the actual ${existingObjectCue} that exists in this space. YOU MUST compose the scene around THE EXISTING ${existingObjectCue.toUpperCase()}. ⛔ Do NOT create a second ${existingObjectCue}. ⛔ Do NOT replace or redesign the existing ${existingObjectCue}. If framing is difficult — move the camera, adjust character pose, or change distance. Do NOT alter the space.`
     : '';
 
-  // EVERY furnished space has furniture, whether or not its zone name happens to name it —
-  // a studio with a desk and laptop is the demonstrated case. An activity that needs an
-  // object uses the object the reference images already show; the camera moves to it.
-  const furnitureAuthority = ` EXISTING FURNITURE AUTHORITY — CRITICAL: the reference images contain this room's ACTUAL furniture and its arrangement (desk, laptop, bed, couch, chairs, table, counters, fixtures, windows, doors). If this moment needs an object — working at a desk, using a laptop, sitting at a table, lying on the bed, cooking at the counter — use the one ALREADY IN THE REFERENCE IMAGES and move the camera to show it. ⛔ Do NOT add a second desk, laptop, table, chair, bed, counter, window or door that the references do not already contain. ⛔ Do NOT duplicate furniture because more than one person is in the room — the second person sits at, stands beside, or shares the same furniture. ⛔ Do NOT move existing furniture to another wall or another side of the room between pictures: a desk by the window stays by the window, a bed stays where it is. A different camera angle is the correct answer; a second object is not.`;
+  // THE SPACE IS WHATEVER THE IMAGES SHOW — never assumed to be a room.
+  // Reading these references as "a room" is what furnished an outdoor street: the
+  // instructions used to ask for the same wall colours, flooring and windows, and for
+  // "this room's actual furniture", on a photograph of a street.
+  const spaceIdentity = `ZONE LOCK — STRICT: The reference images define the EXACT physical space of the "${activeZoneName}" zone, whatever that space actually is — an open outdoor street, an alley, a sidewalk, under a bridge, a vacant lot, a park bench, inside a tent, a vehicle cabin, or a room inside a building. Determine the kind of space FROM THE IMAGES and reproduce that same kind of space. ` +
+    `You MUST preserve: the same layout and arrangement, the same ground and surfaces, the same structures, materials, finishes and colours, the same fixed features (buildings, walls, curbs, fences, doors, windows, counters, fixtures) in the same positions, and the same condition of the place — worn, deteriorating, cluttered, clean or new, exactly as it is. ` +
+    `⛔ NOTHING THE IMAGES DO NOT CONTAIN MAY BE ADDED: no furniture, seating, bed, couch, table, desk, rug, lamp, ceiling, indoor wall, extra window or door, decoration or appliance unless it is actually visible in the reference images. A street stays a street. An alley stays an alley. A tent stays a tent. A room keeps only what that room has. If the references show open air, the picture is open air — no ceiling, no interior, no furnishings. ` +
+    `⛔ DO NOT IMPROVE THE PLACE: never furnish, modernise, tidy or upgrade it to suit the activity.`;
 
-  return `ZONE LOCK — STRICT: The reference images define the EXACT visual identity of the "${activeZoneName}" zone. ` +
-    `These are the canonical rooms currently available to this generation path. Do not invent additional rooms, zones, furniture, or objects unless explicitly confirmed by canonical data. ` +
-    `You MUST preserve: the same room layout, same furniture style, same wall colors, same flooring, same architectural features, ` +
-    `same zone-defining structures (bar counter, kitchen, bed, couch, hallway, etc.), same windows and doors in the same positions, same materials and finishes. ` +
-    `⛔ REFERENCE LIGHTING IS NOT AUTHORITATIVE: the reference images are LAYOUT authority only. If they were photographed in daylight, keep the room's geometry, furniture and materials EXACTLY and relight it for the authoritative hour below — the time of day is never taken from the photograph. ` +
+  const furnitureAuthority = ` EXISTING OBJECTS — CRITICAL: if this moment needs an object (somewhere to sit, lie, eat, set something down, lean), use the one ALREADY VISIBLE in the reference images and move the camera to it. ⛔ Do NOT invent an object the references do not contain — if the space has no chair, bed, table or counter, the moment happens without one. ⛔ Do NOT duplicate an existing object because more than one person is present: the second person sits beside, leans on, or shares the same one. ⛔ Do NOT move existing objects between pictures — a bench on the kerb stays on the kerb.`;
+
+  return spaceIdentity +
+    `⛔ REFERENCE LIGHTING IS NOT AUTHORITATIVE: the reference images are LAYOUT authority only. Keep the space's geometry, structures and materials EXACTLY and relight it for the authoritative hour below — the time of day is never taken from the photograph. ` +
     existingObjectBlock +
     furnitureAuthority +
     ` CAMERA DYNAMICS (MANDATORY VARIATION): You MUST use dynamic camera placement and angles. Do NOT reuse the same static viewpoint. ` +
-    `Vary significantly: from the doorway looking in, from beside furniture, from across the room, from a corner angle, over-the-shoulder close-ups, ` +
+    `Vary significantly: from the doorway or kerb, from beside an object, from across the space, from a corner angle, over-the-shoulder close-ups, ` +
     `wider environmental shots, seated eye-level, standing eye-level, from different heights, from different distances. ` +
-    `Framing must change — sometimes close on character, sometimes wide room view, sometimes partial character in frame. ` +
+    `Framing must change — sometimes close on character, sometimes wide view, sometimes partial character in frame. ` +
     `Distance must vary — sometimes intimate close camera, sometimes far away establishing shot. ` +
-    `You may NOT redesign the room, replace furniture, change wall colors, change flooring, ` +
-    `pull elements from a different zone, or invent new location objects. ` +
+    `You may NOT redesign the space, replace what is there, change its colours or surfaces, ` +
+    `pull elements from a different zone, or invent new objects. ` +
     `ZONE EXCLUSIVITY: Only elements visible in the "${activeZoneName}" reference images may appear — ` +
-    `no objects, wall art, furniture, or details from other zones. ` +
+    `no objects, structures, furnishings or details from other zones. ` +
     `TIME OF DAY: ${lightingDesc}. Adjust lighting to match the actual current time — do not apply wrong-time-of-day lighting. ` +
-    `⛔ The view outside every window MUST agree with this hour: at night the glass reads dark (night sky, distant lit windows, streetlights) — never daylight, never bright sunshine, never a bright blue sky. Interior lamps may be fully on; the outside stays night. ` +
+    `⛔ The view beyond every opening MUST agree with this hour: at night the outside reads dark (night sky, distant lit windows, streetlights) — never daylight, never bright sunshine, never a bright blue sky. Interior lamps may be fully on; the outside stays night. ` +
     `Morning light is soft and golden. Afternoon light is bright and direct. Evening light is warm and low-angle. Night uses lamps or moonlight. ` +
-    `The lighting changes the atmosphere, not the room identity. ` +
-    `CHARACTER INTEGRATION: Any characters must feel physically inside the scene — ` +
-    `match their shadows, highlights, color temperature, brightness, and light direction to the room lighting. ` +
-    `If the room is dim, characters must be dimly lit. If warm light, characters have warm tones. If cool shadows, character reflects that. ` +
+    `The lighting changes the atmosphere, not the identity of the space. ` +
+    `CHARACTER INTEGRATION: Any characters must feel physically inside the space — ` +
+    `match their shadows, highlights, colour temperature, brightness and light direction to the light of this space. ` +
+    `If the space is dim, characters must be dimly lit. If warm light, characters have warm tones. If cool shadows, character reflects that. ` +
     `Characters must be clearly visible — camera must be close enough to identify them when they are the focus. ` +
     `Characters must not look pasted on, cutout, or photographed in different lighting. ` +
-    `Feet must make sense on the floor. If sitting, body must align with existing furniture. ` +
-    `Do NOT invent new furniture to make a closer view — use the same furniture from closer camera angle.`;
+    `Feet must make sense on the ground. If sitting, the body must align with whatever they are sitting on. ` +
+    `Do NOT invent furniture to make a closer view — use the same space from a closer camera angle.`;
 }
 
 /**
@@ -153,12 +156,15 @@ export function buildFacilityEnvNote(locationName, hasRefImages, lightingDesc) {
 export function buildActionEnvNote(activeZoneName, hasRefImages, lightingDesc) {
   // The selected zone IS the environment, whatever the activity is. An activity changes what
   // the people are doing, never where they are: a kiss on a street happens on that street.
-  const zoneAuthority = `THIS MOMENT HAPPENS IN THE SELECTED ZONE "${activeZoneName}" — the activity is performed HERE, in these actual surroundings, and nowhere else. ⛔ NEVER relocate anyone into a house, apartment, bedroom, living room, kitchen or any invented indoor interior, and never substitute a room from another zone or location. The activity never chooses the surroundings. `;
-  if (!hasRefImages) return zoneAuthority + `Only what this zone actually is may appear. Apply ${lightingDesc}. What is visible through any window must match this hour — at night it is dark outside, never daylight.`;
-  return zoneAuthority + `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. The reference images are LAYOUT authority only: if they were photographed in daylight, relight the same room for the authoritative hour below. ` +
-    `CAMERA DYNAMICS: Use varied camera angles, distances, and framing — doorway view, close-ups, wide shots, different heights, different positions. ` +
+  // The zone named here is the one the app has already resolved — including a destination a
+  // legitimate activity relocated the character to. The picture obeys that zone; it never
+  // picks a different space of its own, and it never invents an interior for an activity.
+  const zoneAuthority = `THIS MOMENT HAPPENS IN THE SELECTED ZONE "${activeZoneName}" — the activity is performed HERE, in these actual surroundings, and nowhere else. Whatever this zone is, that is the space: if it is a street, the picture is that street; if it is a bathroom, a bedroom, a kitchen or a living room, the picture is that room. ⛔ NEVER substitute a different space — no house, apartment, bedroom, living room, kitchen or invented interior in place of the one named here, and nothing borrowed from another zone or location. An activity that is commonly associated with an interior — kissing, hugging, eating, sleeping, resting, talking — is performed in whatever space these people are actually in; the activity never chooses the surroundings. `;
+  if (!hasRefImages) return zoneAuthority + `Only what this zone actually is may appear — the space as it really is, with nothing added: no furniture, seating, bed, couch, table, ceiling or indoor walls that this place does not have. Apply ${lightingDesc}. What is visible beyond any opening must match this hour — at night it is dark outside, never daylight.`;
+  return zoneAuthority + `ZONE: "${activeZoneName}" — the reference images are the exact physical space, whatever kind of space it is (an outdoor street, an alley, a sidewalk, under a bridge, a vacant lot, a tent, a vehicle cabin, or a room). Preserve the same layout, ground, structures, materials, colours and condition, and add nothing they do not contain — no furniture, seating, bed, couch, table, rug, ceiling, indoor wall or decoration that is not visible in them. Never furnish, modernise or improve the place to suit the activity. ` +
+    `CAMERA DYNAMICS: Use varied camera angles, distances, and framing — kerb or doorway view, close-ups, wide shots, different heights, different positions. ` +
     `Do not repeat the same static angle. Framing must change. Distance must vary. ` +
-    `Apply ${lightingDesc}. ⛔ The view outside every window MUST agree with this hour: at night it is dark outside — never daylight, never bright sunshine, never a bright blue sky. ` +
-    `Match character lighting to the room. Characters must be visible and clearly identifiable. ` +
-    `⛔ EXISTING FURNITURE AUTHORITY: use the furniture already in the reference images — the same desk, laptop, table, chair, bed and counters in the same places. If the activity needs an object, move the CAMERA to the existing one; never invent a second desk, laptop, table or bed, and never duplicate furniture for a second person. Never move existing furniture between pictures.`;
+    `Apply ${lightingDesc}. ⛔ The view beyond every opening MUST agree with this hour: at night it is dark outside — never daylight, never bright sunshine, never a bright blue sky. ` +
+    `Match character lighting to the space. Characters must be visible and clearly identifiable. ` +
+    `⛔ EXISTING OBJECTS AUTHORITY: use only the objects already visible in the reference images — if the activity needs somewhere to sit, lie or set something down, move the CAMERA to the one that exists. If the space has none, the moment happens without one. Never invent a second object or add furniture, and never move existing objects between pictures.`;
 }
