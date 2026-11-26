@@ -100,6 +100,16 @@ export const SUBTYPE_OPTIONS = {
   transportation: ["train_station", "bus_terminal", "transit_center", "airport", "subway_metro_station", "light_rail_station", "ferry_terminal", "boarding_dock", "cruise_terminal", "marina", "port_terminal", "taxi_stand", "ride_share_pickup", "park_and_ride", "tram_station", "cable_car_station"],
 };
 
+// Display order for the Generic venue type picker. Every entry is one of the identifiers in
+// SUBTYPE_OPTIONS.generic — this groups them for scanning only and adds no option of its own.
+export const GENERIC_VENUE_GROUPS = [
+  { label: "Settlement & Outdoor", types: ["city", "district", "neighborhood", "slums", "campus", "park", "street", "public_square_plaza", "courtyard"] },
+  { label: "Residential & Buildings", types: ["building", "residential_building", "apartment_building", "residential_complex", "mixed_use", "apartment", "studio_apartment", "house", "condo", "dormitory"] },
+  { label: "Commercial & Employment", types: ["business", "commercial_building", "store_retail", "office", "restaurant", "cafe"] },
+  { label: "Medical", types: ["hospital", "medical_facility", "clinic", "health_center"] },
+  { label: "Government & Correctional", types: ["government_facility", "city_hall", "courthouse", "police_station", "jail", "prison"] },
+];
+
 // Display labels where the raw subtype name would read poorly as a venue type.
 export const SUBTYPE_LABELS = {
   free_food_soup_kitchen: "Free Food / Soup Kitchen",
@@ -107,6 +117,7 @@ export const SUBTYPE_LABELS = {
   warehouse: "Warehouse",
   mixed_use: "Mixed-Use Building",
   store_retail: "Store / Retail",
+  house: "House / Home",
   public_square_plaza: "Public Square / Plaza",
   restaurant: "Restaurant / Food Service",
 };

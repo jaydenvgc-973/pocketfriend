@@ -46,6 +46,7 @@ import { usePageContext } from "@/hooks/usePageContext";
 import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } from "@/lib/residentialUnits";
 import { groupLocationReferences } from "@/lib/locationReferenceGroups";
 import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
+import { zoneOptionsForVenueTypes } from "@/lib/venueZoneOptions";
 
 // Zone presets, categories and subtypes live in src/lib/locationFormConfig.js
 
@@ -637,7 +638,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     }
   }, [allCharacters, editingLocation?.id]);
 
-  const presets = ZONE_PRESETS[form.category] || ZONE_PRESETS.other;
+  // A Generic property may carry several venue types, so every selected venue type adds the
+  // zone options of the space it describes. These stay options only: a zone exists once the
+  // user adds it, and every already-configured zone is untouched.
+  const presets = form.category === 'generic'
+    ? zoneOptionsForVenueTypes(form.subtype)
+    : (ZONE_PRESETS[form.category] || ZONE_PRESETS.other);
   const existingZoneNames = form.zones.map(z => z.zone_name.toLowerCase());
   // A Home with the Workplace venue capability enabled. The property keeps its Home
   // category — this only makes the existing Workplace-category capabilities (employees,

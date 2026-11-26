@@ -21,6 +21,7 @@ import { isPrivateResidentialZone } from './sceneBackgroundPopulation.js';
 import { HOUSEHOLD_ACTION_IDS } from './sceneActionConfig.js';
 import { isOnSiteResidenceZone } from './onsiteResidence.js';
 import { MERCHANDISE_FAMILIES, merchandiseFamiliesForVenue } from './venueMerchandise.js';
+import { resolveZoneVenue } from './venueZoneOptions.js';
 
 // ── ACTION CLASSIFICATION HELPER ─────────────────────────────────────────────
 // Adds explicit action_class and is_paid to every action definition.
@@ -662,6 +663,39 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
   toy_store:         RETAIL_STORE_ACTIONS,
   gift_shop:         RETAIL_STORE_ACTIONS,
   retail:            RETAIL_STORE_ACTIONS,
+  // Venue types a mixed-use Generic property can carry. Each resolves to the library its
+  // own category already uses, so a hospital, a house, a store or a jail inside a property
+  // behaves exactly as one anywhere else — the Generic parent never suppresses them.
+  hospital:            MEDICAL_ACTIONS,
+  medical_facility:    MEDICAL_ACTIONS,
+  health_center:       MEDICAL_ACTIONS,
+  clinic:              MEDICAL_ACTIONS,
+  jail:                JAIL_ACTIONS,
+  prison:              JAIL_ACTIONS,
+  police_station:      GOVERNMENT_ACTIONS,
+  government_facility: GOVERNMENT_ACTIONS,
+  building:            HOME_ACTIONS,
+  residential_building: HOME_ACTIONS,
+  apartment_building:  HOME_ACTIONS,
+  residential_complex: HOME_ACTIONS,
+  mixed_use:           HOME_ACTIONS,
+  apartment:           HOME_ACTIONS,
+  studio_apartment:    HOME_ACTIONS,
+  house:               HOME_ACTIONS,
+  condo:               HOME_ACTIONS,
+  dormitory:           HOME_ACTIONS,
+  business:            RETAIL_STORE_ACTIONS,
+  commercial_building: RETAIL_STORE_ACTIONS,
+  store_retail:        RETAIL_STORE_ACTIONS,
+  office:              WORKPLACE_ACTIONS,
+  city:                PARK_ACTIONS,
+  district:            PARK_ACTIONS,
+  neighborhood:        PARK_ACTIONS,
+  slums:               PARK_ACTIONS,
+  campus:              PARK_ACTIONS,
+  street:              PARK_ACTIONS,
+  public_square_plaza: PARK_ACTIONS,
+  courtyard:           PARK_ACTIONS,
 };
 
 // Name hints for when subtype/identity fields aren't set (checked against location.name)
@@ -924,6 +958,12 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
       }
     : location;
 
+  // A Generic property may carry several venue types. Inside a space that belongs to
+  // exactly one of them, that venue type is the setting — its own established library,
+  // prices and staff rules. An ambiguous or unrecognized space changes nothing, and the
+  // precise zone decides, so one venue's activities never spread across the property.
+  const zoneVenue = resolveZoneVenue(venue, activeZone);
+
   // A confinement facility is a prison/jail whatever its category says: its activities
   // are the facility's own.
   const isConfinementVenue = venue.category === 'jail_prison' || venue.is_confinement_facility === true;
@@ -937,14 +977,14 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   // venue's own strip, and the shopping actions below are built from all of them.
   const libraries = isConfinementVenue
     ? [JAIL_ACTIONS]
-    : inOnSiteResidence ? [HOME_ACTIONS] : resolveActionLibraries(venue);
+    : inOnSiteResidence ? [HOME_ACTIONS] : resolveActionLibraries(zoneVenue);
   let actions = libraries[0];
 
   // The store determines what can be shopped for. Every venue type the business carries
   // gets its own purchase action, and Buy Something draws from all of them. A venue that
   // sells no retail merchandise is untouched.
   if (!isConfinementVenue && !inOnSiteResidence) {
-    const shopping = buildVenueShoppingActions(venue, libraries);
+    const shopping = buildVenueShoppingActions(zoneVenue, libraries);
     if (shopping) {
       const kept = actions.filter((a) => !isStorePurchaseAction(a));
       const ids = new Set(kept.map((a) => a.id));
@@ -957,8 +997,8 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   // A residence is not the venue, so it never inherits the business's menu.
   const venueExtras = [];
   if (!inOnSiteResidence) {
-    if (actions === BAR_CLUB_ACTIONS && offersFoodService(venue)) venueExtras.push(...BAR_FOOD_ACTIONS);
-    venueExtras.push(...buildVenueDishActions(venue));
+    if (actions === BAR_CLUB_ACTIONS && offersFoodService(zoneVenue)) venueExtras.push(...BAR_FOOD_ACTIONS);
+    venueExtras.push(...buildVenueDishActions(zoneVenue));
     if (venueExtras.length > 0) actions = [...actions, ...venueExtras];
   }
 
@@ -980,7 +1020,7 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   //   Find Somewhere Warm — the Slums, where seeking warmth is a real errand
   //   Pickpocket          — Slums and City (Thief/Lawbreaker get it elsewhere, via Scene)
   //   Burglarize          — wherever there is a property to break into
-  const subtypesHere = normalizeSubtypes(venue);
+  const subtypesHere = normalizeSubtypes(zoneVenue);
   const sceneExtras = [SMOKE_ACTION, CALL_COPS_ACTION];
   if (subtypesHere.includes('slums')) sceneExtras.push(FIND_WARM_ACTION);
   if (subtypesHere.includes('slums') || subtypesHere.includes('city')) sceneExtras.push(PICKPOCKET_ACTION);
