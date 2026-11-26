@@ -16,7 +16,6 @@ const sameZone = (a, b) => String(a || "").trim().toLowerCase() === String(b || 
 
 export function physicalSettingFor(location, zoneName) {
   if (!location) return null;
-  if (isUnhousedLivingSpace(location)) return "outdoor";
 
   if (zoneName) {
     const workplace = (location.workplaces || []).find((w) =>
@@ -24,9 +23,17 @@ export function physicalSettingFor(location, zoneName) {
     );
     if (workplace?.physical_setting) return workplace.physical_setting;
 
-    const unit = (location.residential_units || []).find((u) => sameZone(u.zone_name, zoneName));
+    // A living space's own setting is more specific than the property's: an apartment inside
+    // a mixed property keeps its indoor setting, and an outdoor living space is outdoors by
+    // the kind of arrangement it is, even before its own setting is recorded.
+    const unit = (location.residential_units || []).find(
+      (u) => sameZone(u.zone_name, zoneName) || (u.zone_names || []).some((n) => sameZone(n, zoneName))
+    );
     if (unit?.physical_setting) return unit.physical_setting;
+    if (unit?.living_space_kind === "unhoused_living_space") return "outdoor";
   }
+
+  if (isUnhousedLivingSpace(location)) return "outdoor";
 
   return location.physical_setting || null;
 }

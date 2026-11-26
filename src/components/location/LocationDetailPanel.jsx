@@ -7,6 +7,7 @@ import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 import WorkerEmploymentControls from "./WorkerEmploymentControls";
 import FacilityUnitsSection from "./FacilityUnitsSection";
 import { sortUnits } from "@/lib/residentialUnits";
+import { isUnhousedLivingSpace } from "@/lib/unhousedLivingSpace";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {

@@ -41,6 +41,21 @@ export function isUnhousedLivingSpace(location) {
   return types.filter(Boolean).some((t) => String(t).toLowerCase() === UNHOUSED_LIVING_SPACE);
 }
 
+// Venue types that describe a conventional residence. A property carrying one of these
+// alongside Unhoused Living Space holds both kinds of living arrangement, so its own
+// physical setting stays whatever the user chose.
+export const HOUSED_VENUE_TYPES = [
+  'apartment', 'house', 'studio_apartment', 'condo', 'dormitory',
+  'apartment_building', 'residential_building', 'residential_complex', 'mixed_use', 'building',
+];
+
+/** True when this location also carries a conventional residential venue type. */
+export function hasHousedVenueType(location) {
+  if (!location) return false;
+  const types = Array.isArray(location.subtype) ? location.subtype : [location.subtype];
+  return types.filter(Boolean).some((t) => HOUSED_VENUE_TYPES.includes(String(t).toLowerCase()));
+}
+
 /**
  * Whether this zone's name establishes a facility that actually exists there.
  * A fire barrel and a portable toilet exist only when the user configured a zone for

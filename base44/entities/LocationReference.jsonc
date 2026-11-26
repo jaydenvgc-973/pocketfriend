@@ -783,6 +783,14 @@
               "outdoor"
             ],
             "description": "Whether this residence is physically indoors or outdoors. Independent of the property it belongs to. Empty when the user has not designated it \u2014 never inferred."
+          },
+          "living_space_kind": {
+            "type": "string",
+            "enum": [
+              "residence",
+              "unhoused_living_space"
+            ],
+            "description": "Which kind of living arrangement this space is. residence = a conventional home (apartment, house, dorm room). unhoused_living_space = an independently configured outdoor living space such as an encampment or underpass, whose occupants remain unhoused. Units saved before this field existed are conventional residences unless the location itself is an Unhoused Living Space."
           }
         },
         "required": [

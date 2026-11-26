@@ -29,10 +29,10 @@ import SchoolEnrollmentSection from "@/components/location/SchoolEnrollmentSecti
 import ReligiousMemberSection from "@/components/location/ReligiousMemberSection";
 import { Link } from "react-router-dom";
 import EnvironmentManager from "@/components/location/EnvironmentManager";
-import ApartmentManager from "@/components/location/ApartmentManager";
 import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
 import OnSiteResidenceSection from "@/components/location/OnSiteResidenceSection";
+import ResidentialUnitsSections from "@/components/location/ResidentialUnitsSections";
 import LocationHousingCostFields from "@/components/location/LocationHousingCostFields";
 import { hasOnSiteResidence } from "@/lib/onsiteResidence";
 import { isRecoveryYard, isLockedRecoveryYardZone, lockedRecoveryYardZoneNames, withLockedRecoveryYardZones } from "@/lib/recoveryYardZones";
@@ -48,7 +48,7 @@ import { getActiveUnitOccupantIds, sortUnits, isEligibleSchoolHousingResident } 
 import { groupLocationReferences } from "@/lib/locationReferenceGroups";
 import { ZONE_PRESETS, ALLOWED_ASSIGNABLE_CHARACTER_TYPES, CATEGORIES, SUBTYPE_OPTIONS, SUBTYPE_LABELS, WORK_CATEGORIES, DAY_LABELS } from "@/lib/locationFormConfig";
 import { zoneOptionsForVenueTypes } from "@/lib/venueZoneOptions";
-import { isUnhousedLivingSpace, UNHOUSED_ZONE_PRESETS } from "@/lib/unhousedLivingSpace";
+import { isUnhousedLivingSpace, hasHousedVenueType, UNHOUSED_ZONE_PRESETS } from "@/lib/unhousedLivingSpace";
 import { renameZoneInForm, moveZoneInForm } from "@/lib/zoneOrder";
 import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
 
@@ -598,7 +598,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   // be worked on one part at a time. They all start closed when the editor opens, and each one
   // opens on its own. This is display only — nothing is cleared, removed or re-saved.
   const [zonesExpanded, setZonesExpanded] = useState(false);
-  const [apartmentsExpanded, setApartmentsExpanded] = useState(false);
   const [residentsExpanded, setResidentsExpanded] = useState(false);
   const [residentSearch, setResidentSearch] = useState("");
   // Names for every saved resident, including people whose record this account does not
@@ -645,6 +644,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   // An established place to stay that is not housing. Always outdoors, and never a home.
   const isUnhoused = isUnhousedLivingSpace(form);
+
   // A Generic property may carry several venue types, so every selected venue type adds the
   // zone options of the space it describes. These stay options only: a zone exists once the
   // user adds it, and every already-configured zone is untouched.
@@ -818,8 +818,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       ...(shouldWriteLocationType ? { location_type: effectiveType } : {}),
       venue_types: source.venue_types || [],
       // An Unhoused Living Space is always outdoors, whichever category it was created
-      // under. Every other place keeps exactly the setting the user chose, or none.
-      physical_setting: isUnhousedLivingSpace(source) ? 'outdoor' : (source.physical_setting || ""),
+      // under. A property that also holds conventional residences keeps exactly the setting
+      // the user chose: its apartments and its outdoor living spaces each carry their own.
+      physical_setting: (isUnhousedLivingSpace(source) && !hasHousedVenueType(source))
+        ? 'outdoor'
+        : (source.physical_setting || ""),
       // Each business keeps its own name, type, zones and employees. Its employee list is
       // always a subset of the property's workers — employment stays a single record.
       workplaces: (source.workplaces || [])
@@ -1031,9 +1034,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       />
 
       {/* ── ON-SITE RESIDENCE (business and Generic properties) ──
-          The same existing residence: a residential environment on the property itself,
-          its rooms the property's own zones, its people the property's own residents. A
-          Generic property may house people this way without becoming a Home. */}
+          A residence on the property itself: its rooms are the property's zones. */}
       {(form.category === 'business' || form.category === 'generic') && (
         <OnSiteResidenceSection
           form={form}
@@ -1317,127 +1318,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── APARTMENTS / PATIENT ROOMS / CELLS ──
-          The internal spaces Places already organizes for apartments now also cover a
-          hospital's patient rooms and a prison's cells, from the same residential_units
-          array. Assigning a room or cell changes nothing about a character's medical or
-          legal status, and house arrest is never given a cell. */}
-      {(() => {
-        const isHomeBuilding = form.category === 'home' && form.subtype.includes('building');
-        // A school can house students in dorm rooms or apartments, using the same units.
-        // A Generic property can hold its own residences — apartments, studios and houses —
-        // each an existing residential unit with its own residents.
-        if (!isHomeBuilding && !['hotel', 'medical', 'jail_prison', 'school', 'generic'].includes(form.category)) return null;
-
-        // A patient room and a prison cell are temporary: once the stay ends the occupant is
-        // no longer assigned, so the space is free for someone else. Apartments, hotel rooms
-        // and every other space are unchanged. Any edit here saves the ended assignments away.
-        const activeUnits = sortUnits((form.residential_units || []).map(u => ({
-          ...u,
-          occupant_character_ids: getActiveUnitOccupantIds(editingLocation || form, u, allCharacters),
-        })));
-
-        const alreadyAssigned = new Set();
-        activeUnits.forEach(u => (u.occupant_character_ids || []).forEach(id => alreadyAssigned.add(id)));
-
-        // Who can be placed in a space at THIS facility.
-        let assignableIds = form.resident_character_ids || [];
-        let labels = {};
-        if (form.category === 'medical') {
-          assignableIds = [...new Set([
-            // A patient room belongs to an admitted patient: only a character who is
-            // currently hospitalized at this facility can be placed in one.
-            ...allAssignableCharacters.filter(c =>
-              c.resolved_presence_status === 'hospitalized' &&
-              (!c.resolved_current_location_id || c.resolved_current_location_id === editingLocation?.id)
-            ).map(c => c.id),
-            ...alreadyAssigned,
-          ])];
-          labels = { sectionLabel: "Patient Rooms", unitSingular: "room", occupantNoun: "patient", contextNoun: "facility", addPlaceholder: "e.g. 204, ICU-3...", emptyHint: "Hospitalized characters at this facility can be assigned to a patient room." };
-        } else if (form.category === 'jail_prison') {
-          assignableIds = [...new Set([
-            ...(form.inmates || []).filter(i => i.confinement_status !== 'released').map(i => i.character_id).filter(Boolean),
-            ...allAssignableCharacters.filter(c => c.is_jailed === true && (!c.incarceration_facility_id || c.incarceration_facility_id === editingLocation?.id)).map(c => c.id),
-            ...alreadyAssigned,
-          ])];
-          labels = { sectionLabel: "Inmate Cells", unitSingular: "cell", occupantNoun: "inmate", contextNoun: "facility", addPlaceholder: "e.g. B2, Cellblock C...", emptyHint: "Incarcerated characters at this facility can be assigned to a cell." };
-        } else if (form.category === 'hotel') {
-          labels = { sectionLabel: "Rooms / Units", unitSingular: "room", contextNoun: "hotel", addPlaceholder: "e.g. Room 101, Unit 4B...", emptyHint: "Add residents to the hotel first, then create rooms to organize them." };
-        } else if (form.category === 'school') {
-          // Only a residential student at THIS school, or a character whose established home
-          // is this school, can be given a dorm room or apartment. Attending classes without
-          // campus residency never qualifies anyone, and no one else from the account appears.
-          const schoolRecord = editingLocation || form;
-          assignableIds = [...new Set([
-            ...allAssignableCharacters.filter(c => isEligibleSchoolHousingResident(c, schoolRecord)).map(c => c.id),
-            ...alreadyAssigned,
-          ])];
-          labels = { sectionLabel: "Dorm Rooms / Apartments", unitSingular: "room", occupantNoun: "student", contextNoun: "school", addPlaceholder: "e.g. Dorm A1, Apartment 101...", emptyHint: "Residential students of this school and characters whose home is this school can be assigned to a dorm room or apartment." };
-        } else if (form.category === 'generic') {
-          // A Generic property may contain several distinct residences. Each unit keeps its
-          // own occupants, so nobody in one apartment or house is treated as living in another.
-          // In an Unhoused Living Space the same mechanism organizes sleeping areas — never
-          // apartments, and never a household.
-          // An encampment's sleeping areas are not apartments. A property that carries a
-          // housed venue type as well as Unhoused Living Space keeps the residence wording:
-          // its apartments and its outdoor living areas coexist.
-          const hasHousedVenueType = (form.subtype || []).some(t => ['apartment', 'house', 'studio_apartment', 'condo', 'dormitory', 'apartment_building', 'residential_building', 'residential_complex', 'mixed_use', 'building'].includes(t));
-          labels = isUnhoused && !hasHousedVenueType
-            ? { sectionLabel: "Sleeping Areas", unitSingular: "area", contextNoun: "encampment", addPlaceholder: "e.g. Tent 2, Under the Bridge...", emptyHint: "Add residents to this living space first, then create the areas they stay in." }
-            : { sectionLabel: "Apartments & Homes", unitSingular: "residence", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Studio 3, Lakeview House...", emptyHint: "Add residents to this location first, then create each apartment or house they live in." };
-        }
-
-        // The section folds to its heading, the same way a business does in Workspaces, so
-        // the property's other parts can be reached without scrolling past every unit.
-        return (
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setApartmentsExpanded(v => !v)}
-              className="w-full flex items-start gap-2 text-left"
-            >
-              <span className="mt-0.5 text-muted-foreground flex-shrink-0">
-                {apartmentsExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="text-xs font-semibold text-foreground uppercase tracking-wider block">
-                  {labels.sectionLabel || "Apartments"}
-                </span>
-                <span className="text-[10px] text-muted-foreground mt-0.5 block">
-                  Organize {labels.contextNoun || "building"} residents into individual {labels.unitSingular || "apartment"}s.
-                </span>
-                {!apartmentsExpanded && (
-                  <span className="text-[10px] text-muted-foreground/70 mt-0.5 block">
-                    {activeUnits.length} {activeUnits.length === 1 ? (labels.unitSingular || "apartment") : `${labels.unitSingular || "apartment"}s`} · tap to open
-                  </span>
-                )}
-              </span>
-            </button>
-            {apartmentsExpanded && (
-              <ApartmentManager
-                showHeader={false}
-                residentialUnits={activeUnits}
-                residentCharacterIds={assignableIds}
-                allCharacters={allCharacters}
-                nameById={characterNameById}
-                maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
-                zones={form.zones || []}
-                suggestedZones={presets}
-                lockedZoneNames={lockedRecoveryYardZoneNames(editingLocation, currentUser?.role === 'admin')}
-                onAddZone={addPresetZone}
-                onAddPropertyZoneImage={addZoneImageByName}
-                onRemovePropertyZoneImage={removeZoneImageByName}
-                category={form.category}
-                subtype={form.subtype}
-                locationName={form.name}
-                locationDescription={form.description}
-                onChange={(units) => update("residential_units", units)}
-                {...labels}
-              />
-            )}
-          </div>
-        );
-      })()}
+      {/* ── LIVING ARRANGEMENTS ──
+          Apartments & Homes and Unhoused Living Spaces are two independent sections over the
+          same residential_units array: patient rooms, cells and dorm rooms as before, plus
+          outdoor living arrangements that never mix into the apartment list. */}
+      <ResidentialUnitsSections
+        form={form}
+        setForm={setForm}
+        editingLocation={editingLocation}
+        isAdmin={currentUser?.role === 'admin'}
+        allCharacters={allCharacters}
+        allAssignableCharacters={allAssignableCharacters}
+        characterNameById={characterNameById}
+        sharedResidencyConfig={sharedResidencyConfig}
+        presets={presets}
+        onAddPresetZone={addPresetZone}
+        onAddPropertyZoneImage={addZoneImageByName}
+        onRemovePropertyZoneImage={removeZoneImageByName}
+      />
 
       {/* ── WORKPLACES INSIDE THIS HOME ──
           Several independent businesses can operate in one Home. Each is its own

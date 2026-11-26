@@ -48,6 +48,13 @@ export default function ApartmentManager({
   // When the editor draws this section's heading itself (so it can expand and collapse),
   // the card shows only its contents.
   showHeader = true,
+  // Written onto every space created here, so a living space keeps the kind of arrangement
+  // it was created as and its physical setting without the user setting either by hand.
+  newUnitDefaults = {},
+  // When set, this kind of living space always has that physical setting: the toggle is
+  // replaced by the fixed value, and the parent location's own setting is untouched.
+  forcePhysicalSetting = "",
+  typeOptions = null,
 }) {
   const [newUnitName, setNewUnitName] = useState("");
   const [editingUnitId, setEditingUnitId] = useState(null);
@@ -85,7 +92,8 @@ export default function ApartmentManager({
       zone_names: [],
       zone_images: [],
       residence_type: "",
-      physical_setting: "",
+      physical_setting: forcePhysicalSetting || "",
+      ...newUnitDefaults,
     };
     onChange([...units, newUnit]);
     setNewUnitName("");
@@ -250,7 +258,7 @@ export default function ApartmentManager({
                     className="flex-1 h-6 px-1.5 rounded-lg bg-secondary border border-border text-[10px] text-foreground outline-none focus:ring-1 focus:ring-primary/50"
                   >
                     <option value="">Not designated</option>
-                    {["Apartment", "House", "Studio", "Condo", "Dorm room", "Room", "Suite", "Sleeping area", "Encampment", "Other"].map(t => (
+                    {(typeOptions || ["Apartment", "House", "Studio", "Condo", "Dorm room", "Room", "Suite", "Sleeping area", "Encampment", "Other"]).map(t => (
                       <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
@@ -278,10 +286,16 @@ export default function ApartmentManager({
                   onRemovePropertyZoneImage={onRemovePropertyZoneImage}
                 />
 
-                <PhysicalSettingToggle
-                  value={unit.physical_setting}
-                  onChange={(value) => handleSetUnitPhysicalSetting(unit.unit_id, value || "")}
-                />
+                {forcePhysicalSetting ? (
+                  <p className="text-[10px] text-muted-foreground">
+                    Outdoors — automatically set for this living space. The property's own physical setting is unchanged.
+                  </p>
+                ) : (
+                  <PhysicalSettingToggle
+                    value={unit.physical_setting}
+                    onChange={(value) => handleSetUnitPhysicalSetting(unit.unit_id, value || "")}
+                  />
+                )}
 
                 {/* Occupants */}
                 {occupants.length > 0 && (
