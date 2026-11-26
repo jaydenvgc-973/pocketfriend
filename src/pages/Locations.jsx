@@ -33,6 +33,7 @@ import ApartmentManager from "@/components/location/ApartmentManager";
 import WorkplaceManager from "@/components/location/WorkplaceManager";
 import GatewayResidencyModal from "@/components/location/GatewayResidencyModal";
 import OnSiteResidenceSection from "@/components/location/OnSiteResidenceSection";
+import LocationHousingCostFields from "@/components/location/LocationHousingCostFields";
 import { hasOnSiteResidence } from "@/lib/onsiteResidence";
 import { isRecoveryYard, isLockedRecoveryYardZone, lockedRecoveryYardZoneNames, withLockedRecoveryYardZones } from "@/lib/recoveryYardZones";
 import { isSharedResidencyLocation } from "@/lib/sharedResidency";
@@ -729,6 +730,28 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     }));
   };
 
+  // A residence's spaces are the property's own zones: a picture made for one of them is
+  // written into that zone's list too, so Scenes and every other reader of zone references
+  // is unchanged.
+  const addZoneImageByName = (zoneName, url) => {
+    if (!zoneName || !url) return;
+    setForm(p => ({
+      ...p,
+      zones: (p.zones || []).map(z => z.zone_name === zoneName && !(z.image_urls || []).includes(url)
+        ? { ...z, image_urls: [...(z.image_urls || []), url] }
+        : z),
+    }));
+  };
+
+  const removeZoneImageByName = (zoneName, url) => {
+    setForm(p => ({
+      ...p,
+      zones: (p.zones || []).map(z => z.zone_name === zoneName
+        ? { ...z, image_urls: (z.image_urls || []).filter(u => u !== url) }
+        : z),
+    }));
+  };
+
   const removeWorkplaceZoneImage = (workplaceId, zoneName, url) => {
     setForm(p => {
       const workplaces = (p.workplaces || []).map(w => w.workplace_id === workplaceId
@@ -1020,7 +1043,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           characters={allAssignableCharacters}
           residentNames={residentNameById}
           lockedZoneNames={lockedRecoveryYardZoneNames(editingLocation, currentUser?.role === 'admin')}
-          onPersist={handleSave}
+          suggestedZones={presets}
+          onPersist={(updates) => handleSave({ ...form, ...updates }, editingLocation?.id)}
           contextLabel={form.category === 'generic' ? 'property' : 'business'}
         />
       )}
@@ -1354,7 +1378,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           // own occupants, so nobody in one apartment or house is treated as living in another.
           // In an Unhoused Living Space the same mechanism organizes sleeping areas — never
           // apartments, and never a household.
-          labels = isUnhoused
+          // An encampment's sleeping areas are not apartments. A property that carries a
+          // housed venue type as well as Unhoused Living Space keeps the residence wording:
+          // its apartments and its outdoor living areas coexist.
+          const hasHousedVenueType = (form.subtype || []).some(t => ['apartment', 'house', 'studio_apartment', 'condo', 'dormitory', 'apartment_building', 'residential_building', 'residential_complex', 'mixed_use', 'building'].includes(t));
+          labels = isUnhoused && !hasHousedVenueType
             ? { sectionLabel: "Sleeping Areas", unitSingular: "area", contextNoun: "encampment", addPlaceholder: "e.g. Tent 2, Under the Bridge...", emptyHint: "Add residents to this living space first, then create the areas they stay in." }
             : { sectionLabel: "Apartments & Homes", unitSingular: "residence", contextNoun: "property", addPlaceholder: "e.g. Apartment 1A, Studio 3, Lakeview House...", emptyHint: "Add residents to this location first, then create each apartment or house they live in." };
         }
@@ -1393,7 +1421,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 allCharacters={allCharacters}
                 nameById={characterNameById}
                 maxUnits={form.category === 'home' ? (sharedResidencyConfig?.max_units || 0) : 0}
-                zoneOptions={['school', 'generic'].includes(form.category) ? (form.zones || []).map(z => z?.zone_name).filter(Boolean) : null}
+                zones={form.zones || []}
+                suggestedZones={presets}
+                lockedZoneNames={lockedRecoveryYardZoneNames(editingLocation, currentUser?.role === 'admin')}
+                onAddZone={addPresetZone}
+                onAddPropertyZoneImage={addZoneImageByName}
+                onRemovePropertyZoneImage={removeZoneImageByName}
+                category={form.category}
+                subtype={form.subtype}
+                locationName={form.name}
+                locationDescription={form.description}
                 onChange={(units) => update("residential_units", units)}
                 {...labels}
               />
@@ -1690,39 +1727,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         />
       </div>
 
-      {(form.category === 'home' || form.category === 'generic') && !isUnhoused && (
-        <div className="space-y-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
-          <div>
-            <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Rent</label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">$</span>
-              <Input type="number" value={form.rent_or_housing_cost} onChange={e => update("rent_or_housing_cost", parseFloat(e.target.value))} placeholder="1200" className="h-10 rounded-xl flex-1" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Bedrooms</label>
-            <Input type="number" min="1" value={form.bedroom_count} onChange={e => {
-              const count = parseInt(e.target.value) || 1;
-              update("bedroom_count", count);
-              if (form.rent_or_housing_cost === 1200 || form.rent_or_housing_cost === 1200 + ((form.bedroom_count - 1) * 300)) {
-                update("rent_or_housing_cost", 1200 + ((count - 1) * 300));
-              }
-            }} className="h-10 rounded-xl" />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-foreground uppercase">Monthly Utilities</label>
-            {Object.entries(form.utility_costs).map(([key, val]) => (
-              <div key={key} className="flex items-center gap-2">
-                <label className="text-xs text-muted-foreground capitalize w-20">{key}:</label>
-                <div className="flex items-center gap-2 flex-1">
-                  <span className="text-sm">$</span>
-                  <Input type="number" value={val || 0} onChange={e => update("utility_costs", { ...form.utility_costs, [key]: parseFloat(e.target.value) || 0 })} className="h-8 rounded-lg flex-1 text-sm" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <LocationHousingCostFields form={form} update={update} isUnhoused={isUnhoused} />
 
       {form.category === 'hotel' && (
         <div className="space-y-3 bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">

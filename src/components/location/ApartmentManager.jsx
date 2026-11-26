@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, X, Pencil, Trash2, UserPlus, ArrowRight } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import PhysicalSettingToggle from "@/components/location/PhysicalSettingToggle";
+import ResidenceSpacesEditor from "@/components/location/ResidenceSpacesEditor";
 
 const UNKNOWN_NAME = "Unknown resident";
 
@@ -31,7 +32,19 @@ export default function ApartmentManager({
   emptyHint = "Add residents to the building first, then create apartments to organize them.",
   maxUnits = 0,
   nameById = {},
-  zoneOptions = null,
+  // The property's own zones, the spaces its venue types suggest, and the handlers that
+  // create a space or store a space's picture on the property. A residence keeps every
+  // space chosen for it — it is never limited to a single one.
+  zones = [],
+  suggestedZones = [],
+  lockedZoneNames = [],
+  onAddZone = null,
+  onAddPropertyZoneImage = null,
+  onRemovePropertyZoneImage = null,
+  category = "",
+  subtype = [],
+  locationName = "",
+  locationDescription = "",
   // When the editor draws this section's heading itself (so it can expand and collapse),
   // the card shows only its contents.
   showHeader = true,
@@ -69,6 +82,9 @@ export default function ApartmentManager({
       unit_name: name,
       occupant_character_ids: [],
       zone_name: "",
+      zone_names: [],
+      zone_images: [],
+      residence_type: "",
       physical_setting: "",
     };
     onChange([...units, newUnit]);
@@ -93,10 +109,21 @@ export default function ApartmentManager({
     setEditNameValue("");
   };
 
-  // A dorm room and an apartment are different residential spaces with their own reference
-  // image: the zone is chosen per space from the property's own zones, never inferred.
-  const handleSetUnitZone = (unitId, zoneName) => {
-    onChange(units.map(u => u.unit_id === unitId ? { ...u, zone_name: zoneName } : u));
+  // A dorm room and an apartment are different residential spaces, each with its own set
+  // of rooms and its own reference images. zone_name stays the first chosen space so every
+  // existing reader of a residence keeps working unchanged.
+  const handleSetUnitZones = (unitId, names) => {
+    onChange(units.map(u => u.unit_id === unitId
+      ? { ...u, zone_names: names, zone_name: names[0] || "" }
+      : u));
+  };
+
+  const handleSetUnitZoneImages = (unitId, images) => {
+    onChange(units.map(u => u.unit_id === unitId ? { ...u, zone_images: images } : u));
+  };
+
+  const handleSetUnitType = (unitId, value) => {
+    onChange(units.map(u => u.unit_id === unitId ? { ...u, residence_type: value } : u));
   };
 
   // Where this residence physically is — independent of the property it belongs to.
@@ -213,23 +240,43 @@ export default function ApartmentManager({
                   )}
                 </div>
 
-                {/* The zone this space is shown as — a dormitory zone for a dorm room,
-                    an apartment zone for an apartment. Never assumed from the name. */}
-                {zoneOptions && zoneOptions.length > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-muted-foreground flex-shrink-0">Zone</span>
-                    <select
-                      value={unit.zone_name || ""}
-                      onChange={e => handleSetUnitZone(unit.unit_id, e.target.value)}
-                      className="flex-1 h-6 px-1.5 rounded-lg bg-secondary border border-border text-[10px] text-foreground outline-none focus:ring-1 focus:ring-primary/50"
-                    >
-                      <option value="">Default zone</option>
-                      {zoneOptions.map(name => (
-                        <option key={name} value={name}>{name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+                {/* What kind of residence this is — chosen by the user, never assumed
+                    from the residence name. */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground flex-shrink-0">Type</span>
+                  <select
+                    value={unit.residence_type || ""}
+                    onChange={e => handleSetUnitType(unit.unit_id, e.target.value)}
+                    className="flex-1 h-6 px-1.5 rounded-lg bg-secondary border border-border text-[10px] text-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                  >
+                    <option value="">Not designated</option>
+                    {["Apartment", "House", "Studio", "Condo", "Dorm room", "Room", "Suite", "Sleeping area", "Encampment", "Other"].map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Every space of THIS residence, with its own pictures. A residence is
+                    never limited to a single zone, and two residences that both have a
+                    Living Room keep their own. */}
+                <ResidenceSpacesEditor
+                  residenceLabel={unit.unit_name || unitSingular}
+                  zoneNames={unit.zone_names || (unit.zone_name ? [unit.zone_name] : [])}
+                  onChangeZoneNames={(names) => handleSetUnitZones(unit.unit_id, names)}
+                  zoneImages={unit.zone_images || []}
+                  onChangeZoneImages={(images) => handleSetUnitZoneImages(unit.unit_id, images)}
+                  propertyZones={zones}
+                  suggestedZones={suggestedZones}
+                  lockedZoneNames={lockedZoneNames}
+                  otherResidences={units.filter(u => u.unit_id !== unit.unit_id)}
+                  locationName={locationName}
+                  category={category}
+                  subtype={subtype}
+                  locationDescription={locationDescription}
+                  onAddPropertyZone={onAddZone}
+                  onAddPropertyZoneImage={onAddPropertyZoneImage}
+                  onRemovePropertyZoneImage={onRemovePropertyZoneImage}
+                />
 
                 <PhysicalSettingToggle
                   value={unit.physical_setting}

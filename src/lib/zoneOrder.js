@@ -31,12 +31,20 @@ export function renameZoneInForm(form, index, rawName) {
         sameName(zi.zone_name, oldName) ? { ...zi, zone_name: trimmed } : zi
       ),
     })),
-    residential_units: (form.residential_units || []).map((u) =>
-      sameName(u.zone_name, oldName) ? { ...u, zone_name: trimmed } : u
-    ),
+    residential_units: (form.residential_units || []).map((u) => ({
+      ...u,
+      zone_name: sameName(u.zone_name, oldName) ? trimmed : u.zone_name,
+      zone_names: (u.zone_names || []).map((n) => (sameName(n, oldName) ? trimmed : n)),
+      zone_images: (u.zone_images || []).map((zi) =>
+        sameName(zi.zone_name, oldName) ? { ...zi, zone_name: trimmed } : zi
+      ),
+    })),
     environments: (form.environments || []).map((e) => ({
       ...e,
       zone_names: (e.zone_names || []).map((n) => (sameName(n, oldName) ? trimmed : n)),
+      zone_images: (e.zone_images || []).map((zi) =>
+        sameName(zi.zone_name, oldName) ? { ...zi, zone_name: trimmed } : zi
+      ),
     })),
   };
 }

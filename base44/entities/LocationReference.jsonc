@@ -550,7 +550,7 @@
     },
     "environments": {
       "type": "array",
-      "description": "Explicit user-configured environments for mixed-use locations. Each environment is user-defined \u2014 never inferred from zone names, category, or any other heuristic. A location has mixed-use environments ONLY when this array is non-empty.",
+      "description": "Explicit user-configured environments for mixed-use locations. Each environment is user-defined \u2014 never inferred from zone names, category, or any other heuristic. A location has mixed-use environments ONLY when this array is non-empty. A residential environment is one configured residence; a property may hold several, each with its own name, spaces, people and reference images.",
       "default": [],
       "items": {
         "type": "object",
@@ -592,7 +592,42 @@
             "items": {
               "type": "string"
             },
-            "description": "Zone names from the location zones array that belong to this environment. User-assigned, never auto-classified."
+            "description": "Zone names from the location zones array that belong to this environment. User-assigned, never auto-classified. A residence keeps every space chosen for it \u2014 one residence selecting a room never removes another residence's rooms."
+          },
+          "occupant_character_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Canonical character IDs assigned to THIS residence. A person living in one residence is never treated as living in another residence of the same property."
+          },
+          "residence_type": {
+            "type": "string",
+            "description": "The kind of residence the user designated for this space (e.g. apartment, house, dorm room, sleeping area). Free text chosen by the user \u2014 never inferred from the environment name."
+          },
+          "zone_images": {
+            "type": "array",
+            "default": [],
+            "description": "Reference images generated or uploaded for THIS residence's own spaces, each keeping the zone name it belongs to. The same image URLs are also part of the parent location's zone image_urls, so the existing Scenes reference usage is unchanged. Two residences that both have a Living Room keep their own pictures here.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "zone_name": {
+                  "type": "string",
+                  "description": "The zone of the parent property this image belongs to"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "The image URL, also present in that parent zone's image_urls"
+                }
+              },
+              "required": [
+                "zone_name",
+                "url"
+              ]
+            }
           }
         },
         "required": [
@@ -681,18 +716,18 @@
     "residential_units": {
       "type": "array",
       "default": [],
-      "description": "User-configured apartments within a Building venue type. Each apartment identifies a distinct living space with its own household. Residents assigned to an apartment remain residents of the parent building. Residents not assigned to any apartment remain unassigned building residents.",
+      "description": "User-configured residences inside one property: apartments in a building, houses, dorm rooms, patient rooms, cells, and the areas of an encampment. Each residence is its own space with its own household and its own rooms \u2014 a residence is never limited to a single zone. Residents assigned to a residence remain residents of the parent property; residents not assigned to any remain unassigned property residents.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "unit_id": {
             "type": "string",
-            "description": "Stable unique ID for this apartment (UUID or slug)"
+            "description": "Stable unique ID for this residence (UUID or slug)"
           },
           "unit_name": {
             "type": "string",
-            "description": "User-defined apartment name or number (e.g. 'Apartment 1', 'Unit 4B')"
+            "description": "User-defined residence name or number (e.g. 'Apartment 1', 'Unit 4B', 'Underpass Encampment')"
           },
           "occupant_character_ids": {
             "type": "array",
@@ -700,11 +735,46 @@
               "type": "string"
             },
             "default": [],
-            "description": "Canonical character IDs assigned as occupants of this apartment. These characters form a household within the building."
+            "description": "Canonical character IDs assigned as occupants of this residence. These characters form a household within the property."
           },
           "zone_name": {
             "type": "string",
-            "description": "The existing location zone this space is shown as \u2014 chosen by the user per space (a dormitory zone for a dorm room, an apartment zone for an apartment). Never inferred from the unit name. When empty, the property's default zone applies."
+            "description": "The primary space this residence is shown as \u2014 the first of its zone_names, kept in sync so every existing reader is unchanged. Never inferred from the residence name."
+          },
+          "zone_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Every space of this residence, in the user's order \u2014 an apartment's living room, kitchen, bedroom, bathroom; an encampment's tent, bridge, sidewalk. One residence selecting a room never removes another residence's rooms."
+          },
+          "zone_images": {
+            "type": "array",
+            "default": [],
+            "description": "Reference images generated or uploaded for THIS residence's own spaces, each keeping the zone name it belongs to. The same image URLs are also part of the parent location's zone image_urls, so existing reference usage is unchanged. Two residences that both have a Living Room keep their own pictures here.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "zone_name": {
+                  "type": "string",
+                  "description": "The zone of the parent property this image belongs to"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "The image URL, also present in that parent zone's image_urls"
+                }
+              },
+              "required": [
+                "zone_name",
+                "url"
+              ]
+            }
+          },
+          "residence_type": {
+            "type": "string",
+            "description": "The kind of residence the user designated for this space (e.g. apartment, house, dorm room, sleeping area). Free text chosen by the user \u2014 never inferred from the residence name."
           },
           "physical_setting": {
             "type": "string",
