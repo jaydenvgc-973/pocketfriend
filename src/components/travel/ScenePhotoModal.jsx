@@ -8,8 +8,9 @@ import { resolveOrCreateConversation } from "@/lib/conversationResolver";
 import ImageShareSelector from "@/components/sharing/ImageShareSelector";
 import { buildOwnShareCharacters, loadCrossAccountContacts, alphabetizeByName } from "@/lib/imageShareCharacters";
 import { isUserPresenceEntity } from "@/lib/sceneStripConfig";
+import { buildPhotoMomentContext, PHOTO_CAPTION_RULES, violatesPhotoMoment } from "@/lib/scenePhotoCaptionContext";
 
-export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage, excludeUser = false }) {
+export default function ScenePhotoModal({ location, characters, allPossibleNpcs, currentUser, displayName, onClose, allCharacters, onGenerateSceneImage, isGeneratingImage, excludeUser = false, activeZone = null, transcript = [] }) {
   // Build the full selectable participant list from the canonical scene list (same source as Who's here)
   const allSceneParticipants = (() => {
     const combined = [...(characters || [])];
@@ -57,15 +58,31 @@ export default function ScenePhotoModal({ location, characters, allPossibleNpcs,
     return () => { cancelled = true; };
   }, [characterKey, currentUser?.email]);
 
+  // The caption is written from the scene's own authorities — the resolved space, the
+  // Eastern hour, and what the transcript actually establishes. Nothing is invented: a
+  // residence with no lobby cannot produce a lobby, and midnight cannot become midday.
   const generatePrompt = async () => {
     setIsGeneratingPrompt(true);
     const selectedChars = allCharacters.filter(c => participants.includes(c.id));
     const allNames = [...(includeUser ? [displayName] : []), ...selectedChars.map(c => c.name)].join(", ");
+    const moment = buildPhotoMomentContext({ location, activeZone, transcript, peopleNames: allNames });
+    const groundedFallback = `A candid photo of ${allNames || "the scene"} at ${location.name}`;
     try {
       const result = await base44.integrations.Core.InvokeLLM({
-        prompt: `Write a short, creative photo caption/description (1 sentence) for a candid photo taken at ${location.name} featuring ${allNames}. Make it feel natural and spontaneous, like what you'd write as a photo prompt. No hashtags.`,
+        prompt: `You are writing the caption of a photo taken inside an established scene of a fictional world. Everything you need is below; you may not add to it.\n\n${moment}\n\n${PHOTO_CAPTION_RULES}`,
       });
-      setPrompt(typeof result === "string" ? result : result?.text || "");
+      const text = (typeof result === "string" ? result : result?.text || "").trim().replace(/^["']|["']$/g, "");
+      // A caption that names a room this venue does not have, or an hour it is not, is
+      // discarded and asked once more — never shown as the moment.
+      if (text && !violatesPhotoMoment(text, { location, activeZone })) {
+        setPrompt(text);
+      } else {
+        const retry = await base44.integrations.Core.InvokeLLM({
+          prompt: `The previous attempt contradicted the scene. ${moment}\n\n${PHOTO_CAPTION_RULES}\n\nWrite the sentence again. Use ONLY the venue and space named above and ONLY the hour named above.`,
+        });
+        const retryText = (typeof retry === "string" ? retry : retry?.text || "").trim().replace(/^["']|["']$/g, "");
+        setPrompt(retryText && !violatesPhotoMoment(retryText, { location, activeZone }) ? retryText : groundedFallback);
+      }
     } catch {
       // ignore
     } finally {
