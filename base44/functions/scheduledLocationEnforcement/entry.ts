@@ -42,7 +42,12 @@ function isOnLocationSideShift(character, locationMap, etTime) {
     if (!entry.location_id) continue;
     const loc = locationMap ? locationMap[entry.location_id] : null;
     if (!loc) continue;
-    const shift = loc.worker_shifts?.[character.id];
+    // This job's own schedule: the workplace's shift record, or the job entry's own
+    // recorded hours — never another job's hours.
+    const shift = loc.worker_shifts?.[character.id]
+      || ((entry.shift_start || entry.work_start_time) && (entry.shift_end || entry.work_end_time)
+        ? { start: entry.shift_start || entry.work_start_time, end: entry.shift_end || entry.work_end_time, days: entry.work_days }
+        : null);
     if (!shift?.start || !shift?.end) continue;
     const shiftDays = Array.isArray(shift.days) && shift.days.length > 0 ? shift.days : null;
     if (shiftDays && !shiftDays.includes(dow)) continue;

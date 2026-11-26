@@ -368,9 +368,13 @@ Deno.serve(async (req) => {
         for (const entry of character.additional_occupation_locations) {
           if (!entry.location_id) continue;
           if (!singleAllWorkLocIds.includes(entry.location_id)) singleAllWorkLocIds.push(entry.location_id);
-          if (entry.work_start_time && entry.work_end_time) {
+          // This job's own recorded hours — shift_start/shift_end, or the legacy
+          // work_start_time/work_end_time naming. Never the primary job's hours.
+          const _eStart = entry.shift_start || entry.work_start_time;
+          const _eEnd = entry.shift_end || entry.work_end_time;
+          if (_eStart && _eEnd) {
             const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
-            singleJobSchedules[entry.location_id] = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+            singleJobSchedules[entry.location_id] = { start: _eStart, end: _eEnd, days: eDays };
           } else if (!(entry.location_id in singleJobSchedules)) {
             singleJobSchedules[entry.location_id] = null;
           }
@@ -406,11 +410,13 @@ Deno.serve(async (req) => {
         for (const entry of character.additional_occupation_locations) {
           if (entry.location_id) continue;
           const isRH = entry.is_rabbit_hole === true;
-          if (isRH && entry.work_start_time && entry.work_end_time) {
+          const _rhStart = entry.shift_start || entry.work_start_time;
+          const _rhEnd = entry.shift_end || entry.work_end_time;
+          if (isRH && _rhStart && _rhEnd) {
             const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
             singleRabbitHoleJobs.push({
               workplaceName: entry.location_name || entry.workplace_type || 'Work',
-              schedule: { start: entry.work_start_time, end: entry.work_end_time, days: eDays },
+              schedule: { start: _rhStart, end: _rhEnd, days: eDays },
             });
           }
         }
@@ -1027,9 +1033,11 @@ Deno.serve(async (req) => {
           for (const entry of char.additional_occupation_locations) {
             if (!entry.location_id) continue;
             if (!allWorkLocIds.includes(entry.location_id)) allWorkLocIds.push(entry.location_id);
-            if (entry.work_start_time && entry.work_end_time) {
+            const _eStart = entry.shift_start || entry.work_start_time;
+            const _eEnd = entry.shift_end || entry.work_end_time;
+            if (_eStart && _eEnd) {
               const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
-              jobSchedules[entry.location_id] = { start: entry.work_start_time, end: entry.work_end_time, days: eDays };
+              jobSchedules[entry.location_id] = { start: _eStart, end: _eEnd, days: eDays };
             } else if (!(entry.location_id in jobSchedules)) {
               jobSchedules[entry.location_id] = null;
             }
@@ -1053,11 +1061,13 @@ Deno.serve(async (req) => {
           for (const entry of char.additional_occupation_locations) {
             if (entry.location_id) continue;
             const isRH = entry.is_rabbit_hole === true;
-            if (isRH && entry.work_start_time && entry.work_end_time) {
+            const _grhStart = entry.shift_start || entry.work_start_time;
+            const _grhEnd = entry.shift_end || entry.work_end_time;
+            if (isRH && _grhStart && _grhEnd) {
               const eDays = Array.isArray(entry.work_days) && entry.work_days.length > 0 ? entry.work_days : null;
               rabbitHoleJobs.push({
                 workplaceName: entry.location_name || entry.workplace_type || 'Work',
-                schedule: { start: entry.work_start_time, end: entry.work_end_time, days: eDays },
+                schedule: { start: _grhStart, end: _grhEnd, days: eDays },
               });
             }
           }

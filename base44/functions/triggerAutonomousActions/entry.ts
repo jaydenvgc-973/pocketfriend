@@ -299,10 +299,14 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
           return { activity: `at work — ${jobTitle} at ${workLoc.name}`, type: 'work', isBusy: true };
         }
         const locActive = isLocationActiveNow(workLoc, currentMinutes, currentDay);
-        const workDays = character.work_days || [1, 2, 3, 4, 5];
-        const workStart = character.work_start_time || '09:00';
-        const workEnd = character.work_end_time || '17:00';
-        const charInWindow = workDays.includes(currentDay) && isInWindow(currentMinutes, workStart, workEnd);
+        // The character-level hours describe the primary job only, and only when this
+        // workplace keeps no shift record for them. No hours are ever fabricated, and a
+        // shift record that does not cover today is final — it is never overridden.
+        const workDays = Array.isArray(character.work_days) ? character.work_days : null;
+        const workStart = character.work_start_time;
+        const workEnd = character.work_end_time;
+        const charInWindow = !shift && workDays && workStart && workEnd &&
+          workDays.includes(currentDay) && isInWindow(currentMinutes, workStart, workEnd);
         if (charInWindow && locActive !== false) {
           const jobTitle = character.work_details?.job_title || 'work';
           return { activity: `at work — ${jobTitle} at ${workLoc.name}`, type: 'work', isBusy: true };
@@ -314,7 +318,11 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
       for (const extra of character.additional_occupation_locations) {
         const extraLoc = allLocations.find(l => l.id === extra.location_id);
         if (extraLoc) {
-          const shift = getCharacterShift(character.id, extraLoc);
+          // This job's own schedule — the workplace's shift record, or the entry's own hours.
+          const shift = getCharacterShift(character.id, extraLoc)
+            || ((extra.shift_start || extra.work_start_time) && (extra.shift_end || extra.work_end_time)
+              ? { start: extra.shift_start || extra.work_start_time, end: extra.shift_end || extra.work_end_time, days: extra.work_days }
+              : null);
           if (shift && isShiftDay(shift, currentDay) && isInWindow(currentMinutes, shift.start, shift.end)) {
             return { activity: `at work — ${extra.job_title || 'work'} at ${extraLoc.name}`, type: 'work', isBusy: true };
           }

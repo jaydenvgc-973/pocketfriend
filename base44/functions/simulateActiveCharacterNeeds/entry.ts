@@ -135,9 +135,12 @@ function isOnShift(character, locationMap) {
           if (cur >= sMin && cur < eMin && (!shiftDays || shiftDays.includes(dow))) return true;
         }
       }
-      if (!loc.worker_shifts?.[character.id] && entry.work_start_time && entry.work_end_time && Array.isArray(entry.work_days) && entry.work_days.length > 0) {
-        const [sh, sm = 0] = entry.work_start_time.split(':').map(Number);
-        const [eh, em = 0] = entry.work_end_time.split(':').map(Number);
+      // This job's own recorded hours — never the primary job's.
+      const _ownStart = entry.shift_start || entry.work_start_time;
+      const _ownEnd = entry.shift_end || entry.work_end_time;
+      if (!loc.worker_shifts?.[character.id] && _ownStart && _ownEnd && Array.isArray(entry.work_days) && entry.work_days.length > 0) {
+        const [sh, sm = 0] = _ownStart.split(':').map(Number);
+        const [eh, em = 0] = _ownEnd.split(':').map(Number);
         const sMin = sh * 60 + sm;
         const eMin = eh * 60 + em;
         if (eMin < sMin) {
