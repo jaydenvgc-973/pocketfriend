@@ -6,7 +6,7 @@
  * inside a vehicle, so the destination scene is told which car it opened in and whose.
  */
 export async function runNextSceneTransition(payload, deps) {
-  const { destination, zoneName, unitId, environmentId, spaceLabel, travelerIds, mode, ride } = payload || {};
+  const { destination, zoneName, unitId, environmentId, spaceLabel, travelerIds, mode } = payload || {};
   const { base44, queryClient, currentUser, observeMode, nextSceneParticipants, setMessages, navigate, completeScene } = deps;
   if (!destination?.id) return;
   // A chosen workspace or on-site residence is a space of this same property: the
@@ -50,12 +50,6 @@ export async function runNextSceneTransition(payload, deps) {
   // business hours never close the living space inside it.
   if (environmentId) params.set("environmentId", environmentId);
   if (observeMode || mode === "watch") params.set("observe", "1");
-  // A ride opens the destination scene inside the owner's own car, so the scene knows
-  // whose vehicle it is and draws the people who rode in it.
-  if (ride?.ownerId) {
-    params.set("rideOwnerId", ride.ownerId);
-    params.set("rideOwnerType", ride.ownerType || "character");
-  }
   // Marks this as a scene of its own even when it happens to share the same place and
   // cast — a confirmed transition always starts the destination scene.
   params.set("started", String(Date.now()));

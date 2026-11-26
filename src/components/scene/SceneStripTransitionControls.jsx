@@ -1,4 +1,4 @@
-import { Siren, Compass, DollarSign, HandCoins, Smartphone, Car } from "lucide-react";
+import { Siren, Compass, DollarSign, HandCoins, Smartphone, Car, Flag } from "lucide-react";
 
 /**
  * The scene's financial and phone entries. Both money controls open the ONE established
@@ -85,6 +85,27 @@ export function NextSceneControl({ onNextScene }) {
     >
       <Compass className="w-4 h-4 text-primary" />
       <span className="text-[9px] text-primary font-bold leading-tight whitespace-nowrap uppercase tracking-wide">Next Scene</span>
+    </button>
+  );
+}
+
+/**
+ * Arrive at Destination — the only way a ride concludes.
+ *
+ * While the scene is inside a car, the destination chosen for the ride is already known, so
+ * this control completes the ride through the established Next Scene transition: the scene
+ * is recorded, the riders move through the existing presence pipeline, and the destination
+ * scene loads. It never asks for the destination again.
+ */
+export function ArriveAtDestinationControl({ destinationName, onArrive }) {
+  return (
+    <button
+      onClick={onArrive}
+      title={destinationName ? `Finish the ride at ${destinationName}` : "Finish the ride at the destination"}
+      className="flex flex-col items-center justify-center gap-1 p-2 rounded-xl border-2 transition-all text-center flex-shrink-0 snap-center bg-emerald-500/15 border-emerald-500/60 hover:bg-emerald-500/25"
+    >
+      <Flag className="w-4 h-4 text-emerald-400" />
+      <span className="text-[9px] text-emerald-400 font-bold leading-tight whitespace-normal break-words uppercase tracking-wide">Arrive at Destination</span>
     </button>
   );
 }

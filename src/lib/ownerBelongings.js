@@ -126,19 +126,6 @@ export function petPrompt(pet) {
   return `Photorealistic photograph of a ${type}${name ? ` named ${name}` : ""} in a warm home interior, full body, natural light, sharp detail, the animal's breed, coloring and markings clearly visible. No people.`;
 }
 
-/** Take a Ride — the occupants inside the owner's actual vehicle. */
-export function buildRidePrompt(car, occupants = [], driverName = null) {
-  const label = carLabel(car) || "car";
-  const names = occupants.map((o) => o?.name).filter(Boolean);
-  const driver = driverName || names[0] || null;
-  const passengers = names.filter((n) => n !== driver);
-  const seatText = [
-    driver ? `${driver} is in the driver's seat, hands on the wheel` : null,
-    passengers.length > 0 ? `${passengers.join(" and ")} ${passengers.length === 1 ? "is" : "are"} in the passenger and rear seats` : null,
-  ].filter(Boolean).join("; ");
-  return `An in-car photograph taken from inside a moving ${label}: ${seatText || "the cabin is empty"}. The body color, seats, dashboard, trim and interior of the vehicle exactly match the supplied vehicle reference images. Everyone is fully dressed in their own clothes. The windows show a soft, blurred street outside. No additional passengers, no people outside the car.`;
-}
-
 /** Walk Pet — the selected actor with the pet registered on their own profile. */
 export function buildWalkPetPrompt(ownerName, pet) {
   const type = petLabel(pet);

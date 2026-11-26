@@ -85,8 +85,10 @@ import SceneActionStrip from "@/components/scene/SceneActionStrip";
 import SceneRideFlow from "@/components/scene/SceneRideFlow";
 import MissingBelongingModal from "@/components/scene/MissingBelongingModal";
 import { runNextSceneTransition } from "@/lib/sceneNextScene";
-import { useRideSceneImage } from "@/hooks/useRideSceneImage";
-import { loadBelongings, hasPet, carViewUrls, buildRidePrompt, buildWalkPetPrompt } from "@/lib/ownerBelongings";
+import { loadBelongings, hasPet, carViewUrls, buildWalkPetPrompt } from "@/lib/ownerBelongings";
+import { useSceneRide } from "@/hooks/useSceneRide";
+import SceneRideBar from "@/components/scene/SceneRideBar";
+import { useSceneArrest } from "@/hooks/useSceneArrest";
 import SceneTransitionModals from "@/components/scene/SceneTransitionModals";
 import SceneMoneyModal from "@/components/scene/SceneMoneyModal";
 import OpenPhoneModal from "@/components/scene/OpenPhoneModal";
@@ -1095,19 +1097,18 @@ export default function Scene() {
       : observeMode && actorName
         ? `[${action.emoji} ${action.label} — ${actorName} with ${target.name}]`
         : `[${action.emoji} ${action.label} — ${target.name}]`;
+    // Inside the car the moment stays in the car: the view follows the two people, drawn
+    // against the owner's own vehicle references. Off-camera people remain in the ride.
+    const inCarShot = buildRideShot(ride, action.id, [actor?.id, target.id]);
     if (actor?.id && actorName) {
       generateSceneImage({
         location, locationZones, activeZone, sceneParticipants, userParticipant,
         isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap,
-        strictCastOnly: observeMode,
-        ambientPopulation: sceneAmbientPopulation,
-        actionFocusIds: [actor.id, target.id],
-        actionOverridePrompt: buildDirectedActionPrompt({
-          actionId: action.id,
-          actorName,
-          targetName: target.name,
-          locationName: location?.name,
-        }),
+        strictCastOnly: observeMode || !!inCarShot,
+        ambientPopulation: inCarShot ? undefined : sceneAmbientPopulation,
+        actionFocusIds: inCarShot ? inCarShot.visibleIds : [actor.id, target.id],
+        actionOverridePrompt: inCarShot ? inCarShot.prompt : buildDirectedActionPrompt({ actionId: action.id, actorName, targetName: target.name, locationName: location?.name }),
+        extraReferenceImages: inCarShot ? carViewUrls(ride.car) : [],
       });
     }
     // Whether this action is an established event or behavior being carried out now is
@@ -1440,16 +1441,14 @@ export default function Scene() {
 
   useEffect(() => { if (hasUserRequestedImage) return; if (!location || location.is_rabbit_hole) return; if (characterIds.length > 0 && broughtCharacters.length < characterIds.length) return; setHasUserRequestedImage(true); }, [hasUserRequestedImage, location?.id, location?.is_rabbit_hole, broughtCharacters.length, characterIds.length]);
 
-  // A scene reached by car opens inside that car: the people who rode, in the owner's own
-  // vehicle, drawn against the vehicle's registered references once the room picture lands.
-  useRideSceneImage({ rideOwnerId: urlParams.get("rideOwnerId"), rideOwnerType: urlParams.get("rideOwnerType"), ownerEmail: currentUser?.email, participantsReady, location, sceneImage, isGeneratingImage, drawRide: (car) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionOverridePrompt: buildRidePrompt(car, sceneParticipants.map((p) => ({ name: p.name }))), extraReferenceImages: carViewUrls(car) }) });
-
   const generateFocusedImage = (prompt) => {
     if (isGeneratingImage) return;
     base44.integrations.Core.GenerateImage({ prompt: `${prompt} Photorealistic, high quality, close-up detail.`, existing_image_urls: firstImage ? [firstImage] : undefined }).then((r) => setSceneImage(r.url)).catch(() => {});
   };
 
-  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null, purchaseMerchandise = null) => { _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, location, messages, generateFocusedImage, setMessages }); };
+  // Inside the car the picture stays the car: a text-triggered room or item picture would
+  // replace the vehicle the scene is actually happening in.
+  const checkImageTrigger = (text, actionImagePrompt = null, actionCategory = null, explicitPrice = null, purchaseSource = null, isFreeOffering = false, purchaseItemKind = null, purchaseMerchandise = null) => { if (ride) return; _checkImageTrigger({ text, actionImagePrompt, actionCategory, explicitPrice, purchaseSource, isFreeOffering, purchaseItemKind, purchaseMerchandise, location, messages, generateFocusedImage, setMessages }); };
 
   // A narrative is something that has already happened, dialogue included. It is recorded
   // as canon so character replies treat it as a recent lived experience, never as words
@@ -1555,6 +1554,7 @@ export default function Scene() {
         onShiftAtLocationIds: onShiftIds,
         homeResidentIds,
         locationsById: locationMap,
+        ride,
       });
 
       // The scene stays in the selected space; the rest of the property is elsewhere.
@@ -2044,27 +2044,12 @@ export default function Scene() {
   // Take a Ride and the two missing-property conditions. Both are answers, never silence.
   const [showRidePicker, setShowRidePicker] = useState(false);
   const [missingBelonging, setMissingBelonging] = useState(null);
-  const arrestTargets = crimeCast.filter((p) => p?.id && !p.isNpc && !String(p.id).startsWith("npc_") && p.id !== currentUser?.id)
-    .map((p) => ({ id: p.id, name: p.name || p.display_name, avatar_url: p.avatar_url }));
+  const { arrestTargets: arrestTargetsFor, handleArrest } = useSceneArrest({ base44, queryClient, currentUser, locationsData, setMessages, setArrestPicker, setArrestTransition });
+  const arrestTargets = arrestTargetsFor(crimeCast);
   const nextSceneParticipants = (observeMode ? observeCast : [...traveledWithChars, ...selectedNpcs, ...extraNpcs])
     .filter((c, i, arr) => c?.id && arr.findIndex((x) => x.id === c.id) === i)
     .filter((c) => !c.isNpc && !String(c.id).startsWith("npc_") && c.id !== currentUser?.id)
     .map((c) => ({ id: c.id, name: c.name || c.display_name, avatar_url: c.avatar_url }));
-
-  const handleArrest = async (person) => {
-    setArrestPicker(null);
-    const facility = pickCustodyFacility(locationsData);
-    if (!person?.id || !facility?.id) return;
-    const res = await base44.functions.invoke('arrestCharacter', { character_id: person.id, facility_id: facility.id, offense: 'Arrest', notes: 'Taken into custody from the scene.' });
-    const data = res?.data || {};
-    if (!data?.success || data.skipped) { setMessages((prev) => [...prev, { id: `arrest_err_${Date.now()}`, sender: "narrative", content: `${person.name || "They"} could not be taken into custody.`, timestamp: new Date().toISOString() }]); return; }
-    // The arrest is an established event of this scene, so it is part of what the scene
-    // records — not something that only exists in the transition modal.
-    setMessages((prev) => [...prev, { id: `arrest_${Date.now()}`, sender: "narrative", content: `${person.name || "They"} is taken into custody and led away.`, timestamp: new Date().toISOString() }]);
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-    setArrestTransition({ character: person, facility: { ...facility, name: data.facility_name || facility.name }, unitId: data.unit_id || null, unitName: data.unit_name || null });
-  };
 
   // The transition itself lives in sceneNextScene.js — the modal only decides where the
   // scene goes next; confirming it is what moves people and opens the destination.
@@ -2072,6 +2057,18 @@ export default function Scene() {
     setShowNextScene(false);
     return runNextSceneTransition(payload, { base44, queryClient, currentUser, observeMode, nextSceneParticipants, setMessages, navigate, completeScene: _completeSceneBeforeTransition });
   };
+
+  // Take a Ride: the car becomes the scene, and the ride ends at the destination already chosen.
+  const { ride, handleRideConfirm, handleArriveAtDestination, buildRideShot } = useSceneRide({
+    drawImage: (opts) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, ...opts }),
+    location,
+    nextSceneParticipants,
+    currentUser,
+    displayName,
+    observeMode,
+    setMessages,
+    handleNextSceneConfirm,
+  });
 
   // `actors` is the person or people chosen through the existing selector for an activity
   // that asks who performs it (Work). Without a choice, the selected scene cast takes part.
@@ -2104,11 +2101,15 @@ export default function Scene() {
       // The room the activity establishes is the room the scene is now in — set here without
       // a generic picture of it, because the activity's own picture, drawn in that room, IS
       // this moment's visual update. Only an activity with no picture asks for the room one.
-      const actionZone = action.suggested_zone_name || activeZone; const zoneChanged = !!action.suggested_zone_name && action.suggested_zone_name !== activeZone;
+      const actionZone = (ride ? null : action.suggested_zone_name) || activeZone; const zoneChanged = !ride && !!action.suggested_zone_name && action.suggested_zone_name !== activeZone;
       if (zoneChanged) setActiveZone(action.suggested_zone_name);
       const userActs = actingPeople.some((c) => c.isUser || c.id === currentUser?.id);
       // The picture shows the people taking part — never every resident who happens to be home.
-      if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
+      // Only a moment that has its own picture is redrawn — and inside the car that picture is
+      // taken from the vehicle's own view. An activity with no picture leaves the car image be.
+      const inCarShot = actionImageFn ? buildRideShot(ride, action.id, actingPeople.map((c) => c.id).filter(Boolean)) : null;
+      if (inCarShot) { generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: inCarShot.visibleIds, actionOverridePrompt: inCarShot.prompt, extraReferenceImages: carViewUrls(ride.car) }); }
+      else if (actionImageFn) { const whoNames = actingPeople.map((c) => c.name).filter(Boolean); if (HOUSEHOLD_ACTION_IDS.includes(action.id) && userParticipant && !userActs) whoNames.unshift(displayName); const whoDesc = whoNames.length > 0 ? whoNames.join(" and ") : "no one — the space is empty"; const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc); generateSceneImage({ location, locationZones, activeZone: actionZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, strictCastOnly: true, actionFocusIds: actingPeople.map((c) => c.id).filter(Boolean), showerState: SHOWER_ACTION_IDS.includes(action.id), actionOverridePrompt: imagePrompt }); }
       // An activity with no picture of its own that establishes a room (a nap in the bedroom,
       // a shower in the bathroom) shows that room — one picture, and never beside an action image.
       else if (zoneChanged || action.suggested_zone_name) requestSpaceImage();
@@ -2295,7 +2296,12 @@ export default function Scene() {
         onOpenMoney={(mode) => setMoneyMode(mode)}
         onOpenPhone={() => setShowPhone(true)}
         onTakeARide={() => setShowRidePicker(true)}
+        inRide={!!ride}
+        onArriveAtDestination={handleArriveAtDestination}
+        rideDestinationName={ride?.spaceLabel || ride?.destination?.name || null}
       />
+
+      {ride && <SceneRideBar ride={ride} />}
 
       {privateTarget && <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0"><span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span><button onClick={() => { setPrivateTarget(null); setMessages((prev) => [...prev, { id: Date.now().toString(), sender: "narrative", content: `You rejoin the group.`, timestamp: new Date().toISOString() }]); }} className="text-[10px] text-primary/70 hover:text-primary underline">End private chat</button></div>}
 
@@ -2327,7 +2333,7 @@ export default function Scene() {
       <AnimatePresence>{moneyMode && <SceneMoneyModal mode={moneyMode} actors={activityActors} userBalance={settings.user_balance ?? 0} currentUser={currentUser} onClose={() => setMoneyMode(null)} onCompleted={(line) => { setMessages((prev) => [...prev, { id: `${Date.now()}_money`, sender: "narrative", content: line, timestamp: new Date().toISOString() }]); queryClient.invalidateQueries({ queryKey: ["userSettings"] }); }} />}</AnimatePresence>
       {/* Take a Ride answers every time: the owner selector, then either the ride or the
           reason it cannot happen. Cancelling changes nothing about the scene. */}
-      <SceneRideFlow open={showRidePicker} onClose={() => setShowRidePicker(false)} currentUser={currentUser} displayName={displayName} userPresent={!observeMode} participants={nextSceneParticipants} locations={locationsData} onConfirm={handleNextSceneConfirm} />
+      <SceneRideFlow open={showRidePicker} onClose={() => setShowRidePicker(false)} currentUser={currentUser} displayName={displayName} userPresent={!observeMode} participants={nextSceneParticipants} locations={locationsData} onConfirm={handleRideConfirm} />
       <MissingBelongingModal open={!!missingBelonging} kind={missingBelonging?.kind} ownerName={missingBelonging?.ownerName} isUser={!!missingBelonging?.isUser} onClose={() => setMissingBelonging(null)} />
       <AnimatePresence>{showPhone && <OpenPhoneModal currentUser={currentUser} worldName={displayName} onOpenScenePhoto={() => { setShowPhone(false); setShowPhotoModal(true); }} onClose={() => setShowPhone(false)} />}</AnimatePresence>
       <AnimatePresence>{showPhotoModal && <ScenePhotoModal location={location} characters={observeMode ? observeCast : allSceneChars} allPossibleNpcs={allPossibleNpcs} currentUser={currentUser} displayName={displayName} excludeUser={observeMode} onClose={() => setShowPhotoModal(false)} allCharacters={characters} onGenerateSceneImage={(actionOverridePrompt) => generateSceneImage({ location, locationZones, activeZone, sceneParticipants, userParticipant, isHomeLocation, isRestrictedEnv, firstImage, selectImageParticipants, characters, locationMap, actionOverridePrompt, ambientPopulation: sceneAmbientPopulation })} isGeneratingImage={isGeneratingImage} />}</AnimatePresence>

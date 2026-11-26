@@ -69,7 +69,7 @@ export default function SceneRideFlow({ open, onClose, currentUser, displayName,
             const owner = ride;
             setRide(null);
             onClose();
-            onConfirm({ ...payload, ride: { ownerId: owner.id, ownerType: owner.type, ownerName: owner.name } });
+            onConfirm({ ...payload, ride: { ownerId: owner.id, ownerType: owner.type, ownerName: owner.name, car: owner.car } });
           }}
         />
       )}

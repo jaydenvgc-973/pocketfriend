@@ -1,6 +1,7 @@
 import React, { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { ArrestControl, NextSceneControl, SendMoneyControl, ReceiveMoneyControl, OpenPhoneControl, RideControl } from "@/components/scene/SceneStripTransitionControls";
+import { ArrestControl, NextSceneControl, ArriveAtDestinationControl, SendMoneyControl, ReceiveMoneyControl, OpenPhoneControl, RideControl } from "@/components/scene/SceneStripTransitionControls";
+import { isInCarActivity } from "@/lib/sceneRide";
 import {
   DIRECTED_SCENE_ACTIONS,
   stripActions,
@@ -91,10 +92,21 @@ export default function SceneActionStrip({
   onOpenMoney,
   onOpenPhone,
   onTakeARide,
+  // The scene is currently inside a car. The strip keeps working, but only with what a
+  // person can actually do in a car: no venue business, no kitchen, bathroom or bedroom,
+  // and no second ride. The ride concludes through Arrive at Destination.
+  inRide = false,
+  onArriveAtDestination,
+  rideDestinationName = null,
 }) {
-  const list = stripActions(courtCase
+  const baseList = stripActions(courtCase
     ? actions.filter((a) => !getCourtActionAuthority(a.id) || courtActors(courtCase, a.id).length > 0)
     : [...actions, ...traitCrimeActions]);
+  // In the car, an activity that would send the scene into a room (a suggested zone) keeps
+  // its own meaning but no longer moves anyone: the car is the whole environment.
+  const list = inRide
+    ? baseList.filter(isInCarActivity).map((a) => ({ ...a, suggested_zone_name: null }))
+    : baseList;
 
   const { place, needs, general } = buildActivitySections(list);
   const generalByKey = new Map(general.map((a) => [generalStripKey(a), a]));
@@ -158,8 +170,9 @@ export default function SceneActionStrip({
             <SendMoneyControl onClick={() => onOpenMoney?.("send")} disabled={actionCooldown} />
             <ReceiveMoneyControl onClick={() => onOpenMoney?.("receive")} disabled={actionCooldown} />
             {/* Invite Character sits third, before the friendship interactions. In a
-                character-only scene the invitation comes from the character who is here. */}
-            {characterInviter && (
+                character-only scene the invitation comes from the character who is here.
+                Nobody is invited into a moving car: the ride's seats were chosen already. */}
+            {characterInviter && !inRide && (
               <button onClick={() => setShowInviteModal(true)} title={`${characterInviter.name} invites someone to ${location.name}`} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-secondary border-border hover:border-primary/30">
                 <span className="text-base leading-none">🙋</span>
                 <span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Invite Character</span>
@@ -168,8 +181,9 @@ export default function SceneActionStrip({
           </React.Fragment>
         )}
         {open && items.map(renderItem)}
-        {/* Arrest is the last general activity, after Call the Cops. */}
-        {open && folder.key === "general" && (
+        {/* Arrest is the last general activity, after Call the Cops. A car is not a venue:
+            custody is not something this scene can carry out. */}
+        {open && folder.key === "general" && !inRide && (
           <ArrestControl
             onArrest={() => setArrestPicker({ id: "arrest", label: "Arrest", emoji: "🚔" })}
             arrestDisabled={arrestTargets.length === 0 || actionCooldown}
@@ -229,12 +243,15 @@ export default function SceneActionStrip({
           {/* Open Phone is the strip's first option: outside every folder, always reachable,
               and opening the phone changes nothing about the scene. */}
           <OpenPhoneControl onClick={() => onOpenPhone?.()} />
-          <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Change Clothes</span></button>
+          {/* Changing clothes and taking a second ride are not things done in a moving car. */}
+          {!inRide && (
+            <button onClick={() => setShowChangeClothesModal(true)} disabled={actionCooldown} className={`flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center ${actionCooldown ? "opacity-40 cursor-not-allowed" : "bg-secondary border-border hover:border-primary/30"}`} title={observeMode ? "Change their clothes" : "Change your outfit"}><span className="text-base leading-none">👕</span><span className="w-full text-[9px] text-foreground font-medium leading-tight whitespace-normal break-words text-center">Change Clothes</span></button>
+          )}
           {/* Take a Ride is the third strip option, outside every folder: it moves the scene
               into the chosen owner's vehicle, so it is never one of the room's activities. */}
-          <RideControl onClick={() => onTakeARide?.()} disabled={actionCooldown} />
+          {!inRide && <RideControl onClick={() => onTakeARide?.()} disabled={actionCooldown} />}
           {/* The setup is always reachable: cancelling it only leaves the venue unpopulated. */}
-          {governmentVenueType && !courtCase && !cityHallPlan && (
+          {governmentVenueType && !courtCase && !cityHallPlan && !inRide && (
             <button onClick={() => setShowVenueSetup(true)} className="flex flex-col items-center justify-center gap-1 p-1.5 w-[78px] min-w-[78px] rounded-xl border transition-all text-center flex-shrink-0 snap-center bg-primary/10 border-primary/40 hover:border-primary/60" title={governmentVenueType === "courthouse" ? "Set up the court case and who is in the room" : "Set up what you are here for and who is with you"}>
               <span className="text-base leading-none">{governmentVenueType === "courthouse" ? "⚖️" : "🏛️"}</span>
               <span className="w-full text-[9px] text-primary font-medium leading-tight whitespace-normal break-words text-center">{governmentVenueType === "courthouse" ? "Begin Court Case" : "Begin City Hall Visit"}</span>
@@ -244,9 +261,13 @@ export default function SceneActionStrip({
           {/* Each folder expands its own activities immediately to its right, before the next
               folder: This Location → its activities → Life Needs → its activities → General →
               its activities. Next Scene is the scene control pinned outside every folder. */}
-          {CATEGORY_FOLDERS.map(renderSection)}
+          {CATEGORY_FOLDERS.filter((f) => !inRide || f.key !== "place").map(renderSection)}
         </div>
-        <NextSceneControl onNextScene={() => setShowNextScene(true)} />
+        {/* A ride ends in exactly one way: arriving at the destination already chosen for it.
+            Outside the car this is the established Next Scene control. */}
+        {inRide
+          ? <ArriveAtDestinationControl destinationName={rideDestinationName} onArrive={onArriveAtDestination} />
+          : <NextSceneControl onNextScene={() => setShowNextScene(true)} />}
       </div>
     </div>
   );
