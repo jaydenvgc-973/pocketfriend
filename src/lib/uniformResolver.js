@@ -117,6 +117,39 @@ function confinementAttire(character, location) {
   };
 }
 
+// ── PATIENT ATTIRE ────────────────────────────────────────────────────────────
+// A hospital dresses the people admitted to it. Like confinement attire, this is not a
+// setting that may be left blank: a hospital with no uniforms saved still has patients,
+// and a patient in their own street clothes is wrong. On-shift clinical staff keep their
+// role attire, and visitors keep their own.
+export const DEFAULT_PATIENT_GOWN = 'hospital patient gown — loose short-sleeved hospital gown in a pale washed blue, open at the back with ties, worn plainly with no lettering, no logos, no prints';
+
+/** Is this person admitted to this medical facility? Their own records decide. */
+function isPatientAt(character, location) {
+  if ((location?.category || '') !== 'medical') return false;
+  const presence = character?.resolved_presence_status || '';
+  if (presence !== 'hospitalized') return false;
+  // A record without a resolved location id is treated as being at the facility it is
+  // being resolved against — a legacy record is never left undressed for missing a field.
+  return !character?.resolved_current_location_id || character.resolved_current_location_id === location.id;
+}
+
+/** The gown a patient wears here when the facility never configured patient attire. */
+function patientGownAttire(character, location) {
+  if (!isPatientAt(character, location)) return null;
+  return {
+    uniform: {
+      name: 'Patient gown',
+      description: DEFAULT_PATIENT_GOWN,
+      applicability: 'role_status',
+      role_status: 'hospitalized',
+    },
+    applicability: 'role_status',
+    reason: 'hospitalized_patient',
+    source: 'medical_patient_default',
+  };
+}
+
 /**
  * Check whether a character is a member of a Location array.
  * Handles both arrays of strings (character IDs) and arrays of objects
@@ -174,6 +207,8 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
         };
       }
     }
+    const gown = patientGownAttire(character, location);
+    if (gown) return gown;
     return { uniform: null, applicability: null, reason: null, source: 'none' };
   }
 
@@ -322,6 +357,12 @@ export function resolveUniform(character, location, characterRoleAtLocation) {
       }
     }
   }
+
+  // A hospitalized patient at a medical facility reads as a patient even when the facility
+  // never configured patient attire. On-shift clinical staff already returned above, so a
+  // gown can never be drawn onto a doctor or nurse working here.
+  const patientGown = patientGownAttire(character, location);
+  if (patientGown) return patientGown;
 
   return { uniform: null, applicability: null, reason: null, source: 'none' };
 }

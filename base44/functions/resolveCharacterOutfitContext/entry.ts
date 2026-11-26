@@ -45,6 +45,10 @@ const DEFAULT_INMATE_UNIFORM = 'facility-issued prison uniform — plain institu
 const DEFAULT_CORRECTIONAL_UNIFORM = 'police-style correctional officer uniform — dark navy duty shirt and trousers with a duty belt, plain without lettering';
 const DEFAULT_NURSE_UNIFORM = 'nurse uniform — plain clinical scrubs in a solid muted color, professional, no lettering';
 const DEFAULT_DOCTOR_UNIFORM = 'doctor uniform — white physician coat over a plain clinical shirt, professional, no lettering';
+// A hospital dresses the people admitted to it. Like the confinement defaults, this is not
+// a setting that may be left blank: a hospital with no patient attire saved still has
+// patients, and a patient in their own street clothes is wrong.
+const DEFAULT_PATIENT_GOWN = 'hospital patient gown — loose short-sleeved hospital gown in a pale washed blue, open at the back with ties, worn plainly with no lettering, no logos, no prints';
 
 // A uniform's own identity decides how it is described when it carries no written
 // description. A location that assigns a "Doctor" uniform but leaves the description
@@ -371,6 +375,15 @@ function resolveUniformText(character: any, location: any): string | null {
       if (/(nurse|nursing|medic|medical|clinician|paramedic)/.test(title)) return DEFAULT_NURSE_UNIFORM;
       if (/(correction|guard|officer|sergeant|lieutenant|captain|warden|deputy)/.test(title)) return DEFAULT_CORRECTIONAL_UNIFORM;
     }
+  }
+
+  // 8. MEDICAL FACILITY DEFAULTS — a hospital always dresses the people admitted to it.
+  // When it has no patient attire configured, a hospitalized patient wears the standard
+  // gown, so a patient is never left in their own street clothes. On-shift clinical staff
+  // already returned their role attire above, so a gown is never drawn onto them.
+  if (isMedical && presence === 'hospitalized') {
+    const resolvedHere = !character.resolved_current_location_id || character.resolved_current_location_id === location.id;
+    if (resolvedHere) return DEFAULT_PATIENT_GOWN;
   }
 
   return null;
