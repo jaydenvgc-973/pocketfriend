@@ -10,10 +10,14 @@ import { getVenueSubtypeContext } from "@/lib/venueSubtypeContext";
  * scanning. The groups are display only — every chip is one of the same options, and a
  * second selection never replaces the first.
  */
-export default function VenueTypeSelector({ category, subtype, onChange }) {
-  const options = SUBTYPE_OPTIONS[category];
-  if (!options) return null;
+export default function VenueTypeSelector({ category, subtype, onChange, options: optionsProp = null, groups: groupsProp = null }) {
+  const options = optionsProp || SUBTYPE_OPTIONS[category];
+  if (!options && !groupsProp) return null;
   const selected = Array.isArray(subtype) ? subtype : [];
+  // A venue type already saved on this place stays visible even when the selected child
+  // categories no longer offer it: a selection is never dropped by a display change.
+  const offered = groupsProp ? groupsProp.flatMap(g => g.types) : (options || []);
+  const kept = selected.filter(s => !offered.includes(s));
 
   const toggle = (option) =>
     onChange(selected.includes(option) ? selected.filter(s => s !== option) : [...selected, option]);
@@ -29,7 +33,22 @@ export default function VenueTypeSelector({ category, subtype, onChange }) {
   return (
     <div>
       <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Venue Type</label>
-      {category === 'generic' ? (
+      {groupsProp ? (
+        <div className="space-y-3">
+          {groupsProp.map(group => (
+            <div key={group.label}>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">{group.label}</p>
+              <div className="grid grid-cols-2 gap-2">{group.types.map(chip)}</div>
+            </div>
+          ))}
+          {kept.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Already selected</p>
+              <div className="grid grid-cols-2 gap-2">{kept.map(chip)}</div>
+            </div>
+          )}
+        </div>
+      ) : category === 'generic' ? (
         <div className="space-y-3">
           {GENERIC_VENUE_GROUPS.map(group => (
             <div key={group.label}>

@@ -807,6 +807,32 @@
         "type": "string"
       }
     },
+    "parent_location_type": {
+      "type": "string",
+      "description": "Generic parents only. What the parent itself is \u2014 city, town, village, neighborhood, district, slum, country, campus, building, property, complex, other. It describes the parent, never one of the child places inside it, and it supplies the parent's own whole-space label in Travel and Scenes. Empty on records saved before it existed, and never inferred as a building.",
+      "enum": [
+        "city",
+        "town",
+        "village",
+        "neighborhood",
+        "district",
+        "slum",
+        "country",
+        "campus",
+        "building",
+        "property",
+        "complex",
+        "other"
+      ]
+    },
+    "additional_categories": {
+      "type": "array",
+      "default": [],
+      "description": "Generic parents only. The kinds of independently functioning child places this parent may contain, using the app's existing location category values (home, business, medical, outdoor, \u2026). It decides which venue types and management sections are offered for child places. It never changes the parent's own category, and an empty list means no restriction was recorded \u2014 every existing capability is kept.",
+      "items": {
+        "type": "string"
+      }
+    },
     "physical_setting": {
       "type": "string",
       "enum": [

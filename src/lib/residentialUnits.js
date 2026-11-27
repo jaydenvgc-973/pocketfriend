@@ -1,5 +1,6 @@
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isExplicitCampusResident } from "@/lib/campusResidencyResolver";
+import { getGenericUnitKind } from "@/lib/genericParentLocation";
 
 /**
  * UNIT ASSIGNMENTS (apartments, patient rooms, prison cells)
@@ -83,18 +84,26 @@ const UNIT_KINDS = {
   },
 };
 
-/** How this property's internal spaces are named. Unknown categories fall back to apartments. */
+/**
+ * How this property's internal spaces are named. Unknown categories fall back to apartments.
+ * A Generic parent names its spaces for the child categories it contains, while the
+ * parent's own whole-space row describes the parent itself (Whole city, Whole property).
+ */
 export function getUnitKind(location) {
   const category = location?.category;
+  if (category === "generic") return getGenericUnitKind(location);
   return UNIT_KINDS[category] || UNIT_KINDS.home;
 }
 
 /**
  * Which facilities carry internal unit assignments.
  * Residential buildings, hospitals/clinics, prisons/jails, and schools with student housing.
+ * A Generic parent carries the spaces the user actually configured inside it — an apartment
+ * building's apartments, a hospital's patient rooms — so those spaces are reachable too.
  * Everything else is unchanged, and a school only has housing when its own record defines it.
  */
 export function supportsUnitAssignments(location) {
+  if (location?.category === "generic") return getResidentialUnits(location).length > 0;
   return ["home", "medical", "jail_prison", "school"].includes(location?.category);
 }
 
@@ -203,6 +212,8 @@ export function getUnitZoneName(location, unitId = null) {
   // image. The zone is the one the user chose for that specific space — never inferred
   // from its name. No choice means the property's own default zone applies, unchanged.
   if (location.category === 'school') return getUnitById(location, unitId)?.zone_name || null;
+  // A Generic parent's spaces keep the zone each one was given in Places.
+  if (location.category === 'generic') return getUnitById(location, unitId)?.zone_name || null;
   return null;
 }
 

@@ -5,6 +5,7 @@ import { X, MapPin, Search, Check, CornerDownRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { buildNextSceneDestinations, filterNextSceneDestinations } from "@/lib/nextSceneDestinations";
+import { getUnitKind } from "@/lib/residentialUnits";
 
 /**
  * NextSceneModal — a scene-transition control, not an in-world action.
@@ -162,7 +163,7 @@ export default function NextSceneModal({
             <div className="space-y-1">
               <p className="text-[11px] font-semibold text-foreground">Unit</p>
               <div className="flex flex-wrap gap-1">
-                <button onClick={() => setUnitId("")} className={`px-2 py-1 rounded-lg border text-[10px] ${!unitId ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-foreground"}`}>Whole building</button>
+                <button onClick={() => setUnitId("")} className={`px-2 py-1 rounded-lg border text-[10px] ${!unitId ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-foreground"}`}>{getUnitKind(destination).none}</button>
                 {units.map((u) => (
                   <button key={u.unit_id} onClick={() => setUnitId(u.unit_id)} className={`px-2 py-1 rounded-lg border text-[10px] ${unitId === u.unit_id ? "bg-primary/15 border-primary/50 text-primary" : "bg-secondary border-border text-foreground"}`}>{u.unit_name}</button>
                 ))}

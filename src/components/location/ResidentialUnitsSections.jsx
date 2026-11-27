@@ -31,8 +31,15 @@ export default function ResidentialUnitsSections({
   onAddPresetZone = null,
   onAddPropertyZoneImage = null,
   onRemovePropertyZoneImage = null,
+  additionalCategories = [],
 }) {
   const [apartmentsExpanded, setApartmentsExpanded] = useState(false);
+
+  // A Generic parent shows the living arrangements its selected child categories allow.
+  // A record with no recorded categories keeps every section it already had.
+  const genericAllows = (...cats) => form.category !== 'generic'
+    || additionalCategories.length === 0
+    || cats.some(c => additionalCategories.includes(c));
 
   const isUnhoused = isUnhousedLivingSpace(form);
   const hasHousedVenue = hasHousedVenueType(form);
@@ -53,7 +60,9 @@ export default function ResidentialUnitsSections({
   const isHomeBuilding = form.category === 'home' && (form.subtype || []).includes('building');
   const showsApartments = (isHomeBuilding || ['hotel', 'medical', 'jail_prison', 'school', 'generic'].includes(form.category))
     // A property whose only living arrangements are outdoor has them in the section below.
-    && !(form.category === 'generic' && isUnhoused && !hasHousedVenue);
+    && !(form.category === 'generic' && isUnhoused && !hasHousedVenue)
+    // Only the child categories this Generic parent contains offer residential spaces.
+    && genericAllows('home', 'hotel', 'medical', 'jail_prison', 'school');
 
   // A patient room and a prison cell are temporary: once the stay ends the occupant is no
   // longer assigned, so the space is free for someone else. Apartments, hotel rooms and
@@ -157,7 +166,7 @@ export default function ResidentialUnitsSections({
       )}
 
       {/* Outdoor living arrangements are their own section, never part of the list above. */}
-      {isUnhoused && (
+      {isUnhoused && genericAllows('outdoor') && (
         <UnhousedLivingSpacesSection
           units={(form.residential_units || []).filter(isUnhousedUnit)}
           residentCharacterIds={unhousedEligibleIds}

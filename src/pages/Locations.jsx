@@ -17,6 +17,9 @@ import ConfirmDeleteDialog from "@/components/common/ConfirmDeleteDialog";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import VenueTypeSelector from "@/components/location/VenueTypeSelector";
+import ParentLocationTypeSelector from "@/components/location/ParentLocationTypeSelector";
+import AdditionalCategoriesSelector from "@/components/location/AdditionalCategoriesSelector";
+import { allowsAdditionalCategory, venueTypeGroupsForCategories } from "@/lib/genericParentLocation";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import SavedPlaces from "@/components/location/SavedPlaces";
@@ -580,6 +583,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     environments: editingLocation?.environments || [],
     residential_units: editingLocation?.residential_units || [],
     venue_types: editingLocation?.venue_types || [],
+    // Generic only: what the parent itself is, and which kinds of child places it contains.
+    parent_location_type: editingLocation?.parent_location_type || "",
+    additional_categories: editingLocation?.additional_categories || [],
     workplaces: editingLocation?.workplaces || [],
     physical_setting: editingLocation?.physical_setting || "",
   });
@@ -665,11 +671,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   // Workspaces section is reachable there — not only on a Home that opted into it.
   // A Generic location can be a whole mixed-use property or city, so the businesses inside
   // it are the same establishments, each keeping its own venue category, staff and hours.
-  const canContainWorkplaces = homeWithWorkplace || [
-    'workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'school',
-    'medical', 'grocery', 'religion', 'government', 'community', 'transportation', 'hotel',
-    'generic',
-  ].includes(form.category);
+  const canContainWorkplaces = homeWithWorkplace || (form.category === 'generic'
+    // A Generic parent offers the businesses its selected child categories allow.
+    ? allowsAdditionalCategory(form, 'business', 'workplace', 'food_drink', 'gym', 'social', 'grocery', 'community', 'religion', 'transportation', 'hotel')
+    : [
+      'workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'school',
+      'medical', 'grocery', 'religion', 'government', 'community', 'transportation', 'hotel',
+    ].includes(form.category));
+
+  // A Generic parent offers the venue types of the child categories it contains. With no
+  // categories recorded, its existing full list is unchanged.
+  const genericVenueGroups = form.category === 'generic' && (form.additional_categories || []).length > 0
+    ? venueTypeGroupsForCategories(form.additional_categories)
+    : null;
 
   const addPresetZone = (name) => {
     if (existingZoneNames.includes(name.toLowerCase())) return;
@@ -922,7 +936,29 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
-      <VenueTypeSelector category={form.category} subtype={form.subtype} onChange={(next) => update("subtype", next)} />
+      {/* ── GENERIC PARENT ──
+          What the parent itself is, and which kinds of child places it may contain.
+          Neither one turns the parent into one of those places. */}
+      {form.category === 'generic' && (
+        <>
+          <ParentLocationTypeSelector
+            value={form.parent_location_type}
+            onChange={(value) => update("parent_location_type", value)}
+          />
+          <AdditionalCategoriesSelector
+            value={form.additional_categories || []}
+            onChange={(value) => update("additional_categories", value)}
+          />
+        </>
+      )}
+
+      <VenueTypeSelector
+        category={form.category}
+        subtype={form.subtype}
+        onChange={(next) => update("subtype", next)}
+        groups={genericVenueGroups}
+        options={genericVenueGroups ? genericVenueGroups.flatMap(g => g.types) : null}
+      />
 
       {/* ── PHYSICAL SETTING ──
           Indoors or outdoors — independent of category, venue type and Environment.
@@ -1035,7 +1071,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       {/* ── ON-SITE RESIDENCE (business and Generic properties) ──
           A residence on the property itself: its rooms are the property's zones. */}
-      {(form.category === 'business' || form.category === 'generic') && (
+      {(form.category === 'business' || (form.category === 'generic' && allowsAdditionalCategory(form, 'home'))) && (
         <OnSiteResidenceSection
           form={form}
           setForm={setForm}
@@ -1335,6 +1371,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         onAddPresetZone={addPresetZone}
         onAddPropertyZoneImage={addZoneImageByName}
         onRemovePropertyZoneImage={removeZoneImageByName}
+        additionalCategories={form.additional_categories || []}
       />
 
       {/* ── WORKPLACES INSIDE THIS HOME ──
