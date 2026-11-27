@@ -1324,7 +1324,8 @@ Only include image fields when sharing a photo, selfie, or visual. Image prompts
     // ── IMAGE GENERATION DISPATCH (reuses Chat's dispatchImageGeneration) ──────
     if (imageGenPrompts.length > 0 && contactCharRecordRef.current) {
       const contactCharForImage = contactCharRecordRef.current;
-      const contactCharRefs = (contactCharForImage.reference_image_urls || []).filter(Boolean);
+      // AVATAR AUTHORITY: the contact's current avatar is the only identity reference.
+      const contactCharRefs = [contactCharForImage.avatar_url, contactCharForImage.image_avatar_url].filter(Boolean).slice(0, 1);
       for (let i = 0; i < imageGenPrompts.length; i++) {
         const imgPrompt = imageGenPrompts[i];
         try {

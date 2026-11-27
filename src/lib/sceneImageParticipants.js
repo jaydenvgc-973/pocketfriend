@@ -68,7 +68,7 @@ export function createImageParticipantSelector({
             name: c.name || rec.name,
             avatar_url: c.avatar_url || rec.avatar_url,
             image_avatar_url: rec.image_avatar_url || c.avatar_url,
-            reference_image_urls: rec.reference_image_urls || [],
+            reference_image_urls: [],
           };
         })
         .slice(0, 4);

@@ -156,19 +156,15 @@ export async function resolveUserIdentityForImageGen(base44, ownerEmail, callerB
   }
 
   // ── STEP 3: Build ordered visual_reference_images ─────────────────────────
-  // Priority: uploaded reference photos > generated avatars
-  // Both sourced from User entity only (Steps 1 above).
+  // AVATAR AUTHORITY: the user's current avatar is the ONLY identity reference.
+  // Uploaded reference photos exist to create that avatar and are never sent — the
+  // clothing they depict is not the user's clothing. There is no fallback to them.
   let visualReferenceImages = [
-    ...userRefUrls.slice(0, 3),
-    ...userGeneratedAvatarUrls.slice(0, 2),
-  ].filter(Boolean);
+    userGeneratedAvatarUrls[0],
+    userRecord?.avatar_url,
+  ].filter(Boolean).slice(0, 1);
 
-  let userRefSource = null;
-  if (userRefUrls.length > 0) {
-    userRefSource = 'user_entity_reference_images';
-  } else if (userGeneratedAvatarUrls.length > 0) {
-    userRefSource = 'user_entity_generated_avatars';
-  }
+  let userRefSource = visualReferenceImages.length > 0 ? 'user_entity_generated_avatar' : null;
 
   // ── STEP 4: Caller bundle fallback (convenience — not primary authority) ───
   // Used ONLY when User entity and UserSettings both returned no refs.
@@ -177,7 +173,7 @@ export async function resolveUserIdentityForImageGen(base44, ownerEmail, callerB
   if (visualReferenceImages.length === 0 && callerBundle?.visual_reference_images?.length > 0) {
     const callerRefs = cdnFilter(callerBundle.visual_reference_images);
     if (callerRefs.length > 0) {
-      visualReferenceImages = callerRefs.slice(0, 3);
+      visualReferenceImages = callerRefs.slice(0, 1);
       userRefSource = 'caller_bundle_fallback';
       diagnostics.caller_bundle_used = true;
       console.warn(

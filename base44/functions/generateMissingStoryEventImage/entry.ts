@@ -423,10 +423,10 @@ Deno.serve(async (req) => {
         const settingsRecord = settingsList?.[0] || null;
 
         if (userEntityRecord || settingsRecord) {
-          const userEntityRefs = cdnFilter(userEntityRecord?.reference_image_urls || []);
+          // AVATAR AUTHORITY: the user's current avatar is the only identity reference.
           const userEntityAvatars = cdnFilter(userEntityRecord?.generated_avatar_urls || []);
           const settingsAvatar = cdnFilter([settingsRecord?.avatar_url, settingsRecord?.image_avatar_url].filter(Boolean));
-          const userRefImages = [...userEntityRefs.slice(0, 3), ...userEntityAvatars.slice(0, 2), ...settingsAvatar.slice(0, 2)].filter(Boolean);
+          const userRefImages = [...userEntityAvatars.slice(0, 1), ...settingsAvatar.slice(0, 1)].filter(Boolean).slice(0, 1);
 
           const worldName = userEntityRecord?.world_name || settingsRecord?.fictional_world_name || null;
           const platformUserId = userEntityRecord?.id || ownerEmail;

@@ -33,10 +33,13 @@ export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
     ).catch(() => []);
     const userEntity = userEntityList?.[0] || null;
 
-    const refs = [
-      ...(userEntity?.reference_image_urls || []),
-      ...(userEntity?.generated_avatar_urls || []),
-    ].filter(Boolean);
+    // AVATAR AUTHORITY: the user's current avatar is the ONLY identity reference.
+    // Uploaded reference photos exist to create that avatar and are never sent — the
+    // clothing they depict is not the user's clothing. There is no fallback to them:
+    // their existence is what produced the avatar in the first place.
+    const refs = [userEntity?.generated_avatar_urls?.[0], userEntity?.avatar_url]
+      .filter(Boolean)
+      .slice(0, 1);
 
     console.log(
       `[resolveUserVisualRefs] User entity | email=${userEmail}` +
@@ -53,10 +56,8 @@ export async function resolveUserVisualRefs(base44, userEmail, options = {}) {
         1
       ).catch(() => []);
       const sett = settingsList?.[0] || {};
-      const settingsRefs = [
-        ...(sett.reference_image_urls || []),
-        ...(sett.generated_avatar_urls || []),
-      ].filter(Boolean);
+      // Legacy mirror: the generated avatar only. Reference photos are never identity.
+      const settingsRefs = [sett?.generated_avatar_urls?.[0]].filter(Boolean);
       if (settingsRefs.length > 0) {
         refs.push(...settingsRefs);
         console.log(`[resolveUserVisualRefs] UserSettings fallback: found ${settingsRefs.length} refs`);

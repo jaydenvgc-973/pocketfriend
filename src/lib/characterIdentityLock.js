@@ -78,7 +78,6 @@ export function buildMultiCharacterIdentityLocks(characters = []) {
 
   const locks = validChars.map((char, idx) => {
     const avatarUrl = char.avatar_url || char.image_avatar_url || '';
-    const refUrls = (char.reference_image_urls || []).filter(u => u && !u.includes('generated_image'));
     const appearanceSummary = [
       char.gender ? `gender: ${char.gender}` : null,
       char.appearance_lock?.skin_tone ? `skin: ${char.appearance_lock.skin_tone}` : null,
@@ -93,7 +92,6 @@ export function buildMultiCharacterIdentityLocks(characters = []) {
     return `
 [${idx + 1}] ${char.name}
 ${avatarUrl ? `Avatar: ${avatarUrl}` : '(no avatar — use appearance description below)'}
-${refUrls.length > 0 ? `Reference photos: ${refUrls.slice(0, 2).join(', ')}` : ''}
 ${genderLine}
 ${appearanceSummary ? `Appearance: ${appearanceSummary}` : ''}
 MUST match face/identity exactly — same person every time, no drift`;

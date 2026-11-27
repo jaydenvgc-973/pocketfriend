@@ -203,24 +203,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         // Build user entry — User entity is authoritative for images; UserSettings for world name
         const userWorldName = settings?.fictional_world_name || email.split('@')[0] || 'Me';
 
-        // Avatar priority: User.reference_image_urls[0] → User.generated_avatar_urls[0] →
-        //   User.avatar_url → UserSettings fallbacks → null
+        // AVATAR AUTHORITY: the user's current avatar is the only identity reference.
         const userAvatarUrl =
-          userEntity?.reference_image_urls?.[0] ||
           userEntity?.generated_avatar_urls?.[0] ||
           userEntity?.avatar_url ||
           settings?.generated_avatar_urls?.[0] ||
-          settings?.reference_image_urls?.[0] ||
           null;
 
-        // Reference images for generation — User entity first, UserSettings as fallback
-        const userRefImageUrls = [
-          ...(userEntity?.reference_image_urls || []),
-          ...(userEntity?.generated_avatar_urls || []),
-          ...(userEntity?.avatar_url ? [userEntity.avatar_url] : []),
-          ...(settings?.reference_image_urls || []),
-          ...(settings?.generated_avatar_urls || []),
-        ].filter(Boolean);
+        const userRefImageUrls = userAvatarUrl ? [userAvatarUrl] : [];
 
         const userEntry = {
           id: '__user__',
@@ -719,15 +709,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Build fresh candidate list — User entity (via picker row) is authoritative.
       // userChar is the __user__ entry built from User entity data during dropdown load.
       // Fall back to UserSettings fields only when User entity data is absent.
+      // AVATAR AUTHORITY: the picker's avatar is the only identity reference. Reference
+      // photos are never identity — they exist to create that avatar.
       const freshRefs = [
-        ...(userChar?.reference_image_urls || []).slice(0, 3),
-        // Selector list image: the avatar_url already shown beside the user in the picker dropdown.
-        // If it's visible in the UI, it's a valid identity reference — must be usable.
         userChar?.avatar_url,
-        // UserSettings fallback (legacy mirror)
-        ...(userSettings?.reference_image_urls || []).slice(0, 3),
-        ...(userSettings?.generated_avatar_urls || []).slice(0, 2),
-      ].filter(Boolean);
+        userSettings?.generated_avatar_urls?.[0],
+      ].filter(Boolean).slice(0, 1);
 
       if (freshRefs.length > 0) {
         // Good resolution — update session cache

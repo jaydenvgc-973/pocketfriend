@@ -149,20 +149,9 @@ export function buildSceneParticipantReferenceKey(participants, envRefs, { maxPe
       hasAvatar = true;
     }
 
-    // 2. ADDITIONAL reference_image_urls — SUPPLEMENTS to the avatar (up to 2).
-    //    These provide more visual evidence, angles, hair detail, facial structure,
-    //    or body type. They strengthen identity coverage; they do NOT replace the avatar.
-    // Established appearance references are authoritative for this person — never
-    // filtered by file-name pattern (same regression as the avatar above).
-    const refUrls = (p.reference_image_urls || []).filter(u =>
-      u && u.trim().length > 0 &&
-      !visualRefs.includes(u) &&
-      !personRefs.includes(u)
-    );
-    for (const url of refUrls.slice(0, maxPerPerson)) {
-      personRefs.push(url);
-      hasAdditionalRefs = true;
-    }
+    // 2. AVATAR AUTHORITY — the avatar above is the ONLY identity reference.
+    //    Original reference photos are never passed: they exist to create the avatar,
+    //    and the clothing they depict is not this person's clothing.
 
     if (personRefs.length > 0) {
       const start = visualRefs.length + 1;

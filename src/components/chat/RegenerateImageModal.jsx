@@ -282,22 +282,16 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged'
       );
 
-      // Build user entry — avatar priority:
-      // 1. User entity reference_image_urls[0]  (authoritative — uploaded face photos)
-      // 2. User entity generated_avatar_urls[0]  (generated portrait)
-      // 3. User entity avatar_url  (profile avatar)
-      // 4. UserSettings equivalents as last resort
-      // Legacy is_user Character is NOT used here.
-      const userRefImgs = (userEntity?.reference_image_urls || []).filter(Boolean);
+      // Build user entry — AVATAR AUTHORITY: the current avatar is the only identity
+      // reference. Uploaded reference photos exist to create it and are never sent.
       const userGenAvatars = (userEntity?.generated_avatar_urls || []).filter(Boolean);
-      let userAvatarUrl = userRefImgs[0] || userGenAvatars[0] || userEntity?.avatar_url || null;
+      let userAvatarUrl = userGenAvatars[0] || userEntity?.avatar_url || null;
       let userAvatarSource = 'placeholder';
-      if (userRefImgs[0]) userAvatarSource = 'user_entity_reference_image';
-      else if (userGenAvatars[0]) userAvatarSource = 'user_entity_generated_avatar';
+      if (userGenAvatars[0]) userAvatarSource = 'user_entity_generated_avatar';
       else if (userEntity?.avatar_url) userAvatarSource = 'user_profile_avatar';
-      else if (settings?.generated_avatar_urls?.[0] || settings?.reference_image_urls?.[0]) {
-        userAvatarUrl = settings?.generated_avatar_urls?.[0] || settings?.reference_image_urls?.[0] || null;
-        userAvatarSource = userAvatarUrl ? 'user_settings_fallback' : 'placeholder';
+      else if (settings?.generated_avatar_urls?.[0]) {
+        userAvatarUrl = settings.generated_avatar_urls[0];
+        userAvatarSource = 'user_settings_fallback';
       }
       console.log(`[RegenerateModal] user_picker_avatar_source=${userAvatarSource} has_url=${!!userAvatarUrl}`);
 
@@ -308,12 +302,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
         name: userWorldName,
         world_name: userWorldName,
         avatar_url: userAvatarUrl,
-        reference_image_urls: [
-          ...userRefImgs,
-          ...userGenAvatars,
-          ...(settings?.generated_avatar_urls || []),
-          ...(settings?.reference_image_urls || []),
-        ].filter(Boolean),
+        reference_image_urls: userAvatarUrl ? [userAvatarUrl] : [],
         is_user: true,
         owner_email: email,
       };
@@ -400,25 +389,12 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     const hasUser = selectedSubjectIds.includes('__user__');
     const charIds = selectedSubjectIds.filter(id => id !== '__user__');
 
-    // Collect user reference images — PRIORITY ORDER:
-    // 1. user roster entry avatar_url — this is ALREADY LOADED and displayed on screen, guaranteed accessible
-    // 2. UserSettings.reference_image_urls (real face photos, if settings loaded in time)
-    // 3. UserSettings.generated_avatar_urls
-    // 4. generation_context user refs (stored from original generation)
-    // CRITICAL: roster entry avatar_url is the most reliable source because it is already
-    // rendering in the picker UI — if it shows on screen, it is accessible. Always use it first.
+    // AVATAR AUTHORITY: the picker's avatar is the only identity reference sent.
+    // Reference photos and stored original-generation refs are never used.
     let userRefImages = [];
     if (hasUser) {
       const userEntry = allCharacters.find(c => c.is_user);
-      const ctxUserRefs = (generationContext?.subjects || [])
-        .find(s => s.subject_type === 'user')?.reference_images || [];
-      const refs = [
-        userEntry?.avatar_url,
-        ...(userEntry?.reference_image_urls || []).slice(0, 3),
-        ...ctxUserRefs.slice(0, 2),
-      ].filter(Boolean);
-      const seen = new Set();
-      userRefImages = refs.filter(u => { if (seen.has(u)) return false; seen.add(u); return true; });
+      userRefImages = [userEntry?.avatar_url].filter(Boolean).slice(0, 1);
     }
 
     const userName = allCharacters.find(c => c.is_user)?.world_name ||

@@ -1228,14 +1228,10 @@ Deno.serve(async (req) => {
         console.warn(`[regenerateImageWithReason] UserSettings lookup failed (non-blocking): ${regenSettErr?.message}`);
       }
 
-      // Step 3: Build ordered refs from User entity only
-      let regenResolvedRefs = [
-        ...regenUserEntityRefs.slice(0, 3),
-        ...regenUserEntityAvatars.slice(0, 2),
-      ].filter(Boolean);
-      let regenUserRefSource = 'none';
-      if (regenUserEntityRefs.length > 0) regenUserRefSource = 'user_entity_reference_images';
-      else if (regenUserEntityAvatars.length > 0) regenUserRefSource = 'user_entity_generated_avatars';
+      // Step 3: AVATAR AUTHORITY — the user's current avatar is the only identity
+      // reference. Reference photos exist to create it and are never sent.
+      let regenResolvedRefs = [regenUserEntityAvatars[0]].filter(Boolean).slice(0, 1);
+      let regenUserRefSource = regenResolvedRefs.length > 0 ? 'user_entity_generated_avatar' : 'none';
 
       // Step 4a: Caller-provided refs from picker — first non-entity fallback
       // Picker refs are pre-validated by the UI. Accept them before ctx snapshot (which is older).
@@ -1244,20 +1240,14 @@ Deno.serve(async (req) => {
           .filter(u => u && typeof u === 'string' && u.startsWith('https://'))
           .map(u => toPublicCDN(u));
         if (callerCDN.length > 0) {
-          regenResolvedRefs = callerCDN.slice(0, 3);
+          regenResolvedRefs = callerCDN.slice(0, 1);
           regenUserRefSource = 'caller_bundle_fallback';
           console.warn(`[regenerateImageWithReason] ⚠️ [CALLER_BUNDLE_FALLBACK] User entity empty — using picker refs (${callerCDN.length})`);
         }
       }
 
-      // Step 4b: Stored ctx.user_reference_images — stale snapshot, use only when all live sources empty
-      if (regenResolvedRefs.length === 0 && ctx.user_reference_images?.length > 0) {
-        regenResolvedRefs = cdnFilter(ctx.user_reference_images).slice(0, 3);
-        if (regenResolvedRefs.length > 0) {
-          regenUserRefSource = 'ctx_snapshot_fallback';
-          console.warn(`[regenerateImageWithReason] ⚠️ [STALE_SNAPSHOT_FALLBACK] Using saved user refs from generation_context — these may be outdated`);
-        }
-      }
+      // Step 4b: removed. A stored generation snapshot is not identity: it may hold
+      // original reference photos, whose clothing is not the user's clothing.
 
       // Step 5: Legacy is_user Character — absolute last resort
       if (regenResolvedRefs.length === 0) {

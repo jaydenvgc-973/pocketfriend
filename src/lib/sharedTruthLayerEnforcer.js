@@ -78,13 +78,8 @@ export function resolveCharacterAvatars(character) {
     avatars.push(character.image_avatar_url);
   }
 
-  // Priority 3: reference_image_urls (or legacy reference_images)
-  const refImages = character.reference_image_urls || character.reference_images || [];
-  if (Array.isArray(refImages)) {
-    refImages.forEach(url => {
-      if (url && !avatars.includes(url)) avatars.push(url);
-    });
-  }
+  // AVATAR AUTHORITY: original reference photos are never identity references — they
+  // exist to create the avatar, and their clothing is not the character's clothing.
 
   // Priority 4: generated_avatar_urls (or legacy generated_avatars)
   const genAvatars = character.generated_avatar_urls || character.generated_avatars || [];

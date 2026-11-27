@@ -1499,20 +1499,19 @@ Deno.serve(async (req) => {
           console.warn(`[generateImageAsync] UserSettings lookup failed (non-blocking): ${settErr?.message}`);
         }
 
-        // Step 3: Build ordered refs — User entity only
+        // Step 3: Build ordered refs — AVATAR AUTHORITY.
+        // The user's current avatar is the ONLY identity reference. Uploaded reference
+        // photos exist to create it and are never sent; there is no fallback to them.
         let resolvedRefs = [
-          ...userEntityRefs.slice(0, 3),
-          ...userEntityAvatars.slice(0, 2),
-        ].filter(Boolean);
-        let userRefSource = 'none';
-        if (userEntityRefs.length > 0) userRefSource = 'user_entity_reference_images';
-        else if (userEntityAvatars.length > 0) userRefSource = 'user_entity_generated_avatars';
+          userEntityAvatars[0],
+        ].filter(Boolean).slice(0, 1);
+        let userRefSource = resolvedRefs.length > 0 ? 'user_entity_generated_avatar' : 'none';
 
         // Step 4: Caller bundle fallback — only when User entity returned nothing
         if (resolvedRefs.length === 0 && callerBundleForFallback?.visual_reference_images?.length > 0) {
           const callerRefs = cdnFilter(callerBundleForFallback.visual_reference_images);
           if (callerRefs.length > 0) {
-            resolvedRefs = callerRefs.slice(0, 3);
+            resolvedRefs = callerRefs.slice(0, 1);
             userRefSource = 'caller_bundle_fallback';
             console.warn(`[generateImageAsync] ⚠️ [CALLER_BUNDLE_FALLBACK] User entity empty — using frontend-passed refs (${callerRefs.length})`);
           }

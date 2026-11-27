@@ -16,24 +16,11 @@ import { getBackgroundPopulationDiversityDirective } from "@/lib/imageDiversityC
 export function buildUserReferenceImages(userChar) {
   if (!userChar) return [];
   
-  const refs = [];
-  
-  // 1. HIGHEST PRIORITY: Uploaded reference images (strongest identity lock)
-  if (userChar.reference_image_urls?.length > 0) {
-    refs.push(...userChar.reference_image_urls.slice(0, 3));
-  }
-  
-  // 2. MEDIUM PRIORITY: Generated avatars
-  if (userChar.generated_avatar_urls?.length > 0) {
-    refs.push(...userChar.generated_avatar_urls.slice(0, 2));
-  }
-  
-  // 3. LOWEST PRIORITY: Primary avatar as fallback
-  if (userChar.avatar_url && !refs.includes(userChar.avatar_url)) {
-    refs.push(userChar.avatar_url);
-  }
-  
-  return refs;
+  // AVATAR AUTHORITY: the current avatar is the ONLY identity reference. Uploaded
+  // reference photos exist to create that avatar and are never sent — the clothing they
+  // depict is not this person's clothing.
+  const canonical = userChar.generated_avatar_urls?.[0] || userChar.avatar_url || null;
+  return canonical ? [canonical] : [];
 }
 
 /**
