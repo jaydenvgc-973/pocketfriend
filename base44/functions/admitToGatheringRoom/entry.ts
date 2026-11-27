@@ -9,9 +9,16 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const gatheringRoomId = body.gathering_room_id;
     const characterIds = Array.isArray(body.character_ids) ? body.character_ids : [];
+    // character_only: the user authorizes their character to participate alone (Carry
+    // on without me). Same entry function, same participant records, same capacity —
+    // the user is simply not a participant of the session.
+    const characterOnly = body.character_only === true;
 
     if (!gatheringRoomId) {
       return Response.json({ error: 'Missing gathering_room_id' }, { status: 400 });
+    }
+    if (characterOnly && characterIds.length === 0) {
+      return Response.json({ error: 'character_only entry requires at least one character' }, { status: 400 });
     }
 
     const now = new Date();
@@ -71,14 +78,10 @@ Deno.serve(async (req) => {
     );
 
     for (const sess of trulyActiveSessions) {
-      if (sess.gathering_room_id === gatheringRoomId) {
-        // Already in THIS room — return already_in_room
-        return Response.json({
-          error: 'already_in_room',
-          session_id: sess.id,
-          expires_at: sess.expires_at,
-        }, { status: 409 });
-      }
+      // An active session in THIS room is handled after the room, capacity and
+      // participant checks below (step 9.5), because joining or admitting into it
+      // must never create a duplicate participant or a second session.
+      if (sess.gathering_room_id === gatheringRoomId) continue;
       // Active session in ANOTHER room — terminate it through canonical exit authority
       await base44.asServiceRole.entities.GatheringRoomSession.update(sess.id, {
         status: 'exited',
@@ -161,7 +164,8 @@ Deno.serve(async (req) => {
     const currentCount = allRoomParticipants.filter(p => validSessionIds.has(p.session_id)).length;
 
     // ── 6. PARTY SIZE: user + characters (all count toward same capacity) ──
-    const partySize = 1 + characterIds.length;
+    // A character-only entry occupies slots for its characters alone.
+    const partySize = characterOnly ? characterIds.length : 1 + characterIds.length;
 
     // ── 7. CAPACITY CHECK: atomic reject-if-over ──
     const MAX_CAPACITY = 8;
@@ -221,6 +225,124 @@ Deno.serve(async (req) => {
     // NOT from UserSettings which does not have avatar fields.
     const userAvatarUrl = user.generated_avatar_urls?.[0] || user.reference_image_urls?.[0] || null;
 
+    // ── 9.5. EXISTING SESSION IN THIS ROOM ───────────────────────────────────
+    // The user's own session may already be here (Travel entry, or a character sent
+    // ahead with Carry on without me). Joining or admitting into it reuses that same
+    // session and its participants — never a duplicate participant, never a second
+    // session for the account, and never a reset of existing participation.
+    const existingRoomSession = trulyActiveSessions.find(
+      s => s.gathering_room_id === gatheringRoomId
+    ) || null;
+
+    if (existingRoomSession) {
+      const sessionParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant.filter(
+        { session_id: existingRoomSession.id }, null, 50
+      );
+      const hasUserParticipant = sessionParticipants.some(p => p.participant_type === 'user');
+      const presentCharIds = new Set(
+        sessionParticipants
+          .filter(p => p.participant_type === 'character')
+          .map(p => p.participant_id)
+      );
+      const missingCharIds = characterIds.filter(id => !presentCharIds.has(id));
+
+      // Character-only entry where the character is already inside: leave the existing
+      // participation untouched.
+      if (characterOnly && missingCharIds.length === 0) {
+        return Response.json({
+          success: true,
+          already_present: true,
+          session_id: existingRoomSession.id,
+          gathering_room_id: gatheringRoomId,
+          gathering_room_name: room.name,
+          expires_at: existingRoomSession.expires_at,
+        });
+      }
+
+      // The user is joining a session that already holds their character(s) and the
+      // user is already a participant — nothing to add (existing behavior).
+      if (!characterOnly && hasUserParticipant && missingCharIds.length === 0) {
+        return Response.json({
+          error: 'already_in_room',
+          session_id: existingRoomSession.id,
+          expires_at: existingRoomSession.expires_at,
+        }, { status: 409 });
+      }
+
+      // Capacity is verified again here — occupancy may have changed since the
+      // invitation was generated.
+      const slotsNeeded = (characterOnly || hasUserParticipant ? 0 : 1) + missingCharIds.length;
+      if (currentCount + slotsNeeded > MAX_CAPACITY) {
+        return Response.json({
+          error: 'capacity_exceeded',
+          current_occupancy: currentCount,
+          requested_party: slotsNeeded,
+          available_slots: MAX_CAPACITY - currentCount,
+          message: `This room has ${currentCount} participants and ${MAX_CAPACITY - currentCount} slot(s) open. The invitation can no longer be completed.`,
+        }, { status: 409 });
+      }
+
+      if (!characterOnly && !hasUserParticipant) {
+        await base44.asServiceRole.entities.GatheringRoomParticipant.create({
+          gathering_room_id: gatheringRoomId,
+          session_id: existingRoomSession.id,
+          owner_email: user.email,
+          participant_type: 'user',
+          participant_id: user.id,
+          participant_name: userDisplayName,
+          avatar_url: userAvatarUrl,
+          joined_at: nowIso,
+        });
+      }
+
+      for (const cid of missingCharIds) {
+        const c = ownedChars.find(ch => ch.id === cid);
+        if (!c) continue;
+        await base44.asServiceRole.entities.GatheringRoomParticipant.create({
+          gathering_room_id: gatheringRoomId,
+          session_id: existingRoomSession.id,
+          owner_email: user.email,
+          participant_type: 'character',
+          participant_id: c.id,
+          participant_name: c.name,
+          avatar_url: c.avatar_url || c.image_avatar_url || null,
+          joined_at: nowIso,
+        });
+        // Same canonical location fields as any other entry — no parallel truth.
+        await base44.asServiceRole.entities.Character.update(c.id, {
+          resolved_current_location_id: gatheringRoomId,
+          resolved_current_location_name: room.name,
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'gathering_room',
+          resolved_last_updated_at: nowIso,
+        }).catch(() => {});
+      }
+
+      if (missingCharIds.length > 0) {
+        const mergedCharIds = Array.from(new Set([...(existingRoomSession.character_ids || []), ...missingCharIds]));
+        await base44.asServiceRole.entities.GatheringRoomSession.update(existingRoomSession.id, {
+          character_ids: mergedCharIds,
+          character_names: mergedCharIds.map(id => ownedChars.find(c => c.id === id)?.name).filter(Boolean),
+        }).catch(() => {});
+      }
+
+      try {
+        await base44.asServiceRole.functions.invoke('recalculateGatheringRoomOccupancy', {
+          gathering_room_id: gatheringRoomId,
+        });
+      } catch (_) {}
+
+      return Response.json({
+        success: true,
+        joined_existing_session: true,
+        session_id: existingRoomSession.id,
+        gathering_room_id: gatheringRoomId,
+        gathering_room_name: room.name,
+        expires_at: existingRoomSession.expires_at,
+      });
+    }
+
     // ── 10. CREATE SESSION (30-minute hard limit) ──
     const expiresAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
     const session = await base44.asServiceRole.entities.GatheringRoomSession.create({
@@ -239,16 +361,20 @@ Deno.serve(async (req) => {
 
     // ── 11. CREATE PARTICIPANTS (user + each owned character) ──
     // User participant first, then characters — local display order is handled frontend-side.
-    await base44.asServiceRole.entities.GatheringRoomParticipant.create({
-      gathering_room_id: gatheringRoomId,
-      session_id: session.id,
-      owner_email: user.email,
-      participant_type: 'user',
-      participant_id: user.id,
-      participant_name: userDisplayName,
-      avatar_url: userAvatarUrl,
-      joined_at: nowIso,
-    });
+    // A character-only entry (Carry on without me) creates no user participant: the user
+    // stays where they are and is never present in the room.
+    if (!characterOnly) {
+      await base44.asServiceRole.entities.GatheringRoomParticipant.create({
+        gathering_room_id: gatheringRoomId,
+        session_id: session.id,
+        owner_email: user.email,
+        participant_type: 'user',
+        participant_id: user.id,
+        participant_name: userDisplayName,
+        avatar_url: userAvatarUrl,
+        joined_at: nowIso,
+      });
+    }
 
     for (const c of ownedChars) {
       await base44.asServiceRole.entities.GatheringRoomParticipant.create({

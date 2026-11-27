@@ -525,7 +525,40 @@ export default function Home() {
       {invitations && (
         <InviteOutModal
           invitations={invitations}
-          onAccept={(invite) => {
+          onAccept={async (invite) => {
+            // Gathering Room invitation: enter through the established entry function,
+            // then open the actual Gathering Room — never the Scenes page.
+            if (invite.isGatheringRoom) {
+              const clearInvite = () => {
+                const remaining = invitations.filter(i => i.characterId !== invite.characterId);
+                setInvitations(remaining.length > 0 ? remaining : null);
+                if (settings[0]?.id) {
+                  base44.entities.UserSettings.update(settings[0].id, {
+                    pending_character_invites: remaining,
+                  }).catch(() => {});
+                }
+                return remaining;
+              };
+              try {
+                await base44.functions.invoke('admitToGatheringRoom', {
+                  gathering_room_id: invite.gatheringRoomId,
+                  character_ids: [invite.characterId],
+                });
+              } catch (err) {
+                const data = err?.response?.data || err?.data || {};
+                if (data.error === 'already_in_room') {
+                  clearInvite();
+                  navigate(`/gathering-room/${invite.gatheringRoomId}`);
+                  return;
+                }
+                alert(data.message || data.error || `Could not enter ${invite.locationName}.`);
+                return;
+              }
+              clearInvite();
+              navigate(`/gathering-room/${invite.gatheringRoomId}`);
+              return;
+            }
+
             base44.functions.invoke('recordCharacterInviteAccepted', {
               characterId: invite.characterId,
               locationId: invite.locationId,
@@ -540,10 +573,13 @@ export default function Home() {
           }}
           onMaybeLater={(inv) => {
             // Character goes anyway — user just isn't joining
-            base44.functions.invoke('recordCharacterInviteDeclined', {
-              characterId: inv.characterId,
-              locationId: inv.locationId,
-            }).catch(() => {});
+            // Maybe later / Decline never authorize Gathering Room entry.
+            if (!inv.isGatheringRoom) {
+              base44.functions.invoke('recordCharacterInviteDeclined', {
+                characterId: inv.characterId,
+                locationId: inv.locationId,
+              }).catch(() => {});
+            }
             const remaining = invitations.filter(i => i.characterId !== inv.characterId);
             setInvitations(remaining.length > 0 ? remaining : null);
           }}
@@ -551,6 +587,33 @@ export default function Home() {
             if (carryOnBusy) return;
             setCarryOnBusy(true);
             try {
+              // Gathering Room invitation: this selection authorizes this one entry.
+              // The character becomes a real participant through the existing entry
+              // function; the user is not admitted and stays exactly where they are.
+              if (inv.isGatheringRoom) {
+                try {
+                  await base44.functions.invoke('admitToGatheringRoom', {
+                    gathering_room_id: inv.gatheringRoomId,
+                    character_ids: [inv.characterId],
+                    character_only: true,
+                  });
+                } catch (err) {
+                  const data = err?.response?.data || err?.data || {};
+                  throw new Error(data.message || data.error || err?.message || 'the entry was not confirmed');
+                }
+                const remaining = invitations.filter(i => i.characterId !== inv.characterId);
+                setInvitations(remaining.length > 0 ? remaining : null);
+                if (settings[0]?.id) {
+                  await base44.entities.UserSettings.update(settings[0].id, {
+                    pending_character_invites: remaining,
+                  }).catch(() => {});
+                  queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+                }
+                queryClient.invalidateQueries({ queryKey: ["gatheringRooms"] });
+                queryClient.invalidateQueries({ queryKey: ["myActiveGatheringRoomSession"] });
+                return;
+              }
+
               const char = allCharacters.find(c => c.id === inv.characterId);
               const alreadyThere = char && (
                 char.resolved_current_location_id === inv.locationId ||
@@ -588,10 +651,13 @@ export default function Home() {
           busy={carryOnBusy}
           onDecline={(inv) => {
             // Character still goes — user declined the invite but the character had their own plan
-            base44.functions.invoke('recordCharacterInviteDeclined', {
-              characterId: inv.characterId,
-              locationId: inv.locationId,
-            }).catch(() => {});
+            // Maybe later / Decline never authorize Gathering Room entry.
+            if (!inv.isGatheringRoom) {
+              base44.functions.invoke('recordCharacterInviteDeclined', {
+                characterId: inv.characterId,
+                locationId: inv.locationId,
+              }).catch(() => {});
+            }
             const remaining = invitations.filter(i => i.characterId !== inv.characterId);
             setInvitations(remaining.length > 0 ? remaining : null);
           }}

@@ -62,6 +62,71 @@ Deno.serve(async (req) => {
 
     const eligibleLocMap = Object.fromEntries(eligibleLocations.map(l => [l.id, l]));
 
+    // ── GATHERING ROOMS ───────────────────────────────────────────────────
+    // The established Gathering Rooms are social destinations of their own. They are
+    // existing records — never duplicated as ordinary locations, never registered as
+    // Scenes locations. Occupancy is the backend-authoritative room.current_occupancy
+    // field; rooms with other people present receive more consideration, but presence
+    // never guarantees selection and empty rooms stay eligible.
+    const gatheringRooms = await base44.asServiceRole.entities.GatheringRoom
+      .filter({ is_active: true }, 'sort_order', 20)
+      .catch(() => []);
+
+    // Cross-account presence, read once per generation from the existing session and
+    // participant records of rooms that currently have people in them. No polling.
+    const occupiedRoomIds = gatheringRooms
+      .filter(r => (r.current_occupancy || 0) > 0)
+      .map(r => r.id);
+    const roomCrossAccountCount = {};
+    if (occupiedRoomIds.length > 0) {
+      const roomSessions = await base44.asServiceRole.entities.GatheringRoomSession
+        .filter({ status: 'active' }, null, 100).catch(() => []);
+      const validSessionIds = new Set(
+        roomSessions
+          .filter(s => new Date(s.expires_at).getTime() > Date.now())
+          .map(s => s.id)
+      );
+      const roomParticipants = await base44.asServiceRole.entities.GatheringRoomParticipant
+        .filter({ gathering_room_id: { $in: occupiedRoomIds } }, null, 100).catch(() => []);
+      for (const p of roomParticipants) {
+        if (!validSessionIds.has(p.session_id)) continue;
+        if (p.owner_email && p.owner_email !== user.email) {
+          roomCrossAccountCount[p.gathering_room_id] = (roomCrossAccountCount[p.gathering_room_id] || 0) + 1;
+        }
+      }
+    }
+
+    // Eligible rooms for one character: the room must have room for the proposed visit
+    // (the character plus the user when the character is not already inside).
+    const gatheringRoomCandidatesFor = (char) => {
+      const candidates = [];
+      for (const room of gatheringRooms) {
+        const alreadyPresent = char.resolved_source_reason === 'gathering_room' &&
+          char.resolved_current_location_id === room.id;
+        const capacity = room.max_capacity || 8;
+        const occupancy = room.current_occupancy || 0;
+        const slotsNeeded = alreadyPresent ? 1 : 2;
+        if (capacity - occupancy < slotsNeeded) continue;
+        const crossAccount = roomCrossAccountCount[room.id] || 0;
+        let weight = 1;                     // empty rooms remain eligible
+        if (occupancy > 0) weight = 3;      // people already there — more consideration
+        if (crossAccount > 0) weight = 6;   // other accounts present — strongest pull
+        if (alreadyPresent) weight += 2;    // join them where they already are
+        candidates.push({ room, alreadyPresent, weight });
+      }
+      return candidates;
+    };
+
+    const pickWeightedRoom = (candidates) => {
+      const total = candidates.reduce((sum, c) => sum + c.weight, 0);
+      let roll = Math.random() * total;
+      for (const c of candidates) {
+        roll -= c.weight;
+        if (roll <= 0) return c;
+      }
+      return candidates[candidates.length - 1];
+    };
+
     // ── EASTERN TIME ──────────────────────────────────────────────────────
     // UTC is forbidden for app logic. All schedule comparisons (location hours,
     // sleep checks, time-of-day venue selection) are evaluated in America/New_York.
@@ -182,6 +247,7 @@ Deno.serve(async (req) => {
       const socialVenues = getSocialVenuesForTime();
 
       let inviteType, targetLocation;
+      let gatheringPick = null;
       const rand = Math.random();
 
       // Work invite — only if char is currently on shift AND location is open with time remaining
@@ -194,9 +260,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Social venue invite
+      // Social venue invite — ordinary venues and the established Gathering Rooms
+      // share this same invitation path. A Gathering Room is not a separate kind of
+      // invitation; it is one more place the character can suggest.
       if (!targetLocation) {
-        if (rand < 0.3 && charHome) {
+        const roomCandidates = gatheringRoomCandidatesFor(char);
+        if (roomCandidates.length > 0 && Math.random() < 0.45) {
+          gatheringPick = pickWeightedRoom(roomCandidates);
+        } else if (rand < 0.3 && charHome) {
           inviteType = 'home';
           targetLocation = charHome;
         } else if (socialVenues.length > 0) {
@@ -208,6 +279,37 @@ Deno.serve(async (req) => {
         } else {
           continue; // No eligible location
         }
+      }
+
+      // Gathering Room invitation. Generating the invitation never admits the
+      // character: entry happens only through the existing entry function, after the
+      // user authorizes it with Let's go or Carry on without me.
+      if (gatheringPick) {
+        const room = gatheringPick.room;
+        if (!gatheringPick.alreadyPresent) {
+          const roomPlanLabel = `planning to hang out at ${room.name}`;
+          base44.asServiceRole.entities.Character.update(char.id, {
+            current_activity: roomPlanLabel,
+            current_situation: `Out — ${roomPlanLabel}`,
+            life_last_updated: now.toISOString(),
+          }).catch(() => {});
+        }
+        invitations.push({
+          characterId: char.id,
+          characterName: char.name,
+          characterAvatar: char.avatar_url,
+          inviteType: 'goout',
+          isGatheringRoom: true,
+          gatheringRoomId: room.id,
+          gatheringRoomName: room.name,
+          characterAlreadyPresent: gatheringPick.alreadyPresent,
+          locationId: room.id,
+          locationName: room.name,
+          locationCategory: room.category || 'social',
+          inviteIssuedAt: now.toISOString(),
+          locationClosesAt: null,
+        });
+        continue;
       }
 
       if (!targetLocation || !eligibleLocMap[targetLocation.id]) continue;
