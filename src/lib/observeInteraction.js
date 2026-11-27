@@ -274,7 +274,7 @@ ${spokenBy.name} (character ID ${spokenBy.id}) just said this out loud, in this 
   const holder = /^(you|the user)$/i.test(String(observerName || '').trim()) ? '' : String(observerName || '').trim();
   const accountHolderRule = holder ? `
 THE ACCOUNT HOLDER, ${holder}, IS NOT IN THIS SCENE:
-- ${holder} owns this world. They are NOT here: not standing anywhere in this place, not within sight or hearing, and not one of the people in this scene.
+- ${holder} holds the account this world runs on. That is an application fact, never a position in this world: it makes ${holder} no owner, leader, landlord, manager or employee of this place. They are NOT here: not standing anywhere in this place, not within sight or hearing, and not one of the people in this scene.
 - ${holder}'s name appears throughout the records, memories and conversations below because these people know them and have a life with them. Knowing ${holder} does not put ${holder} in this room.
 - Every line spoken here is spoken to a person who is actually in this scene, under that person's own name. Never address, answer, ask, thank, invite, touch, kiss, hand something to, or look toward ${holder}.
 - When one person here speaks to another, the name used is the other person's name, the one standing there. ${holder}'s name is never used as the person being spoken to, and never replaces anyone in this scene.

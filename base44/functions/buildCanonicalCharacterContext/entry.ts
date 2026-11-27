@@ -32,6 +32,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.31';
 import { buildInternalFamilyTruth, buildFamilySection, buildFavoritesBlock } from './promptBlocks.ts';
 import { isUnhousedPlace, homeIsStructuralPlace } from './housingTruth.ts';
+import { buildPlaceAuthorityLines } from './placeAuthority.ts';
 
 // ── INLINE HELPERS ────────────────────────────────────────────────────────────
 // Deno functions cannot import local lib files — all helpers are inlined.
@@ -579,6 +580,7 @@ function buildHardFacts(character, hasActiveStoryEvent = false) {
       const kind = CAT[pl?.category] || (character.resolved_location_type ? `a ${character.resolved_location_type.replace(/_/g, ' ')}` : 'an established place in your world');
       const relation = resIds.includes(character.id) ? 'you live here' : wrkIds.includes(character.id) ? (pl?.category === 'school' || pl?.category === 'education' ? 'you are enrolled here' : 'you work here') : 'you are here as a visitor';
       lines.push(`WHAT THIS PLACE IS — ${nmm}: ${kind}, and ${relation}. Every room, zone, and area inside it belongs to this one place: a room's name, your job, your schedule, or the activity you are doing inside it never turns it into a different place, a second address, or another building.${isHomeHere ? '' : ' Your home is somewhere else and you are not there right now.'}${isWorkHere || !character.occupation_location_name ? '' : ` Your workplace is ${character.occupation_location_name} — a different place you are not inside, so its rooms, desks, lighting, and coworkers are not around you.`} Where you physically are is set only by CURRENT LOCATION. An earlier message, narrative, memory, promise, or plan that places you elsewhere is wrong or has passed: correct it plainly in one sentence, never defend it, and never use your own earlier words as evidence about where you are.`);
+    lines.push(...buildPlaceAuthorityLines(pl));
   }
 
   // ── SLEEP STATE — READ COMMITTED CANONICAL STATE (One Truth) ────────────────

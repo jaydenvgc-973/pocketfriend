@@ -18,6 +18,7 @@
 import { isCharacterAtWork, isCharacterOnShift, isCharacterAtSchool, isLocationActiveNow } from '@/lib/workScheduleUtils';
 import { isJailOrPrison, isIncarceratedCharacter } from '@/lib/jailSceneRules';
 import { buildRideContextBlock } from '@/lib/sceneRide';
+import { buildLocationAuthorityBlock } from '@/lib/locationAuthority';
 
 const nameOf = (p) => p?.name || p?.display_name || null;
 
@@ -213,7 +214,12 @@ export function buildSceneCircumstances({ location, participants = [], backgroun
 - Visiting hours ending a visit never makes the visitor a prisoner.`
     : '';
 
-  if (lines.length === 0 && background.length === 0 && !jailVisitorRule && !rideBlock) return '';
+  // Who answers for this place inside the world — and the standing rule that owning,
+  // administering, sharing, editing or viewing it in the app is not a role in the world.
+  // Both scene pathways (user present and observed) get it from here.
+  const authorityBlock = buildLocationAuthorityBlock(location);
+
+  if (lines.length === 0 && background.length === 0 && !jailVisitorRule && !rideBlock && !authorityBlock) return '';
 
   const backgroundLine = background.length > 0
     ? `\n- The other people here hold the roles this place actually gives them: ${background.map((b) => `${b.name} (${String(b.role).toLowerCase()})`).join(', ')}. They speak and behave from that role — a bartender works the bar, a teacher teaches the room, a receptionist handles check-in — and they are never confused with, or stood in for by, the established people above.`
@@ -238,5 +244,5 @@ HOW THIS SHAPES WHAT THEY SAY:
 - Nobody's reason for being here changes because this scene opened. Nobody just arrived, just got here, decided to stop by, or came to check the place out: they were already doing what they are doing.
 - What already happened to them stays true. A test already taken has been taken; a shift already finished is over; an event stated as past is past and is never treated as still to come.
 - Only someone described above as a visitor speaks like a visitor. A person who works, studies or lives here never speaks like an uninformed guest in their own workplace, school or home.
-===${jailVisitorRule}${rideBlock ? `\n\n${rideBlock}` : ''}`;
+===${jailVisitorRule}${authorityBlock ? `\n\n${authorityBlock}` : ''}${rideBlock ? `\n\n${rideBlock}` : ''}`;
 }
