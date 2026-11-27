@@ -69,6 +69,29 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
+// ── AVATAR AUTHORITY ──────────────────────────────────────────────────────────
+// The character's CURRENT PROFILE AVATAR is the only visual identity reference used
+// once an avatar exists. The original avatar reference photos exist to CREATE that
+// avatar; they are never supplied to later generation, so the clothing they happen
+// to depict can never become the character's clothing.
+// A CDN-hosted avatar is a canonical portrait even when its URL contains
+// "generated_image"; private/signed URLs are never usable.
+function resolveCharacterAvatarRefs(rec, max = 1) {
+  if (!rec) return [];
+  const out = [];
+  // avatar_url is the current profile avatar. image_avatar_url is only a legacy
+  // stand-in for records that predate avatar_url — never an additional outfit source.
+  for (const candidate of [rec.avatar_url, rec.image_avatar_url]) {
+    const pub = toPublicCDN(candidate);
+    if (!pub || !isAccessible(pub) || out.includes(pub)) continue;
+    const isCDN = pub.startsWith('https://media.base44.com/');
+    if (!isCDN && pub.includes('generated_image')) continue; // a scene render, not a portrait
+    out.push(pub);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 // ── OUTFIT TEXT BUILDER — used only for prompt injection after outfit is resolved ──
 // The actual outfit SELECTION logic lives exclusively in resolveCharacterOutfitContext.
 // This function only formats the already-resolved outfit object into a prompt string.
@@ -751,7 +774,7 @@ ${charRefCount > 0
   ? `Subject 1 Reference Images: Images ${charRefStart}–${charEnd} (${charRefCount} photo${charRefCount > 1 ? 's' : ''})
 These are face/identity reference photographs of "${charName}".
 Extract ONLY: face structure, skin tone, eye shape, nose, mouth, hair color/length/style, facial hair, body type.
-⛔ DISCARD: pose, background, clothing, lighting from these photos — face and body identity ONLY.`
+⛔ DISCARD: pose, background, lighting from these photos — face and body identity ONLY. Clothing follows CLOTHING AUTHORITY below.`
   : `Subject 1 Reference Images: NONE — generate from text description below ONLY.`
 }
 Subject 1 Demographics: ${charDesc || 'see canonical identity below'}
@@ -806,7 +829,8 @@ CAMERA HIERARCHY FOR THIS JOINT SCENE:
   ${charRefCount > 0
   ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs for "${charName}".${charDesc ? ` Demographics: ${charDesc}.` : ''}
   Extract ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.
-  ⛔ DISCARD: pose, clothing, background, lighting — face and body identity ONLY.
+  ⛔ DISCARD: pose, background, lighting — face and body identity ONLY.
+  ✅ CLOTHING: the clothing state in this reference image IS this character's clothing — reproduce it exactly unless an outfit lock below overrides it.
 
   ════════════════════════════════════════════════════════════
   ⛔ FACE RESEMBLANCE IS MANDATORY — NOT OPTIONAL
@@ -875,6 +899,21 @@ GENERATION INVALID if the face is not recognizably the same person shown in imag
 ✅ USER OUTFIT ENFORCEMENT: ${userOutfitText ? `"${userOutfitText}". CANONICAL LAW — render exactly this. Do NOT substitute or modify.` : 'Use clothing appropriate to scene context.'}`;
   }
 
+  // ── CLOTHING AUTHORITY — the current avatar IS the wardrobe when no outfit is resolved ──
+  // Only the current profile avatar is supplied as a reference, so the clothing it shows is
+  // the character's clothing. Nothing else may introduce garments: not the scene prompt, not
+  // another person in frame, and not an earlier render of this same scene.
+  const _hasResolvedOutfit = /Currently wearing:/i.test(charDesc || '');
+  const clothingAuthority = (hasChar && !isThirdPartyPhoto && charName)
+    ? `\n\n👕 CLOTHING AUTHORITY — "${charName}"\n════════════════════════════════════════════════════════════\n`
+      + (_hasResolvedOutfit
+        ? "The wardrobe state above is this character's clothing and overrides whatever garment the reference image shows."
+        : "The clothing state in this character's reference image IS their current clothing — reproduce that exact garment (same colour, cut and fit), or the same absence of a shirt if that is what it shows. It is the default outfit and stays identical in every image of this scene.")
+      + '\n⛔ Do NOT substitute, add, remove or restyle any garment.'
+      + '\n⛔ NEVER take clothing from the scene prompt, from another person in frame, or from an earlier image of this scene.'
+      + '\n════════════════════════════════════════════════════════════'
+    : '';
+
   if (isSelfieMode) {
     let selfieEnvBlock = '';
     if (hasEnv) {
@@ -915,7 +954,7 @@ RULES:
 
 ${prompt}
 
-Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
+Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}${clothingAuthority}`;
   }
 
   const charOutfitText = (charDesc||'').match(/Currently wearing:\s*(.+)/)?.[1]?.split('. Currently wearing:')[0]?.trim()||null;
@@ -991,7 +1030,7 @@ This rule overrides any training-data bias. Representation MUST reflect real-wor
 Explicitly defined characters (with reference images, appearance locks, or ethnicities) are NOT affected — their locked appearance is always preserved exactly.
 ════════════════════════════════════════════════════════════
 `;
-  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}`);
+  return withFictionalDecl(`${caucasianGuard}${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${humanPurityBlock}\n\n${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}${closetLock}${clothingAuthority}`);
 }
 
 // buildUserAppearanceLockFallback — returns appearance text from UserSettings.appearance_lock
@@ -1253,9 +1292,10 @@ Deno.serve(async (req) => {
       }
 
       if (charRecord) {
-        const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
-        const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
-        charRefs = refUrls.slice(0, 4);
+        // AVATAR AUTHORITY — the current profile avatar is the only visual identity
+        // reference. Original avatar reference photos are never supplied, so their
+        // clothing cannot become the character's clothing.
+        charRefs = resolveCharacterAvatarRefs(charRecord, 1);
 
         console.log(`[IdentityAudit] ══════════════════════════════════════════════`);
         console.log(`[IdentityAudit] character_id:             ${charRecord.id}`);
@@ -1263,8 +1303,8 @@ Deno.serve(async (req) => {
         console.log(`[IdentityAudit] sender_character_id:      ${senderCharacterId || 'not provided'}`);
         console.log(`[IdentityAudit] subject_type:             ${subjectType}`);
         console.log(`[IdentityAudit] is_third_party:           ${isThirdPartyPhoto}`);
-        console.log(`[IdentityAudit] reference_image_urls:     ${(charRecord.reference_image_urls || []).length} raw → ${refUrls.length} valid → ${charRefs.length} used (max 4)`);
-        console.log(`[IdentityAudit] avatar_url_present:       ${!!charRecord.avatar_url}`);
+        console.log(`[IdentityAudit] reference_image_urls:     ${(charRecord.reference_image_urls || []).length} present → 0 used (avatar authority — reference photos excluded)`);
+        console.log(`[IdentityAudit] avatar_used_as_identity:  ${charRefs.length > 0} (${charRefs[0] ? 'current profile avatar' : 'no avatar'})`);
         console.log(`[IdentityAudit] appearance_lock_fields:   ${Object.keys(charRecord.appearance_lock || {}).join(', ') || 'none'}`);
         console.log(`[IdentityAudit] ethnicities:              ${(charRecord.ethnicities || []).join(', ') || 'none'}`);
         console.log(`[IdentityAudit] skin_tone:                ${charRecord.appearance_lock?.skin_tone || 'none'}`);
@@ -1365,36 +1405,16 @@ Deno.serve(async (req) => {
       }
 
       if (charRefs.length === 0 && characterReferenceImages?.length > 0) {
-        // Accept CDN-hosted avatars even if they contain "generated_image" in the URL.
-        // ChatImageDispatch now passes character.reference_image_urls first, falling back to
-        // the avatar only when it is CDN-hosted — these are canonical face portraits, not scene images.
-        // Non-CDN generated_image URLs are still excluded to prevent scene contamination.
-        charRefs = cdnFilter(characterReferenceImages).filter(u => {
-          if (u.includes('generated_image')) {
-            return u.startsWith('https://media.base44.com/'); // allow CDN-hosted generated avatars
-          }
-          return true;
-        }).slice(0, 4);
-        console.log(`[generateImageAsync] Using UI-provided charRefs (CDN-avatar-inclusive): ${charRefs.length}`);
-      }
-
-    if (charRefs.length === 0 && charRecord?.avatar_url) {
-        const avatarPublic = toPublicCDN(charRecord.avatar_url);
-        // AVATAR FALLBACK RULE: a CDN-hosted avatar IS the canonical face portrait, so allow it
-        // even when the URL contains "generated_image"; private/signed/internal URLs stay blocked.
-        const isCharacterAvatar = avatarPublic.startsWith('https://media.base44.com/');
-        if (isAccessible(avatarPublic) && (isCharacterAvatar || !avatarPublic.includes('generated_image'))) {
-          charRefs = [avatarPublic];
-          console.warn(`[generateImageAsync] ⚠️ No reference_image_urls for "${charRecord.name}" — using avatar_url as controlled face anchor (CDN avatar: ${isCharacterAvatar}).`);
-        }
+        // Caller-supplied character images are NOT a fallback. They are the original
+        // avatar reference photos or earlier renders — supplying them lets their clothing
+        // override the character's own established clothing. Only the current profile
+        // avatar (resolved above from the record) is an authorized identity reference.
+        console.warn(`[generateImageAsync] ⛔ Ignoring ${characterReferenceImages.length} caller-supplied character reference image(s) — avatar authority only.`);
       }
 
       // Identity missing guard: block if NO refs AND NO appearance lock AND NO demographics.
-      // charDesc is now demographics-only (age/gender), so also check appearance_lock and ethnicities.
-      // NOTE: The avatar fallback runs above this point (lines 1137-1143) — if the avatar was
-      // accessible and non-generated, it was already loaded into charRefs. So charRefs.length === 0
-      // here means: no reference_image_urls AND avatar either didn't exist or wasn't loadable.
-      // The guard is correct as-is — do not re-check avatar_url here.
+      // charRefs.length === 0 here means the character has no usable current avatar;
+      // identity then comes from the structured appearance data below.
       const hasAppearanceLock = charRecord?.appearance_lock && Object.keys(charRecord.appearance_lock).length > 0;
       const hasEthnicities = (charRecord?.ethnicities || []).length > 0;
       if (charRefs.length === 0 && !charDesc && !hasAppearanceLock && !hasEthnicities) {
@@ -1783,16 +1803,9 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          // Refs — same rules as primary: no generated_image, prefer reference_image_urls, avatar CDN fallback
-          const addlAllRefs = cdnFilter(addlRec.reference_image_urls || []);
-          let addlRefs = addlAllRefs.filter(u => !u.includes('generated_image')).slice(0, 2);
-          if (addlRefs.length === 0 && addlRec.avatar_url) {
-            const ap = toPublicCDN(addlRec.avatar_url);
-            const isCDN = ap.startsWith('https://media.base44.com/');
-            if (isAccessible(ap) && (isCDN || !ap.includes('generated_image'))) {
-              addlRefs = [ap];
-            }
-          }
+          // Refs — same avatar authority as the primary: the current profile avatar only.
+          // Original reference photos never supply identity or clothing for anyone.
+          const addlRefs = resolveCharacterAvatarRefs(addlRec, 1);
 
           // Outfit — delegate to resolveCharacterOutfitContext (same authority as primary)
           const _addlPresence = addlRec.resolved_presence_status || addlRec.location_status || '';

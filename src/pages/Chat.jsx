@@ -472,7 +472,9 @@ export default function Chat({ chatTypeOverride } = {}) {
     const convoId = conversationIdRef.current || conversationId;
     const resolvedCurrentUser = resolveAuthenticatedUser(currentUser, userSettings);
     const userRefImages = resolvedCurrentUser?.visual_reference_images || [];
-    const charRefs = (character.reference_image_urls || []).filter(Boolean);
+    // AVATAR AUTHORITY — the current profile avatar is the only identity reference.
+    // Original avatar reference photos are never supplied to image generation.
+    const charRefs = [character.avatar_url, character.image_avatar_url].filter(Boolean).slice(0, 1);
       const navigatedAway = !isMountedRef.current;
 
       // ── SUBJECT-AWARE CHARACTER RESOLUTION ──────────────────────────────────
@@ -551,7 +553,7 @@ export default function Chat({ chatTypeOverride } = {}) {
           resolvedCharacterId = subjectResult.primarySubjectId;
           resolvedAdditionalCharacterIds = subjectResult.additionalCharacterIds.slice(0, 4);
           resolvedSubjectType = 'character';
-          resolvedCharRefs = (primarySubjectChar?.reference_image_urls || []).filter(Boolean);
+          resolvedCharRefs = [primarySubjectChar?.avatar_url, primarySubjectChar?.image_avatar_url].filter(Boolean).slice(0, 1);
           console.log(`[Chat] Image subject: THIRD-PARTY primary="${primarySubjectChar?.name || subjectResult.primarySubjectId}" | additional=[${resolvedAdditionalCharacterIds.join(',')}]`);
 
         } else if (subjectResult.resolutionState === 'resolved' && subjectResult.includeSender && subjectResult.additionalCharacterIds.length > 0) {

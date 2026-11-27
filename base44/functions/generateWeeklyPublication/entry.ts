@@ -65,13 +65,9 @@ function resolveCharacterRefImages(charRecord) {
   };
   pushUrl(charRecord.avatar_url);
   pushUrl(charRecord.image_avatar_url);
-  for (const url of cdnFilter(charRecord.reference_image_urls || [])) {
-    if (out.length >= 4) break;
-    // Keep earlier scene renders out of identity anchoring once a face exists.
-    if (url.includes('generated_image') && out.length > 0) continue;
-    pushUrl(url);
-  }
-  return out.slice(0, 4);
+  // Original avatar reference photos are never supplied here. They exist to create the
+  // avatar, and the clothing they depict is not this character's established clothing.
+  return out.slice(0, 2);
 }
 
 // Build appearance lock text from character record — aligned with the proven

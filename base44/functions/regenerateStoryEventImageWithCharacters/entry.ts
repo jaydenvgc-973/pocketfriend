@@ -290,15 +290,12 @@ Deno.serve(async (req) => {
             visibleNames.push(c.name || c.display_name || cid);
             visibleTypes.push(c.character_type || 'active_created_character');
 
-            // Collect all reference image sources
+            // Identity reference = the CURRENT PROFILE AVATAR only.
+            // Original avatar reference photos are excluded: they exist to create the
+            // avatar, and the clothing they depict is not this character's clothing.
             const charRefImages = [];
             if (c.avatar_url && typeof c.avatar_url === 'string') charRefImages.push(c.avatar_url);
             if (c.image_avatar_url && typeof c.image_avatar_url === 'string') charRefImages.push(c.image_avatar_url);
-            if (Array.isArray(c.reference_image_urls)) {
-              c.reference_image_urls.forEach(url => {
-                if (url && typeof url === 'string') charRefImages.push(url);
-              });
-            }
 
             if (charRefImages.length > 0) {
               refImages.push(...charRefImages);
@@ -449,15 +446,11 @@ Deno.serve(async (req) => {
       let cursor = 0;
       for (const cid of effectiveCharacterIds) {
         const c = charById[cid];
+        // Current profile avatar only — original reference photos never supply identity.
         const collected = [];
         if (c) {
           if (c.avatar_url && typeof c.avatar_url === 'string') collected.push(c.avatar_url);
           if (c.image_avatar_url && typeof c.image_avatar_url === 'string') collected.push(c.image_avatar_url);
-          if (Array.isArray(c.reference_image_urls)) {
-            for (const url of c.reference_image_urls) {
-              if (url && typeof url === 'string') collected.push(url);
-            }
-          }
         }
         const nums = [];
         for (const url of collected) {

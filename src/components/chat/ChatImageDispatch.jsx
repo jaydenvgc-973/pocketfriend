@@ -84,33 +84,27 @@ export async function dispatchImageGeneration({
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
     //
     // IDENTITY RESOLUTION — subject-aware:
-    // charRefs is now the PRE-RESOLVED subject's reference images, passed from Chat.jsx after
-    // subject resolution. When the subject differs from the sender (third-party photo), charRefs
-    // contains the SUBJECT's refs — NOT the sender's. We must not override with character.reference_image_urls
-    // here because character is always the SENDER, not necessarily the subject.
-    //
-    // Priority:
-    // 1. charRefs passed from caller (subject-resolved refs — may be sender or named third-party)
-    // 2. character.reference_image_urls ONLY as fallback when charRefs is empty AND subject == sender
-    // 3. character.avatar_url CDN fallback — only when charRefs is empty
+    // charRefs is the PRE-RESOLVED subject's current profile avatar, passed from Chat.jsx
+    // after subject resolution (the subject may be the sender or a named third party).
+    // Original avatar reference photos are never passed or sent.
     const callerRefs = (charRefs || []).filter(Boolean);
 
-    // Only fall back to sender's DB refs when the caller passed no refs AND we have no indication
-    // of a third-party subject (characterId matches character.id = sender is subject)
     const senderIsSubject = !characterId || characterId === character.id;
-    const senderDbRefs = senderIsSubject ? (character.reference_image_urls || []).filter(Boolean) : [];
 
-    let candidateRefs = callerRefs.length > 0 ? callerRefs : senderDbRefs;
-
-    // Avatar fallback: only use CDN-hosted avatars (media.base44.com) — these are canonical portraits.
-    // Only apply sender avatar fallback when sender is the subject.
-    const avatarPublic = (senderIsSubject && character.avatar_url) ? toPublicCDN(character.avatar_url) : null;
+    // AVATAR AUTHORITY — the character's CURRENT PROFILE AVATAR is the only identity
+    // reference sent for a character. Original avatar reference photos are never sent:
+    // they exist to create the avatar, and the clothing they depict is not the
+    // character's clothing. Caller-supplied subject refs are only honoured when they
+    // are that same current avatar.
+    const avatarPublic = (senderIsSubject && (character.avatar_url || character.image_avatar_url))
+      ? toPublicCDN(character.avatar_url || character.image_avatar_url)
+      : null;
     const avatarIsCanonicalCDN = avatarPublic &&
       avatarPublic.startsWith('https://media.base44.com/') &&
       isProviderAccessible(avatarPublic);
 
-    const rawCharRefs = candidateRefs.length > 0
-      ? candidateRefs
+    const rawCharRefs = callerRefs.length > 0
+      ? callerRefs
       : (avatarIsCanonicalCDN ? [avatarPublic] : []);
 
     const publicCharRefs = rawCharRefs.map(toPublicCDN).filter(isProviderAccessible);

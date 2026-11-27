@@ -746,15 +746,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
     }
 
-    // FIX: Do NOT use avatar_url as the primary reference image.
-    // Avatar photos contain background, pose, and lighting that contaminate the generated scene.
-    // Use reference_image_urls (real face photos) first. Only fall back to avatar if none exist.
-    const refUrls = (character.reference_image_urls || [])
-      .filter(url => url && !url.includes('generated_image'))
-      .slice(0, 3);
-    const charRefImages = refUrls.length > 0
-      ? refUrls
-      : (character.avatar_url ? [character.avatar_url] : []);
+    // AVATAR AUTHORITY: the current profile avatar is the ONLY identity reference.
+    // Original avatar reference photos are never supplied — they exist to create the
+    // avatar, and the clothing they depict is not the character's clothing.
+    const charRefImages = [character.avatar_url, character.image_avatar_url].filter(Boolean).slice(0, 1);
 
     // ── SUBJECT ROUTING LOGIC ────────────────────────────────────────────────
     // The SENDER tab (character vs user) controls WHO SENDS the image.
@@ -775,12 +770,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (resolvedSingleChar) {
         resolvedCharacterId = resolvedSingleChar.id;
         resolvedCharacterName = resolvedSingleChar.name;
-        const explicitRefs = (resolvedSingleChar.reference_image_urls || [])
-          .filter(url => url && !url.includes('generated_image'))
-          .slice(0, 3);
-        resolvedCharRefImages = explicitRefs.length > 0
-          ? explicitRefs
-          : (resolvedSingleChar.avatar_url ? [resolvedSingleChar.avatar_url] : []);
+        // Current profile avatar only — original reference photos never supply identity.
+        resolvedCharRefImages = [resolvedSingleChar.avatar_url, resolvedSingleChar.image_avatar_url].filter(Boolean).slice(0, 1);
         console.log(`[MediaGallery] Single character override: "${resolvedSingleChar.name}" (${resolvedSingleChar.id})`);
       }
     } else if (hasSingleUserSubject) {

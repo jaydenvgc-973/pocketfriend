@@ -172,11 +172,12 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
   ].filter(Boolean);
   const appearanceText = appearanceParts.length > 0 ? appearanceParts.join(', ') : null;
 
-  // Priority: reference_image_urls ONLY (not avatar as primary, to avoid scene contamination).
-  // Cap at 2 — consistent with generateImageAsync. More refs = more background contamination.
-  const allRefs = (char.reference_image_urls || [])
-    .filter(url => url && typeof url === 'string' && !url.includes('generated_image'))
-    .slice(0, 2);
+  // AVATAR AUTHORITY: the current profile avatar is the ONLY identity reference.
+  // Original avatar reference photos are never supplied — they exist to create the
+  // avatar, and the clothing they depict is not this character's clothing.
+  const allRefs = [char.avatar_url, char.image_avatar_url]
+    .filter(url => url && typeof url === 'string' && !url.includes('/files/mp/private/'))
+    .slice(0, 1);
 
   console.log(
     `[resolveCharacterVisualRefs] id=${char.id} name="${char.name}"` +
@@ -188,18 +189,7 @@ export async function resolveCharacterVisualRefs(base44, characterId, allCharact
   );
 
   if (allRefs.length > 0) {
-    return { refs: allRefs, missing: false, appearanceText, source: 'reference_image_urls' };
-  }
-
-  // Fallback: avatar_url as controlled last-resort identity anchor.
-  // Face-only extraction is enforced in the prompt — background contamination is minimized.
-  // Better than generating a random person when no reference_image_urls exist.
-  if (char.avatar_url) {
-    console.warn(
-      `[resolveCharacterVisualRefs] ⚠️ No reference_image_urls for "${char.name}" — using avatar_url as last-resort face anchor.` +
-      ` Add reference photos for a stronger identity lock.`
-    );
-    return { refs: [char.avatar_url], missing: false, appearanceText, source: 'avatar_url_fallback' };
+    return { refs: allRefs, missing: false, appearanceText, source: 'current_avatar' };
   }
 
   // No images at all — if appearance text exists, identity can still be text-described in prompt.

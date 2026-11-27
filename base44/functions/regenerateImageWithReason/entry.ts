@@ -1084,15 +1084,16 @@ Deno.serve(async (req) => {
 
       if (charRecord) {
         charName = charRecord.name;
-        // CRITICAL: Only use reference_image_urls, NOT avatar.
-        // Avatar is typically a raw selfie/mirror shot — when passed as a reference, the AI copies its entire visual context
-        // (background, pose, props, lighting), causing scene contamination. This is the ROOT CAUSE of "pasted character" failures.
-        // If no reference images exist, generate from text description only.
-        const refUrls = cdnFilter(charRecord.reference_image_urls || []);
-        // CRITICAL: Filter generated images + cap at 2. More refs = more background contamination bleed-through.
-        const validRefUrls = refUrls.filter(url => !url.includes('generated_image'));
-        charRefs = validRefUrls.slice(0, 2);
-        console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs: ${charRefs.length} (max 2, no generated images, no avatar)`);
+        // AVATAR AUTHORITY — the current profile avatar is the only identity reference.
+        // Original avatar reference photos are never supplied: they exist to create the
+        // avatar, and the clothing they depict is not this character's clothing.
+        // Pose, background and lighting are explicitly discarded in the prompt; only face,
+        // hair, skin and body come from the avatar, and its clothing is the default outfit.
+        const _avatarRefs = [charRecord.avatar_url, charRecord.image_avatar_url]
+          .map(toPublicCDN)
+          .filter(u => u && isAccessible(u) && (u.startsWith('https://media.base44.com/') || !u.includes('generated_image')));
+        charRefs = Array.from(new Set(_avatarRefs)).slice(0, 1);
+        console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs: ${charRefs.length} (current profile avatar only)`);
 
         // APPEARANCE AUTHORITY SEPARATION — matches generateImageAsync exactly.
         // charDesc carries ONLY scene-neutral demographics (age range, gender).
@@ -1751,17 +1752,12 @@ Deno.serve(async (req) => {
           if (rec) {
             subjectDisplayName = rec.name || subjectDisplayName;
 
-            // Refs: prefer fresh reference_image_urls, CDN avatar fallback, then stored ctx refs
-            const freshAllRefs = cdnFilter(rec.reference_image_urls || []);
-            const freshRefs = freshAllRefs.filter(u => !u.includes('generated_image')).slice(0, 2);
-            if (freshRefs.length > 0) {
-              subjectRefs = freshRefs;
-            } else if (rec.avatar_url) {
-              const ap = toPublicCDN(rec.avatar_url);
-              if (isAccessible(ap)) subjectRefs = [ap];
-            } else if (ctxSubjectEntry?.reference_images?.length > 0) {
-              subjectRefs = cdnFilter(ctxSubjectEntry.reference_images).slice(0, 2);
-            }
+            // Refs: the current profile avatar only — never original reference photos,
+            // never an earlier render, never stored context reference images.
+            const ap = toPublicCDN(rec.avatar_url || rec.image_avatar_url);
+            subjectRefs = (ap && isAccessible(ap) && (ap.startsWith('https://media.base44.com/') || !ap.includes('generated_image')))
+              ? [ap]
+              : [];
 
             // Outfit
             const _bundlePresence = rec.resolved_presence_status || rec.location_status || '';
