@@ -26,6 +26,7 @@ import { buildJailAttireBlock } from "@/lib/jailSceneRules";
 import { buildShowerStateRule } from "@/lib/sceneActionConfig";
 import { isPrivateResidentialZone } from "@/lib/sceneBackgroundPopulation";
 import { resolveSceneZone } from "@/lib/sceneSpaceZone";
+import { publishSceneImageFailure, publishSceneImageSuccess } from "@/lib/sceneImageFailure";
 
 /**
  * useSceneImageGenerator
@@ -110,10 +111,6 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       // A picture that fails is never replaced by a place's fallback image: the picture
       // already on screen stays.
       keepImageOnFailure = false,
-      // Told when a picture could not be drawn at all (the provider refused it, or the
-      // request failed). The caller says so in the scene's own feed instead of leaving an
-      // empty room looking like the completed activity.
-      onImageError = null,
       // How many of each person's own reference images may be used. A ride spends the
       // budget on the vehicle's views, so each occupant keeps their avatar only.
       maxRefsPerPerson = 2,
@@ -127,7 +124,12 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
     // This request's ticket: anything it produces is only shown while it is still the newest.
     const ticket = ++requestTicketRef.current;
     const isCurrent = () => ticket === requestTicketRef.current;
-    const commit = (url) => { if (isCurrent()) setSceneImage(url); };
+    // A drawn picture is the picture of the moment — and it clears any notice about a
+    // request the image service refused.
+    const commit = (url) => { if (!isCurrent()) return; setSceneImage(url); publishSceneImageSuccess(); };
+    // The place's own reference image is not a picture of anything that happened. Showing
+    // it after a refused request must never read as a success, so it never clears the notice.
+    const commitPlaceImage = (url) => { if (isCurrent()) setSceneImage(url); };
     setIsGeneratingImage(true);
 
     const lightingDesc = getEasternLightingDescriptor();
@@ -355,9 +357,12 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         });
         commit(result.url);
       } catch {
-        // A failed picture never becomes a picture of somewhere else: the current image stays.
-        if (!keepImageOnFailure) commit(zoneFallbackImage);
-        if (onImageError) onImageError();
+        // A refused picture is never passed off as the moment itself. An activity's own
+        // picture never falls back to the place's empty reference image — that fallback is
+        // exactly what left an empty tent on screen looking like a completed shower. The
+        // picture already on screen stays, and the picture area says what happened.
+        if (!keepImageOnFailure && !actionOverridePrompt) commitPlaceImage(zoneFallbackImage);
+        publishSceneImageFailure();
       } finally { if (isCurrent()) setIsGeneratingImage(false); }
       return;
     }
@@ -400,8 +405,8 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
         });
         commit(result.url);
       } catch {
-        commit(zoneFallbackImage);
-        if (onImageError) onImageError();
+        commitPlaceImage(zoneFallbackImage);
+        publishSceneImageFailure();
       } finally {
         if (isCurrent()) setIsGeneratingImage(false);
       }
@@ -437,8 +442,8 @@ export function useSceneImageGenerator({ transcript = [], getActiveSpace = null 
       });
       commit(result.url);
     } catch {
-      commit(zoneFallbackImage);
-      if (onImageError) onImageError();
+      commitPlaceImage(zoneFallbackImage);
+      publishSceneImageFailure();
     } finally {
       if (isCurrent()) setIsGeneratingImage(false);
     }

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { RefreshCw, MapPin, ChevronDown, ChevronUp, Check, ZoomIn, Sparkles } from "lucide-react";
 import WatchVideoPanel from "@/components/scene/WatchVideoPanel";
+import SceneImageNotice from "@/components/scene/SceneImageNotice";
 import { Car } from "lucide-react";
 import { carLabel } from "@/lib/ownerBelongings";
 
@@ -118,6 +119,10 @@ export default function SceneMediaArea({
         </div>
       )}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60 pointer-events-none" />
+
+      {/* A refused picture says so instead of leaving an empty room looking like the
+          completed activity. It renders nothing while pictures are being drawn. */}
+      <SceneImageNotice />
 
       {/* The active scene environment: inside a car, that is the car itself — not a room of
           the property the ride started from. */}
