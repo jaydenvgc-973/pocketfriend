@@ -2253,14 +2253,14 @@ export default function Locations() {
   );
 
   return (
-    <div className="min-h-screen bg-background pb-24">
+    <div className="min-h-screen bg-background pb-28">
       <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/settings" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
-        <div className="flex-1">
-          <h1 className="text-base font-bold text-foreground">Location References</h1>
-          <p className="text-xs text-muted-foreground">Zone-accurate visual references for generated images</p>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-base font-bold text-foreground truncate">Location References</h1>
+          <p className="text-xs text-muted-foreground truncate">Zone-accurate visual references for generated images</p>
         </div>
         <Button onClick={() => { setInlineEditId(null); setShowAddForm(v => !v); }} size="sm" className="rounded-xl gap-1.5">
           <Plus className="w-4 h-4" /> Add

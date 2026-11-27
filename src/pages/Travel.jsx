@@ -711,14 +711,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     });
 
   return (
-    <div className="min-h-screen bg-background pt-16 pb-20">
+    <div className="min-h-screen bg-background pt-16 pb-28">
       <div className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
-        <Link to="/home" className="text-muted-foreground hover:text-foreground">
+        <Link to="/home" className="text-muted-foreground hover:text-foreground flex-shrink-0">
           <ArrowLeft className="w-5 h-5" />
         </Link>
-        <div className="flex-1">
-          <h1 className="text-base font-bold text-foreground">Travel</h1>
-          <p className="text-xs text-muted-foreground">Choose a place, then who's coming</p>
+        {/* The header's own text gives way instead of the page: min-w-0 lets this column
+            shrink, and the single-line subtitle keeps the header compact on a phone. */}
+        <div className="flex-1 min-w-0">
+          <h1 className="text-base font-bold text-foreground truncate">Travel</h1>
+          <p className="text-xs text-muted-foreground truncate">Choose a place, then who's coming</p>
         </div>
         <FixLocationsButton currentUserEmail={currentUser?.email} />
         <button

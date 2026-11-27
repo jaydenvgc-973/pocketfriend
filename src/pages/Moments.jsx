@@ -189,18 +189,18 @@ export default function Moments() {
   const unlockedCount = allAchievements.filter(a => unlockedMap[a.id]).length;
 
   return (
-    <div className="min-h-screen bg-background pt-28 pb-20" style={{ paddingTop: 'max(7rem, calc(7rem + env(safe-area-inset-top)))' }}>
+    <div className="min-h-screen bg-background pt-28 pb-28" style={{ paddingTop: 'max(7rem, calc(7rem + env(safe-area-inset-top)))' }}>
       {/* Header */}
        <div className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border px-4 pb-4" style={{ paddingTop: 'max(1.5rem, calc(1.5rem + env(safe-area-inset-top)))' }}>
-         <div className="flex items-center justify-between">
-           <div>
-             <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
-             <p className="text-xs text-muted-foreground mt-0.5">
+         <div className="flex items-center justify-between gap-2">
+           <div className="min-w-0">
+             <h1 className="text-xl font-bold text-foreground truncate">Moments &amp; Impact</h1>
+             <p className="text-xs text-muted-foreground mt-0.5 truncate">
                {unlockedCount} / {allAchievements.length} achievements unlocked
                {scanning && <span className="ml-2 text-primary/60">• scanning...</span>}
              </p>
            </div>
-           <div className="flex items-center gap-2">
+           <div className="flex items-center gap-2 flex-shrink-0">
              <button
               onClick={async () => {
                 if (scanning || !currentUser?.email) return;
@@ -231,10 +231,10 @@ export default function Moments() {
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-xs font-medium"
              >
                {reelJobStatus === 'processing'
-                 ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Memory Reel processing</>
+                 ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> <span className="hidden sm:inline">Memory </span>Reel processing</>
                  : reelJobStatus === 'complete'
-                 ? <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Memory Reel ready</>
-                 : <><Film className="w-3.5 h-3.5" /> Create Memory Reel</>
+                 ? <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> <span className="hidden sm:inline">Memory </span>Reel ready</>
+                 : <><Film className="w-3.5 h-3.5" /> Create<span className="hidden sm:inline"> Memory</span> Reel</>
                }
              </Link>
              <button

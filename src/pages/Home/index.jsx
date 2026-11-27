@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useNavigate, Link } from "react-router-dom";
 import { Plus, Users, Settings, Wrench, RefreshCw } from "lucide-react";
-import FixLocationsButton from "@/components/home/FixLocationsButton";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
@@ -327,11 +326,13 @@ export default function Home() {
           />
         )}
       </AnimatePresence>
-      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
+      <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3">
         <div className="max-w-lg mx-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
-            <div className="flex items-center gap-2">
+          {/* The header never widens the page: the title gives way (truncating) and the
+              controls keep their own space, so every control stays reachable on a phone. */}
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <h1 className="min-w-0 truncate text-xl font-bold text-foreground">Pocketfriend</h1>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <Link to="/groups">
                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
                   <Users className="w-5 h-5" />
@@ -345,7 +346,6 @@ export default function Home() {
               >
                 <RefreshCw className={`w-4 h-4 ${isSyncing ? "animate-spin" : ""}`} />
               </button>
-              <FixLocationsButton currentUserEmail={currentUser?.email} />
               <button
                 onClick={() => setShowTroubleshooting(true)}
                 className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"

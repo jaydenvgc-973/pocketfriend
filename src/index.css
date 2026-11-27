@@ -86,6 +86,13 @@
   body {
     @apply bg-background text-foreground font-inter;
   }
+
+  /* The page itself is only ever as wide as the space it is given. A component that needs
+     horizontal movement (a strip, a carousel, a table) scrolls inside itself; the whole
+     application page never moves sideways. */
+  html {
+    overflow-x: hidden;
+  }
 }
 
 /* Scenes picture area — a share of the height that always leaves the conversation its
