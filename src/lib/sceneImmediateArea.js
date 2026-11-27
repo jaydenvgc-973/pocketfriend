@@ -23,6 +23,7 @@
  */
 import { getResidentialUnits, getActiveUnitOccupantIds } from '@/lib/residentialUnits';
 import { getLocationWorkplaces } from '@/lib/locationWorkspaces';
+import { isUnhousedResidenceUnit } from '@/lib/unhousedLivingSpace';
 import { isCharacterAtWork } from '@/lib/workScheduleUtils';
 import { isCharacterHome } from '@/lib/travelAvailability';
 
@@ -31,8 +32,15 @@ function isAtLocation(character, location) {
   return character.resolved_current_location_id === location.id;
 }
 
+// Presence states that mean the person is NOT in this property's shared area, whatever a
+// stale location field says: a hospital bed, a cell, house arrest, the road, off-screen.
+const AWAY_PRESENCE_STATUSES = new Set([
+  'hospitalized', 'incarcerated', 'confined', 'house_arrest', 'traveling', 'rabbit_hole', 'deceased',
+]);
+
 /**
- * The ids of the people who are inside a separate occupied space of this property.
+ * The ids of the people who are inside a separate occupied space of this property — or
+ * otherwise not in its shared immediate area.
  * Empty for an ordinary venue or a single-household home.
  */
 export function getPrivateSpaceOccupantIds(location, characters = []) {
@@ -43,24 +51,43 @@ export function getPrivateSpaceOccupantIds(location, characters = []) {
   // 1. ASSIGNED SPACES — apartments, patient rooms, cells, dorm rooms, hotel rooms. The
   //    assignment Places already stores is the authority, and an ended stay is no
   //    assignment. Only an occupant who is actually at this property is inside it.
+  //
+  //    AN UNHOUSED LIVING SPACE IS NOT A ROOM INSIDE THE PROPERTY. A tent, an encampment
+  //    or an outdoor sleeping area stands in the parent's own outdoor space, so the
+  //    people staying there are part of that outdoor environment — they are never sealed
+  //    inside a private interior. Choosing that space itself still selects exactly its
+  //    occupants, through the unit the visit names. Their physical location is still what
+  //    decides eligibility: someone at work, hospitalized, locked up or in another venue
+  //    is elsewhere and never enters this pool.
   getResidentialUnits(location).forEach((unit) => {
+    const unhoused = isUnhousedResidenceUnit(location, unit);
     getActiveUnitOccupantIds(location, unit, list).forEach((id) => {
       const character = list.find((c) => c.id === id);
       if (!character) return;
       const here = character.resolved_current_location_id === location.id
         || (character.current_home_location_id === location.id && isCharacterHome(character));
-      if (here) ids.add(id);
+      if (!here) return;
+      // Staying in a tent is not being in the property's shared area — the person belongs
+      // to the parent's outdoor environment and stays eligible there. A record that says
+      // they are in a hospital bed, a cell or on the road is not there at all, so it is
+      // still never part of that outdoor pool.
+      if (unhoused && !AWAY_PRESENCE_STATUSES.has(character.resolved_presence_status)) return;
+      ids.add(id);
     });
   });
 
   // 2. WORKPLACES INSIDE THE PROPERTY — an employee on shift is in that business's own
-  //    space, not in the property's shared area.
+  //    space, not in the property's shared area. Authoritative presence outranks a
+  //    recomputed shift: a record that already places them at work in this property means
+  //    they are inside that business now, even when the shift window cannot be re-derived.
   getLocationWorkplaces(location).forEach((workplace) => {
     (workplace.worker_character_ids || []).forEach((id) => {
       const character = list.find((c) => c.id === id);
       if (!character) return;
       if (character.resolved_current_location_id && !isAtLocation(character, location)) return;
-      if (!isCharacterAtWork(character, location)) return;
+      const atWorkHere = isCharacterAtWork(character, location)
+        || (character.resolved_presence_status === 'at_work' && isAtLocation(character, location));
+      if (!atWorkHere) return;
       ids.add(id);
     });
   });
